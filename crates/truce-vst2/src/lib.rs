@@ -450,8 +450,11 @@ fn notify_process_param_changes<P: PluginExport>(inst: &Vst2Instance<P>) {
 /// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
 /// Transport, etc.).
 fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
-    use truce_core::midi::pitch_bend_to_bytes;
-    let (status, data1, data2) = match &event.body {
+    use truce_core::midi::{downconvert_to_midi1, pitch_bend_to_bytes};
+    // VST2 is MIDI 1.0 only; down-convert any 2.0 output first so it
+    // isn't dropped.
+    let body = downconvert_to_midi1(&event.body).unwrap_or(event.body);
+    let (status, data1, data2) = match &body {
         EventBody::NoteOn {
             channel,
             note,

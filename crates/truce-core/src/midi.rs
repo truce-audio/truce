@@ -191,11 +191,117 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
     }
 }
 
-// `downconvert_to_midi1` is intentionally absent until plug-ins
-// can opt into MIDI 2.0 with an explicit downconvert policy; a
-// per-event downcast helper without that gate would route every
-// MIDI 2.0 plug-in's output through silent precision loss on
-// VST3 / VST2 / LV2 / AAX.
+/// Down-convert a MIDI 2.0 channel-voice [`EventBody`] to its nearest
+/// MIDI 1.0 equivalent (lossy). Used two ways: when a plug-in *emits*
+/// 2.0 but the wrapper has no UMP transport (VST3 / VST2 / AAX / LV2),
+/// and when a plug-in that did **not** opt into MIDI 2.0
+/// (`midi_input_dialect == Midi1`) *receives* 2.0 - it should see 1.0
+/// rather than have the event dropped.
+///
+/// 16/32-bit values take their high 7/14 bits; a live `NoteOn2` keeps a
+/// non-zero velocity so it can't collapse into a note-off. Per-note
+/// richness (`PerNoteCC` / `PerNotePitchBend`) collapses onto the note's
+/// channel - the note identity is lost but the controller stays visible
+/// (MPE-style degradation). Returns `None` for bodies that are already
+/// MIDI 1.0, aren't channel voice, or have no 1.0 form (per-note
+/// management, (N)RPN controllers).
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn downconvert_to_midi1(body: &EventBody) -> Option<EventBody> {
+    let hi7_16 = |v: u16| (v >> 9) as u8;
+    let hi7_32 = |v: u32| (v >> 25) as u8;
+    let hi14_32 = |v: u32| (v >> 18) as u16 & 0x3FFF;
+    Some(match *body {
+        EventBody::NoteOn2 {
+            group,
+            channel,
+            note,
+            velocity,
+            ..
+        } => EventBody::NoteOn {
+            group,
+            channel,
+            note,
+            velocity: hi7_16(velocity).max(u8::from(velocity > 0)),
+        },
+        EventBody::NoteOff2 {
+            group,
+            channel,
+            note,
+            velocity,
+            ..
+        } => EventBody::NoteOff {
+            group,
+            channel,
+            note,
+            velocity: hi7_16(velocity),
+        },
+        EventBody::PolyPressure2 {
+            group,
+            channel,
+            note,
+            pressure,
+        } => EventBody::Aftertouch {
+            group,
+            channel,
+            note,
+            pressure: hi7_32(pressure),
+        },
+        EventBody::ControlChange2 {
+            group,
+            channel,
+            cc,
+            value,
+        }
+        | EventBody::PerNoteCC {
+            group,
+            channel,
+            cc,
+            value,
+            ..
+        } => EventBody::ControlChange {
+            group,
+            channel,
+            cc,
+            value: hi7_32(value),
+        },
+        EventBody::ChannelPressure2 {
+            group,
+            channel,
+            pressure,
+        } => EventBody::ChannelPressure {
+            group,
+            channel,
+            pressure: hi7_32(pressure),
+        },
+        EventBody::PitchBend2 {
+            group,
+            channel,
+            value,
+        }
+        | EventBody::PerNotePitchBend {
+            group,
+            channel,
+            value,
+            ..
+        } => EventBody::PitchBend {
+            group,
+            channel,
+            value: hi14_32(value),
+        },
+        EventBody::ProgramChange2 {
+            group,
+            channel,
+            program,
+            ..
+        } => EventBody::ProgramChange {
+            group,
+            channel,
+            program,
+        },
+        _ => return None,
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -208,6 +314,78 @@ mod tests {
         let (len, back) = event_to_midi1(&event).unwrap();
         assert_eq!(len, 3);
         assert_eq!(back, [0x90, 60, 100]);
+    }
+
+    #[test]
+    fn downconvert_note_on_2_keeps_high_bits() {
+        let out = downconvert_to_midi1(&EventBody::NoteOn2 {
+            group: 2,
+            channel: 3,
+            note: 60,
+            velocity: 0xFFFF,
+            attribute_type: 0,
+            attribute: 0,
+        });
+        assert!(matches!(
+            out,
+            Some(EventBody::NoteOn {
+                group: 2,
+                channel: 3,
+                note: 60,
+                velocity: 127,
+            })
+        ));
+    }
+
+    #[test]
+    fn downconvert_keeps_live_note_off_the_note_off_boundary() {
+        // A tiny non-zero 16-bit velocity must not become a note-off.
+        let Some(EventBody::NoteOn { velocity, .. }) = downconvert_to_midi1(&EventBody::NoteOn2 {
+            group: 0,
+            channel: 0,
+            note: 60,
+            velocity: 1,
+            attribute_type: 0,
+            attribute: 0,
+        }) else {
+            panic!("expected NoteOn");
+        };
+        assert_eq!(velocity, 1);
+    }
+
+    #[test]
+    fn downconvert_per_note_collapses_to_channel_cc() {
+        let out = downconvert_to_midi1(&EventBody::PerNoteCC {
+            group: 0,
+            channel: 4,
+            note: 60,
+            cc: 74,
+            value: u32::MAX,
+            registered: true,
+        });
+        assert!(matches!(
+            out,
+            Some(EventBody::ControlChange {
+                channel: 4,
+                cc: 74,
+                value: 127,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn downconvert_returns_none_for_1_0_and_non_cv() {
+        assert!(
+            downconvert_to_midi1(&EventBody::NoteOn {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            })
+            .is_none()
+        );
+        assert!(downconvert_to_midi1(&EventBody::ParamChange { id: 0, value: 0.0 }).is_none());
     }
 
     #[test]
