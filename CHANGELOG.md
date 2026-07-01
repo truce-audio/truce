@@ -9,6 +9,7 @@ Notable changes per release.
 - **VST3 note-expression output.** A plugin's per-note `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` events now go out to VST3 hosts as `kNoteExpressionValueEvent`, keyed by a deterministic `noteId` so they track the note. VST3 has no UMP, so this is the lossy note-expression path (input already decoded it; output was missing).
 - **AU v3 multi-port MIDI output.** A multi-port plugin now exposes N named `MIDIOutputNames` on AU v3 and routes each event to its `Event::port` (cable), matching CLAP/VST3/LV2. AU v2 stays single-stream; AU v3 MIDI input remains single-port for now.
 - **AU v3 honors the `midi2` opt-in.** The appex now declares `audioUnitMIDIProtocol` = 2.0 only when `midi2 = true`, so native MIDI 2.0 input (`NoteOn2` / `PerNoteCC` / …) reaches the plugin exactly when opted in - the same contract as CLAP. Previously the 2.0 decode path was present but dormant (the appex never requested the 2.0 protocol).
+- **AU v3 MIDI 2.0 output.** In `midi2` mode the appex emits channel voice as UMP through `midiOutputEventListBlock` (MIDI 1.0 events as MT 0x2, 2.0 as MT 0x4), so a plugin's `NoteOn2` / `PerNoteCC` / … reach the host at full resolution - end-to-end 2.0 in and out on AU v3, matching CLAP. SysEx output in 2.0 mode is best-effort (byte block only).
 
 ## 1.0.5
 

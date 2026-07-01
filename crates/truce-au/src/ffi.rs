@@ -167,6 +167,12 @@ pub struct AuCallbacks {
         out_len: *mut u32,
     ),
 
+    /// UMP channel-voice output for AU v3 in MIDI 2.0 protocol mode. The
+    /// appex uses these instead of `output_event_*` (the byte / MIDI 1.0
+    /// path) when it declared `audioUnitMIDIProtocol` = 2.0.
+    pub output_ump_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    pub output_ump_at: unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut AuUmpEvent),
+
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
@@ -244,6 +250,22 @@ pub struct AuMidi2Event {
     /// 0x4 = MIDI 2.0 CV (64-bit), 0x5 = data 128 (128-bit).
     /// Types 0x3 (SysEx-7), 0x4 (MIDI 2.0 CV), and 0x5 (data 128
     /// / SysEx-8) are decoded; 0x0 / 0x1 / 0x2 are reserved.
+    pub words: [u32; 4],
+}
+
+/// Plugin -> host UMP output event (AU v3, MIDI 2.0 protocol mode).
+/// Mirrors `AuUmpEvent` in `au_shim_types.h`. `word_count` is 1
+/// (MT 0x2, MIDI 1.0 CV) or 2 (MT 0x4, MIDI 2.0 CV); only that many
+/// `words` are valid. `cable` is the MIDI output port.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct AuUmpEvent {
+    pub sample_offset: u32,
+    pub cable: u8,
+    pub word_count: u8,
+    /// Padding to 4-byte-align `words`; matches `_reserved` in
+    /// `au_shim_types.h` by position.
+    pub reserved: [u8; 2],
     pub words: [u32; 4],
 }
 

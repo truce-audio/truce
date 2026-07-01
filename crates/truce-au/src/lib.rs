@@ -38,7 +38,10 @@ use truce_core::export::PluginExport;
 use truce_core::info::MidiDialect;
 use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
 use truce_core::state;
-use truce_core::ump::{SysExAssembler, SysExFeed, decode_ump_channel_voice_2};
+use truce_core::ump::{
+    SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_ump_channel_voice_1,
+    encode_ump_channel_voice_2,
+};
 use truce_core::wrapper::{
     default_io_channels, log_midi_ports_clamped, log_missing_bus_layout, run_audio_block,
     run_extern_callback_with, run_register,
@@ -47,7 +50,7 @@ use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
 use ffi::{
     AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuParamEvent, AuPluginDescriptor,
-    AuTransportSnapshot,
+    AuTransportSnapshot, AuUmpEvent,
 };
 
 // ---------------------------------------------------------------------------
@@ -868,6 +871,61 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
     }
 }
 
+/// Encode a channel-voice event into UMP for AU v3's MIDI-2.0-protocol
+/// output path: 2.0 variants become MT 0x4 (two words), 1.0 variants
+/// MT 0x2 (one word). Returns `None` for non-channel-voice bodies (the
+/// byte / `output_event_at` path handles nothing here - in 2.0 mode all
+/// channel voice rides UMP).
+fn try_encode_au_ump(event: &Event) -> Option<AuUmpEvent> {
+    let (word_count, words) = match encode_ump_channel_voice_2(&event.body) {
+        Some(w) => (2u8, w),
+        None => (1u8, encode_ump_channel_voice_1(&event.body)?),
+    };
+    Some(AuUmpEvent {
+        sample_offset: event.sample_offset,
+        cable: event.port,
+        word_count,
+        reserved: [0; 2],
+        words,
+    })
+}
+
+unsafe extern "C" fn cb_output_ump_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        len_u32(
+            inst.output_events
+                .iter()
+                .filter_map(try_encode_au_ump)
+                .count(),
+        )
+    }
+}
+
+unsafe extern "C" fn cb_output_ump_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out: *mut AuUmpEvent,
+) {
+    unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        if let Some(mut packet) = inst
+            .output_events
+            .iter()
+            .filter_map(try_encode_au_ump)
+            .nth(index as usize)
+        {
+            // Clamp the cable to the declared output-port count, matching
+            // the byte path; the appex passes it to
+            // `midiOutputEventListBlock`.
+            packet.cable = packet
+                .cable
+                .min(P::info().midi_output_ports.saturating_sub(1));
+            *out = packet;
+        }
+    }
+}
+
 /// `SysEx` input for AU v2. The shim's `au_v2_sysex` strips the
 /// `0xF0`/`0xF7` framing and calls this once per complete message
 /// before the render pulls audio; we copy the inner bytes into the
@@ -1346,6 +1404,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         output_event_at: cb_output_event_at::<P>,
         output_sysex_count: cb_output_sysex_count::<P>,
         output_sysex_at: cb_output_sysex_at::<P>,
+        output_ump_count: cb_output_ump_count::<P>,
+        output_ump_at: cb_output_ump_at::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,

@@ -93,6 +93,19 @@ typedef struct {
     uint32_t words[4];
 } AuMidi2Event;
 
+/* Plugin -> host UMP output event (AU v3, MIDI 2.0 protocol mode). The
+ * v3 appex drains these via `output_ump_count` / `output_ump_at` and
+ * builds a `MIDIEventList` for `midiOutputEventListBlock`. `word_count`
+ * is 1 (MT 0x2 = MIDI 1.0 CV) or 2 (MT 0x4 = MIDI 2.0 CV); only that many
+ * `words` are valid. `cable` is the MIDI output port. */
+typedef struct {
+    uint32_t sample_offset;
+    uint8_t cable;
+    uint8_t word_count;
+    uint8_t _reserved[2];
+    uint32_t words[4];
+} AuUmpEvent;
+
 /* Host-side parameter automation event. The AU v3 shim decodes
  * AURenderEvent.parameter / .parameterRamp entries into this shape
  * (one row per host event), with `sample_offset` relative to the
@@ -173,6 +186,12 @@ typedef struct {
                             uint32_t *out_delta_frames,
                             const uint8_t **out_bytes,
                             uint32_t *out_len);
+    /* UMP channel-voice output for AU v3 in MIDI 2.0 protocol mode. The
+     * appex uses these (instead of the byte-based `output_event_*`) when
+     * it declared `audioUnitMIDIProtocol` = 2.0: MIDI 1.0 variants become
+     * MT 0x2 UMP, MIDI 2.0 variants MT 0x4. */
+    uint32_t (*output_ump_count)(void *ctx);
+    void (*output_ump_at)(void *ctx, uint32_t index, AuUmpEvent *out);
     /* GUI */
     int32_t (*gui_has_editor)(void *ctx);
     void (*gui_get_size)(void *ctx, uint32_t *w, uint32_t *h);
