@@ -477,10 +477,11 @@ name = "Truce Channel Spread"
 bundle_id = "chan-spread"
 crate = "truce-example-mpe-spreader"
 category = "midi"
-# Promotes 1.0 -> 2.0 and fans notes across channels / ports. The second
-# output port carries the Port Fan split and the Auto Vibrato / Mod
-# Brightness per-note expression.
-midi2 = true
+# Promotes 1.0 -> 2.0 and fans notes across channels / ports. Asymmetric
+# dialect: 1.0 in (real 1.0 to promote), 2.0 out. The second output port
+# carries the Port Fan split and the Auto Vibrato / Mod Brightness
+# per-note expression.
+midi2_output = true
 midi_output_ports = 2
 fourcc = "TMpe"
 au3_subtype = "TMp3"

@@ -631,6 +631,8 @@ mod suite_tests {
                 midi_input: None,
                 midi_output: None,
                 midi2: false,
+                midi2_input: None,
+                midi2_output: None,
                 midi_input_ports: None,
                 midi_output_ports: None,
                 presets: None,

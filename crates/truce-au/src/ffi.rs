@@ -47,6 +47,10 @@ pub struct AuPluginDescriptor {
     /// declares `audioUnitMIDIProtocol` = 2.0 when set (host delivers
     /// native UMP 2.0), else 1.0 (host down-converts). AU v2 ignores it.
     pub midi2_input: i32,
+    /// `1` if the MIDI output port is MIDI 2.0 dialect. The appex's
+    /// output drain emits UMP via `midiOutputEventListBlock` when set;
+    /// the framework converts it to the host's protocol. AU v2 ignores it.
+    pub midi2_output: i32,
 }
 
 /// Parameter descriptor for the `ObjC` shim.
