@@ -860,13 +860,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             if noteOnRef.pointee {
                 self.midiInScratch.append(AuMidiEvent(
                     sample_offset: 0,
-                    status: 0x90, data1: 60, data2: 95, _pad: 0))
+                    status: 0x90, data1: 60, data2: 95, port: 0))
                 noteOnRef.pointee = false
             }
             if noteOffRef.pointee {
                 self.midiInScratch.append(AuMidiEvent(
                     sample_offset: 0,
-                    status: 0x80, data1: 60, data2: 0, _pad: 0))
+                    status: 0x80, data1: 60, data2: 0, port: 0))
                 noteOffRef.pointee = false
             }
             if !isEffect {
@@ -929,7 +929,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 let outCount = cb.pointee.output_event_count(ctx)
                 for i in 0..<outCount {
                     var ev = AuMidiEvent(sample_offset: 0, status: 0,
-                                         data1: 0, data2: 0, _pad: 0)
+                                         data1: 0, data2: 0, port: 0)
                     cb.pointee.output_event_at(ctx, i, &ev)
                     sendShortMidi(ev, to: virtualSource)
                 }
@@ -1173,7 +1173,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 let outCount = cb.pointee.output_event_count(ctx)
                 for i in 0..<outCount {
                     var ev = AuMidiEvent(sample_offset: 0, status: 0,
-                                         data1: 0, data2: 0, _pad: 0)
+                                         data1: 0, data2: 0, port: 0)
                     cb.pointee.output_event_at(ctx, i, &ev)
                     sendShortMidi(ev, to: virtualSource)
                 }
@@ -1281,7 +1281,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 let tail = (self.midiInRingHead + self.midiInRingCount) % cap
                 buf[tail] = AuMidiEvent(
                     sample_offset: 0,
-                    status: status, data1: data1, data2: data2, _pad: 0)
+                    status: status, data1: data1, data2: data2, port: 0)
                 self.midiInRingCount += 1
             }
             packetPtr = UnsafePointer(MIDIPacketNext(packetPtr))
