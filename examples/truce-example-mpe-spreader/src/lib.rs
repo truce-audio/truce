@@ -1,6 +1,6 @@
 //! Promotes MIDI 1.0 to MIDI 2.0 (UMP) and spreads notes across the
-//! channel / port / group address space - a test vehicle for truce's
-//! 2.0 **encode** and **multi-port output** surface.
+//! channel address space - a test vehicle for truce's 2.0 **encode**
+//! surface.
 //!
 //! Every incoming 1.0 channel-voice message is re-emitted as its native
 //! 2.0 `EventBody` (7-bit velocity -> 16-bit, 7/14-bit controller/bend
@@ -9,23 +9,14 @@
 //! - **Passthrough**   - promotion only, addressing untouched.
 //! - **Channel Fan**   - round-robin each note across `Channels` MIDI
 //!   channels (an MPE-style voice allocator).
-//! - **Port Fan**      - alternate notes between output ports 0 and 1.
-//!   A wire-level exerciser: both ports are emitted with correct
-//!   `port_index` / cable, but no current DAW routes a plugin's separate
-//!   note ports through a device chain, so it isn't audible yet.
-//! - **Group Fan**     - round-robin each note across `Channels` UMP
-//!   groups (a multi-timbral spread). Group only survives native-2.0
-//!   transports (AU v3); CLAP's note model has no group field, so it's a
-//!   no-op there.
 //! - **Auto Vibrato**  - a per-held-note pitch-bend LFO emitted as
-//!   `PerNotePitchBend` (32-bit) on each note's own port/channel.
+//!   `PerNotePitchBend` (32-bit) on each note's own channel.
 //! - **Mod Brightness** - the mod wheel (CC 1) routed to per-note
-//!   brightness (`PerNoteCC` 74) on every held note, on each note's own
-//!   port/channel.
+//!   brightness (`PerNoteCC` 74) on every held note, on its own channel.
 //!
-//! `midi2 = true` in `truce.toml` makes the output carry native UMP on
-//! CLAP / AU v3; on formats without a UMP transport the wrapper (or host)
-//! down-converts to 1.0. Non-1.0-channel-voice input is ignored.
+//! `midi2_output = true` in `truce.toml` makes the output carry native
+//! UMP on CLAP / AU v3; on formats without a UMP transport the wrapper
+//! (or host) down-converts to 1.0. Non-1.0-channel-voice input is ignored.
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -36,9 +27,6 @@ use truce_gui_types::layout::{GridLayout, dropdown, knob, widgets};
 
 use SpreaderParamsParamId as P;
 
-/// Promoted notes leave here (and, for `Port Fan`, port 1 too). Per-note
-/// expression rides the note's own port, never a fixed one.
-const PORT_MAIN: u8 = 0;
 /// MIDI mod-wheel CC number.
 const CC_MOD_WHEEL: u8 = 1;
 /// MIDI 2.0 per-note brightness controller number.
@@ -53,10 +41,6 @@ pub enum Algo {
     Passthrough,
     #[name = "Channel Fan"]
     ChannelFan,
-    #[name = "Port Fan"]
-    PortFan,
-    #[name = "Group Fan"]
-    GroupFan,
     #[name = "Auto Vibrato"]
     AutoVibrato,
     #[name = "Mod Brightness"]
@@ -95,7 +79,6 @@ pub struct SpreaderParams {
 /// voice even if the mode or fan width changes mid-hold.
 #[derive(Clone, Copy)]
 struct Held {
-    port: u8,
     group: u8,
     channel: u8,
     /// Vibrato LFO phase in turns (0..1), advanced per block.
@@ -111,10 +94,6 @@ pub struct Spreader {
     held: [Option<Held>; 128],
     /// Next channel to hand out for `Channel Fan`.
     next_channel: u8,
-    /// Next UMP group to hand out for `Group Fan`.
-    next_group: u8,
-    /// Next output port to hand out for `Port Fan`.
-    next_port: u8,
     /// Whether `Auto Vibrato` emitted bends last block, so a note-off or
     /// a mode change can recentre the note instead of leaving it detuned.
     vibrato_active: bool,
@@ -128,8 +107,6 @@ impl Spreader {
             sample_rate: 44100.0,
             held: [None; 128],
             next_channel: 0,
-            next_group: 0,
-            next_port: 0,
             vibrato_active: false,
         }
     }
@@ -175,8 +152,6 @@ impl PluginLogic for Spreader {
         self.sample_rate = sample_rate;
         self.held = [None; 128];
         self.next_channel = 0;
-        self.next_group = 0;
-        self.next_port = 0;
         self.vibrato_active = false;
     }
 
@@ -200,16 +175,14 @@ impl PluginLogic for Spreader {
                     note,
                     velocity,
                 } => {
-                    let (port, g, ch) = self.route(algo, width, group, channel);
+                    let (g, ch) = self.route(algo, width, group, channel);
                     self.held[usize::from(note)] = Some(Held {
-                        port,
                         group: g,
                         channel: ch,
                         phase: 0.0,
                     });
-                    context.output_events.push(Event::on_port(
+                    context.output_events.push(Event::new(
                         off,
-                        port,
                         EventBody::NoteOn2 {
                             group: g,
                             channel: ch,
@@ -227,17 +200,14 @@ impl PluginLogic for Spreader {
                     velocity,
                 } => {
                     let held = self.held[usize::from(note)].take();
-                    let (port, g, ch) = held.map_or((PORT_MAIN, group, channel), |h| {
-                        (h.port, h.group, h.channel)
-                    });
+                    let (g, ch) = held.map_or((group, channel), |h| (h.group, h.channel));
                     // Recentre a note that was being vibrato'd before it
                     // ends, so its release tail isn't stuck at the last
                     // bend. (Playback stop sends note-offs, so this covers
                     // "recentre on stop" too.)
                     if self.vibrato_active && held.is_some() {
-                        context.output_events.push(Event::on_port(
+                        context.output_events.push(Event::new(
                             off,
-                            port,
                             EventBody::PerNotePitchBend {
                                 group: g,
                                 channel: ch,
@@ -246,9 +216,8 @@ impl PluginLogic for Spreader {
                             },
                         ));
                     }
-                    context.output_events.push(Event::on_port(
+                    context.output_events.push(Event::new(
                         off,
-                        port,
                         EventBody::NoteOff2 {
                             group: g,
                             channel: ch,
@@ -264,13 +233,12 @@ impl PluginLogic for Spreader {
                 {
                     // Route the mod wheel to per-note brightness on every
                     // held note. Per-note expression must ride the same
-                    // port/channel as the note so a downstream voice keyed
-                    // by (port, channel, note) actually receives it.
+                    // channel as the note so a downstream voice keyed by
+                    // (channel, note) actually receives it.
                     for note in 0u8..128 {
                         if let Some(h) = self.held[usize::from(note)] {
-                            context.output_events.push(Event::on_port(
+                            context.output_events.push(Event::new(
                                 off,
-                                h.port,
                                 EventBody::PerNoteCC {
                                     group: h.group,
                                     channel: h.channel,
@@ -289,9 +257,8 @@ impl PluginLogic for Spreader {
                     cc,
                     value,
                 } => {
-                    context.output_events.push(Event::on_port(
+                    context.output_events.push(Event::new(
                         off,
-                        PORT_MAIN,
                         EventBody::ControlChange2 {
                             group,
                             channel,
@@ -305,9 +272,8 @@ impl PluginLogic for Spreader {
                     channel,
                     value,
                 } => {
-                    context.output_events.push(Event::on_port(
+                    context.output_events.push(Event::new(
                         off,
-                        PORT_MAIN,
                         EventBody::PitchBend2 {
                             group,
                             channel,
@@ -321,9 +287,8 @@ impl PluginLogic for Spreader {
                     note,
                     pressure,
                 } => {
-                    context.output_events.push(Event::on_port(
+                    context.output_events.push(Event::new(
                         off,
-                        PORT_MAIN,
                         EventBody::PolyPressure2 {
                             group,
                             channel,
@@ -337,9 +302,8 @@ impl PluginLogic for Spreader {
                     channel,
                     pressure,
                 } => {
-                    context.output_events.push(Event::on_port(
+                    context.output_events.push(Event::new(
                         off,
-                        PORT_MAIN,
                         EventBody::ChannelPressure2 {
                             group,
                             channel,
@@ -352,9 +316,8 @@ impl PluginLogic for Spreader {
                     channel,
                     program,
                 } => {
-                    context.output_events.push(Event::on_port(
+                    context.output_events.push(Event::new(
                         off,
-                        PORT_MAIN,
                         EventBody::ProgramChange2 {
                             group,
                             channel,
@@ -400,32 +363,16 @@ impl PluginLogic for Spreader {
 }
 
 impl Spreader {
-    /// Resolve the output `(port, group, channel)` for a fresh note and
-    /// advance any round-robin counters. Only called on `NoteOn`.
-    fn route(&mut self, algo: Algo, width: u8, group: u8, channel: u8) -> (u8, u8, u8) {
+    /// Resolve the output `(group, channel)` for a fresh note and advance
+    /// any round-robin counters. Only called on `NoteOn`.
+    fn route(&mut self, algo: Algo, width: u8, group: u8, channel: u8) -> (u8, u8) {
         match algo {
             Algo::ChannelFan => {
                 let ch = self.next_channel % width;
                 self.next_channel = (self.next_channel + 1) % width;
-                (PORT_MAIN, group, ch)
+                (group, ch)
             }
-            Algo::PortFan => {
-                let port = self.next_port;
-                self.next_port ^= 1;
-                (port, group, channel)
-            }
-            // Round-robin each note across `width` UMP groups. A
-            // multi-timbral downstream synth voices each group differently.
-            // Group only survives on native-2.0 transports (AU v3); CLAP's
-            // note model has no group field, so this is a no-op there.
-            Algo::GroupFan => {
-                let g = self.next_group % width;
-                self.next_group = (self.next_group + 1) % width;
-                (PORT_MAIN, g, channel)
-            }
-            Algo::Passthrough | Algo::AutoVibrato | Algo::ModBrightness => {
-                (PORT_MAIN, group, channel)
-            }
+            Algo::Passthrough | Algo::AutoVibrato | Algo::ModBrightness => (group, channel),
         }
     }
 
@@ -435,9 +382,8 @@ impl Spreader {
         for note in 0u8..128 {
             if let Some(h) = self.held[usize::from(note)].as_mut() {
                 h.phase = 0.0;
-                context.output_events.push(Event::on_port(
+                context.output_events.push(Event::new(
                     0,
-                    h.port,
                     EventBody::PerNotePitchBend {
                         group: h.group,
                         channel: h.channel,
@@ -450,7 +396,7 @@ impl Spreader {
     }
 
     /// Advance every held note's vibrato LFO by one block and emit a
-    /// `PerNotePitchBend` for it on the expression port.
+    /// `PerNotePitchBend` for it on the note's own channel.
     fn emit_vibrato(&mut self, block_samples: usize, context: &mut ProcessContext) {
         let rate = self.params.vib_rate.raw_target();
         let depth = self.params.vib_depth.raw_target();
@@ -460,9 +406,8 @@ impl Spreader {
             if let Some(h) = self.held[usize::from(note)].as_mut() {
                 h.phase = (h.phase + inc).fract();
                 let value = lfo_bend(depth, (h.phase * TAU).sin());
-                context.output_events.push(Event::on_port(
+                context.output_events.push(Event::new(
                     0,
-                    h.port,
                     EventBody::PerNotePitchBend {
                         group: h.group,
                         channel: h.channel,
@@ -533,7 +478,6 @@ mod tests {
             }],
         );
         let ev = out.iter().next().expect("one event");
-        assert_eq!(ev.port, PORT_MAIN);
         match ev.body {
             EventBody::NoteOn2 { velocity, note, .. } => {
                 assert_eq!(note, 60);
@@ -567,40 +511,6 @@ mod tests {
     }
 
     #[test]
-    fn port_fan_alternates_output_ports() {
-        let out = run(Algo::PortFan, 16, &[note_on(0, 60), note_on(0, 61)]);
-        let ports: Vec<u8> = out
-            .iter()
-            .filter(|e| matches!(e.body, EventBody::NoteOn2 { .. }))
-            .map(|e| e.port)
-            .collect();
-        assert_eq!(ports, vec![0, 1]);
-    }
-
-    #[test]
-    fn group_fan_round_robins_groups() {
-        let out = run(
-            Algo::GroupFan,
-            4,
-            &[
-                note_on(0, 60),
-                note_on(0, 61),
-                note_on(0, 62),
-                note_on(0, 63),
-            ],
-        );
-        let groups: Vec<u8> = out
-            .iter()
-            .filter_map(|e| match e.body {
-                EventBody::NoteOn2 { group, .. } => Some(group),
-                _ => None,
-            })
-            .collect();
-        // Four notes over a width of 4 -> groups 0,1,2,3.
-        assert_eq!(groups, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
     fn mod_brightness_routes_mod_wheel_to_per_note() {
         let out = run(
             Algo::ModBrightness,
@@ -619,7 +529,6 @@ mod tests {
             .iter()
             .find(|e| matches!(e.body, EventBody::PerNoteCC { .. }))
             .expect("a per-note CC");
-        assert_eq!(per_note.port, PORT_MAIN);
         match per_note.body {
             EventBody::PerNoteCC {
                 note, cc, value, ..
@@ -635,11 +544,11 @@ mod tests {
     #[test]
     fn auto_vibrato_emits_per_note_pitch_bend() {
         let out = run(Algo::AutoVibrato, 16, &[note_on(0, 60)]);
-        let bend = out
-            .iter()
-            .find(|e| matches!(e.body, EventBody::PerNotePitchBend { .. }))
-            .expect("a per-note pitch bend");
-        assert_eq!(bend.port, PORT_MAIN);
+        assert!(
+            out.iter()
+                .any(|e| matches!(e.body, EventBody::PerNotePitchBend { .. })),
+            "auto vibrato emits a per-note pitch bend"
+        );
     }
 
     // Hold note 60 under Auto Vibrato (bends it), then run one more block
