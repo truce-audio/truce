@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 1.0.3
+
+- **Fixed a black margin when resizing plugin editors on Linux.** In hosts that resize the embedded plugin window directly instead of calling the plugin's resize API (Bitwig on Linux/X11), the editor's child window stayed at its old size while the host's frame grew, leaving the newly exposed area black until the window was moved. baseview now watches the host embed window and mirrors its size onto the editor's child, so editors follow a host-driven resize immediately. Fixes every GUI backend (egui / iced / slint / vizia) and both CLAP and VST3, via the `baseview-truce` 0.1.1-truce.11 dependency.
+
 ## 1.0.2
 
 - **Fixed iOS AU v3 packaging bugs for App Store submission.** `cargo truce package --ios` corrects code signing, framework embedding, entitlements, and the required Info.plist keys App Store Connect upload checks.
