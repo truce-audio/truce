@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-hyper-synth"
+name = "truce-example-mpe-synth"
 publish = false
 version.workspace = true
 repository.workspace = true
@@ -12,7 +12,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "truce-example-hyper-synth-standalone"
+name = "truce-example-mpe-synth-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 

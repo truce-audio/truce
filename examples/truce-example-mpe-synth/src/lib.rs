@@ -1,8 +1,8 @@
-//! `hyper-synth` - a MIDI 2.0 synth.
+//! `mpe-synth` - a per-note-expressive MIDI 2.0 synth.
 //!
-//! An out-of-tree test vehicle for truce's 1.1.0 MIDI 2.0 **decode** and
-//! **multi-port input** surface. It plays native 2.0 (and, on 1.0
-//! transports, plain 1.0) and makes the extra resolution audible:
+//! A test vehicle for truce's 1.1.0 MIDI 2.0 **decode** and **multi-port
+//! input** surface, and the render half of the `mpe-spreader` pair: it
+//! makes every address dimension the spreader fans over audible.
 //!
 //! - `NoteOn2` 16-bit velocity -> amplitude (finer than 7-bit steps).
 //! - `PerNotePitchBend` (32-bit) -> per-voice detune (MPE-style).
@@ -10,8 +10,10 @@
 //! - `PitchBend2` (32-bit) -> channel-wide bend.
 //! - `ControlChange2` 74 -> the master-cutoff macro (drives the param).
 //! - UMP **group** -> oscillator waveform (multi-timbral).
-//! - `Event.port` -> part of the voice key: a note on port 1 is a
-//!   distinct voice from the same note on port 0.
+//! - MIDI **channel** -> equal-power stereo pan (`Channel Fan` spreads a
+//!   chord across the field).
+//! - `Event.port` -> octave, and part of the voice key: a note on port 1
+//!   is a distinct voice an octave above the same note on port 0.
 //!
 //! Every 2.0 arm has a 1.0 sibling, so it plays on VST2 / AU v2 / AAX /
 //! LV2 too - just at 7/14-bit resolution and group 0.
@@ -31,6 +33,9 @@ const NUM_VOICES: usize = 32;
 const PER_NOTE_BEND_SEMIS: f64 = 48.0;
 /// Channel pitch-bend range, in semitones each way.
 const CHANNEL_BEND_SEMIS: f64 = 2.0;
+/// Input port -> octave: port 1 plays an octave above port 0, so a
+/// `Port Fan` note stream splits into octaves.
+const PORT_OCTAVE_SEMIS: f64 = 12.0;
 /// MIDI 2.0 per-note brightness controller number.
 const CC_BRIGHTNESS: u8 = 74;
 /// `0x8000_0000` as f64 - the centre of a 32-bit signed-ish control.
@@ -71,6 +76,9 @@ struct Voice {
     env: f32,
     /// One-pole low-pass state.
     lp: f32,
+    /// Equal-power stereo gains, derived from the MIDI channel at note-on.
+    pan_l: f32,
+    pan_r: f32,
 }
 
 pub struct Synth {
@@ -94,6 +102,7 @@ impl Synth {
 
     fn note_on(&mut self, port: u8, group: u8, channel: u8, note: u8, amp: f32) {
         let slot = self.voices.iter().position(|v| !v.active).unwrap_or(0); // steal voice 0 if the pool is full
+        let (pan_l, pan_r) = pan_gains(channel);
         self.voices[slot] = Voice {
             active: true,
             releasing: false,
@@ -108,6 +117,8 @@ impl Synth {
             cutoff: 1.0,
             env: 0.0,
             lp: 0.0,
+            pan_l,
+            pan_r,
         };
     }
 
@@ -219,6 +230,14 @@ fn bend14_semis(v: u16) -> f64 {
     ((f64::from(v) - 8192.0) / 8192.0) * CHANNEL_BEND_SEMIS
 }
 
+// MIDI channel -> equal-power stereo gains: channel 0 hard left, channel
+// 15 hard right, so a `Channel Fan` note stream spreads across the field.
+fn pan_gains(channel: u8) -> (f32, f32) {
+    let pan = f32::from(channel.min(15)) / 15.0;
+    let angle = pan * std::f32::consts::FRAC_PI_2;
+    (angle.cos(), angle.sin())
+}
+
 // Naive (not band-limited) oscillator; waveform picked by UMP group.
 #[allow(clippy::cast_possible_truncation)]
 fn osc(group: u8, phase: f64) -> f32 {
@@ -268,9 +287,12 @@ impl PluginLogic for Synth {
                 next += 1;
             }
 
-            let mut sample = 0.0f32;
+            let mut left = 0.0f32;
+            let mut right = 0.0f32;
             for v in self.voices.iter_mut().filter(|v| v.active) {
-                let semis = v.bend_semis + self.channel_bend[usize::from(v.channel)];
+                let semis = v.bend_semis
+                    + self.channel_bend[usize::from(v.channel)]
+                    + f64::from(v.port) * PORT_OCTAVE_SEMIS;
                 let freq = v.base_freq * 2.0_f64.powf(semis / 12.0);
                 let raw = osc(v.group, v.phase);
                 v.phase = (v.phase + freq / self.sample_rate).fract();
@@ -286,12 +308,13 @@ impl PluginLogic for Synth {
                 } else if v.env < 1.0 {
                     v.env = (v.env + atk_step).min(1.0);
                 }
-                sample += v.lp * v.env * v.amp;
+                let s = v.lp * v.env * v.amp;
+                left += s * v.pan_l;
+                right += s * v.pan_r;
             }
 
-            let out = (sample * volume).clamp(-1.0, 1.0);
-            buffer.output(0)[i] = out;
-            buffer.output(1)[i] = out;
+            buffer.output(0)[i] = (left * volume).clamp(-1.0, 1.0);
+            buffer.output(1)[i] = (right * volume).clamp(-1.0, 1.0);
         }
 
         if self.voices.iter().any(|v| v.active) {
@@ -307,7 +330,7 @@ impl PluginLogic for Synth {
             knob(P::Release, "Release"),
             knob(P::Volume, "Volume"),
         ])])
-        .with_title("HYPER")
+        .with_title("MPE")
         .into_editor(&self.params)
     }
 }
@@ -321,7 +344,7 @@ truce::plugin! {
 mod tests {
     use super::*;
 
-    fn render(input: &[Event]) -> (Synth, Vec<f32>) {
+    fn render_full(input: &[Event]) -> (Synth, Vec<f32>, Vec<f32>) {
         let params = Arc::new(SynthParams::new());
         let mut plugin = Synth::new(Arc::clone(&params));
         plugin.reset(44100.0, 64);
@@ -341,7 +364,17 @@ mod tests {
         let mut out_ev = EventList::default();
         let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut out_ev);
         plugin.process(&mut buffer, &events, &mut ctx);
+        (plugin, l, r)
+    }
+
+    fn render(input: &[Event]) -> (Synth, Vec<f32>) {
+        let (plugin, l, _r) = render_full(input);
         (plugin, l)
+    }
+
+    fn render_stereo(input: &[Event]) -> (Vec<f32>, Vec<f32>) {
+        let (_p, l, r) = render_full(input);
+        (l, r)
     }
 
     fn peak(samples: &[f32]) -> f32 {
@@ -405,6 +438,49 @@ mod tests {
         assert!(bent > 0.0, "up-bend should raise the voice");
     }
 
+    #[test]
+    fn port_shifts_an_octave() {
+        // Same note on port 0 and port 1; port 1 renders an octave up, so
+        // its oscillator phase advances ~twice as far over the block.
+        let (p, _) = render(&[note_on(0, 0, 60), note_on(1, 0, 60)]);
+        let v0 = p.voices.iter().find(|v| v.active && v.port == 0).unwrap();
+        let v1 = p.voices.iter().find(|v| v.active && v.port == 1).unwrap();
+        let ratio = v1.phase / v0.phase;
+        assert!(
+            (ratio - 2.0).abs() < 0.05,
+            "port 1 should be an octave up (got {ratio}x)"
+        );
+    }
+
+    #[test]
+    fn channel_pans_across_stereo_field() {
+        // Channel 0 -> hard left, channel 15 -> hard right.
+        let (l0, r0) = render_stereo(&[note_on_ch(0, 60)]);
+        assert!(
+            peak(&l0) > 0.0 && peak(&r0) < 1e-6,
+            "channel 0 is hard left"
+        );
+        let (l15, r15) = render_stereo(&[note_on_ch(15, 60)]);
+        assert!(
+            peak(&r15) > 0.0 && peak(&l15) < 1e-6,
+            "channel 15 is hard right"
+        );
+    }
+
+    fn note_on_ch(channel: u8, note: u8) -> Event {
+        Event::new(
+            0,
+            EventBody::NoteOn2 {
+                group: 0,
+                channel,
+                note,
+                velocity: 0x8000,
+                attribute_type: 0,
+                attribute: 0,
+            },
+        )
+    }
+
     fn note2(velocity: u16) -> Event {
         Event::new(
             0,
@@ -437,13 +513,13 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {
-        truce_test::screenshot!(Plugin, "screenshots/hyper_synth_default_macos.png").run();
+        truce_test::screenshot!(Plugin, "screenshots/mpe_synth_default_macos.png").run();
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn gui_screenshot_linux() {
-        truce_test::screenshot!(Plugin, "screenshots/hyper_synth_default_linux.png")
+        truce_test::screenshot!(Plugin, "screenshots/mpe_synth_default_linux.png")
             .pixel_threshold(2)
             .run();
     }
@@ -451,7 +527,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn gui_screenshot_windows() {
-        truce_test::screenshot!(Plugin, "screenshots/hyper_synth_default_windows.png")
+        truce_test::screenshot!(Plugin, "screenshots/mpe_synth_default_windows.png")
             .pixel_threshold(2)
             .run();
     }
