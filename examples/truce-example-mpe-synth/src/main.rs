@@ -1,4 +1,4 @@
-use truce_example_hyper_synth::Plugin;
+use truce_example_mpe_synth::Plugin;
 
 fn main() {
     truce_standalone::run::<Plugin>();
