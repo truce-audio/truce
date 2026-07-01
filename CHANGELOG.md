@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 1.1.0
+
+- **MIDI 2.0 / UMP on CLAP (opt-in).** Set `midi2 = true` in `truce.toml` to have a plugin's CLAP note ports carry UMP: the wrapper advertises `CLAP_NOTE_DIALECT_MIDI2`, decodes inbound `CLAP_EVENT_MIDI2` into the native 2.0 `EventBody` variants (16/32-bit + per-note, with UMP group), and emits them back out. MIDI-1.0 plugins are unchanged.
+
 ## 1.0.5
 
 - **Editor performance and stability overhaul on Windows.** Every GPU call that can block inside the graphics driver - device creation, swapchain reconfigure / acquire / present - now runs off the host's GUI thread in all wgpu backends: egui renders on a dedicated thread, and the iced / Slint / built-in editors route those calls through a per-editor surface-pump thread that pre-acquires frames. Repaint-heavy editors (meters, animations) no longer bog down the host's UI; editors open without stalling the DAW; resizing reflows live and lands crisp on release instead of showing a stretched frame for seconds (dropping an acquired DX12 frame unpresented starves the swapchain's frame-latency wait - stale frames are now presented, keeping paints flowing through resize churn); and a wedged driver costs a blank or paused editor instead of a frozen, previously unkillable, DAW. Corrective resize requests also moved out of the host's resize dispatch, and an out-of-bounds host size is letterboxed rather than pushed back into a fight with the host. vizia (OpenGL, frame loop in upstream `vizia_baseview`) probes for working WGL up front and keeps the editor closed when the GL driver is broken, rather than aborting the host from its window proc.
@@ -9,7 +13,6 @@ Notable changes per release.
 - **HiDPI (2x) plugin editors render correctly on Linux.** Under desktop display scaling (e.g. Ubuntu at 200%) embedded editors were mis-sized across every backend and format - rendered at half size or clipped, and in REAPER the LV2 editor opened at half size because REAPER reads the `ui:resize` request as physical then divides by the scale to size its pane. The surface now tracks the window's physical size on every resize, the LV2 request is scaled to compensate, and standalone editors no longer jitter at 2x. (#163)
 - **Right- and middle-click now reach iced and Slint editors.** Both backends forwarded only the left button from baseview, so right-click-to-reset (and any custom-widget use of other buttons) never fired; all mouse buttons map through now. (#168)
 - **Fixed a crash when closing and reopening plugin editors on macOS.** The editor's frame timer could fire after its window state was freed (a use-after-free most visible as an AU v3 editor crash on reopen); the timer is now invalidated at teardown and holds only a weak reference. Via the `baseview-truce` 0.1.1-truce.12 dependency, all GUI backends.
-
 
 ## 1.0.4
 
