@@ -34,6 +34,10 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 - `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
 - `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
 
+### Fixes
+
+- **Fixed a crash when closing and reopening plugin editors on macOS.** The editor's frame timer could fire after its window state was freed (a use-after-free most visible as an AU v3 editor crash on reopen); the timer is now invalidated at teardown and holds only a weak reference. Via the `baseview-truce` 0.1.1-truce.12 dependency, all GUI backends.
+
 ## 1.0.4
 
 - **`cargo truce build` / `install` / `package` accept `--features`.** Pass extra Cargo features for the plugin crate (comma/space-separated); they apply to every underlying build (per-format, shell logic, iOS, standalone bin) so the set stays uniform. Format features (`clap`/`vst3`/...) are reserved for the format flags.
