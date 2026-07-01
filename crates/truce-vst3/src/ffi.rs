@@ -165,6 +165,21 @@ pub struct Vst3Callbacks {
         out_bytes: *mut *const u8,
         out_len: *mut u32,
     ),
+    /// Count of per-note MIDI 2.0 events the plug-in pushed that map to
+    /// VST3 note expression. The shim drains them into
+    /// `kNoteExpressionValueEvent` on the event output bus.
+    pub get_output_note_expression_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Fill the index-th note-expression event: `type_id` is the VST3
+    /// `NoteExpressionTypeID`, `note_id` correlates to the emitted
+    /// `NoteOn`, `value` is normalized `0..=1`.
+    pub get_output_note_expression: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        index: u32,
+        out_type_id: *mut u32,
+        out_note_id: *mut i32,
+        out_sample_offset: *mut u32,
+        out_value: *mut f64,
+    ),
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
