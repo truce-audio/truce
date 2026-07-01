@@ -95,7 +95,7 @@ func forwardMIDIEventList(
                     status: UInt8((w0 >> 16) & 0xFF),
                     data1: UInt8((w0 >> 8) & 0xFF),
                     data2: UInt8(w0 & 0xFF),
-                    _pad: 0)
+                    port: 0)
                 midiCount += 1
             } else if mt == 0x3 || mt == 0x4 || mt == 0x5 {
                 // MIDI 2.0 CV (0x4), SysEx-7 (0x3), SysEx-8 (0x5):
@@ -196,10 +196,32 @@ class TruceAUAudioUnit: AUAudioUnit {
     /// that emits no MIDI returns an empty array so hosts don't
     /// surface a phantom port.
     override var midiOutputNames: [String] {
-        if let d = g_descriptor?.pointee, d.has_midi_output != 0 {
-            return ["MIDI Out"]
+        guard let d = g_descriptor?.pointee, d.has_midi_output != 0 else { return [] }
+        // One named output per declared MIDI output port. The plugin
+        // routes each event to a port via `Event::port`, which the
+        // render drain passes as the `cable` to `midiOutputEventBlock`.
+        // Numbered only when there's more than one, so the common
+        // single-port case keeps the plain "MIDI Out" label.
+        let n = max(1, Int(d.midi_output_ports))
+        if n == 1 { return ["MIDI Out"] }
+        return (1...n).map { "MIDI Out \($0)" }
+    }
+
+    /// MIDI protocol the host delivers input in. Declaring 2.0 makes the
+    /// host send native UMP MIDI 2.0 (NoteOn2 / PerNoteCC / ...) through
+    /// the render-event MIDI list, which the Rust side decodes; declaring
+    /// 1.0 makes the host down-convert first. Gated on the plugin's
+    /// `midi2` opt-in so a plugin that didn't ask for MIDI 2.0 never sees
+    /// the 2.0 variants - the same contract as CLAP (which only
+    /// advertises `CLAP_NOTE_DIALECT_MIDI2` when opted in). Without this
+    /// override the default is 1.0, so the Rust 2.0 decode path would
+    /// stay dormant.
+    @available(macOS 12.0, iOS 15.0, *)
+    override var audioUnitMIDIProtocol: MIDIProtocolID {
+        if let d = g_descriptor?.pointee, d.midi2_input != 0 {
+            return ._2_0
         }
-        return []
+        return ._1_0
     }
 
     private func buildParameterTree() {
@@ -301,7 +323,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 midiBuf[Int(numMidi)] = AuMidiEvent(
                     sample_offset: UInt32(min(relOffset, Int64(frameCount - 1))),
                     status: m.data.0, data1: m.length > 1 ? m.data.1 : 0,
-                    data2: m.length > 2 ? m.data.2 : 0, _pad: 0)
+                    data2: m.length > 2 ? m.data.2 : 0, port: 0)
                 numMidi += 1
             } else if head.eventType.rawValue == kAURenderEventMIDIEventListRaw {
                 // iOS 17+ / macOS 14+: AU hosts deliver UMPs through
@@ -428,14 +450,17 @@ class TruceAUAudioUnit: AUAudioUnit {
             let cvCount = cb.pointee.output_event_count(ctx)
             for i in 0..<cvCount {
                 var ev = AuMidiEvent(
-                    sample_offset: 0, status: 0, data1: 0, data2: 0, _pad: 0)
+                    sample_offset: 0, status: 0, data1: 0, data2: 0, port: 0)
                 cb.pointee.output_event_at(ctx, i, &ev)
                 let st = ev.status & 0xF0
                 let len = (st == 0xC0 || st == 0xD0) ? 2 : 3
                 let bytes: [UInt8] = [ev.status, ev.data1, ev.data2]
                 let evTime = AUEventSampleTime(bufStart + Int64(ev.sample_offset))
+                // `ev.port` is the plugin's chosen MIDI output cable,
+                // already clamped to the declared port count on the Rust
+                // side. AU v2 always reports 0 (single stream).
                 _ = bytes.withUnsafeBufferPointer { buf in
-                    outputBlock(evTime, 0 /* cable */, len, buf.baseAddress!)
+                    outputBlock(evTime, ev.port, len, buf.baseAddress!)
                 }
             }
 
@@ -461,6 +486,9 @@ class TruceAUAudioUnit: AUAudioUnit {
                 }
                 dst[Int(len) + 1] = 0xF7
                 let evTime = AUEventSampleTime(bufStart + Int64(delta))
+                // SysEx always goes out on cable 0 - `output_sysex_at`
+                // doesn't carry the port yet (multi-port SysEx output is
+                // a follow-up; channel-voice above routes by cable).
                 _ = outputBlock(evTime, 0 /* cable */, framedLen, UnsafePointer(dst))
                 scratchUsed += framedLen
             }

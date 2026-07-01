@@ -35,6 +35,18 @@ typedef struct {
      * the `aumu` component type so an `aumf` MusicEffect (audio effect
      * that opts into MIDI input) is also handed events. */
     int32_t accepts_midi_in;
+    /* Number of MIDI input / output ports. AU v2 is single-stream, so it
+     * ignores these (one port). AU v3 uses `midi_output_ports` to size
+     * `MIDIOutputNames`; multi-port MIDI input is not wired yet, so the
+     * input count is informational for now. */
+    uint32_t midi_input_ports;
+    uint32_t midi_output_ports;
+    /* 1 if the plugin's MIDI input port is MIDI 2.0 dialect (`midi2 =
+     * true` in truce.toml). The AU v3 appex declares
+     * `audioUnitMIDIProtocol` = 2.0 when set so the host delivers native
+     * UMP 2.0; otherwise it declares 1.0 and the host down-converts.
+     * AU v2 ignores it (single-stream MIDI 1.0). */
+    int32_t midi2_input;
 } AuPluginDescriptor;
 
 typedef struct {
@@ -63,7 +75,10 @@ typedef struct {
     uint8_t status;
     uint8_t data1;
     uint8_t data2;
-    uint8_t _pad;
+    /* MIDI cable / port. Output: the AU v3 appex passes this as the
+     * `cable` to `midiOutputEventBlock` (0 on AU v2, which is single
+     * stream). Input: currently always 0 (multi-cable input unwired). */
+    uint8_t port;
 } AuMidiEvent;
 
 /* Universal MIDI Packet container - carries MIDI 2.0 channel-voice
