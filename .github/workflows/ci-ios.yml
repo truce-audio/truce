@@ -85,6 +85,8 @@ jobs:
             -p truce-example-dasp-bitcrusher \
             -p truce-example-gain-iced \
             -p truce-example-gui-zoo-iced \
+            -p truce-example-midi-inspector \
+            -p truce-example-hyper-synth \
             --target aarch64-apple-ios-sim \
             --release --no-default-features --features au
 
