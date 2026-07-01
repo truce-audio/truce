@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 1.0.5
+
+- **Right- and middle-click now reach iced and Slint editors.** Both backends forwarded only the left button from baseview, so right-click-to-reset (and any custom-widget use of other buttons) never fired; all mouse buttons map through now. (#168)
+
 ## 1.0.4
 
 - **`cargo truce build` / `install` / `package` accept `--features`.** Pass extra Cargo features for the plugin crate (comma/space-separated); they apply to every underlying build (per-format, shell logic, iOS, standalone bin) so the set stays uniform. Format features (`clap`/`vst3`/...) are reserved for the format flags.
