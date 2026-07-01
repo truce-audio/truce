@@ -12,9 +12,18 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, wired across every form
 
 ### MIDI 2.0 / UMP
 
-Opt in per plugin with `midi2 = true` in `truce.toml`. Without it a plugin only ever sees MIDI 1.0 - the host down-converts before delivery (no truce-side down-convert step), so a 1.0-only `match` never breaks.
+Opt in per direction in `truce.toml`. `midi2 = true` sets both directions to 2.0; the new `midi2_input` / `midi2_output` keys override a single direction (each defaults to following `midi2`).
 
-- **CLAP and AU v3 carry native MIDI 2.0 end-to-end, in and out.** The native 16/32-bit + per-note `EventBody` variants (`NoteOn2`, `PerNoteCC`, …) and the UMP `group` are both delivered and emitted. CLAP advertises `CLAP_NOTE_DIALECT_MIDI2` and decodes/encodes `CLAP_EVENT_MIDI2`; AU v3 declares `audioUnitMIDIProtocol` = 2.0 and uses the host's UMP `MIDIEventList` path (macOS 12+ / iOS 15+) both directions. (AU v3 SysEx output in 2.0 mode is best-effort.)
+The direction split exists because opting a plugin's *input* into 2.0 makes the host up-convert incoming 1.0 to 2.0 (`NoteOn` -> `NoteOn2`, `ControlChange` -> `ControlChange2`, ...) before `process()` ever runs. So the three shapes are:
+
+- **2.0 both ways** (`midi2 = true`) - a synth that wants native 16/32-bit velocity and per-note control reads the `NoteOn2` / `PerNoteCC` / ... variants directly.
+- **1.0 in, 2.0 out** (`midi2_output = true` only) - a 1.0 -> 2.0 promoter or an MPE spreader still receives real 1.0 to promote/transform, and emits 2.0. Opting its input into 2.0 as well would make the host promote first and leave a 1.0-only `match` seeing nothing.
+- **1.0 both ways** (no opt-in) - the host down-converts before delivery (no truce-side step), so an existing 1.0 plugin is untouched.
+
+Across formats:
+
+- **CLAP** decodes UMP (`CLAP_EVENT_MIDI2`) and note expressions (`CLAP_EVENT_NOTE_EXPRESSION`) on input, and emits CLAP-native on output - notes as `clap_event_note` (full 16-bit velocity through CLAP's `f64` field), per-note control as note expressions, channel-level 2.0 down-converted to `CLAP_EVENT_MIDI` - because hosts read a plugin's output as notes + expressions, not raw UMP. A non-2.0 input port down-converts to 1.0.
+- **AU v3** declares `audioUnitMIDIProtocol` from the input dialect and drains output through the host's UMP `MIDIEventList` block from the output dialect (macOS 12+ / iOS 15+); the framework converts the output to the host's own protocol. (SysEx output in 2.0 mode is best-effort.)
 - **VST3 maps the per-note subset through note expression** (it has no UMP): `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - a lossy translation, not UMP. VST2 / AU v2 / AAX / LV2 stay MIDI 1.0.
 
 ### Multiple MIDI ports
