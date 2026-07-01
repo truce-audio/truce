@@ -105,6 +105,21 @@ pub fn log_missing_bus_layout<P: PluginExport>(format: &str) {
     );
 }
 
+/// Diagnostic for a plugin that declared more MIDI ports than the
+/// format can carry. The wrapper clamps to a single port and routes
+/// all traffic to port `0`; without this line the truncation would read
+/// as "multi-port supported." `declared` is the plugin's per-direction
+/// port count; nothing is logged for the single-port (or zero-port)
+/// case. `direction` is `"input"` / `"output"`.
+pub fn log_midi_ports_clamped(format: &str, direction: &str, declared: u8) {
+    if declared > 1 {
+        eprintln!(
+            "[truce {format}] plugin declares {declared} MIDI {direction} ports, but {format} \
+             carries one - routing all {direction} MIDI to port 0.",
+        );
+    }
+}
+
 /// Run a `register_*` body under [`std::panic::catch_unwind`].
 ///
 /// Format wrappers' `register_*` entry points run during plugin

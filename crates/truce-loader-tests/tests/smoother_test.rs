@@ -82,6 +82,7 @@ fn smoother_ramps_gradually() {
     let mut events = EventList::default();
     events.push(Event {
         sample_offset: 0,
+        port: 0,
         body: EventBody::ParamChange { id: 0, value: 0.0 },
     });
 
@@ -106,6 +107,7 @@ fn smoother_ramps_gradually() {
     events.clear();
     events.push(Event {
         sample_offset: 0,
+        port: 0,
         body: EventBody::ParamChange { id: 0, value: 1.0 },
     });
 

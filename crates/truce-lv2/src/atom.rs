@@ -398,10 +398,7 @@ impl<'a> AtomSequenceReader<'a> {
 pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
     // LV2 carries legacy MIDI 1.0 byte streams with no UMP group, so
     // decode at group 0 through the shared channel-voice decoder.
-    parse_midi1(0, bytes).map(|body| Event {
-        sample_offset,
-        body,
-    })
+    parse_midi1(0, bytes).map(|body| Event::new(sample_offset, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -818,33 +815,33 @@ mod tests {
         }
 
         let mut source = EventList::default();
-        source.push(Event {
-            sample_offset: 0,
-            body: EventBody::NoteOn {
+        source.push(Event::new(
+            0,
+            EventBody::NoteOn {
                 group: 0,
                 channel: 0,
                 note: 60,
                 velocity: 95,
             },
-        });
-        source.push(Event {
-            sample_offset: 128,
-            body: EventBody::NoteOff {
+        ));
+        source.push(Event::new(
+            128,
+            EventBody::NoteOff {
                 group: 0,
                 channel: 0,
                 note: 60,
                 velocity: 0,
             },
-        });
-        source.push(Event {
-            sample_offset: 256,
-            body: EventBody::ControlChange {
+        ));
+        source.push(Event::new(
+            256,
+            EventBody::ControlChange {
                 group: 0,
                 channel: 3,
                 cc: 7,
                 value: 64,
             },
-        });
+        ));
 
         unsafe {
             write_midi_out_sequence(seq, &source, &urid);
