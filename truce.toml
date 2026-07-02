@@ -494,6 +494,9 @@ name = "Truce SysEx Echo"
 bundle_id = "sysex-echo"
 crate = "truce-example-sysex-echo"
 category = "midi"
+# 2.0 output so the echo exercises SysEx-over-UMP (SysEx-7 packet
+# chains) on AU v3; input stays 1.0.
+midi2_output = true
 fourcc = "TSxe"
 au3_subtype = "TSx3"
 au_tag = "MIDI"

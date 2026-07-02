@@ -23,7 +23,7 @@ The direction split exists because opting a plugin's *input* into 2.0 makes the 
 Across formats:
 
 - **CLAP** decodes UMP (`CLAP_EVENT_MIDI2`) and note expressions (`CLAP_EVENT_NOTE_EXPRESSION`) on input, and emits CLAP-native on output - notes as `clap_event_note` (full 16-bit velocity through CLAP's `f64` field), per-note control as note expressions, channel-level 2.0 down-converted to `CLAP_EVENT_MIDI` - because hosts read a plugin's output as notes + expressions, not raw UMP. A non-2.0 input port down-converts to 1.0.
-- **AU v3** declares `audioUnitMIDIProtocol` from the input dialect and drains output through the host's UMP `MIDIEventList` block from the output dialect (macOS 12+ / iOS 15+); the framework converts the output to the host's own protocol. (SysEx output in 2.0 mode is best-effort.)
+- **AU v3** declares `audioUnitMIDIProtocol` from the input dialect and drains output through the host's UMP `MIDIEventList` block from the output dialect (macOS 12+ / iOS 15+); the framework converts the output to the host's own protocol. SysEx output rides the same UMP stream as SysEx-7 packet chains.
 - **VST3 maps the per-note subset through note expression** (it has no UMP): `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - a lossy translation, not UMP. VST2 / AU v2 / AAX / LV2 stay MIDI 1.0.
 
 ### Multiple MIDI ports

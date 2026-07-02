@@ -451,14 +451,17 @@ class TruceAUAudioUnit: AUAudioUnit {
         // `bufStart` is already bound above (input timing); reuse it.
         let use2 = (g_descriptor?.pointee.midi2_output ?? 0) != 0
 
-        // Channel-voice output. In MIDI 2.0 protocol mode (`midi2 =
-        // true`, so `audioUnitMIDIProtocol` = 2.0) the byte block is
-        // unavailable, so every event rides UMP through
-        // `midiOutputEventListBlock`: MIDI 1.0 events as MT 0x2, MIDI 2.0
-        // as MT 0x4 (encoded on the Rust side, drained via
-        // `output_ump_*`). Otherwise the legacy MIDI 1.0 byte path.
+        // In MIDI 2.0 protocol mode (`midi2 = true`, so
+        // `audioUnitMIDIProtocol` = 2.0) the byte block is unavailable,
+        // so every event rides UMP through `midiOutputEventListBlock`:
+        // MIDI 1.0 events as MT 0x2, MIDI 2.0 as MT 0x4, and SysEx as
+        // MT 0x3 (SysEx-7) packet chains - all encoded on the Rust side
+        // and drained via `output_ump_*`. Otherwise the legacy MIDI 1.0
+        // byte path.
+        var drainedViaUMP = false
         if use2, #available(macOS 12.0, iOS 15.0, *),
            let listBlock = midiOutputListBlock as? AUMIDIEventListBlock {
+            drainedViaUMP = true
             let umpCount = cb.pointee.output_ump_count(ctx)
             for i in 0..<umpCount {
                 var ue = AuUmpEvent()
@@ -493,13 +496,15 @@ class TruceAUAudioUnit: AUAudioUnit {
             }
         }
 
-        // SysEx output - via the byte block only. In 2.0 protocol mode
-        // that block may be nil (SysEx-over-UMP output is a follow-up),
-        // so SysEx is best-effort there. Each event's framed payload
-        // (`0xF0` + inner + `0xF7`) lands in `sysexOutScratch` so the
-        // pointer stays valid for the synchronous call; scratch advances
-        // per event so concurrent events don't overwrite each other.
-        if let outputBlock = midiOutputBlock {
+        // SysEx output on the byte path. Skipped when the UMP drain ran
+        // above - there SysEx already went out as SysEx-7 packets inside
+        // the `output_ump_*` stream, and re-sending it here would
+        // double-deliver on hosts that supply both blocks. Each event's
+        // framed payload (`0xF0` + inner + `0xF7`) lands in
+        // `sysexOutScratch` so the pointer stays valid for the
+        // synchronous call; scratch advances per event so concurrent
+        // events don't overwrite each other.
+        if !drainedViaUMP, let outputBlock = midiOutputBlock {
             let sxCount = cb.pointee.output_sysex_count(ctx)
             var scratchUsed = 0
             for i in 0..<sxCount {
