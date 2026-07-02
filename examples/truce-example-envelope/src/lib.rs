@@ -122,15 +122,15 @@ impl PluginLogic for Envelope {
             let value = level_to_cc(self.env);
             if self.last_sent != Some(value) {
                 self.last_sent = Some(value);
-                context.output_events.push(Event {
-                    sample_offset: len_u32(i),
-                    body: EventBody::ControlChange {
+                context.output_events.push(Event::new(
+                    len_u32(i),
+                    EventBody::ControlChange {
                         group: 0,
                         channel: 0,
                         cc,
                         value,
                     },
-                });
+                ));
             }
         }
 

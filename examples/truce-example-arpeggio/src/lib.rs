@@ -219,15 +219,15 @@ impl PluginLogic for Arpeggio {
                     if self.held_notes.is_empty() {
                         // Release current arp note
                         if let Some(cn) = self.active_note.take() {
-                            context.output_events.push(Event {
-                                sample_offset: event.sample_offset,
-                                body: EventBody::NoteOff {
+                            context.output_events.push(Event::new(
+                                event.sample_offset,
+                                EventBody::NoteOff {
                                     group: 0,
                                     channel: 0,
                                     note: cn,
                                     velocity: 0,
                                 },
-                            });
+                            ));
                         }
                     }
                 }
@@ -280,15 +280,15 @@ impl PluginLogic for Arpeggio {
                 // sounding past gate-off, this is a no-op) and trigger
                 // the next step.
                 if let Some(cn) = self.active_note.take() {
-                    context.output_events.push(Event {
-                        sample_offset: len_u32(i),
-                        body: EventBody::NoteOff {
+                    context.output_events.push(Event::new(
+                        len_u32(i),
+                        EventBody::NoteOff {
                             group: 0,
                             channel: 0,
                             note: cn,
                             velocity: 0,
                         },
-                    });
+                    ));
                 }
                 let note = if pattern == ArpPattern::Random {
                     let idx = self.next_random() as usize % seq.len();
@@ -296,15 +296,15 @@ impl PluginLogic for Arpeggio {
                 } else {
                     seq[step_to_seq_idx(step_num, seq.len())]
                 };
-                context.output_events.push(Event {
-                    sample_offset: len_u32(i),
-                    body: EventBody::NoteOn {
+                context.output_events.push(Event::new(
+                    len_u32(i),
+                    EventBody::NoteOn {
                         group: 0,
                         channel: 0,
                         note,
                         velocity: 102,
                     },
-                });
+                ));
                 self.active_note = Some(note);
                 self.last_step = Some(step_num);
             } else if let Some(step) = self.last_step {
@@ -314,15 +314,15 @@ impl PluginLogic for Arpeggio {
                 if beat >= gate_off_beat
                     && let Some(cn) = self.active_note.take()
                 {
-                    context.output_events.push(Event {
-                        sample_offset: len_u32(i),
-                        body: EventBody::NoteOff {
+                    context.output_events.push(Event::new(
+                        len_u32(i),
+                        EventBody::NoteOff {
                             group: 0,
                             channel: 0,
                             note: cn,
                             velocity: 0,
                         },
-                    });
+                    ));
                 }
             }
 

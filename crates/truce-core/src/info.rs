@@ -1,3 +1,16 @@
+/// Wire dialect a MIDI port speaks. `Midi1` is the default and covers
+/// every format today; `Midi2` opts a port into MIDI 2.0 / UMP so the
+/// plugin receives the native 16/32-bit + per-note + group-addressed
+/// variants of [`crate::events::EventBody`] instead of the MIDI 1.0
+/// down-conversion. Only formats with a UMP transport (CLAP's MIDI2
+/// note dialect) honor `Midi2`; others clamp to MIDI 1.0.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub enum MidiDialect {
+    #[default]
+    Midi1,
+    Midi2,
+}
+
 /// Static metadata about a plugin.
 #[derive(Clone, Debug)]
 pub struct PluginInfo {
@@ -21,6 +34,29 @@ pub struct PluginInfo {
     /// MIDI output port / bus / capability on this one flag, so the
     /// host actually reads what `process()` pushes to `output_events`.
     pub emits_midi: bool,
+
+    /// Dialect the (single) MIDI input port speaks. Defaults to
+    /// [`MidiDialect::Midi1`]; a plugin opts into MIDI 2.0 with the
+    /// `midi2` key in `truce.toml`. Only honored by formats with a UMP
+    /// transport (CLAP); others deliver MIDI 1.0 regardless.
+    pub midi_input_dialect: MidiDialect,
+
+    /// Dialect the (single) MIDI output port speaks. See
+    /// [`Self::midi_input_dialect`].
+    pub midi_output_dialect: MidiDialect,
+
+    /// Number of MIDI input ports the plugin exposes. `0` when it
+    /// accepts no MIDI, `1` for the ordinary single-port case, `>1` for
+    /// a multi-port plugin (e.g. a merger). Derived from the MIDI-input
+    /// capability by default; `midi_input_ports` in `truce.toml` raises
+    /// it. Formats without a multi-port MIDI transport clamp to `1` and
+    /// route everything to [`crate::Event::port`] `0`. Always `>= 1` when
+    /// [`Self::accepts_midi_in`] is set, and `0` otherwise.
+    pub midi_input_ports: u8,
+
+    /// Number of MIDI output ports the plugin exposes. See
+    /// [`Self::midi_input_ports`]; mirrors [`Self::emits_midi`].
+    pub midi_output_ports: u8,
 
     /// Short identifier (`bundle_id` in `truce.toml`). Used to derive
     /// the LV2 plugin URI (`{vendor.url}/lv2/{bundle_id}`); also a

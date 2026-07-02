@@ -206,10 +206,17 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
 
     let category = parse_category(&plugin.category);
     let (audio_in, audio_out) = audio_io_for(category);
-    // Same `(accepts_midi_in, emits_midi)` derivation baked onto
-    // `PluginInfo`, so the TTL ports and the runtime `PortLayout` agree.
-    let (accepts_midi_in, has_midi_out) =
+    // Same MIDI port-count derivation baked onto `PluginInfo`, so the
+    // TTL ports and the runtime `PortLayout` agree.
+    let (accepts_midi_in, emits_midi) =
         truce_build::midi_capabilities(&plugin.category, plugin.midi_input, plugin.midi_output);
+    let (midi_in_ports, midi_out_ports) = truce_build::midi_port_counts(
+        accepts_midi_in,
+        emits_midi,
+        plugin.midi_input_ports,
+        plugin.midi_output_ports,
+    );
+    let (midi_in_ports, midi_out_ports) = (u32::from(midi_in_ports), u32::from(midi_out_ports));
 
     let url = config.vendor.url.clone();
     let uri = truce_build::lv2::plugin_uri(&url, &plugin.bundle_id);
@@ -224,8 +231,8 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
         category,
         audio_in,
         audio_out,
-        accepts_midi_in,
-        has_midi_out,
+        midi_in_ports,
+        midi_out_ports,
         params,
         meter_ids,
         // Always emit the UI block. Hosts that don't honour the UI

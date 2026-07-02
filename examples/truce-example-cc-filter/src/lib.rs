@@ -182,15 +182,15 @@ mod tests {
         let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 64) };
 
         let mut events = EventList::default();
-        events.push(Event {
-            sample_offset: 0,
-            body: EventBody::ControlChange {
+        events.push(Event::new(
+            0,
+            EventBody::ControlChange {
                 group: 0,
                 channel: 0,
                 cc: 74,
                 value: 0, // fully closed
             },
-        });
+        ));
 
         let transport = TransportInfo::default();
         let mut output_events = EventList::default();

@@ -477,6 +477,9 @@ name = "Truce Channel Spread"
 bundle_id = "chan-spread"
 crate = "truce-example-mpe-spreader"
 category = "midi"
+# Promotes 1.0 -> 2.0 and fans notes across channels. Asymmetric dialect:
+# 1.0 in (real 1.0 to promote), 2.0 out.
+midi2_output = true
 fourcc = "TMpe"
 au3_subtype = "TMp3"
 au_tag = "MIDI"
@@ -491,11 +494,51 @@ name = "Truce SysEx Echo"
 bundle_id = "sysex-echo"
 crate = "truce-example-sysex-echo"
 category = "midi"
+# 2.0 output so the echo exercises SysEx-over-UMP (SysEx-7 packet
+# chains) on AU v3; input stays 1.0.
+midi2_output = true
 fourcc = "TSxe"
 au3_subtype = "TSx3"
 au_tag = "MIDI"
 # See note on transpose above re: AAX MIDI category override.
 au3_name = "Truce SysEx Echo (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
+[[plugin]]
+name = "Truce MPE Synth"
+bundle_id = "mpe-synth"
+crate = "truce-example-mpe-synth"
+# Per-note-expressive instrument (MIDI in, audio out). `midi2 = true` makes
+# the host deliver native MIDI 2.0, so per-note pitch bend / brightness land
+# at 32-bit resolution; channel -> stereo pan.
+category = "instrument"
+midi2 = true
+fourcc = "TMps"
+au3_subtype = "TMs3"
+au_tag = "Synthesizer"
+vst3_subcategory = "Instrument|Synth"
+au3_name = "Truce MPE Synth (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
+[[plugin]]
+name = "Truce Multiport"
+bundle_id = "multiport"
+crate = "truce-example-multiport"
+# Multi-port MIDI *input* demo: two input ports, each a distinct patch.
+# Route a separate track to each port (the Kontakt / VEP paradigm) and both
+# play from one instance. VST3 event buses / CLAP note ports carry the port;
+# other formats clamp to one port and play patch 0.
+category = "instrument"
+midi_input_ports = 2
+fourcc = "TMlt"
+au3_subtype = "TMl3"
+au_tag = "Synthesizer"
+vst3_subcategory = "Instrument|Synth"
+au3_name = "Truce Multiport (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
@@ -511,6 +554,9 @@ crate = "truce-example-midi-inspector"
 category = "effect"
 midi_input = true
 midi_output = true
+# Opt into MIDI 2.0 so the host delivers native 2.0 (NoteOn2, PerNoteCC,
+# ...) for the inspector to display at full resolution.
+midi2 = true
 fourcc = "TMin"
 au3_subtype = "TMi3"
 au_tag = "Effects"

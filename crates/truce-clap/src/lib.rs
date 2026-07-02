@@ -32,13 +32,17 @@ use std::sync::{Arc, OnceLock};
 
 use clap_sys::events::{
     CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_MIDI_SYSEX,
-    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN,
-    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
-    CLAP_EVENT_TRANSPORT, CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
+    CLAP_EVENT_MIDI2, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
+    CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT, CLAP_NOTE_EXPRESSION_BRIGHTNESS,
+    CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE,
+    CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME,
+    CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
     CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE,
     CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi,
-    clap_event_midi_sysex, clap_event_note, clap_event_param_gesture, clap_event_param_value,
-    clap_event_transport, clap_input_events, clap_output_events,
+    clap_event_midi_sysex, clap_event_midi2, clap_event_note, clap_event_note_expression,
+    clap_event_param_gesture, clap_event_param_value, clap_event_transport, clap_input_events,
+    clap_output_events,
 };
 use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
@@ -46,8 +50,8 @@ use clap_sys::ext::audio_ports::{
 };
 use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_plugin_latency};
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, clap_note_port_info,
-    clap_plugin_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
+    clap_note_port_info, clap_plugin_note_ports,
 };
 use clap_sys::ext::params::{
     CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_BYPASS, CLAP_PARAM_IS_ENUM,
@@ -90,8 +94,10 @@ use truce_core::editor::{
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::{PluginCategory, PluginInfo};
-use truce_core::midi::{decode_short_message, denorm_7bit, pitch_bend_to_bytes};
+use truce_core::info::{MidiDialect, PluginCategory, PluginInfo};
+use truce_core::midi::{
+    decode_short_message, denorm_7bit, downconvert_to_midi1, event_to_midi1, pitch_bend_to_bytes,
+};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
 use truce_core::state;
@@ -507,6 +513,123 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 /// transport state through whichever channel they prefer; the bit
 /// layout is identical, so the decode is too.
 //
+/// `0x8000_0000` as `f64` - the centre of a 32-bit per-note pitch bend.
+const HALF_U32: f64 = 2_147_483_648.0;
+/// Per-note pitch-bend range for CLAP `TUNING` (MPE convention), in
+/// semitones each way. Shared by the encode and decode paths so the
+/// round trip is lossless.
+const PER_NOTE_TUNING_SEMITONES: f64 = 48.0;
+
+/// 32-bit wire value -> CLAP `0..1` note-expression value.
+fn unit_from_u32(v: u32) -> f64 {
+    f64::from(v) / f64::from(u32::MAX)
+}
+
+/// CLAP `0..1` note-expression value -> 32-bit wire value.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn u32_from_unit(v: f64) -> u32 {
+    (v.clamp(0.0, 1.0) * f64::from(u32::MAX)).round() as u32
+}
+
+/// 32-bit per-note pitch bend (centre `0x8000_0000`) -> CLAP semitones.
+fn tuning_semitones(v: u32) -> f64 {
+    ((f64::from(v) - HALF_U32) / HALF_U32) * PER_NOTE_TUNING_SEMITONES
+}
+
+/// CLAP `TUNING` semitones -> 32-bit per-note pitch bend (centre
+/// `0x8000_0000`).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn tuning_to_u32(semis: f64) -> u32 {
+    (HALF_U32 + (semis / PER_NOTE_TUNING_SEMITONES) * HALF_U32).clamp(0.0, f64::from(u32::MAX))
+        as u32
+}
+
+/// Map a truce per-note 2.0 event to a CLAP note expression
+/// `(expression_id, channel, note, value)`. `TUNING` is in semitones;
+/// the rest are `0..1`.
+fn clap_note_expression_of(body: &EventBody) -> Option<(i32, u8, u8, f64)> {
+    match *body {
+        EventBody::PerNoteCC {
+            channel,
+            note,
+            cc,
+            value,
+            ..
+        } => {
+            let id = match cc {
+                7 => CLAP_NOTE_EXPRESSION_VOLUME,
+                10 => CLAP_NOTE_EXPRESSION_PAN,
+                1 => CLAP_NOTE_EXPRESSION_VIBRATO,
+                11 => CLAP_NOTE_EXPRESSION_EXPRESSION,
+                74 => CLAP_NOTE_EXPRESSION_BRIGHTNESS,
+                _ => return None,
+            };
+            Some((id, channel, note, unit_from_u32(value)))
+        }
+        EventBody::PerNotePitchBend {
+            channel,
+            note,
+            value,
+            ..
+        } => Some((
+            CLAP_NOTE_EXPRESSION_TUNING,
+            channel,
+            note,
+            tuning_semitones(value),
+        )),
+        EventBody::PolyPressure2 {
+            channel,
+            note,
+            pressure,
+            ..
+        } => Some((
+            CLAP_NOTE_EXPRESSION_PRESSURE,
+            channel,
+            note,
+            unit_from_u32(pressure),
+        )),
+        _ => None,
+    }
+}
+
+/// Decode a CLAP note expression into its truce per-note 2.0 event.
+fn note_expression_to_body(ne: &clap_event_note_expression) -> Option<EventBody> {
+    let channel = u8::try_from(ne.channel).unwrap_or(0);
+    let note = u8::try_from(ne.key).unwrap_or(0);
+    let cc = match ne.expression_id {
+        CLAP_NOTE_EXPRESSION_TUNING => {
+            return Some(EventBody::PerNotePitchBend {
+                group: 0,
+                channel,
+                note,
+                value: tuning_to_u32(ne.value),
+            });
+        }
+        CLAP_NOTE_EXPRESSION_VOLUME => 7,
+        CLAP_NOTE_EXPRESSION_PAN => 10,
+        CLAP_NOTE_EXPRESSION_VIBRATO => 1,
+        CLAP_NOTE_EXPRESSION_EXPRESSION => 11,
+        CLAP_NOTE_EXPRESSION_BRIGHTNESS => 74,
+        CLAP_NOTE_EXPRESSION_PRESSURE => {
+            return Some(EventBody::PolyPressure2 {
+                group: 0,
+                channel,
+                note,
+                pressure: u32_from_unit(ne.value),
+            });
+        }
+        _ => return None,
+    };
+    Some(EventBody::PerNoteCC {
+        group: 0,
+        channel,
+        note,
+        cc,
+        value: u32_from_unit(ne.value),
+        registered: true,
+    })
+}
+
 // CLAP transport positions arrive as `i64` fixed-point counts that
 // must be divided into `f64` seconds/beats; the `i64 as f64`
 // narrowing is bounded in practice by song-length (well below 2^52).
@@ -563,6 +686,30 @@ fn build_transport_info(t: &clap_event_transport, sample_rate: f64) -> Transport
     }
 }
 
+/// MIDI port an inbound CLAP event arrived on, read from the event's
+/// `port_index`. Non-MIDI events (params, transport) report `0`. Note
+/// events use a wildcard `-1` for "all ports"; that and any negative or
+/// out-of-`u8`-range index collapse to port `0`.
+unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
+    unsafe {
+        let idx: i32 = match type_ {
+            CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF => {
+                i32::from((*header.cast::<clap_event_note>()).port_index)
+            }
+            CLAP_EVENT_NOTE_EXPRESSION => {
+                i32::from((*header.cast::<clap_event_note_expression>()).port_index)
+            }
+            CLAP_EVENT_MIDI => i32::from((*header.cast::<clap_event_midi>()).port_index),
+            CLAP_EVENT_MIDI2 => i32::from((*header.cast::<clap_event_midi2>()).port_index),
+            CLAP_EVENT_MIDI_SYSEX => {
+                i32::from((*header.cast::<clap_event_midi_sysex>()).port_index)
+            }
+            _ => 0,
+        };
+        u8::try_from(idx).unwrap_or(0)
+    }
+}
+
 /// `sort` controls whether the resulting `event_list` gets a stable
 /// sort by sample offset. `process` needs sorted events (the plugin
 /// iterates them in time order); `params_flush` discards the events
@@ -602,6 +749,12 @@ unsafe fn convert_input_events<P: PluginExport>(
             }
 
             let sample_offset = (*header).time;
+            // Stamp each event with the MIDI port it arrived on, clamped
+            // to the plugin's declared input-port count so an event on a
+            // port the plugin doesn't expose routes to 0. Non-MIDI
+            // events report 0. Single-port plugins always get 0.
+            let port = clap_input_port(header, (*header).type_)
+                .min(data.info.midi_input_ports.saturating_sub(1));
 
             match (*header).type_ {
                 CLAP_EVENT_NOTE_ON => {
@@ -615,29 +768,31 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // every other format. Plugins that want CLAP's full
                     // float precision can handle `NoteOn2` from
                     // `CLAP_EVENT_MIDI2` (when the host emits that path).
-                    data.event_list.push(Event {
+                    data.event_list.push(Event::on_port(
                         sample_offset,
-                        body: EventBody::NoteOn {
+                        port,
+                        EventBody::NoteOn {
                             group: 0,
                             channel,
                             note,
                             velocity: denorm_7bit(f32::from_f64(note_event.velocity)),
                         },
-                    });
+                    ));
                 }
                 CLAP_EVENT_NOTE_OFF => {
                     let note_event = &*header.cast::<clap_event_note>();
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let (channel, note) = (note_event.channel as u8, note_event.key as u8);
-                    data.event_list.push(Event {
+                    data.event_list.push(Event::on_port(
                         sample_offset,
-                        body: EventBody::NoteOff {
+                        port,
+                        EventBody::NoteOff {
                             group: 0,
                             channel,
                             note,
                             velocity: denorm_7bit(f32::from_f64(note_event.velocity)),
                         },
-                    });
+                    ));
                 }
                 CLAP_EVENT_PARAM_VALUE => {
                     // When a state load was applied at the head of
@@ -656,13 +811,14 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // `chunked_process::process_chunked` - that way
                     // the smoother sees `set_target` at the event's
                     // sample, not at the head of the audio block.
-                    data.event_list.push(Event {
+                    data.event_list.push(Event::on_port(
                         sample_offset,
-                        body: EventBody::ParamChange {
+                        port,
+                        EventBody::ParamChange {
                             id: param_event.param_id,
                             value: param_event.value,
                         },
-                    });
+                    ));
                 }
                 CLAP_EVENT_PARAM_MOD => {
                     // Same rationale as PARAM_VALUE above: drop
@@ -671,24 +827,22 @@ unsafe fn convert_input_events<P: PluginExport>(
                         continue;
                     }
                     let mod_event = &*header.cast::<clap_event_param_value>();
-                    data.event_list.push(Event {
+                    data.event_list.push(Event::on_port(
                         sample_offset,
-                        body: EventBody::ParamMod {
+                        port,
+                        EventBody::ParamMod {
                             id: mod_event.param_id,
                             note_id: mod_event.note_id,
                             value: mod_event.value,
                         },
-                    });
+                    ));
                 }
                 CLAP_EVENT_TRANSPORT => {
                     let transport = &*header.cast::<clap_event_transport>();
-                    data.event_list.push(Event {
+                    data.event_list.push(Event::new(
                         sample_offset,
-                        body: EventBody::Transport(build_transport_info(
-                            transport,
-                            data.sample_rate,
-                        )),
-                    });
+                        EventBody::Transport(build_transport_info(transport, data.sample_rate)),
+                    ));
                 }
                 CLAP_EVENT_MIDI => {
                     // CLAP carries MIDI 1.0 channel-voice messages as
@@ -702,10 +856,8 @@ unsafe fn convert_input_events<P: PluginExport>(
                     if let Some(body) =
                         decode_short_message(midi.data[0], midi.data[1], midi.data[2])
                     {
-                        data.event_list.push(Event {
-                            sample_offset,
-                            body,
-                        });
+                        data.event_list
+                            .push(Event::on_port(sample_offset, port, body));
                     }
                 }
                 CLAP_EVENT_MIDI_SYSEX => {
@@ -726,13 +878,47 @@ unsafe fn convert_input_events<P: PluginExport>(
                     };
                     let _ = data.event_list.push_sysex(sample_offset, bytes);
                 }
+                // Decode the UMP packet. A `Midi2`-dialect plugin gets
+                // the native 2.0 `EventBody` variants (group nibble
+                // included); a plugin that didn't opt into MIDI 2.0 gets
+                // the 1.0 down-conversion instead of a dropped event -
+                // hosts don't always honor the advertised dialect, so a
+                // 2.0 packet can still arrive at a 1.0 plugin.
+                CLAP_EVENT_MIDI2 => {
+                    let midi2 = &*header.cast::<clap_event_midi2>();
+                    if let Some(decoded) = truce_core::ump::decode_ump_channel_voice_2(midi2.data) {
+                        let body = if data.info.midi_input_dialect == MidiDialect::Midi2 {
+                            Some(decoded)
+                        } else {
+                            downconvert_to_midi1(&decoded)
+                        };
+                        if let Some(body) = body {
+                            data.event_list
+                                .push(Event::on_port(sample_offset, port, body));
+                        }
+                    }
+                }
+                CLAP_EVENT_NOTE_EXPRESSION => {
+                    // Per-note expression (hosts send these for MPE-style
+                    // input). Decode to the 2.0 per-note event; a plugin
+                    // that didn't opt into 2.0 gets the down-converted
+                    // channel form instead.
+                    let ne = &*header.cast::<clap_event_note_expression>();
+                    if let Some(decoded) = note_expression_to_body(ne) {
+                        let body = if data.info.midi_input_dialect == MidiDialect::Midi2 {
+                            Some(decoded)
+                        } else {
+                            downconvert_to_midi1(&decoded)
+                        };
+                        if let Some(body) = body {
+                            data.event_list
+                                .push(Event::on_port(sample_offset, port, body));
+                        }
+                    }
+                }
                 _ => {
-                    // Unsupported event type (system real-time,
-                    // MIDI 2.0) - skip silently. MIDI 2.0 demux is
-                    // gated behind a per-plug-in version opt-in
-                    // that's not wired yet; until then the channel
-                    // voice 1.0 + `SysEx` paths above are the only
-                    // ones surfaced.
+                    // Unsupported event type (system real-time, utility)
+                    // - skip silently.
                 }
             }
         }
@@ -1067,7 +1253,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             let Some(try_push) = (*proc.out_events).try_push else {
                 return CLAP_PROCESS_CONTINUE;
             };
+            // Route each output event to the note port the plugin
+            // stamped it with, clamped to the declared output-port count.
+            let out_port_max = data.info.midi_output_ports.saturating_sub(1);
             for event in data.output_events.iter() {
+                let out_port = event.port.min(out_port_max);
                 match &event.body {
                     EventBody::NoteOn {
                         channel,
@@ -1084,7 +1274,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 flags: 0,
                             },
                             note_id: -1,
-                            port_index: 0,
+                            port_index: i16::from(out_port),
                             channel: i16::from(*channel),
                             key: i16::from(*note),
                             velocity: f64::from(*velocity) / 127.0,
@@ -1106,7 +1296,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 flags: 0,
                             },
                             note_id: -1,
-                            port_index: 0,
+                            port_index: i16::from(out_port),
                             channel: i16::from(*channel),
                             key: i16::from(*note),
                             velocity: f64::from(*velocity) / 127.0,
@@ -1129,7 +1319,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 type_: CLAP_EVENT_MIDI,
                                 flags: 0,
                             },
-                            port_index: 0,
+                            port_index: u16::from(out_port),
                             data: [0xB0 | (channel & 0x0F), *cc, *value],
                         };
                         try_push(proc.out_events, &raw const ev.header);
@@ -1148,7 +1338,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 type_: CLAP_EVENT_MIDI,
                                 flags: 0,
                             },
-                            port_index: 0,
+                            port_index: u16::from(out_port),
                             data: [0xA0 | (channel & 0x0F), *note, *pressure],
                         };
                         try_push(proc.out_events, &raw const ev.header);
@@ -1164,7 +1354,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 type_: CLAP_EVENT_MIDI,
                                 flags: 0,
                             },
-                            port_index: 0,
+                            port_index: u16::from(out_port),
                             data: [0xD0 | (channel & 0x0F), *pressure, 0],
                         };
                         try_push(proc.out_events, &raw const ev.header);
@@ -1179,7 +1369,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 type_: CLAP_EVENT_MIDI,
                                 flags: 0,
                             },
-                            port_index: 0,
+                            port_index: u16::from(out_port),
                             data: [0xE0 | (channel & 0x0F), lsb, msb],
                         };
                         try_push(proc.out_events, &raw const ev.header);
@@ -1195,7 +1385,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 type_: CLAP_EVENT_MIDI,
                                 flags: 0,
                             },
-                            port_index: 0,
+                            port_index: u16::from(out_port),
                             data: [0xC0 | (channel & 0x0F), *program, 0],
                         };
                         try_push(proc.out_events, &raw const ev.header);
@@ -1247,19 +1437,106 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                                 type_: CLAP_EVENT_MIDI_SYSEX,
                                 flags: 0,
                             },
-                            port_index: 0,
+                            port_index: u16::from(out_port),
                             buffer: bytes.as_ptr(),
                             size: len_u32(bytes.len()),
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
-                    // MIDI 2.0, ParamMod, Transport, and per-note
-                    // events: the plugin-output direction isn't
-                    // routinely emitted by truce plugins; leave them
-                    // as silent skips rather than building partial
-                    // encoders. MIDI 2.0 emission stays parked
-                    // until a per-plug-in version opt-in lands.
-                    _ => {}
+                    // MIDI 2.0 channel-voice + per-note events. Emitted
+                    // CLAP-native so every host reads them: notes as
+                    // `clap_event_note` (full 16-bit velocity via the f64
+                    // field), per-note control as note expressions, and
+                    // channel-level control down-converted to raw MIDI.
+                    // Native `CLAP_EVENT_MIDI2` output is only consumed by
+                    // UMP-aware hosts; note graphs (Bitwig, ...) read notes
+                    // + expressions. ParamMod / Transport have no wire form
+                    // and fall through the encoder as `None`.
+                    EventBody::NoteOn2 {
+                        channel,
+                        note,
+                        velocity,
+                        ..
+                    } => {
+                        let ev = clap_event_note {
+                            header: clap_event_header {
+                                size: size_of_u32::<clap_event_note>(),
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_NOTE_ON,
+                                flags: 0,
+                            },
+                            note_id: -1,
+                            port_index: i16::from(out_port),
+                            channel: i16::from(*channel),
+                            key: i16::from(*note),
+                            velocity: f64::from(*velocity) / f64::from(u16::MAX),
+                        };
+                        try_push(proc.out_events, &raw const ev.header);
+                    }
+                    EventBody::NoteOff2 {
+                        channel,
+                        note,
+                        velocity,
+                        ..
+                    } => {
+                        let ev = clap_event_note {
+                            header: clap_event_header {
+                                size: size_of_u32::<clap_event_note>(),
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_NOTE_OFF,
+                                flags: 0,
+                            },
+                            note_id: -1,
+                            port_index: i16::from(out_port),
+                            channel: i16::from(*channel),
+                            key: i16::from(*note),
+                            velocity: f64::from(*velocity) / f64::from(u16::MAX),
+                        };
+                        try_push(proc.out_events, &raw const ev.header);
+                    }
+                    body if clap_note_expression_of(body).is_some() => {
+                        let (expression_id, channel, note, value) =
+                            clap_note_expression_of(body).unwrap();
+                        let ev = clap_event_note_expression {
+                            header: clap_event_header {
+                                size: size_of_u32::<clap_event_note_expression>(),
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_NOTE_EXPRESSION,
+                                flags: 0,
+                            },
+                            expression_id,
+                            note_id: -1,
+                            port_index: i16::from(out_port),
+                            channel: i16::from(channel),
+                            key: i16::from(note),
+                            value,
+                        };
+                        try_push(proc.out_events, &raw const ev.header);
+                    }
+                    body => {
+                        // Channel-level 2.0 (ControlChange2 / PitchBend2 /
+                        // ChannelPressure2 / ProgramChange2): down-convert
+                        // to a 1.0 short message and emit as raw MIDI.
+                        if let Some(m1) = downconvert_to_midi1(body)
+                            && let Some((_, data)) = event_to_midi1(&m1)
+                        {
+                            let ev = clap_event_midi {
+                                header: clap_event_header {
+                                    size: size_of_u32::<clap_event_midi>(),
+                                    time: event.sample_offset,
+                                    space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                    type_: CLAP_EVENT_MIDI,
+                                    flags: 0,
+                                },
+                                port_index: u16::from(out_port),
+                                data,
+                            };
+                            try_push(proc.out_events, &raw const ev.header);
+                        }
+                    }
                 }
             }
         }
@@ -1719,17 +1996,17 @@ unsafe extern "C" fn note_ports_count<P: PluginExport>(
     _plugin: *const clap_plugin,
     is_input: bool,
 ) -> u32 {
-    // Declare a note port only in the directions the plugin actually
-    // uses, from the one `PluginInfo` capability pair (category
-    // default, overridable via `midi_input` / `midi_output`). A plain
-    // audio effect declares neither.
+    // Declare the plugin's MIDI ports for this direction. Count comes
+    // from `PluginInfo` (category default of 0-or-1, raised by
+    // `midi_input_ports` / `midi_output_ports`). A plain audio effect
+    // declares neither direction.
     let info = P::info();
-    let enabled = if is_input {
-        info.accepts_midi_in
+    let ports = if is_input {
+        info.midi_input_ports
     } else {
-        info.emits_midi
+        info.midi_output_ports
     };
-    u32::from(enabled)
+    u32::from(ports)
 }
 
 unsafe extern "C" fn note_ports_get<P: PluginExport>(
@@ -1739,12 +2016,19 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
     info: *mut clap_note_port_info,
 ) -> bool {
     unsafe {
-        if index != 0 {
+        let ports = if is_input {
+            P::info().midi_input_ports
+        } else {
+            P::info().midi_output_ports
+        };
+        if index >= u32::from(ports) {
             return false;
         }
 
         let out = &mut *info;
-        out.id = u32::from(!is_input);
+        // Port ids must be unique across the plugin. Fold the direction
+        // bit and the index together: input k -> 2k, output k -> 2k+1.
+        out.id = (index << 1) | u32::from(!is_input);
         // Notes go out as `CLAP_EVENT_NOTE`, but every other
         // channel-voice message and SysEx go out as `CLAP_EVENT_MIDI`
         // (raw MIDI dialect), so advertise both dialects or a
@@ -1754,15 +2038,33 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
         // raw-MIDI path.
         out.supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
         out.preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
+        // A port that opted into MIDI 2.0 also carries UMP: advertise
+        // the MIDI2 dialect so the host routes `CLAP_EVENT_MIDI2` to us
+        // (in) and reads it back (out). Still CLAP-preferred - MIDI2 is
+        // the opt-in native path, not the default.
+        let dialect = if is_input {
+            P::info().midi_input_dialect
+        } else {
+            P::info().midi_output_dialect
+        };
+        if dialect == MidiDialect::Midi2 {
+            out.supported_dialects |= CLAP_NOTE_DIALECT_MIDI2;
+        }
         out.name = [0; CLAP_NAME_SIZE];
-        copy_str_to_buf(
-            &mut out.name,
-            if is_input {
-                "Note Input"
-            } else {
-                "Note Output"
-            },
-        );
+        let base = if is_input {
+            "Note Input"
+        } else {
+            "Note Output"
+        };
+        // Number the ports only when there's more than one, so the
+        // single-port case keeps its plain label. Not the audio thread -
+        // allocation here is fine.
+        let name = if ports > 1 {
+            format!("{base} {}", index + 1)
+        } else {
+            base.to_string()
+        };
+        copy_str_to_buf(&mut out.name, &name);
 
         true
     }

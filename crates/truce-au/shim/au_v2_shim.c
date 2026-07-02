@@ -1387,7 +1387,7 @@ static OSStatus au_v2_midi_event(void *self_, UInt32 status,
     ev->status = (uint8_t)status;
     ev->data1 = (uint8_t)data1;
     ev->data2 = (uint8_t)data2;
-    ev->_pad = 0;
+    ev->port = 0; /* AU v2 is single-stream MIDI input */
     return noErr;
 }
 

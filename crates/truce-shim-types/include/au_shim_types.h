@@ -35,6 +35,24 @@ typedef struct {
      * the `aumu` component type so an `aumf` MusicEffect (audio effect
      * that opts into MIDI input) is also handed events. */
     int32_t accepts_midi_in;
+    /* Number of MIDI input / output ports. AU v2 is single-stream, so it
+     * ignores these (one port). AU v3 uses `midi_output_ports` to size
+     * `MIDIOutputNames`; multi-port MIDI input is not wired yet, so the
+     * input count is informational for now. */
+    uint32_t midi_input_ports;
+    uint32_t midi_output_ports;
+    /* 1 if the plugin's MIDI input port is MIDI 2.0 dialect (`midi2 =
+     * true` in truce.toml). The AU v3 appex declares
+     * `audioUnitMIDIProtocol` = 2.0 when set so the host delivers native
+     * UMP 2.0; otherwise it declares 1.0 and the host down-converts.
+     * AU v2 ignores it (single-stream MIDI 1.0). */
+    int32_t midi2_input;
+    /* 1 if the plugin's MIDI output port is MIDI 2.0 dialect. The AU v3
+     * appex's output drain emits UMP via `midiOutputEventListBlock` when
+     * set; the framework converts to the host's protocol. AU v2 ignores
+     * it. Independent of `midi2_input` (a 1.0 -> 2.0 promoter is 1.0 in,
+     * 2.0 out). */
+    int32_t midi2_output;
 } AuPluginDescriptor;
 
 typedef struct {
@@ -63,7 +81,10 @@ typedef struct {
     uint8_t status;
     uint8_t data1;
     uint8_t data2;
-    uint8_t _pad;
+    /* MIDI cable / port. Output: the AU v3 appex passes this as the
+     * `cable` to `midiOutputEventBlock` (0 on AU v2, which is single
+     * stream). Input: currently always 0 (multi-cable input unwired). */
+    uint8_t port;
 } AuMidiEvent;
 
 /* Universal MIDI Packet container - carries MIDI 2.0 channel-voice
@@ -77,6 +98,19 @@ typedef struct {
     uint32_t sample_offset;
     uint32_t words[4];
 } AuMidi2Event;
+
+/* Plugin -> host UMP output event (AU v3, MIDI 2.0 protocol mode). The
+ * v3 appex drains these via `output_ump_count` / `output_ump_at` and
+ * builds a `MIDIEventList` for `midiOutputEventListBlock`. `word_count`
+ * is 1 (MT 0x2 = MIDI 1.0 CV) or 2 (MT 0x4 = MIDI 2.0 CV); only that many
+ * `words` are valid. `cable` is the MIDI output port. */
+typedef struct {
+    uint32_t sample_offset;
+    uint8_t cable;
+    uint8_t word_count;
+    uint8_t _reserved[2];
+    uint32_t words[4];
+} AuUmpEvent;
 
 /* Host-side parameter automation event. The AU v3 shim decodes
  * AURenderEvent.parameter / .parameterRamp entries into this shape
@@ -158,6 +192,12 @@ typedef struct {
                             uint32_t *out_delta_frames,
                             const uint8_t **out_bytes,
                             uint32_t *out_len);
+    /* UMP channel-voice output for AU v3 in MIDI 2.0 protocol mode. The
+     * appex uses these (instead of the byte-based `output_event_*`) when
+     * it declared `audioUnitMIDIProtocol` = 2.0: MIDI 1.0 variants become
+     * MT 0x2 UMP, MIDI 2.0 variants MT 0x4. */
+    uint32_t (*output_ump_count)(void *ctx);
+    void (*output_ump_at)(void *ctx, uint32_t index, AuUmpEvent *out);
     /* GUI */
     int32_t (*gui_has_editor)(void *ctx);
     void (*gui_get_size)(void *ctx, uint32_t *w, uint32_t *h);

@@ -1326,6 +1326,7 @@ fn audio_callback<P: PluginExport>(
     while let Some(ev) = pending.pop() {
         event_list.push(Event {
             sample_offset: 0,
+            port: 0,
             body: ev.body,
         });
     }

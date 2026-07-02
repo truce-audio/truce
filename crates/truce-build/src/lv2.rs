@@ -57,8 +57,13 @@ pub struct Lv2Bundle {
     /// rest of the configuration matrix is for the runtime to map.
     pub audio_in: u32,
     pub audio_out: u32,
-    pub accepts_midi_in: bool,
-    pub has_midi_out: bool,
+    /// Number of MIDI input ports. `0` or `1` both yield a single atom
+    /// input port (it always exists to carry `time:Position`); `>1` adds
+    /// MIDI-only atom input ports after it.
+    pub midi_in_ports: u32,
+    /// Number of MIDI output ports (atom output ports advertising
+    /// `midi:MidiEvent`). `0` emits none.
+    pub midi_out_ports: u32,
     pub params: Vec<Lv2Param>,
     pub meter_ids: Vec<u32>,
     /// Whether the plugin ships a UI. Drives the `ui:ui <…>` line and
@@ -163,13 +168,16 @@ impl Lv2Param {
     }
 }
 
-/// Layout indices used to lay out LV2 ports in the TTL.
+/// Layout indices used to lay out LV2 ports in the TTL. Mirrors the
+/// runtime `PortLayout` in `truce-lv2` exactly - the two must agree on
+/// every port index.
 struct Layout {
     audio_in: u32,
     audio_out: u32,
     num_params: u32,
     num_meters: u32,
-    has_midi_out: bool,
+    midi_in_ports: u32,
+    midi_out_ports: u32,
 }
 
 impl Layout {
@@ -185,18 +193,19 @@ impl Layout {
     fn meter_start(&self) -> u32 {
         self.control_start() + self.num_params
     }
-    fn atom_in_port(&self) -> u32 {
+    fn atom_in_start(&self) -> u32 {
         self.meter_start() + self.num_meters
     }
-    fn midi_out_port(&self) -> Option<u32> {
-        if self.has_midi_out {
-            Some(self.atom_in_port() + 1)
-        } else {
-            None
-        }
+    /// Atom input ports: one transport/control port always, plus one
+    /// per extra declared MIDI input beyond the first.
+    fn num_atom_in(&self) -> u32 {
+        self.midi_in_ports.max(1)
+    }
+    fn midi_out_start(&self) -> u32 {
+        self.atom_in_start() + self.num_atom_in()
     }
     fn notify_out_port(&self) -> u32 {
-        self.midi_out_port().unwrap_or(self.atom_in_port()) + 1
+        self.midi_out_start() + self.midi_out_ports
     }
     fn total(&self) -> u32 {
         self.notify_out_port() + 1
@@ -213,7 +222,8 @@ pub fn render_ttls(bundle: &Lv2Bundle, so_name: &str) -> (String, String) {
         audio_out: bundle.audio_out,
         num_params: u32::try_from(bundle.params.len()).unwrap_or(u32::MAX),
         num_meters: u32::try_from(bundle.meter_ids.len()).unwrap_or(u32::MAX),
-        has_midi_out: bundle.has_midi_out,
+        midi_in_ports: bundle.midi_in_ports,
+        midi_out_ports: bundle.midi_out_ports,
     };
     let manifest = render_manifest(bundle, &layout, "plugin.ttl", so_name);
     let plugin_ttl = render_plugin_ttl(bundle, &layout, so_name);
@@ -402,41 +412,10 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
         let slot = (index - layout.meter_start()) as usize;
         let id = b.meter_ids[slot];
         emit_meter_port(f, index, slot, id);
-    } else if index == layout.atom_in_port() {
-        // Input atom port. Always declared so hosts deliver
-        // `time:Position` to every plugin type. We always advertise
-        // `midi:MidiEvent` support too - Reaper (and others) only route
-        // transport to ports that also accept MIDI. Effects ignore any
-        // arriving MIDI bytes.
-        let _ = writeln!(f, "        a lv2:InputPort, atom:AtomPort ;");
-        let _ = writeln!(f, "        atom:bufferType atom:Sequence ;");
-        // `patch:Message` lets hosts deliver `patch:Set` parameter
-        // updates here with sample-accurate timing - see the
-        // `patch:writable` block above for the per-param URI list.
-        let _ = writeln!(
-            f,
-            "        atom:supports midi:MidiEvent, time:Position, patch:Message ;"
-        );
-        // The single atom input is the plugin's control/event input, so
-        // designate it `lv2:control` for EVERY plugin type. The LV2 atom
-        // spec defines this designation as "which port MIDI should be
-        // sent to" - omitting it on instruments (the previous
-        // `!accepts_midi_in` guard) left synths with no designated MIDI
-        // input, which REAPER rejects when scanning an `lv2:InstrumentPlugin`.
-        // Effects already carried it; this just extends it to instruments
-        // and note effects.
-        let _ = writeln!(f, "        lv2:designation lv2:control ;");
-        let _ = writeln!(f, "        lv2:index {index} ;");
-        let _ = writeln!(f, "        lv2:symbol \"midi_in\" ;");
-        let _ = writeln!(f, "        lv2:name \"MIDI In\" ;");
-        let _ = writeln!(f, "        rsz:minimumSize 4096 ;");
-    } else if Some(index) == layout.midi_out_port() {
-        let _ = writeln!(f, "        a lv2:OutputPort, atom:AtomPort ;");
-        let _ = writeln!(f, "        atom:bufferType atom:Sequence ;");
-        let _ = writeln!(f, "        atom:supports midi:MidiEvent ;");
-        let _ = writeln!(f, "        lv2:index {index} ;");
-        let _ = writeln!(f, "        lv2:symbol \"midi_out\" ;");
-        let _ = writeln!(f, "        lv2:name \"MIDI Out\" ;");
+    } else if index < layout.midi_out_start() {
+        emit_atom_in_port(f, index, index - layout.atom_in_start());
+    } else if index < layout.notify_out_port() {
+        emit_midi_out_port(f, index, index - layout.midi_out_start());
     } else if index == layout.notify_out_port() {
         let _ = writeln!(f, "        a lv2:OutputPort, atom:AtomPort ;");
         let _ = writeln!(f, "        atom:bufferType atom:Sequence ;");
@@ -446,6 +425,49 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
         let _ = writeln!(f, "        lv2:symbol \"notify_out\" ;");
         let _ = writeln!(f, "        lv2:name \"Notify Out\" ;");
         let _ = writeln!(f, "        rsz:minimumSize 4096 ;");
+    }
+}
+
+/// Atom input port. `port` is the 0-based MIDI input index. Port 0 is
+/// the plugin's control/event input: it always carries `time:Position`
+/// (transport) and `patch:Message` (param automation), advertises
+/// `midi:MidiEvent` (Reaper only routes transport to MIDI-accepting
+/// ports; effects ignore stray bytes), and is designated `lv2:control`.
+/// Extra ports (`port >= 1`) are MIDI-only and carry no designation.
+fn emit_atom_in_port(f: &mut String, index: u32, port: u32) {
+    let _ = writeln!(f, "        a lv2:InputPort, atom:AtomPort ;");
+    let _ = writeln!(f, "        atom:bufferType atom:Sequence ;");
+    if port == 0 {
+        let _ = writeln!(
+            f,
+            "        atom:supports midi:MidiEvent, time:Position, patch:Message ;"
+        );
+        let _ = writeln!(f, "        lv2:designation lv2:control ;");
+        let _ = writeln!(f, "        lv2:index {index} ;");
+        let _ = writeln!(f, "        lv2:symbol \"midi_in\" ;");
+        let _ = writeln!(f, "        lv2:name \"MIDI In\" ;");
+    } else {
+        let _ = writeln!(f, "        atom:supports midi:MidiEvent ;");
+        let _ = writeln!(f, "        lv2:index {index} ;");
+        let _ = writeln!(f, "        lv2:symbol \"midi_in_{port}\" ;");
+        let _ = writeln!(f, "        lv2:name \"MIDI In {}\" ;", port + 1);
+    }
+    let _ = writeln!(f, "        rsz:minimumSize 4096 ;");
+}
+
+/// Atom output port advertising `midi:MidiEvent`. `port` is the 0-based
+/// MIDI output index; port 0 keeps the plain `midi_out` symbol.
+fn emit_midi_out_port(f: &mut String, index: u32, port: u32) {
+    let _ = writeln!(f, "        a lv2:OutputPort, atom:AtomPort ;");
+    let _ = writeln!(f, "        atom:bufferType atom:Sequence ;");
+    let _ = writeln!(f, "        atom:supports midi:MidiEvent ;");
+    let _ = writeln!(f, "        lv2:index {index} ;");
+    if port == 0 {
+        let _ = writeln!(f, "        lv2:symbol \"midi_out\" ;");
+        let _ = writeln!(f, "        lv2:name \"MIDI Out\" ;");
+    } else {
+        let _ = writeln!(f, "        lv2:symbol \"midi_out_{port}\" ;");
+        let _ = writeln!(f, "        lv2:name \"MIDI Out {}\" ;", port + 1);
     }
 }
 
@@ -757,8 +779,8 @@ mod tests {
             category,
             audio_in,
             audio_out,
-            accepts_midi_in,
-            has_midi_out: false,
+            midi_in_ports: u32::from(accepts_midi_in),
+            midi_out_ports: 0,
             params,
             meter_ids: vec![],
             has_ui: false,
@@ -802,6 +824,46 @@ mod tests {
     fn effect_midi_input_is_designated_control() {
         let (_manifest, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
         assert!(ttl.contains("lv2:designation lv2:control"));
+    }
+
+    #[test]
+    fn multi_port_emits_numbered_atom_ports() {
+        let mut b = bundle(Lv2Category::NoteEffect, true, vec![]);
+        b.midi_in_ports = 2;
+        b.midi_out_ports = 2;
+        let (_m, ttl) = render_ttls(&b, "x.so");
+        // Port 0 keeps the plain symbols; extras are numbered.
+        assert!(ttl.contains("lv2:symbol \"midi_in\""));
+        assert!(ttl.contains("lv2:symbol \"midi_in_1\""));
+        assert!(ttl.contains("lv2:symbol \"midi_out\""));
+        assert!(ttl.contains("lv2:symbol \"midi_out_1\""));
+        // Only the first atom input is the designated control port.
+        assert_eq!(ttl.matches("lv2:designation lv2:control").count(), 2); // midi_in + notify_out
+        // Extra MIDI input carries no transport/patch support.
+        let extra = ttl
+            .split("lv2:symbol \"midi_in_1\"")
+            .next()
+            .and_then(|h| h.rsplit("a lv2:InputPort, atom:AtomPort").next())
+            .expect("midi_in_1 present");
+        assert!(!extra.contains("time:Position"));
+    }
+
+    #[test]
+    fn multi_port_layout_indices_are_contiguous() {
+        // 2 audio in/out + 1 param + 2 midi-in + 2 midi-out + notify.
+        let layout = Layout {
+            audio_in: 2,
+            audio_out: 2,
+            num_params: 1,
+            num_meters: 0,
+            midi_in_ports: 2,
+            midi_out_ports: 2,
+        };
+        assert_eq!(layout.atom_in_start(), 5); // after 2+2 audio + 1 param
+        assert_eq!(layout.num_atom_in(), 2);
+        assert_eq!(layout.midi_out_start(), 7);
+        assert_eq!(layout.notify_out_port(), 9);
+        assert_eq!(layout.total(), 10);
     }
 
     /// A range-less enum resolves to a concrete count upstream; here we

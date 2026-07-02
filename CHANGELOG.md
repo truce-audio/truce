@@ -2,6 +2,43 @@
 
 Notable changes per release.
 
+## 1.1.0
+
+A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, wired across every format that can carry them. Both are opt-in and leave existing MIDI-1.0, single-port plugins unchanged at runtime - but the shared `Event` change below is a breaking API change.
+
+### Breaking
+
+- **`Event` gained a `port` field** - the MIDI port an event arrived on / should go out on (`0` for single-port plugins). Constructing an `Event` with a struct literal now requires it. *Migration:* build events with `Event::new(offset, body)` (port `0`, the common case) or `Event::on_port(offset, port, body)`; `Event::new` is the only form that omits `port`, so a struct literal must spell it out. Reading events (`event.port`) is unaffected.
+
+### MIDI 2.0 / UMP
+
+Opt in per direction in `truce.toml`. `midi2 = true` sets both directions to 2.0; the new `midi2_input` / `midi2_output` keys override a single direction (each defaults to following `midi2`).
+
+The direction split exists because opting a plugin's *input* into 2.0 makes the host up-convert incoming 1.0 to 2.0 (`NoteOn` -> `NoteOn2`, `ControlChange` -> `ControlChange2`, ...) before `process()` ever runs. So the three shapes are:
+
+- **2.0 both ways** (`midi2 = true`) - a synth that wants native 16/32-bit velocity and per-note control reads the `NoteOn2` / `PerNoteCC` / ... variants directly.
+- **1.0 in, 2.0 out** (`midi2_output = true` only) - a 1.0 -> 2.0 promoter or an MPE spreader still receives real 1.0 to promote/transform, and emits 2.0. Opting its input into 2.0 as well would make the host promote first and leave a 1.0-only `match` seeing nothing.
+- **1.0 both ways** (no opt-in) - the host down-converts before delivery (no truce-side step), so an existing 1.0 plugin is untouched.
+
+Across formats:
+
+- **CLAP** decodes UMP (`CLAP_EVENT_MIDI2`) and note expressions (`CLAP_EVENT_NOTE_EXPRESSION`) on input, and emits CLAP-native on output - notes as `clap_event_note` (full 16-bit velocity through CLAP's `f64` field), per-note control as note expressions, channel-level 2.0 down-converted to `CLAP_EVENT_MIDI` - because hosts read a plugin's output as notes + expressions, not raw UMP. A non-2.0 input port down-converts to 1.0.
+- **AU v3** declares `audioUnitMIDIProtocol` from the input dialect and drains output through the host's UMP `MIDIEventList` block from the output dialect (macOS 12+ / iOS 15+); the framework converts the output to the host's own protocol. SysEx output rides the same UMP stream as SysEx-7 packet chains.
+- **VST3 maps the per-note subset through note expression** (it has no UMP): `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - a lossy translation, not UMP. VST2 / AU v2 / AAX / LV2 stay MIDI 1.0.
+
+### Multiple MIDI ports
+
+A plugin can expose more than one MIDI **input** port. The headline use is a multi-timbral instrument (the Kontakt / Vienna Ensemble Pro shape): one instance with several 16-channel input ports, so the host routes a separate track to each and each plays its own sound. Declare the count with `midi_input_ports` in `truce.toml`; the plugin reads `event.port` to tell them apart (see the `Event` change above).
+
+- **CLAP (N note ports), VST3 (N event buses), and LV2 (N atom ports) deliver the port on input.** VST2 / AU v2 / AU v3 / AAX carry a single input port and log a skip when a plugin declares more.
+- `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
+- `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
+
+### Fixes
+
+- **Right- and middle-click now reach iced and Slint editors.** Both backends forwarded only the left button from baseview, so right-click-to-reset (and any custom-widget use of other buttons) never fired; all mouse buttons map through now. (#168)
+- **Fixed a crash when closing and reopening plugin editors on macOS.** The editor's frame timer could fire after its window state was freed (a use-after-free most visible as an AU v3 editor crash on reopen); the timer is now invalidated at teardown and holds only a weak reference. Via the `baseview-truce` 0.1.1-truce.12 dependency, all GUI backends.
+
 ## 1.0.4
 
 - **`cargo truce build` / `install` / `package` accept `--features`.** Pass extra Cargo features for the plugin crate (comma/space-separated); they apply to every underlying build (per-format, shell logic, iOS, standalone bin) so the set stays uniform. Format features (`clap`/`vst3`/...) are reserved for the format flags.

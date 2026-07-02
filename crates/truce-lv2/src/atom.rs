@@ -19,7 +19,7 @@ use std::ffi::c_void;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::midi::{parse_midi1, pitch_bend_to_bytes};
+use truce_core::midi::{downconvert_to_midi1, parse_midi1, pitch_bend_to_bytes};
 
 use crate::urid::{Urid, UridMap};
 
@@ -398,10 +398,7 @@ impl<'a> AtomSequenceReader<'a> {
 pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
     // LV2 carries legacy MIDI 1.0 byte streams with no UMP group, so
     // decode at group 0 through the shared channel-voice decoder.
-    parse_midi1(0, bytes).map(|body| Event {
-        sample_offset,
-        body,
-    })
+    parse_midi1(0, bytes).map(|body| Event::new(sample_offset, body))
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +411,17 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
 /// # Safety
 /// `out` must point to a writable atom sequence buffer with capacity the
 /// host allocated (typically a few KB).
-pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList, urid: &UridMap) {
+/// Write the events destined for MIDI output port `port` into `out`.
+/// `port_count` is the plugin's declared output-port count; an event
+/// whose [`truce_core::Event::port`] exceeds it routes to port 0.
+/// Single-port plugins call with `port = 0`, `port_count = 1`.
+pub unsafe fn write_midi_out_sequence(
+    out: *mut AtomSequence,
+    events: &EventList,
+    urid: &UridMap,
+    port: u8,
+    port_count: u8,
+) {
     unsafe {
         if out.is_null() || urid.midi_event == 0 {
             return;
@@ -431,6 +438,11 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
         (*out).body.unit = 0;
         (*out).body.pad = 0;
         for event in events.iter() {
+            // Only this port's events land in this sequence; an
+            // out-of-range port collapses to port 0.
+            if event.port.min(port_count.saturating_sub(1)) != port {
+                continue;
+            }
             // `SysEx` events have a variable-length payload that
             // can't fit in the fixed-size `buf` below; handle them
             // here, reading the bytes out of the `EventList`'s pool
@@ -458,7 +470,10 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                 continue;
             }
             let mut buf = [0u8; 3];
-            let (n, frame) = match &event.body {
+            // LV2 carries MIDI 1.0 byte streams only; down-convert any
+            // 2.0 output so it isn't dropped.
+            let cv = downconvert_to_midi1(&event.body).unwrap_or(event.body);
+            let (n, frame) = match &cv {
                 EventBody::NoteOn {
                     channel,
                     note,
@@ -818,36 +833,36 @@ mod tests {
         }
 
         let mut source = EventList::default();
-        source.push(Event {
-            sample_offset: 0,
-            body: EventBody::NoteOn {
+        source.push(Event::new(
+            0,
+            EventBody::NoteOn {
                 group: 0,
                 channel: 0,
                 note: 60,
                 velocity: 95,
             },
-        });
-        source.push(Event {
-            sample_offset: 128,
-            body: EventBody::NoteOff {
+        ));
+        source.push(Event::new(
+            128,
+            EventBody::NoteOff {
                 group: 0,
                 channel: 0,
                 note: 60,
                 velocity: 0,
             },
-        });
-        source.push(Event {
-            sample_offset: 256,
-            body: EventBody::ControlChange {
+        ));
+        source.push(Event::new(
+            256,
+            EventBody::ControlChange {
                 group: 0,
                 channel: 3,
                 cc: 7,
                 value: 64,
             },
-        });
+        ));
 
         unsafe {
-            write_midi_out_sequence(seq, &source, &urid);
+            write_midi_out_sequence(seq, &source, &urid, 0, 1);
         }
 
         let reader = AtomSequenceReader::new(seq.cast_const(), &urid);

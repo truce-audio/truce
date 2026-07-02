@@ -25,11 +25,11 @@ use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, 
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
+use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block,
-    run_extern_callback_with, run_register,
+    default_io_channels, first_bus_layout, log_midi_ports_clamped, log_missing_bus_layout,
+    run_audio_block, run_extern_callback_with, run_register,
 };
 use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
@@ -382,6 +382,11 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             (0, out) => (out.max(2), out), // output-only instrument → match output
             (in_, out) => (in_, out),
         };
+
+        // AAX carries a single MIDI stream per direction; clamp a
+        // multi-port declaration to one and warn.
+        log_midi_ports_clamped("AAX", "input", info.midi_input_ports);
+        log_midi_ports_clamped("AAX", "output", info.midi_output_ports);
 
         let descriptor = TruceAaxDescriptor {
             name,
@@ -843,6 +848,7 @@ pub unsafe fn _process<P: PluginExport>(
                 if let Some(body) = decode_short_message(ev.status, ev.data1, ev.data2) {
                     inst.event_list.push(Event {
                         sample_offset: ev.delta_frames,
+                        port: 0,
                         body,
                     });
                 }
@@ -949,7 +955,9 @@ pub unsafe fn _process<P: PluginExport>(
 /// `_output_sysex_at`). `try_encode_aax_midi` returning `None` for
 /// `SysEx` is correct: the channel-voice slot can't carry it.
 fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
-    let (status, data1, data2) = match &event.body {
+    // AAX is MIDI 1.0 only; down-convert any 2.0 output first.
+    let body = downconvert_to_midi1(&event.body).unwrap_or(event.body);
+    let (status, data1, data2) = match &body {
         EventBody::NoteOn {
             channel,
             note,
