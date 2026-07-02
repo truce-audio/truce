@@ -39,8 +39,8 @@ use truce_core::info::MidiDialect;
 use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
 use truce_core::state;
 use truce_core::ump::{
-    SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_ump_channel_voice_1,
-    encode_ump_channel_voice_2,
+    SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_sysex7_packet,
+    encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
     default_io_channels, log_midi_ports_clamped, log_missing_bus_layout, run_audio_block,
@@ -877,9 +877,9 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
 
 /// Encode a channel-voice event into UMP for AU v3's MIDI-2.0-protocol
 /// output path: 2.0 variants become MT 0x4 (two words), 1.0 variants
-/// MT 0x2 (one word). Returns `None` for non-channel-voice bodies (the
-/// byte / `output_event_at` path handles nothing here - in 2.0 mode all
-/// channel voice rides UMP).
+/// MT 0x2 (one word). Returns `None` for bodies that aren't channel
+/// voice (`SysEx` flattens to its own packet chain in
+/// [`au_ump_packet_at`]; transport / automation don't ride UMP).
 fn try_encode_au_ump(event: &Event) -> Option<AuUmpEvent> {
     let (word_count, words) = match encode_ump_channel_voice_2(&event.body) {
         Some(w) => (2u8, w),
@@ -894,15 +894,46 @@ fn try_encode_au_ump(event: &Event) -> Option<AuUmpEvent> {
     })
 }
 
+/// UMP packets `event` contributes to the 2.0 output stream: channel
+/// voice is one packet, `SysEx` is its whole `SysEx`-7 chain (one 64-bit
+/// packet per 6 payload bytes).
+fn au_ump_packet_count(list: &EventList, event: &Event) -> usize {
+    if matches!(event.body, EventBody::SysEx { .. }) {
+        sysex7_packet_count(list.sysex_bytes(&event.body).len())
+    } else {
+        usize::from(try_encode_au_ump(event).is_some())
+    }
+}
+
+/// The `index`-th packet of the flattened UMP output stream.
+fn au_ump_packet_at(list: &EventList, mut index: usize) -> Option<AuUmpEvent> {
+    for event in list.iter() {
+        let n = au_ump_packet_count(list, event);
+        if index < n {
+            if matches!(event.body, EventBody::SysEx { .. }) {
+                // SysEx carries no group; packets go out on group 0. The
+                // cable still routes by the event's port.
+                let words = encode_sysex7_packet(0, list.sysex_bytes(&event.body), index)?;
+                return Some(AuUmpEvent {
+                    sample_offset: event.sample_offset,
+                    cable: event.port,
+                    word_count: 2,
+                    reserved: [0; 2],
+                    words: [words[0], words[1], 0, 0],
+                });
+            }
+            return try_encode_au_ump(event);
+        }
+        index -= n;
+    }
+    None
+}
+
 unsafe extern "C" fn cb_output_ump_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        len_u32(
-            inst.output_events
-                .iter()
-                .filter_map(try_encode_au_ump)
-                .count(),
-        )
+        let list = &inst.output_events;
+        len_u32(list.iter().map(|e| au_ump_packet_count(list, e)).sum())
     }
 }
 
@@ -913,12 +944,7 @@ unsafe extern "C" fn cb_output_ump_at<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        if let Some(mut packet) = inst
-            .output_events
-            .iter()
-            .filter_map(try_encode_au_ump)
-            .nth(index as usize)
-        {
+        if let Some(mut packet) = au_ump_packet_at(&inst.output_events, index as usize) {
             // Clamp the cable to the declared output-port count, matching
             // the byte path; the appex passes it to
             // `midiOutputEventListBlock`.
@@ -1499,7 +1525,65 @@ macro_rules! export_au {
 #[cfg(test)]
 mod tests {
     use truce_core::SYSEX_POOL_PREALLOC;
+    use truce_core::events::{Event, EventBody, EventList};
     use truce_shim_types::AU_SHIM_TYPES_H;
+
+    use super::{au_ump_packet_at, au_ump_packet_count};
+
+    #[test]
+    fn ump_output_flattens_sysex_into_packet_chain() {
+        // A note, a 7-byte SysEx (Start + End), and a trailing CC:
+        // 1 + 2 + 1 packets, indexed in event order.
+        let mut list = EventList::with_capacity(8);
+        list.push(Event::on_port(
+            10,
+            1,
+            EventBody::NoteOn {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+        ));
+        list.push_sysex_on_port(20, 1, &[1, 2, 3, 4, 5, 6, 7])
+            .unwrap();
+        list.push(Event::new(
+            30,
+            EventBody::ControlChange {
+                group: 0,
+                channel: 0,
+                cc: 1,
+                value: 64,
+            },
+        ));
+
+        let total: usize = list.iter().map(|e| au_ump_packet_count(&list, e)).sum();
+        assert_eq!(total, 4);
+
+        // Packet 0: the note (MT 0x2, one word).
+        let note = au_ump_packet_at(&list, 0).unwrap();
+        assert_eq!(note.word_count, 1);
+        assert_eq!(note.sample_offset, 10);
+        assert_eq!(note.cable, 1);
+
+        // Packets 1-2: the SysEx chain - MT 0x3, Start then End, both
+        // stamped with the event's offset and port.
+        let start = au_ump_packet_at(&list, 1).unwrap();
+        let end = au_ump_packet_at(&list, 2).unwrap();
+        for p in [&start, &end] {
+            assert_eq!((p.words[0] >> 28) & 0xF, 0x3);
+            assert_eq!(p.word_count, 2);
+            assert_eq!(p.sample_offset, 20);
+            assert_eq!(p.cable, 1);
+        }
+        assert_eq!((start.words[0] >> 20) & 0xF, 0x1, "Start status");
+        assert_eq!((end.words[0] >> 20) & 0xF, 0x3, "End status");
+
+        // Packet 3: the CC; then the stream ends.
+        let cc = au_ump_packet_at(&list, 3).unwrap();
+        assert_eq!(cc.sample_offset, 30);
+        assert!(au_ump_packet_at(&list, 4).is_none());
+    }
 
     #[test]
     fn sysex_pool_prealloc_matches_header() {
