@@ -418,6 +418,11 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         new_size: (u32, u32),
         scale: f64,
     ) {
+        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+        eprintln!(
+            "[truce-scale egui] window.resize({}x{}) scale={}",
+            new_size.0, new_size.1, scale
+        );
         window.resize(baseview::Size::new(
             f64::from(new_size.0),
             f64::from(new_size.1),
@@ -797,7 +802,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             clippy::cast_sign_loss,
                             clippy::cast_precision_loss
                         )]
-                        let logical_size = (
+                        let logical_in = (
                             (pw as f32 / scale).round() as u32,
                             (ph as f32 / scale).round() as u32,
                         );
@@ -805,14 +810,40 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         // never ran the format's constraint preflight - fit
                         // here and push the corrected size back.
                         let (logical_size, correct) = self.resize_corrector.fit(
-                            logical_size.0,
-                            logical_size.1,
+                            logical_in.0,
+                            logical_in.1,
                             self.min_size,
                             self.max_size,
                             self.aspect_ratio,
                         );
+                        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+                        eprintln!(
+                            "[truce-scale egui] Resized phys={}x{} info.scale()={} logical_in={}x{} fitted={}x{} correct={:?} self.size={}x{} bounds min={:?} max={:?} aspect={:?}",
+                            pw, ph, info.scale(), logical_in.0, logical_in.1,
+                            logical_size.0, logical_size.1, correct,
+                            self.size.0, self.size.1,
+                            self.min_size, self.max_size, self.aspect_ratio,
+                        );
                         if let Some((rw, rh)) = correct {
-                            let _ = self.context.request_resize(rw, rh);
+                            // On Linux, hosts that bypass size negotiation
+                            // (Bitwig) ignore this request and react by
+                            // *growing* the embed window - a resize loop,
+                            // worsened by our own corrective `window.resize`
+                            // feeding a fresh in-bounds `Resized` that re-arms
+                            // the guard. Clamp the content (and counter-resize
+                            // our child) but never ask the host to resize its
+                            // frame. mac/windows honor the request and
+                            // negotiate via `checkSizeConstraint` anyway.
+                            #[cfg(not(target_os = "linux"))]
+                            {
+                                // [truce-scale] DIAGNOSTIC - remove after debugging #163
+                                eprintln!(
+                                    "[truce-scale egui] request_resize({rw}x{rh}) -> host"
+                                );
+                                let _ = self.context.request_resize(rw, rh);
+                            }
+                            #[cfg(target_os = "linux")]
+                            let _ = (rw, rh);
                         }
                         // Write through to the shared scale so `on_frame` /
                         // `run_frame` convert with the OS-reported DPI.
@@ -999,6 +1030,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             self.scale.set(crate::platform::query_backing_scale(&parent));
             WindowScalePolicy::SystemScaleFactor
         };
+        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+        eprintln!(
+            "[truce-scale egui] open use_system_scale={} host_scale_set={} effective_scale={} size={:?}",
+            self.use_system_scale, self.host_scale_set, self.scale.get(), self.size,
+        );
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
@@ -1165,6 +1201,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // change on its next frame and resizes the wgpu surface +
         // renderer to match. No explicit notification needed -
         // baseview's frame loop polls.
+        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+        eprintln!("[truce-scale egui] set_scale_factor({factor})");
         self.host_scale_set = true;
         self.scale.set(factor);
     }

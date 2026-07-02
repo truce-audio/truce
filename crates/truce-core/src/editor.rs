@@ -717,14 +717,25 @@ pub fn clamp_logical_size(w: u32, h: u32, editor: &dyn Editor) -> (u32, u32) {
 /// spun into a resize feedback loop.
 #[derive(Default)]
 pub struct ResizeCorrector {
-    /// The last out-of-bounds host size a correction was requested for.
-    requested_for: Option<(u32, u32)>,
+    /// Whether we've already pushed a corrective resize back to the host
+    /// for the current out-of-bounds excursion. Latches on the first
+    /// push-back and clears only when the host hands us an in-bounds size
+    /// again. A host that bypasses negotiation and then ignores the
+    /// push-back would otherwise be re-asked every frame and spun into a
+    /// runaway resize loop: Bitwig on Linux returns success to
+    /// `request_resize` but instead *grows* the embed window a few px per
+    /// call, and jitters the size on the un-clamped axis so the fitted
+    /// target changes every frame. Latching on "have we asked since the
+    /// last in-bounds size" - rather than on the requested size - sends
+    /// exactly one request per excursion even when that target wobbles.
+    pushed_back: bool,
 }
 
 impl ResizeCorrector {
     /// Fit a host-driven logical size against the constraints. Returns
     /// the fitted size to render at and, when the host size was out of
-    /// bounds and not yet corrected, the size to request back.
+    /// bounds and we haven't already pushed back this excursion, the size
+    /// to request back.
     pub fn fit(
         &mut self,
         w: u32,
@@ -735,12 +746,15 @@ impl ResizeCorrector {
     ) -> ((u32, u32), Option<(u32, u32)>) {
         let fitted = fit_size(w, h, min, max, aspect);
         if fitted == (w, h) {
-            self.requested_for = None;
+            // In-bounds: the host is cooperating (or the drag returned
+            // within bounds); re-arm the next excursion's one-shot push.
+            self.pushed_back = false;
             return (fitted, None);
         }
-        let already_requested = self.requested_for == Some((w, h));
-        self.requested_for = Some((w, h));
-        (fitted, (!already_requested).then_some(fitted))
+        // Out of bounds: push back exactly once per excursion.
+        let request = (!self.pushed_back).then_some(fitted);
+        self.pushed_back = true;
+        (fitted, request)
     }
 }
 
@@ -787,16 +801,26 @@ mod corrector_tests {
     }
 
     #[test]
-    fn out_of_bounds_corrects_once_per_host_size() {
+    fn out_of_bounds_pushes_once_per_excursion() {
         let mut c = ResizeCorrector::default();
-        // First sight of an oversize host window: fit + request.
+        // First out-of-bounds sight: fit + one push-back.
         let (fitted, req) = c.fit(1200, 800, MIN, MAX, None);
         assert_eq!(fitted, (900, 600));
         assert_eq!(req, Some((900, 600)));
         // Host refused / echoed the same size: no repeat request.
         assert_eq!(c.fit(1200, 800, MIN, MAX, None), ((900, 600), None));
-        // Drag continues to a new offending size: one new request.
-        let (_, req) = c.fit(1300, 800, MIN, MAX, None);
+        // Host ignores it and keeps feeding out-of-bounds sizes - crucially,
+        // even ones whose *fitted target wobbles* (a different clamp on the
+        // un-pinned axis each frame). We stay quiet, so a host that grows in
+        // response to each request (Bitwig) can't be spun into a runaway.
+        assert_eq!(c.fit(1300, 590, MIN, MAX, None), ((900, 590), None));
+        assert_eq!(c.fit(1300, 595, MIN, MAX, None), ((900, 595), None));
+        // ...even a swing to the opposite bound stays quiet mid-excursion.
+        assert_eq!(c.fit(100, 100, MIN, MAX, None), ((300, 200), None));
+        // Host finally hands us an in-bounds size: excursion over, re-arm.
+        assert_eq!(c.fit(800, 500, MIN, MAX, None), ((800, 500), None));
+        // Next excursion gets a fresh single push-back.
+        let (_, req) = c.fit(1200, 800, MIN, MAX, None);
         assert_eq!(req, Some((900, 600)));
     }
 

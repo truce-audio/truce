@@ -55,6 +55,12 @@ pub struct ViziaEditor<P: Params + ?Sized> {
     /// vizia's window scale policy in `open()`. `None` -> vizia's OS
     /// `SystemScaleFactor` default.
     scale: Option<f64>,
+    /// Standalone hosts set this (via `set_uses_system_scale`) so an
+    /// editor with no host-reported scale honors the desktop `Xft.dpi`
+    /// on Linux; an embedded plugin leaves it false and defaults to 1.0
+    /// there instead (a non-DPI-aware host runs at 1x). No effect off
+    /// Linux, or when the host reported a scale.
+    use_system_scale: bool,
     window: Option<vizia::WindowHandle>,
     /// Host parent `NSView` pointer the `on_idle` re-anchor walks.
     /// Shared with the idle closure and zeroed on `close()` / `Drop`
@@ -91,6 +97,7 @@ impl<P: Params + 'static> ViziaEditor<P> {
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             scale: None,
+            use_system_scale: false,
             window: None,
             #[cfg(target_os = "macos")]
             reanchor_parent: Arc::new(AtomicUsize::new(0)),
@@ -210,6 +217,10 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         }
     }
 
+    fn set_uses_system_scale(&mut self, yes: bool) {
+        self.use_system_scale = yes;
+    }
+
     fn screenshot(
         &mut self,
         _params: Arc<dyn truce_params::Params>,
@@ -304,8 +315,21 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         // (the OS-detected DPI). The two can disagree for an embedded
         // plug-in view - notably on Windows - which renders the editor at
         // the wrong scale and overflows/clips the host-allocated rect.
-        // `None` (no host report, e.g. standalone) keeps the OS default.
-        let app = match self.scale {
+        //
+        // With no host report, keep the OS default (`None`) EXCEPT for an
+        // embedded plug-in on Linux: there `SystemScaleFactor` reads the
+        // desktop `Xft.dpi`, a bad proxy for a non-DPI-aware host's scale
+        // (Bitwig on X11 runs at 1x and would get a double-sized window),
+        // so default to 1.0. The standalone (`use_system_scale`) keeps the
+        // OS default so its top-level window still honors desktop scaling.
+        let policy_scale = if let Some(scale) = self.scale {
+            Some(scale)
+        } else if cfg!(target_os = "linux") && !self.use_system_scale {
+            Some(1.0)
+        } else {
+            None
+        };
+        let app = match policy_scale {
             Some(scale) => app.with_scale_policy(WindowScalePolicy::ScaleFactor(scale)),
             None => app,
         };

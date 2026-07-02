@@ -541,9 +541,19 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                             self.aspect_ratio,
                         );
                         if let Some((rw, rh)) = correct {
+                            // On Linux, hosts that bypass size negotiation
+                            // (Bitwig) ignore this request and react by
+                            // *growing* the embed window - a resize loop.
+                            // Counter-resize our own child to the fitted size
+                            // but never ask the host to resize its frame.
+                            // mac/windows honor it (and negotiate via
+                            // `checkSizeConstraint`) anyway.
+                            #[cfg(not(target_os = "linux"))]
                             if let Some(ref program) = runtime.program {
                                 let _ = program.context.request_resize(rw, rh);
                             }
+                            #[cfg(target_os = "linux")]
+                            let _ = (rw, rh);
                             self.pending_size.store(
                                 (u64::from(fw) << 32) | u64::from(fh),
                                 std::sync::atomic::Ordering::Release,
