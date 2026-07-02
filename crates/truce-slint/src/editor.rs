@@ -16,7 +16,7 @@ use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgb
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize};
 
-use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle, ResizeCorrector};
 use truce_gui::EditorScale;
 use truce_params::Params;
 
@@ -342,6 +342,14 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     /// Raised by the device's lost callback (or a swallowed render panic).
     /// Polled in `on_frame`, which rebuilds the wgpu device/surface/blit.
     device_lost: Arc<AtomicBool>,
+    /// Constraint copy from the parent `SlintEditor`, applied to
+    /// host-driven `Resized` events that bypassed the format's
+    /// negotiation hooks (Linux hosts resizing the embed window
+    /// directly), plus the corrective push-back guard.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    aspect_ratio: Option<(u32, u32)>,
+    resize_corrector: ResizeCorrector,
 }
 
 /// Wraps the live handler so a wgpu init failure at `open()` time
@@ -671,6 +679,23 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                         (f64::from(phys_w) / scale) as u32,
                         (f64::from(phys_h) / scale) as u32,
                     );
+                    // A host that resized the embed window directly never
+                    // ran the format's constraint preflight - fit here,
+                    // push the corrected size back to the host, and queue
+                    // the fitted size through the pending cell so
+                    // `on_frame` counter-resizes the child window.
+                    let ((fw, fh), correct) = self.resize_corrector.fit(
+                        lw,
+                        lh,
+                        self.min_size,
+                        self.max_size,
+                        self.aspect_ratio,
+                    );
+                    if let Some((rw, rh)) = correct {
+                        let _ = self.state.request_resize(rw, rh);
+                        self.pending_size
+                            .store(pack_size((fw, fh)), Ordering::Release);
+                    }
                     self.width = lw;
                     self.height = lh;
                     // Mirror the OS-reported scale into the shared
@@ -808,6 +833,9 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // freshly-built window.
         self.pending_size.store(0, Ordering::Relaxed);
         let pending_size_handle = Arc::clone(&self.pending_size);
+        let min_size = self.min_size;
+        let max_size = self.max_size;
+        let aspect_ratio = self.aspect_ratio;
         // Refresh shared scale from the parent window - on macOS the
         // parent's NSWindow may live on a non-main display whose
         // `backingScaleFactor` differs from `NSScreen.mainScreen`'s.
@@ -893,6 +921,10 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     last_pos: LogicalPosition::default(),
                     pending_size: pending_size_handle,
                     device_lost,
+                    min_size,
+                    max_size,
+                    aspect_ratio,
+                    resize_corrector: ResizeCorrector::default(),
                 }))
             },
         );
