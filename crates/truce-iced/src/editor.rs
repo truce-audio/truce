@@ -27,6 +27,10 @@ use crate::runtime::{
 /// Type parameters:
 /// - `P` - the plugin's `Params` type
 /// - `M` - the plugin's `IcedPlugin` implementation
+// Several independent one-shot flags (scale mode + host-scale-seen, plus
+// the resize/size flags below). They're genuinely distinct booleans, not
+// a state enum in disguise, so grouping them would obscure more than help.
+#[allow(clippy::struct_excessive_bools)]
 pub struct IcedEditor<P, M>
 where
     P: Params + 'static,
@@ -40,6 +44,15 @@ where
     /// `tick()` reads it and reconfigures the surface/viewport when it
     /// diverges from `last_applied_scale`.
     scale: EditorScale,
+    /// Standalone hosts set this (via `set_uses_system_scale`) so the
+    /// editor honors the desktop `Xft.dpi` scale on Linux; plugins leave
+    /// it false and drive scale from the host instead. See
+    /// [`truce_gui::platform::editor_window_scale`]. No effect off Linux.
+    use_system_scale: bool,
+    /// Whether the host announced a content scale via `set_scale_factor`.
+    /// On Linux this gates whether an embedded editor trusts `scale`
+    /// (host-announced) or defaults to 1.0.
+    host_scale_set: bool,
     font: Option<&'static [u8]>,
     /// Constructor closure for the plugin model. Each constructor
     /// stores a closure that produces an `M` of the correct concrete
@@ -149,6 +162,8 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             params,
             size,
             scale: EditorScale::new(truce_gui::backing_scale()),
+            use_system_scale: false,
+            host_scale_set: false,
             font: None,
             make_plugin,
             meter_ids,
@@ -171,6 +186,8 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
             params,
             size,
             scale: EditorScale::new(truce_gui::backing_scale()),
+            use_system_scale: false,
+            host_scale_set: false,
             font: None,
             make_plugin: Arc::new(|p| M::new(p)),
             meter_ids: Vec::new(),
@@ -592,6 +609,21 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         self.pending_size
             .store(0, std::sync::atomic::Ordering::Relaxed);
 
+        // Pick the baseview scale policy. On Linux an embedded plugin
+        // follows the host's scale (default 1.0) rather than the desktop
+        // Xft.dpi, which a non-DPI-aware host (Bitwig) doesn't share; the
+        // standalone and every macOS/Windows path keep SystemScaleFactor.
+        let scale_policy = if let Some(s) = truce_gui::platform::editor_window_scale(
+            self.use_system_scale,
+            self.host_scale_set,
+            self.scale.get(),
+        ) {
+            self.scale.set(s);
+            baseview::WindowScalePolicy::ScaleFactor(s)
+        } else {
+            baseview::WindowScalePolicy::SystemScaleFactor
+        };
+
         // Everything the handler needs is moved into the builder
         // closure, which baseview runs on the handler's own thread. The
         // plugin model + `IcedRuntime` are built there so the handler
@@ -617,7 +649,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         let options = baseview::WindowOpenOptions {
             title: String::from("truce-iced"),
             size: baseview::Size::new(f64::from(w), f64::from(h)),
-            scale: baseview::WindowScalePolicy::SystemScaleFactor,
+            scale: scale_policy,
         };
 
         let window = baseview::Window::open_parented(
@@ -752,6 +784,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         // Write to the shared cell; the runtime's `tick()` picks up the
         // change on its next frame and reconfigures the surface and
         // viewport.
+        self.host_scale_set = true;
         self.scale.set(factor);
+    }
+
+    fn set_uses_system_scale(&mut self, yes: bool) {
+        self.use_system_scale = yes;
     }
 }

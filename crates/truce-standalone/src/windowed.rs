@@ -297,6 +297,11 @@ where
         }
 
         let ctx = synthesize_editor_context::<P>(&plugin, &transport, Arc::clone(&pending_resize));
+        // The standalone owns a real top-level window and should honor
+        // the desktop scale (Xft.dpi on Linux); plugins leave the default
+        // and drive scale from the host instead. See
+        // `truce_gui::platform::editor_window_scale`.
+        editor.set_uses_system_scale(true);
         editor.open(truce_parent, ctx);
 
         // After `editor.open()` reparents baseview's child under the

@@ -80,6 +80,11 @@ impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
 /// `state.gain.read()`, `state.bypass.value()`. Stores its own
 /// `Arc<P>` from construction; rebuilds the typed `PluginContext<P>`
 /// every time the host opens the window via [`PluginContext::with_params`].
+// Several independent one-shot flags (resize/maximize opt-ins, scale
+// mode). They're genuinely distinct booleans, not a state enum in
+// disguise, so the grouping the lint wants would obscure more than it'd
+// clarify.
+#[allow(clippy::struct_excessive_bools)]
 pub struct EguiEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
@@ -123,6 +128,15 @@ pub struct EguiEditor<P: Params + ?Sized> {
     /// reconfiguration on the next frame when the value diverges
     /// from its last-applied snapshot.
     scale: EditorScale,
+    /// Standalone hosts set this (via `set_uses_system_scale`) so the
+    /// editor honors the desktop `Xft.dpi` scale on Linux; plugins leave
+    /// it false and drive scale from the host instead. See
+    /// [`truce_gui::platform::editor_window_scale`]. No effect off Linux.
+    use_system_scale: bool,
+    /// Whether the host announced a content scale via `set_scale_factor`.
+    /// On Linux this gates whether an embedded editor trusts `scale`
+    /// (host-announced) or defaults to 1.0.
+    host_scale_set: bool,
     /// Active baseview window handle - exists only while editor is open.
     window: Option<baseview::WindowHandle>,
     /// Typed editor context stored at `open()` for `state_changed` forwarding.
@@ -156,6 +170,8 @@ impl<P: Params + 'static> EguiEditor<P> {
             visuals: None,
             font: None,
             scale: EditorScale::new(truce_gui::backing_scale()),
+            use_system_scale: false,
+            host_scale_set: false,
             window: None,
             context: None,
             can_resize: false,
@@ -177,6 +193,8 @@ impl<P: Params + 'static> EguiEditor<P> {
             visuals: None,
             font: None,
             scale: EditorScale::new(truce_gui::backing_scale()),
+            use_system_scale: false,
+            host_scale_set: false,
             window: None,
             context: None,
             can_resize: false,
@@ -966,8 +984,21 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // On Linux the same call returns the cached baseview scale.
         // Any `set_scale_factor` the host issues *after* open will
         // override this on the next frame via the shared state.
-        self.scale
-            .set(crate::platform::query_backing_scale(&parent));
+        // Pick the baseview scale policy. On Linux an embedded plugin
+        // follows the host's scale (default 1.0) rather than the desktop
+        // Xft.dpi, which a non-DPI-aware host (Bitwig) doesn't share; the
+        // standalone and every macOS/Windows path keep SystemScaleFactor.
+        let scale_policy = if let Some(s) = truce_gui::platform::editor_window_scale(
+            self.use_system_scale,
+            self.host_scale_set,
+            self.scale.get(),
+        ) {
+            self.scale.set(s);
+            WindowScalePolicy::ScaleFactor(s)
+        } else {
+            self.scale.set(crate::platform::query_backing_scale(&parent));
+            WindowScalePolicy::SystemScaleFactor
+        };
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
@@ -981,7 +1012,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         let options = WindowOpenOptions {
             title: String::from("truce-egui"),
             size: baseview::Size::new(f64::from(lw), f64::from(lh)),
-            scale: WindowScalePolicy::SystemScaleFactor,
+            scale: scale_policy,
         };
 
         let parent_wrapper = ParentWindow(parent);
@@ -1134,7 +1165,12 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // change on its next frame and resizes the wgpu surface +
         // renderer to match. No explicit notification needed -
         // baseview's frame loop polls.
+        self.host_scale_set = true;
         self.scale.set(factor);
+    }
+
+    fn set_uses_system_scale(&mut self, yes: bool) {
+        self.use_system_scale = yes;
     }
 
     fn state_changed(&mut self) {
