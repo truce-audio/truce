@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle, fit_size};
 use truce_gpu::WgpuBackend;
 use truce_gui_types::render::RenderBackend;
 use truce_params::Params;
@@ -238,8 +238,15 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                         } else {
                             (phys.width, phys.height)
                         };
-                        if (lw, lh) != inner.size() && lw > 0 && lh > 0 {
-                            inner.set_size(lw, lh);
+                        if lw > 0 && lh > 0 {
+                            // Fit-only: this handler deliberately never
+                            // echoes `request_resize` (see `on_frame`), so
+                            // an out-of-bounds host size renders clamped.
+                            let (fw, fh) =
+                                fit_size(lw, lh, inner.min_size(), inner.max_size(), None);
+                            if (fw, fh) != inner.size() {
+                                inner.set_size(fw, fh);
+                            }
                         }
                     }
                 }

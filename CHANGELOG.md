@@ -4,6 +4,7 @@ Notable changes per release.
 
 ## 1.0.5
 
+- **Editor size constraints are enforced when the host bypasses resize negotiation.** Some Linux hosts (Bitwig on X11) resize the plugin's embedded window directly at the windowing-system level, skipping VST3 `checkSizeConstraint` / CLAP resize hints entirely - so `min_size` / `max_size` / `aspect_ratio` were silently ignored there. Every GUI backend's resize handler now fits the incoming size against the editor's declared bounds and pushes a corrective resize back to the host (at most once per offending size, so an uncooperative host can't be spun into a feedback loop). (#163)
 - **Right- and middle-click now reach iced and Slint editors.** Both backends forwarded only the left button from baseview, so right-click-to-reset (and any custom-widget use of other buttons) never fired; all mouse buttons map through now. (#168)
 
 ## 1.0.4
