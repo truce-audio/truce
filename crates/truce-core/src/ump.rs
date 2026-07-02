@@ -23,8 +23,9 @@
 //! 2.0-protocol transport; there's no mt-0x2 decoder yet (wrappers
 //! receive 1.0 as bytes). Out of scope: utility (mt 0x0), system
 //! real-time (mt 0x1), flex-data (mt 0xD), UMP stream (mt 0xF).
-//! `SysEx`-7 (mt 0x3) / data (mt 0x5) have the assembler; everything
-//! else awaits demand.
+//! `SysEx`-7 (mt 0x3) has both the assembler and an encoder
+//! ([`encode_sysex7_packet`]); `SysEx`-8 / data (mt 0x5) has the
+//! assembler only; everything else awaits demand.
 
 use crate::events::EventBody;
 
@@ -313,6 +314,64 @@ pub fn encode_ump_channel_voice_1(body: &EventBody) -> Option<[u32; 4]> {
         | (u32::from(data1 & 0x7F) << 8)
         | u32::from(data2 & 0x7F);
     Some([w0, 0, 0, 0])
+}
+
+/// Payload bytes carried per `SysEx`-7 UMP: the 64-bit packet holds
+/// 16 bits of header + 6 data slots.
+const SYSEX_7_BYTES_PER_PACKET: usize = 6;
+
+/// Number of `SysEx`-7 UMPs needed to carry `payload_len` inner bytes.
+/// A zero-length message still takes one `Complete` packet.
+#[must_use]
+pub const fn sysex7_packet_count(payload_len: usize) -> usize {
+    if payload_len == 0 {
+        1
+    } else {
+        payload_len.div_ceil(SYSEX_7_BYTES_PER_PACKET)
+    }
+}
+
+/// Encode packet `packet_index` of the `SysEx`-7 chain carrying
+/// `payload` (the inner bytes - no `0xF0` / `0xF7` framing, which UMP
+/// doesn't transmit). A payload of up to 6 bytes is one `Complete`
+/// packet; longer payloads chain `Start` / `Continue`… / `End`. Returns
+/// `None` past the end of the chain ([`sysex7_packet_count`] gives its
+/// length). Data bytes are masked to 7 bits per spec.
+///
+/// The inverse of [`SysExAssembler::push_sysex7_packet`]: feeding the
+/// full chain through the assembler yields `payload` back.
+#[must_use]
+pub fn encode_sysex7_packet(group: u8, payload: &[u8], packet_index: usize) -> Option<[u32; 2]> {
+    let total = sysex7_packet_count(payload.len());
+    if packet_index >= total {
+        return None;
+    }
+    let start = packet_index * SYSEX_7_BYTES_PER_PACKET;
+    let chunk = &payload[start..(start + SYSEX_7_BYTES_PER_PACKET).min(payload.len())];
+    let status = match (total, packet_index) {
+        (1, _) => SYSEX_STATUS_COMPLETE,
+        (_, 0) => SYSEX_STATUS_START,
+        (_, i) if i == total - 1 => SYSEX_STATUS_END,
+        _ => SYSEX_STATUS_CONTINUE,
+    };
+    let mut padded = [0u8; SYSEX_7_BYTES_PER_PACKET];
+    for (dst, src) in padded.iter_mut().zip(chunk) {
+        *dst = src & 0x7F;
+    }
+    // chunk.len() is 0..=6 by construction.
+    #[allow(clippy::cast_possible_truncation)]
+    let n = chunk.len() as u32;
+    let w0 = (u32::from(MT_SYSEX_7) << 28)
+        | (u32::from(group & 0x0F) << 24)
+        | (u32::from(status) << 20)
+        | (n << 16)
+        | (u32::from(padded[0]) << 8)
+        | u32::from(padded[1]);
+    let w1 = (u32::from(padded[2]) << 24)
+        | (u32::from(padded[3]) << 16)
+        | (u32::from(padded[4]) << 8)
+        | u32::from(padded[5]);
+    Some([w0, w1])
 }
 
 /// Pull `(group, channel)` off any channel-voice body. Returns `None`
@@ -1143,6 +1202,66 @@ mod tests {
             }
             _ => panic!("expected Complete on stream 9"),
         }
+    }
+
+    // -- SysEx-7 encoder --
+
+    // Feed an encoded chain back through the assembler and return the
+    // reassembled payload; the encoder and assembler anchor each other.
+    #[track_caller]
+    fn sysex7_encode_round_trip(group: u8, payload: &[u8]) {
+        let mut a = SysExAssembler::with_capacity(payload.len().max(1));
+        let total = sysex7_packet_count(payload.len());
+        for i in 0..total {
+            let packet = encode_sysex7_packet(group, payload, i).expect("in-range packet");
+            match a.push_sysex7_packet(packet) {
+                SysExFeed::Buffered => assert!(i + 1 < total, "premature Buffered"),
+                SysExFeed::Complete(p) => {
+                    assert_eq!(i + 1, total, "Complete before the last packet");
+                    assert_eq!(p.group, group);
+                    assert_eq!(p.bytes, payload);
+                }
+                _ => panic!("assembler rejected encoder output"),
+            }
+        }
+        assert!(encode_sysex7_packet(group, payload, total).is_none());
+    }
+
+    #[test]
+    fn sysex7_encoder_round_trips_through_assembler() {
+        sysex7_encode_round_trip(0, &[]);
+        sysex7_encode_round_trip(0, &[0x7E]);
+        sysex7_encode_round_trip(3, &[1, 2, 3, 4, 5, 6]); // exactly one packet
+        sysex7_encode_round_trip(7, &[1, 2, 3, 4, 5, 6, 7]); // Start + End
+        sysex7_encode_round_trip(15, &(0..=40u8).collect::<Vec<_>>()); // long chain
+    }
+
+    #[test]
+    fn sysex7_encoder_bits_match_spec() {
+        // Complete, 2 bytes, group 5: mt=0x3, status=0x0, n=2.
+        let packet = encode_sysex7_packet(5, &[0x7E, 0x09], 0).unwrap();
+        assert_eq!(
+            packet,
+            [(0x3 << 28) | (5 << 24) | (2 << 16) | (0x7E << 8) | 0x09, 0]
+        );
+        // 7 bytes: packet 0 is Start (n=6), packet 1 is End (n=1).
+        let payload = [1, 2, 3, 4, 5, 6, 7];
+        let start = encode_sysex7_packet(0, &payload, 0).unwrap();
+        assert_eq!(
+            (start[0] >> 20) & 0xF,
+            u32::from(SYSEX_STATUS_START),
+            "first of a chain is Start"
+        );
+        let end = encode_sysex7_packet(0, &payload, 1).unwrap();
+        assert_eq!((end[0] >> 20) & 0xF, u32::from(SYSEX_STATUS_END));
+        assert_eq!((end[0] >> 16) & 0xF, 1, "End carries the 1 leftover byte");
+        assert_eq!((end[0] >> 8) & 0xFF, 7);
+    }
+
+    #[test]
+    fn sysex7_encoder_masks_to_7_bit() {
+        let packet = encode_sysex7_packet(0, &[0xFF], 0).unwrap();
+        assert_eq!((packet[0] >> 8) & 0xFF, 0x7F);
     }
 
     #[test]
