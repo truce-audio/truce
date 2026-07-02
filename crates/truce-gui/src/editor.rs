@@ -88,6 +88,17 @@ pub struct BuiltinEditor<P: Params> {
     /// `EditorScale` and this field is unused.
     #[cfg(feature = "cpu")]
     scale: EditorScale,
+    /// Standalone hosts set this (via `set_uses_system_scale`) so the
+    /// editor honors the desktop `Xft.dpi` scale on Linux; plugins leave
+    /// it false and drive scale from the host instead. See
+    /// [`crate::platform::editor_window_scale`]. No effect off Linux.
+    #[cfg(feature = "cpu")]
+    use_system_scale: bool,
+    /// Whether the host announced a content scale via `set_scale_factor`.
+    /// On Linux this gates whether an embedded editor trusts `scale`
+    /// (host-announced) or defaults to 1.0.
+    #[cfg(feature = "cpu")]
+    host_scale_set: bool,
     /// Meter IDs referenced by the layout, collected once at
     /// construction. Meters are display-only values written from the
     /// audio thread (`PluginContext::get_meter`); they never move
@@ -268,6 +279,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             last_painted_values: Vec::new(),
             #[cfg(feature = "cpu")]
             scale: EditorScale::new(crate::backing_scale()),
+            #[cfg(feature = "cpu")]
+            use_system_scale: false,
+            #[cfg(feature = "cpu")]
+            host_scale_set: false,
             #[cfg(feature = "cpu")]
             meter_ids,
             #[cfg(feature = "cpu")]
@@ -897,6 +912,10 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                     Layout::Rows(pl) => editor.interaction.build_regions(pl),
                     Layout::Grid(gl) => editor.interaction.build_regions_grid(gl),
                 }
+                // [truce-scale] DIAGNOSTIC - remove after debugging #163
+                eprintln!(
+                    "[truce-scale cpu] window.resize({new_w}x{new_h}) scale={scale}"
+                );
                 window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
                 editor.request_repaint();
             }
@@ -1095,6 +1114,13 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 editor.scale.set(info.scale());
                 crate::platform::note_linux_scale_factor(info.scale());
                 let phys = info.physical_size();
+                // [truce-scale] DIAGNOSTIC - remove after debugging #163
+                eprintln!(
+                    "[truce-scale cpu-size] Resized actual_window_phys={}x{} scale={}",
+                    phys.width,
+                    phys.height,
+                    info.scale()
+                );
                 if editor.can_resize() {
                     let scale = info.scale();
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -1117,13 +1143,31 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                             editor.max_size(),
                             editor.aspect_ratio(),
                         );
+                        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+                        eprintln!(
+                            "[truce-scale cpu] Resized phys={}x{} info.scale()={} logical_in={}x{} fitted={}x{} correct={:?} editor.size={:?} bounds min={:?} max={:?} aspect={:?}",
+                            phys.width, phys.height, info.scale(), lw, lh, fw, fh, correct, editor.size(),
+                            editor.min_size(), editor.max_size(), editor.aspect_ratio(),
+                        );
                         if (fw, fh) != editor.size() {
                             editor.set_size(fw, fh);
                         }
-                        if let Some((rw, rh)) = correct
-                            && let Some(ctx) = editor.context.as_ref()
-                        {
-                            let _ = ctx.request_resize(rw, rh);
+                        if let Some((rw, rh)) = correct {
+                            // On Linux, hosts that bypass size negotiation
+                            // (Bitwig) ignore this request and react by
+                            // *growing* the embed window - a resize loop.
+                            // Clamp the content (and counter-resize our child)
+                            // but never ask the host to resize its frame.
+                            // mac/windows honor it (and negotiate via
+                            // `checkSizeConstraint`) anyway.
+                            #[cfg(not(target_os = "linux"))]
+                            if let Some(ctx) = editor.context.as_ref() {
+                                // [truce-scale] DIAGNOSTIC - remove after debugging #163
+                                eprintln!("[truce-scale cpu] request_resize({rw}x{rh}) -> host");
+                                let _ = ctx.request_resize(rw, rh);
+                            }
+                            #[cfg(target_os = "linux")]
+                            let _ = (rw, rh);
                         }
                     }
                 }
@@ -1290,8 +1334,27 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // Windows the per-monitor DPI from the parent HWND. Any
         // `set_scale_factor` the host issues after open will overwrite
         // through the same shared cell.
-        self.scale
-            .set(crate::platform::query_backing_scale(&parent));
+        // Pick the baseview scale policy. On Linux an embedded plugin
+        // follows the host's scale (default 1.0) rather than the desktop
+        // Xft.dpi, which a non-DPI-aware host (Bitwig) doesn't share; the
+        // standalone and every macOS/Windows path keep SystemScaleFactor.
+        let scale_policy = if let Some(s) = crate::platform::editor_window_scale(
+            self.use_system_scale,
+            self.host_scale_set,
+            self.scale.get(),
+        ) {
+            self.scale.set(s);
+            baseview::WindowScalePolicy::ScaleFactor(s)
+        } else {
+            self.scale
+                .set(crate::platform::query_backing_scale(&parent));
+            baseview::WindowScalePolicy::SystemScaleFactor
+        };
+        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+        eprintln!(
+            "[truce-scale cpu] open use_system_scale={} host_scale_set={} effective_scale={} size={}x{}",
+            self.use_system_scale, self.host_scale_set, self.scale.get(), w, h,
+        );
         let scale = self.scale.get();
         let scale_f32 = self.scale.get_f32();
         self.backend = CpuBackend::new(w, h, scale_f32);
@@ -1312,11 +1375,15 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         let (lw, lh) = (f64::from(w), f64::from(h));
         let phys_w = crate::platform::to_physical_px(w, scale);
         let phys_h = crate::platform::to_physical_px(h, scale);
+        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+        eprintln!(
+            "[truce-scale cpu-size] open surface_configured={phys_w}x{phys_h} (logical {w}x{h} * scale {scale})"
+        );
 
         let options = baseview::WindowOpenOptions {
             title: String::from("truce"),
             size: baseview::Size::new(lw, lh),
-            scale: baseview::WindowScalePolicy::SystemScaleFactor,
+            scale: scale_policy,
         };
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
@@ -1405,7 +1472,14 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // change on its next frame and rebuilds the CPU pixmap +
         // reconfigures the wgpu surface. The trait's default no-op
         // would silently swallow host scale changes here.
+        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+        eprintln!("[truce-scale cpu] set_scale_factor({factor})");
+        self.host_scale_set = true;
         self.scale.set(factor);
+    }
+
+    fn set_uses_system_scale(&mut self, yes: bool) {
+        self.use_system_scale = yes;
     }
 
     fn close(&mut self) {

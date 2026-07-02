@@ -2283,10 +2283,17 @@ unsafe fn request_host_resize(host: *const clap_host, host_scale: f64, lw: u32, 
             return false;
         }
         let Some(req) = (*host_gui_ptr).request_resize else {
+            // [truce-scale] DIAGNOSTIC - remove after debugging #163
+            eprintln!("[truce-scale clap] request_host_resize: host has no request_resize");
             return false;
         };
         let (pw, ph) = scale_logical_to_physical(lw, lh, host_scale);
-        req(host, pw, ph)
+        let ok = req(host, pw, ph);
+        // [truce-scale] DIAGNOSTIC - remove after debugging #163
+        eprintln!(
+            "[truce-scale clap] request_host_resize logical={lw}x{lh} host_scale={host_scale} -> phys={pw}x{ph} host_returned={ok}"
+        );
+        ok
     }
 }
 
@@ -2355,6 +2362,11 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
             let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
             // Convert clamped logical back to physical for the host.
             let (pw, ph) = scale_logical_to_physical(lw, lh, data.host_scale);
+            // [truce-scale] DIAGNOSTIC - remove after debugging #163
+            eprintln!(
+                "[truce-scale clap] adjust_size in_phys={}x{} host_scale={} logical={}x{} fitted={lw}x{lh} -> out_phys={pw}x{ph}",
+                *width, *height, data.host_scale, req.0, req.1,
+            );
             *width = pw;
             *height = ph;
             true
