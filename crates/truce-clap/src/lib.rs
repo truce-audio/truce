@@ -1828,8 +1828,23 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             return false;
         }
 
-        let Some(deserialized) = state::deserialize_state(&blob, data.plugin_id_hash) else {
-            return false;
+        let deserialized = match state::deserialize_state(&blob, data.plugin_id_hash) {
+            Some(d) => d,
+            None => {
+                // Not a truce envelope (e.g. legacy nice-plug JSON
+                // session). No known param IDs to restore host-thread
+                // side, but hand the raw bytes to the plugin's
+                // load_state() unchanged via the same audio-thread
+                // handoff queue as a normal load - PluginRuntime::
+                // load_state takes &mut P, which would alias
+                // process()'s &mut P if called here on the host
+                // thread. A plugin-side migration path can still
+                // recognize its own legacy format from `extra`.
+                state::DeserializedState {
+                    params: Vec::new(),
+                    extra: Some(blob),
+                }
+            }
         };
 
         // Apply params synchronously on the host thread (atomic-safe)
