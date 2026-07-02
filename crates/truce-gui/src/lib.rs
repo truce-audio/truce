@@ -83,7 +83,7 @@ pub use truce_plugin::__plugin_logic_deps;
 pub use editor::BuiltinEditor;
 #[cfg(all(feature = "gpu", not(target_os = "ios")))]
 pub use gpu_editor::GpuEditor;
-pub use platform::{EditorScale, to_physical_px};
+pub use platform::{EditorScale, PaintPacer, to_physical_px};
 
 /// Construct truce's default editor for a plugin's `editor()` impl.
 ///

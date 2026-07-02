@@ -114,6 +114,10 @@ struct GpuWindowHandler<P: Params> {
     /// `WgpuBackend::set_scale` + `resize` when they diverge.
     scale: EditorScale,
     last_applied_scale: f32,
+    /// Paces paints to the compositor's measured consumption rate so
+    /// the per-tick render/present can't park the host's GUI thread in
+    /// the swapchain acquire - see [`crate::PaintPacer`].
+    pacer: crate::platform::PaintPacer,
 }
 
 impl<P: Params + 'static> GpuWindowHandler<P> {
@@ -177,9 +181,15 @@ impl<P: Params + 'static> GpuWindowHandler<P> {
                     self.current_size = new_size;
                 }
 
+                // Compositor pacing veto - scale/resize above still
+                // apply during a hold; only the render + present skip.
+                if self.pacer.should_hold() {
+                    return;
+                }
                 inner.render_to(gpu);
             }
             gpu.present();
+            self.pacer.record_acquire(gpu.acquire_wait());
         }
     }
 }
@@ -375,6 +385,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                     current_size: size,
                     scale: scale_handle,
                     last_applied_scale: scale,
+                    pacer: crate::platform::PaintPacer::default(),
                 }
             },
         );

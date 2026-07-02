@@ -347,6 +347,10 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     /// of re-calling `to_physical_px` twice per frame.
     last_phys_w: u32,
     last_phys_h: u32,
+    /// Paces paints to the compositor's measured consumption rate so
+    /// the per-tick render/blit can't park the host's GUI thread in
+    /// the swapchain acquire - see [`truce_gui::PaintPacer`].
+    pacer: truce_gui::PaintPacer,
     /// Last known cursor position in logical points.
     last_pos: LogicalPosition,
     /// Shared with the parent `SlintEditor`. `Editor::set_size`
@@ -534,6 +538,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
             self.last_phys_h = phys_h;
         }
 
+        // Compositor pacing veto - see `pacer`. Resize / scale
+        // handling above still applies during a hold; the render +
+        // present below wait for the compositor to catch up.
+        if self.pacer.should_hold() {
+            return;
+        }
+
         // 1. Drive Slint timers/animations
         slint::platform::update_timers_and_animations();
 
@@ -571,7 +582,9 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // with the desktop showing through the newly exposed area. On
         // `Outdated` / `Lost` / `Validation` we reconfigure and retry;
         // `Timeout` / `Occluded` are transient, so we skip this frame.
+        let acquire_start = std::time::Instant::now();
         let mut acquired = None;
+        let mut transient_skip = false;
         for _ in 0..2 {
             match self.surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame)
@@ -585,9 +598,14 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     self.surface.configure(&self.device, &self.surface_config);
                 }
                 wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    return;
+                    transient_skip = true;
+                    break;
                 }
             }
+        }
+        self.pacer.record_acquire(acquire_start.elapsed());
+        if transient_skip {
+            return;
         }
         let Some(frame) = acquired else {
             return;
@@ -966,6 +984,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     last_applied_scale: scale_f32,
                     last_phys_w: phys_w,
                     last_phys_h: phys_h,
+                    pacer: truce_gui::PaintPacer::default(),
                     last_pos: LogicalPosition::default(),
                     pending_size: pending_size_handle,
                     device_lost,

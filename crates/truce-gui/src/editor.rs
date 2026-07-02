@@ -842,6 +842,10 @@ struct BuiltinWindowHandler<P: Params> {
     /// tracking, double-click synthesis, and line→pixel scroll
     /// conversion once for everyone.
     translator: crate::interaction::BaseviewTranslator,
+    /// Paces paints to the compositor's measured consumption rate so
+    /// per-tick repaints (meters) can't park the host's GUI thread in
+    /// the swapchain acquire - see [`crate::PaintPacer`].
+    pacer: crate::platform::PaintPacer,
     /// Last scale we built the CPU pixmap + wgpu surface against.
     /// `on_frame` reads `editor.scale.get()` (via the raw ptr deref
     /// it already does) and compares; on divergence it rebuilds the
@@ -972,6 +976,12 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
         // truly nothing moved.
         editor.detect_host_param_changes();
         editor.detect_meter_changes();
+        // Compositor pacing veto - before `take_needs_repaint` so the
+        // dirty bit survives the held ticks and the deferred paint
+        // still happens.
+        if self.pacer.should_hold() {
+            return;
+        }
         if !editor.take_needs_repaint() {
             return;
         }
@@ -1001,7 +1011,9 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
             // reconfigure (`surface_config` already holds the correct
             // physical size) and retry; `Timeout` / `Occluded` are
             // transient, so we skip this frame and try again next tick.
+            let acquire_start = std::time::Instant::now();
             let mut acquired = None;
+            let mut transient_skip = false;
             for _ in 0..2 {
                 match surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(frame)
@@ -1015,8 +1027,15 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                         surface.configure(device, surface_config);
                     }
                     wgpu::CurrentSurfaceTexture::Timeout
-                    | wgpu::CurrentSurfaceTexture::Occluded => return,
+                    | wgpu::CurrentSurfaceTexture::Occluded => {
+                        transient_skip = true;
+                        break;
+                    }
                 }
+            }
+            self.pacer.record_acquire(acquire_start.elapsed());
+            if transient_skip {
+                return;
             }
             let Some(frame) = acquired else {
                 // Couldn't recover the swapchain this tick - ask for
@@ -1431,6 +1450,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     backend: shared_for_handler.clone(),
                     translator: crate::interaction::BaseviewTranslator::default(),
                     last_applied_scale: scale_f32,
+                    pacer: crate::platform::PaintPacer::default(),
                     resize_corrector: ResizeCorrector::default(),
                 }
             },

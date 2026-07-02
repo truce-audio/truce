@@ -287,6 +287,11 @@ pub struct WgpuBackend {
     /// rebuilds the texture if these no longer match the target view.
     msaa_width: u32,
     msaa_height: u32,
+    /// How long the last `present` blocked in the swapchain acquire
+    /// (`get_current_texture`). The acquire waits for the compositor
+    /// to free a frame slot; editor handlers read this to pace paints
+    /// so the wait doesn't park the host's GUI thread.
+    last_acquire_wait: std::time::Duration,
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     /// Ordered list of bind-group switches within the current frame. Always
@@ -614,6 +619,7 @@ impl WgpuBackend {
             msaa_texture,
             msaa_width: width,
             msaa_height: height,
+            last_acquire_wait: std::time::Duration::ZERO,
             vertices: Vec::with_capacity(4096),
             indices: Vec::with_capacity(8192),
             batches: Vec::new(),
@@ -924,6 +930,7 @@ impl WgpuBackend {
             msaa_texture,
             msaa_width: width,
             msaa_height: height,
+            last_acquire_wait: std::time::Duration::ZERO,
             vertices: Vec::with_capacity(4096),
             indices: Vec::with_capacity(8192),
             batches: Vec::new(),
@@ -1136,6 +1143,13 @@ impl WgpuBackend {
             view_formats: &[],
         });
         tex.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// How long the last `present` blocked in the swapchain acquire.
+    /// See [`Self::last_acquire_wait`].
+    #[must_use]
+    pub fn acquire_wait(&self) -> std::time::Duration {
+        self.last_acquire_wait
     }
 
     /// Resize the wgpu surface, MSAA texture, and viewport projection.
@@ -1579,7 +1593,9 @@ impl RenderBackend for WgpuBackend {
         // with the desktop showing through the newly exposed area. On
         // `Outdated` / `Lost` / `Validation` we reconfigure and retry;
         // `Timeout` / `Occluded` are transient, so we skip this frame.
+        let acquire_start = std::time::Instant::now();
         let mut acquired = None;
+        let mut transient_skip = false;
         for _ in 0..2 {
             match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(frame)
@@ -1595,9 +1611,14 @@ impl RenderBackend for WgpuBackend {
                     }
                 }
                 wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    return;
+                    transient_skip = true;
+                    break;
                 }
             }
+        }
+        self.last_acquire_wait = acquire_start.elapsed();
+        if transient_skip {
+            return;
         }
         let Some(frame) = acquired else {
             return;
@@ -2003,6 +2024,7 @@ impl WgpuBackend {
             width: phys_w,
             height: phys_h,
             scale,
+            last_acquire_wait: std::time::Duration::ZERO,
         })
     }
 
