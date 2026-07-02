@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use truce_core::Float;
 #[cfg(feature = "cpu")]
-use truce_core::editor::Editor;
-#[cfg(feature = "cpu")]
 use truce_core::editor::RawWindowHandle;
+#[cfg(feature = "cpu")]
+use truce_core::editor::{Editor, ResizeCorrector};
 use truce_core::editor::{PluginContext, PluginContextReadF32};
 use truce_params::Params;
 
@@ -836,6 +836,10 @@ struct BuiltinWindowHandler<P: Params> {
     /// guards the lifecycle, so reading `editor.scale` is the
     /// canonical access path.
     last_applied_scale: f32,
+    /// Enforces min/max/aspect on host resizes that bypassed the
+    /// format's negotiation hooks (Linux hosts resizing the embed
+    /// window directly).
+    resize_corrector: ResizeCorrector,
 }
 
 // SAFETY: The raw pointer is only accessed from the GUI thread.
@@ -1102,9 +1106,25 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                     } else {
                         (phys.width, phys.height)
                     };
-                    let (cur_w, cur_h) = editor.size();
-                    if (lw, lh) != (cur_w, cur_h) && lw > 0 && lh > 0 {
-                        editor.set_size(lw, lh);
+                    if lw > 0 && lh > 0 {
+                        // A host that resized the embed window directly
+                        // never ran the format's constraint preflight -
+                        // fit here and push the corrected size back.
+                        let ((fw, fh), correct) = self.resize_corrector.fit(
+                            lw,
+                            lh,
+                            editor.min_size(),
+                            editor.max_size(),
+                            editor.aspect_ratio(),
+                        );
+                        if (fw, fh) != editor.size() {
+                            editor.set_size(fw, fh);
+                        }
+                        if let Some((rw, rh)) = correct
+                            && let Some(ctx) = editor.context.as_ref()
+                        {
+                            let _ = ctx.request_resize(rw, rh);
+                        }
                     }
                 }
                 // Keep the swapchain covering the window's *actual*
@@ -1372,6 +1392,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     backend: shared_for_handler.clone(),
                     translator: crate::interaction::BaseviewTranslator::default(),
                     last_applied_scale: scale_f32,
+                    resize_corrector: ResizeCorrector::default(),
                 }
             },
         );

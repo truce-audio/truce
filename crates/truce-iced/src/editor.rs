@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::iced::{Event, Size};
 use iced_wgpu::wgpu;
-use truce_core::editor::{Editor, PluginContext};
+use truce_core::editor::{Editor, PluginContext, ResizeCorrector};
 use truce_gui::EditorScale;
 use truce_gui::layout::GridLayout;
 use truce_params::Params;
@@ -280,6 +280,14 @@ struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
     /// borrowing `runtime`.
     scale: EditorScale,
     last_cursor: Option<baseview::MouseCursor>,
+    /// Constraint copy from the parent `IcedEditor`, applied to
+    /// host-driven `Resized` events that bypassed the format's
+    /// negotiation hooks (Linux hosts resizing the embed window
+    /// directly), plus the corrective push-back guard.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    aspect_ratio: Option<(u32, u32)>,
+    resize_corrector: ResizeCorrector,
 }
 
 // The explicit `Idle | None => Default` arm documents iced's known
@@ -498,6 +506,33 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     // the reconfigure inline below.
                     runtime.scale.set(info.scale());
                     runtime.last_applied_scale = info.scale();
+                    // A host that resized the embed window directly never
+                    // ran the format's constraint preflight - fit here,
+                    // push the corrected size back to the host, and queue
+                    // the fitted size through the pending cell so
+                    // `on_frame` counter-resizes the child window.
+                    {
+                        let logical = info.logical_size();
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let (lw, lh) =
+                            (logical.width.round() as u32, logical.height.round() as u32);
+                        let ((fw, fh), correct) = self.resize_corrector.fit(
+                            lw,
+                            lh,
+                            self.min_size,
+                            self.max_size,
+                            self.aspect_ratio,
+                        );
+                        if let Some((rw, rh)) = correct {
+                            if let Some(ref program) = runtime.program {
+                                let _ = program.context.request_resize(rw, rh);
+                            }
+                            self.pending_size.store(
+                                (u64::from(fw) << 32) | u64::from(fh),
+                                std::sync::atomic::Ordering::Release,
+                            );
+                        }
+                    }
                     if let Some(ref mut render) = runtime.render {
                         let pw = info.physical_size().width;
                         let ph = info.physical_size().height;
@@ -573,6 +608,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         let scale = self.scale.clone();
         let meter_ids = self.meter_ids.clone();
         let pending_size = Arc::clone(&self.pending_size);
+        let min_size = self.min_size;
+        let max_size = self.max_size;
+        let aspect_ratio = self.aspect_ratio;
         let typed_ctx = context.with_params(self.params.clone());
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
@@ -616,6 +654,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                     pending_size,
                     scale,
                     last_cursor: None,
+                    min_size,
+                    max_size,
+                    aspect_ratio,
+                    resize_corrector: ResizeCorrector::default(),
                 }
             },
         );

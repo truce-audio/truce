@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, PluginContext, PluginContextReadF64, RawWindowHandle};
+use truce_core::editor::{
+    Editor, PluginContext, PluginContextReadF64, RawWindowHandle, ResizeCorrector,
+};
 use truce_params::Params;
 
 use crate::platform::ParentWindow;
@@ -357,6 +359,14 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     /// `repaint_delay`. `None` means egui reported itself idle (no
     /// animation, caret blink, or pending `request_repaint`).
     next_paint_at: Option<std::time::Instant>,
+    /// Constraint copy from the parent `EguiEditor`, applied to
+    /// host-driven `Resized` events that bypassed the format's
+    /// negotiation hooks (Linux hosts resizing the embed window
+    /// directly), plus the corrective push-back guard.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    aspect_ratio: Option<(u32, u32)>,
+    resize_corrector: ResizeCorrector,
 }
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
@@ -773,6 +783,19 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             (pw as f32 / scale).round() as u32,
                             (ph as f32 / scale).round() as u32,
                         );
+                        // A host that resized the embed window directly
+                        // never ran the format's constraint preflight - fit
+                        // here and push the corrected size back.
+                        let (logical_size, correct) = self.resize_corrector.fit(
+                            logical_size.0,
+                            logical_size.1,
+                            self.min_size,
+                            self.max_size,
+                            self.aspect_ratio,
+                        );
+                        if let Some((rw, rh)) = correct {
+                            let _ = self.context.request_resize(rw, rh);
+                        }
                         // Write through to the shared scale so `on_frame` /
                         // `run_frame` convert with the OS-reported DPI.
                         self.scale.set(info.scale());
@@ -963,6 +986,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         let parent_wrapper = ParentWindow(parent);
         let handler_ctx = typed_ctx.clone();
+        let min_size = self.min_size;
+        let max_size = self.max_size;
+        let aspect_ratio = self.aspect_ratio;
         // Seed the idle gate's param snapshot so the first automation
         // change is detected as a change rather than as "differs from
         // empty." IDs are fixed for the editor's lifetime.
@@ -1042,6 +1068,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     param_snapshot,
                     force_paint: true,
                     next_paint_at: None,
+                    min_size,
+                    max_size,
+                    aspect_ratio,
+                    resize_corrector: ResizeCorrector::default(),
                 }
             },
         );

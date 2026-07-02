@@ -687,6 +687,48 @@ pub fn clamp_logical_size(w: u32, h: u32, editor: &dyn Editor) -> (u32, u32) {
     (w.clamp(min_w.max(1), max_w), h.clamp(min_h.max(1), max_h))
 }
 
+/// Enforces size constraints on host resizes that bypassed the format's
+/// negotiation hooks. Some hosts resize the plugin's embedded window
+/// directly at the windowing-system level (Bitwig on Linux/X11 resizes
+/// the embed window itself), so no `checkSizeConstraint`-style preflight
+/// ever runs - the editor's own `Resized` handler is the last place that
+/// can enforce `min_size` / `max_size` / `aspect_ratio`.
+///
+/// [`Self::fit`] returns the size the editor should render at, plus an
+/// optional corrective size to push back to the host
+/// (`PluginContext::request_resize`). Each offending host size triggers at
+/// most one correction, and the corrective size itself satisfies the
+/// constraints, so a host that refuses (or echoes) the request can't be
+/// spun into a resize feedback loop.
+#[derive(Default)]
+pub struct ResizeCorrector {
+    /// The last out-of-bounds host size a correction was requested for.
+    requested_for: Option<(u32, u32)>,
+}
+
+impl ResizeCorrector {
+    /// Fit a host-driven logical size against the constraints. Returns
+    /// the fitted size to render at and, when the host size was out of
+    /// bounds and not yet corrected, the size to request back.
+    pub fn fit(
+        &mut self,
+        w: u32,
+        h: u32,
+        min: (u32, u32),
+        max: (u32, u32),
+        aspect: Option<(u32, u32)>,
+    ) -> ((u32, u32), Option<(u32, u32)>) {
+        let fitted = fit_size(w, h, min, max, aspect);
+        if fitted == (w, h) {
+            self.requested_for = None;
+            return (fitted, None);
+        }
+        let already_requested = self.requested_for == Some((w, h));
+        self.requested_for = Some((w, h));
+        (fitted, (!already_requested).then_some(fitted))
+    }
+}
+
 /// A usable `(num, denom)` ratio as `u64`, or `None` when no aspect is set
 /// or either term is zero. `u64` so the on-ratio multiplications below can't
 /// overflow before the clamp lands (a hypothetical `(u32::MAX, 1)` aspect).
@@ -714,6 +756,56 @@ fn derive_width(h: u32, min_w: u32, max_w: u32, num64: u64, denom64: u64) -> (u3
     let on_ratio = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX)) as u32;
     let clamped = on_ratio.clamp(min_w.max(1), max_w);
     (clamped, clamped != on_ratio)
+}
+
+#[cfg(test)]
+mod corrector_tests {
+    use super::ResizeCorrector;
+
+    const MIN: (u32, u32) = (300, 200);
+    const MAX: (u32, u32) = (900, 600);
+
+    #[test]
+    fn in_bounds_size_passes_through_without_correction() {
+        let mut c = ResizeCorrector::default();
+        assert_eq!(c.fit(400, 300, MIN, MAX, None), ((400, 300), None));
+    }
+
+    #[test]
+    fn out_of_bounds_corrects_once_per_host_size() {
+        let mut c = ResizeCorrector::default();
+        // First sight of an oversize host window: fit + request.
+        let (fitted, req) = c.fit(1200, 800, MIN, MAX, None);
+        assert_eq!(fitted, (900, 600));
+        assert_eq!(req, Some((900, 600)));
+        // Host refused / echoed the same size: no repeat request.
+        assert_eq!(c.fit(1200, 800, MIN, MAX, None), ((900, 600), None));
+        // Drag continues to a new offending size: one new request.
+        let (_, req) = c.fit(1300, 800, MIN, MAX, None);
+        assert_eq!(req, Some((900, 600)));
+    }
+
+    #[test]
+    fn honoured_correction_resets_the_guard() {
+        let mut c = ResizeCorrector::default();
+        let _ = c.fit(1200, 800, MIN, MAX, None);
+        // Host applied the corrective size: in bounds, guard resets...
+        assert_eq!(c.fit(900, 600, MIN, MAX, None), ((900, 600), None));
+        // ...so the same offending size requests again next time.
+        let (_, req) = c.fit(1200, 800, MIN, MAX, None);
+        assert_eq!(req, Some((900, 600)));
+    }
+
+    #[test]
+    fn aspect_violation_corrects_onto_ratio() {
+        let mut c = ResizeCorrector::default();
+        let ((w, h), req) = c.fit(800, 600, MIN, MAX, Some((4, 3)));
+        assert_eq!((w, h), (800, 600), "already on-ratio passes through");
+        assert_eq!(req, None);
+        let ((w, h), req) = c.fit(800, 400, MIN, MAX, Some((4, 3)));
+        assert_eq!((w, h), (533, 400), "height-limited fit onto 4:3");
+        assert_eq!(req, Some((533, 400)));
+    }
 }
 
 #[cfg(test)]
