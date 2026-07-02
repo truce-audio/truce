@@ -6,6 +6,8 @@ Notable changes per release.
 
 - **Editor size constraints are enforced when the host bypasses resize negotiation.** Some Linux hosts (Bitwig on X11) resize the plugin's embedded window directly at the windowing-system level, skipping VST3 `checkSizeConstraint` / CLAP resize hints entirely - so `min_size` / `max_size` / `aspect_ratio` were silently ignored there. Every GUI backend's resize handler now fits the incoming size against the editor's declared bounds and pushes a corrective resize back to the host (at most once per offending size, so an uncooperative host can't be spun into a feedback loop). (#163)
 - **Right- and middle-click now reach iced and Slint editors.** Both backends forwarded only the left button from baseview, so right-click-to-reset (and any custom-widget use of other buttons) never fired; all mouse buttons map through now. (#168)
+- **Fixed a crash when closing and reopening plugin editors on macOS.** The editor's frame timer could fire after its window state was freed (a use-after-free most visible as an AU v3 editor crash on reopen); the timer is now invalidated at teardown and holds only a weak reference. Via the `baseview-truce` 0.1.1-truce.12 dependency, all GUI backends.
+
 
 ## 1.0.4
 
