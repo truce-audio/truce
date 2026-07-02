@@ -340,7 +340,11 @@ pub fn note_linux_scale_factor(scale: f64) {
 /// macOS/Windows always keep `SystemScaleFactor`: the OS reports a
 /// reliable per-window scale there.
 #[must_use]
-pub fn editor_window_scale(uses_system_scale: bool, host_scale_set: bool, host_scale: f64) -> Option<f64> {
+pub fn editor_window_scale(
+    uses_system_scale: bool,
+    host_scale_set: bool,
+    host_scale: f64,
+) -> Option<f64> {
     #[cfg(target_os = "linux")]
     {
         if uses_system_scale {

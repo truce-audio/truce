@@ -1041,11 +1041,6 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
             let (lw, lh) = phys_to_logical(*w, *h, host_scale);
             let (fw, fh) = fit_logical_size(lw, lh, editor.as_ref());
             let (pw, ph) = logical_to_phys(fw, fh, host_scale);
-            // [truce-scale] DIAGNOSTIC - remove after debugging #163
-            eprintln!(
-                "[truce-scale vst3] checkSizeConstraint in_phys={}x{} host_scale={host_scale} logical={lw}x{lh} fitted={fw}x{fh} -> out_phys={pw}x{ph}",
-                *w, *h,
-            );
             *w = pw;
             *h = ph;
         } else {
@@ -1197,13 +1192,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         let pw = (f64::from(w) * host_scale).round() as u32;
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         let ph = (f64::from(h) * host_scale).round() as u32;
-                        let ok =
-                            ffi::truce_vst3_request_resize(ctx_raw.as_ptr().cast_mut(), pw, ph) != 0;
-                        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                        eprintln!(
-                            "[truce-scale vst3] request_resize logical={w}x{h} host_scale={host_scale} -> phys={pw}x{ph} host_returned={ok}"
-                        );
-                        ok
+                        ffi::truce_vst3_request_resize(ctx_raw.as_ptr().cast_mut(), pw, ph) != 0
                     }),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {

@@ -912,10 +912,6 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                     Layout::Rows(pl) => editor.interaction.build_regions(pl),
                     Layout::Grid(gl) => editor.interaction.build_regions_grid(gl),
                 }
-                // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                eprintln!(
-                    "[truce-scale cpu] window.resize({new_w}x{new_h}) scale={scale}"
-                );
                 window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
                 editor.request_repaint();
             }
@@ -1114,13 +1110,6 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 editor.scale.set(info.scale());
                 crate::platform::note_linux_scale_factor(info.scale());
                 let phys = info.physical_size();
-                // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                eprintln!(
-                    "[truce-scale cpu-size] Resized actual_window_phys={}x{} scale={}",
-                    phys.width,
-                    phys.height,
-                    info.scale()
-                );
                 if editor.can_resize() {
                     let scale = info.scale();
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -1143,12 +1132,6 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                             editor.max_size(),
                             editor.aspect_ratio(),
                         );
-                        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                        eprintln!(
-                            "[truce-scale cpu] Resized phys={}x{} info.scale()={} logical_in={}x{} fitted={}x{} correct={:?} editor.size={:?} bounds min={:?} max={:?} aspect={:?}",
-                            phys.width, phys.height, info.scale(), lw, lh, fw, fh, correct, editor.size(),
-                            editor.min_size(), editor.max_size(), editor.aspect_ratio(),
-                        );
                         if (fw, fh) != editor.size() {
                             editor.set_size(fw, fh);
                         }
@@ -1162,8 +1145,6 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                             // `checkSizeConstraint`) anyway.
                             #[cfg(not(target_os = "linux"))]
                             if let Some(ctx) = editor.context.as_ref() {
-                                // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                                eprintln!("[truce-scale cpu] request_resize({rw}x{rh}) -> host");
                                 let _ = ctx.request_resize(rw, rh);
                             }
                             #[cfg(target_os = "linux")]
@@ -1350,11 +1331,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 .set(crate::platform::query_backing_scale(&parent));
             baseview::WindowScalePolicy::SystemScaleFactor
         };
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!(
-            "[truce-scale cpu] open use_system_scale={} host_scale_set={} effective_scale={} size={}x{}",
-            self.use_system_scale, self.host_scale_set, self.scale.get(), w, h,
-        );
         let scale = self.scale.get();
         let scale_f32 = self.scale.get_f32();
         self.backend = CpuBackend::new(w, h, scale_f32);
@@ -1375,10 +1351,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         let (lw, lh) = (f64::from(w), f64::from(h));
         let phys_w = crate::platform::to_physical_px(w, scale);
         let phys_h = crate::platform::to_physical_px(h, scale);
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!(
-            "[truce-scale cpu-size] open surface_configured={phys_w}x{phys_h} (logical {w}x{h} * scale {scale})"
-        );
 
         let options = baseview::WindowOpenOptions {
             title: String::from("truce"),
@@ -1472,8 +1444,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // change on its next frame and rebuilds the CPU pixmap +
         // reconfigures the wgpu surface. The trait's default no-op
         // would silently swallow host scale changes here.
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!("[truce-scale cpu] set_scale_factor({factor})");
         self.host_scale_set = true;
         self.scale.set(factor);
     }

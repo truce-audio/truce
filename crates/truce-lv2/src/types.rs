@@ -56,3 +56,8 @@ pub const LV2_URID__MAP: &str = "http://lv2plug.in/ns/ext/urid#map";
 pub const LV2_URID__UNMAP: &str = "http://lv2plug.in/ns/ext/urid#unmap";
 pub const LV2_ATOM__SEQUENCE: &str = "http://lv2plug.in/ns/ext/atom#Sequence";
 pub const LV2_MIDI__MIDI_EVENT: &str = "http://lv2plug.in/ns/ext/midi#MidiEvent";
+/// Feature/URI for the host-provided options array (`LV2_Options_Option[]`).
+pub const LV2_OPTIONS__OPTIONS: &str = "http://lv2plug.in/ns/ext/options#options";
+/// Option key for the host's UI scale factor (an `atom:Float`). Hosts on a
+/// high-DPI display pass this so the UI can render at the right backing scale.
+pub const LV2_UI__SCALE_FACTOR: &str = "http://lv2plug.in/ns/extensions/ui#scaleFactor";
