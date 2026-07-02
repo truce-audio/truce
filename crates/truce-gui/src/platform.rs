@@ -200,6 +200,55 @@ pub use truce_gui_utils::{
 /// alongside its `EditorScale` clone and, when it observes a divergence
 /// at frame start, recomputes physical sizes and reconfigures its
 /// surface / renderer.
+/// Paces editor paints to the compositor's measured consumption rate.
+///
+/// A child-window swapchain acquire (`get_current_texture`) blocks
+/// until the compositor frees a frame slot, and a host may compose an
+/// embedded editor window far below the editor's tick rate (REAPER on
+/// Windows composes FX child windows at ~13 Hz). Painting every tick
+/// then parks the host's GUI thread in that wait - measured at 74 ms
+/// of every 77 ms frame, which saturates the host's whole UI and reads
+/// as the DAW hanging. Editors feed each paint's measured acquire wait
+/// into [`Self::record_acquire`] and skip the tick while
+/// [`Self::should_hold`] is true, converging on the rate the
+/// compositor actually displays (which is all the user ever saw).
+///
+/// The pace is a decayed maximum: a successfully paced paint measures
+/// a ~0 ms acquire, so pacing by the last wait alone oscillates
+/// (paced, unpaced, paced, ...). Holding the estimate through the
+/// zeros and shrinking it ~15% per paint lets it track a compositor
+/// that genuinely speeds up within roughly a second.
+#[derive(Debug, Default)]
+pub struct PaintPacer {
+    not_before: Option<std::time::Instant>,
+    pace: std::time::Duration,
+}
+
+impl PaintPacer {
+    /// Acquire waits below this are treated as "compositor keeps up" -
+    /// no pacing.
+    const MIN_PACE: std::time::Duration = std::time::Duration::from_millis(8);
+    /// Ceiling on the hold so a pathological acquire (wgpu's internal
+    /// timeout is ~1 s) can't park the editor for a full second.
+    const MAX_PACE: std::time::Duration = std::time::Duration::from_millis(250);
+
+    /// Whether this tick's paint should be skipped: the previous
+    /// acquire showed the compositor hasn't caught up yet.
+    #[must_use]
+    pub fn should_hold(&self) -> bool {
+        self.not_before
+            .is_some_and(|t| std::time::Instant::now() < t)
+    }
+
+    /// Record how long a paint's swapchain acquire blocked, scheduling
+    /// the earliest next paint accordingly.
+    pub fn record_acquire(&mut self, wait: std::time::Duration) {
+        self.pace = wait.max(self.pace.mul_f32(0.85));
+        self.not_before = (self.pace >= Self::MIN_PACE)
+            .then(|| std::time::Instant::now() + self.pace.min(Self::MAX_PACE));
+    }
+}
+
 #[derive(Clone)]
 pub struct EditorScale {
     inner: Arc<AtomicU64>,

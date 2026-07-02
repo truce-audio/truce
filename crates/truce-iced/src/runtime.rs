@@ -244,6 +244,10 @@ pub(crate) struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     /// (`RedrawRequest::At`, e.g. a `text_input` caret blink). `tick()`
     /// renders once this instant passes.
     pub(crate) redraw_at: Option<std::time::Instant>,
+    /// Paces paints to the compositor's measured consumption rate so
+    /// repaint-heavy editors can't park the host's GUI thread in the
+    /// swapchain acquire - see [`truce_gui::PaintPacer`].
+    pub(crate) pacer: truce_gui::PaintPacer,
 }
 
 /// The iced subscription runtime, parameterised by the editor's message
@@ -326,6 +330,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             force_render: true,
             animate: false,
             redraw_at: None,
+            pacer: truce_gui::PaintPacer::default(),
         }
     }
 
@@ -509,6 +514,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
 
     /// Drive one frame: update iced state + present to surface.
     pub(crate) fn tick(&mut self) {
+        // Compositor pacing veto - see `pacer`. Everything this tick
+        // would do (state sync, view rebuild, present) is deferred a
+        // few ticks; input events stay queued in `pending_events` and
+        // subscription messages stay in the channel, so nothing is
+        // lost, and the paced paint drains them.
+        if self.pacer.should_hold() {
+            return;
+        }
         let Some(render) = self.render.as_mut() else {
             return;
         };
@@ -703,7 +716,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // Present: get surface texture, render, submit. iced 0.14's
         // `Renderer::present` builds its own encoder + submits to the
         // queue internally, so we no longer manage either by hand.
-        let frame = match render.surface.get_current_texture() {
+        let acquire_start = std::time::Instant::now();
+        let acquire_result = render.surface.get_current_texture();
+        self.pacer.record_acquire(acquire_start.elapsed());
+        let frame = match acquire_result {
             Ok(f) => f,
             Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Outdated) => {
                 render

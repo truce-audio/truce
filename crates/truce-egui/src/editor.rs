@@ -332,6 +332,28 @@ fn unpack_size(packed: u64) -> (u32, u32) {
 
 // Baseview WindowHandler - owns the egui frame loop + wgpu renderer
 
+/// Ceiling on how long a pending resize may be debounced during a
+/// continuous drag (see `EguiWindowHandler::resize_seen`). ~4
+/// reconfigures per second is what the slowest measured driver path
+/// absorbs without backing up the GUI thread.
+const RESIZE_DEBOUNCE_CAP: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// How long the window size must hold still before `on_frame` paints
+/// again. While a child window is being live-resized, DWM holds its
+/// presented frames and wgpu's swapchain acquire
+/// (`Surface::get_current_texture`) blocks the host's GUI thread for
+/// its full internal timeout - ~1 s per paint measured in REAPER on
+/// Windows/AMD. Widgets that request continuous repaints (meters)
+/// would otherwise stack those stalls into a multi-second host freeze.
+///
+/// The window must exceed the quiet gap a blocked paint itself creates:
+/// while one paint sits in the 1 s acquire, the host finishes its
+/// resize cascade, so a short settle re-opens the gate the moment the
+/// stall ends and the freeze becomes self-sustaining (measured at a
+/// steady 4 paint-stalls/s with 50 ms). 300 ms sits past that gap
+/// while keeping the post-resize repaint prompt.
+const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
+
 struct EguiWindowHandler<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     context: PluginContext<P>,
@@ -390,6 +412,28 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     max_size: (u32, u32),
     aspect_ratio: Option<(u32, u32)>,
     resize_corrector: ResizeCorrector,
+    /// `pending_size` value observed on the previous `on_frame` tick.
+    /// A pending resize is applied only once it has survived one full
+    /// tick unchanged (or [`Self::resize_burst_start`] passes the
+    /// debounce cap). Reconfiguring the wgpu swapchain calls DXGI
+    /// `ResizeBuffers`, which blocks the host's GUI thread inside the
+    /// driver until the GPU queue drains - doing that on every tick of
+    /// a live drag stacked those waits into multi-second host freezes
+    /// (REAPER on Windows/AMD measured ~235 ms per reconfigure).
+    resize_seen: (u32, u32),
+    /// When the current burst of pending-size changes began. Bounds the
+    /// debounce: a drag that never pauses a full tick still reconfigures
+    /// every [`RESIZE_DEBOUNCE_CAP`] so the surface tracks the window.
+    resize_burst_start: Option<std::time::Instant>,
+    /// When the window size last changed (new pending observed or a
+    /// resize applied). Painting is suppressed until this is at least
+    /// [`RESIZE_SETTLE`] ago - see that constant for why.
+    last_size_change: Option<std::time::Instant>,
+    /// Paces paints to the compositor's measured consumption rate so
+    /// a repaint-heavy editor (meters) can't park the host's GUI
+    /// thread in the swapchain acquire - see
+    /// [`truce_gui::PaintPacer`].
+    pacer: truce_gui::PaintPacer,
     /// The window's *actual* physical size from the last host-driven
     /// `Resized` (`(0,0)` = none). The wgpu surface is configured to cover
     /// this exact extent - which may exceed `to_physical_px(fitted)` when a
@@ -679,6 +723,28 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             // picks up the freshly-sized surface.
             let pending = unpack_size(self.pending_size.load(Ordering::Relaxed));
             if pending != self.size && pending.0 > 0 && pending.1 > 0 {
+                // Debounce a live drag: only pay the swapchain
+                // reconfigure (a blocking driver wait, see
+                // `resize_seen`) once the size has held still for a
+                // tick, or every `RESIZE_DEBOUNCE_CAP` during a burst.
+                // Until then skip the tick - content briefly freezes
+                // at the old extent mid-drag, which beats stacking
+                // driver waits on the host's GUI thread.
+                let stable = pending == self.resize_seen;
+                if !stable {
+                    self.last_size_change = Some(std::time::Instant::now());
+                }
+                self.resize_seen = pending;
+                let deadline_passed = self
+                    .resize_burst_start
+                    .is_some_and(|t| t.elapsed() >= RESIZE_DEBOUNCE_CAP);
+                if self.resize_burst_start.is_none() {
+                    self.resize_burst_start = Some(std::time::Instant::now());
+                }
+                if !stable && !deadline_passed {
+                    return;
+                }
+                self.resize_burst_start = None;
                 // Skip the draw on a resize frame so AppKit's deferred
                 // relayout (scheduled by `view.setNeedsDisplay` inside
                 // `Window::resize`) settles before we paint, and
@@ -729,9 +795,32 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     resize_window,
                 );
                 self.size = new_size;
+                self.last_size_change = Some(std::time::Instant::now());
                 // The freshly-sized surface must be painted next frame
                 // regardless of the idle gate.
                 self.force_paint = true;
+                return;
+            }
+            // No divergent pending size: the host either never resized
+            // or bounced back to the current size mid-burst - clear the
+            // debounce marker so the next burst starts a fresh window.
+            self.resize_burst_start = None;
+            // Hold off painting until the size has been quiet for
+            // `RESIZE_SETTLE` - a paint mid-resize blocks the host GUI
+            // thread in the swapchain acquire (see the constant).
+            // `force_paint` stays armed, so the settled size paints on
+            // the first tick past the window.
+            if self
+                .last_size_change
+                .is_some_and(|t| t.elapsed() < RESIZE_SETTLE)
+            {
+                return;
+            }
+            // Compositor pacing veto - see `pacer`. Checked outside
+            // `should_paint` because a repaint-requesting widget
+            // (meter) re-arms `has_requested_repaint` every frame and
+            // would bypass any schedule-based gate.
+            if self.pacer.should_hold() {
                 return;
             }
             // Idle gate: skip the whole frame (no egui run, no present)
@@ -743,6 +832,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             }
             let repaint_delay = self.run_frame();
             self.force_paint = false;
+            self.pacer.record_acquire(
+                self.renderer
+                    .as_ref()
+                    .map_or(std::time::Duration::ZERO, EguiRenderer::acquire_wait),
+            );
             // Schedule the next forced paint from egui's reported delay:
             // `ZERO` -> paint next frame (animating), a finite delay ->
             // paint then, and anything very large (egui's idle
@@ -903,6 +997,15 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     if let baseview::WindowEvent::Resized(info) = win {
                         let pw = info.physical_size().width;
                         let ph = info.physical_size().height;
+                        // Any change in the window's physical extent (re)arms
+                        // the paint settle gate - see `RESIZE_SETTLE`. The
+                        // pending-size tracking in `on_frame` can't see this
+                        // churn for a fixed-size editor: the fitted logical
+                        // size stays at the natural size while the host drags
+                        // the window through arbitrary extents.
+                        if (pw, ph) != self.last_resize_phys {
+                            self.last_size_change = Some(std::time::Instant::now());
+                        }
                         // Authoritative window extent for the wgpu surface -
                         // see `last_resize_phys`. `on_frame` reads it when it
                         // matches the pending logical size.
@@ -1254,6 +1357,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     max_size,
                     aspect_ratio,
                     resize_corrector: ResizeCorrector::default(),
+                    resize_seen: (0, 0),
+                    resize_burst_start: None,
+                    last_size_change: None,
+                    pacer: truce_gui::PaintPacer::default(),
                     last_resize_phys: (0, 0),
                     last_resize_fitted: (0, 0),
                 }

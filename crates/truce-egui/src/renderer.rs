@@ -18,6 +18,12 @@ pub struct EguiRenderer {
     /// validation panic (which on macOS unwinds into the host's
     /// callback and aborts the DAW).
     max_texture_dim: u32,
+    /// How long the last `render` blocked in the swapchain acquire
+    /// (`get_current_texture`). The acquire waits until the compositor
+    /// frees a frame slot, so this measures how much faster than the
+    /// compositor we are painting - the editor's frame pacing reads it
+    /// to avoid parking the host GUI thread in that wait.
+    last_acquire_wait: std::time::Duration,
 }
 
 /// Present mode for the editor's child-window swapchain.
@@ -265,6 +271,7 @@ impl EguiRenderer {
             width,
             height,
             max_texture_dim,
+            last_acquire_wait: std::time::Duration::ZERO,
         })
     }
 
@@ -405,8 +412,11 @@ impl EguiRenderer {
             &screen_desc,
         );
 
+        let acquire_start = std::time::Instant::now();
+        let acquired = self.surface.get_current_texture();
+        self.last_acquire_wait = acquire_start.elapsed();
         let (wgpu::CurrentSurfaceTexture::Success(frame)
-        | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = self.surface.get_current_texture()
+        | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = acquired
         else {
             return;
         };
@@ -465,6 +475,13 @@ impl EguiRenderer {
     /// DPI display can't trip `surface.configure`'s validation
     /// panic (which previously unwound through Reaper's CLAP
     /// callback as a foreign C++ exception and aborted the host).
+    /// How long the last `render` blocked in the swapchain acquire.
+    /// See [`Self::last_acquire_wait`].
+    #[must_use]
+    pub fn acquire_wait(&self) -> std::time::Duration {
+        self.last_acquire_wait
+    }
+
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
