@@ -9,10 +9,20 @@
 //! - **Passthrough**   - promotion only, addressing untouched.
 //! - **Channel Fan**   - round-robin each note across `Channels` MIDI
 //!   channels (an MPE-style voice allocator).
-//! - **Auto Vibrato**  - a per-held-note pitch-bend LFO emitted as
-//!   `PerNotePitchBend` (32-bit) on each note's own channel.
+//! - **Per-Note Vibrato** - a per-held-note pitch-bend LFO emitted as
+//!   `PerNotePitchBend` (32-bit) on each note's own channel. Needs a
+//!   2.0-capable path downstream (CLAP note expression, AU v3 UMP) -
+//!   per-note bend has no MIDI 1.0 encoding and vanishes when a host
+//!   down-converts.
+//! - **MPE Vibrato**   - the same LFO as channel-level `PitchBend2`,
+//!   with notes channel-fanned so each bend still lands on one note.
+//!   Down-converts to a plain 14-bit bend, so it's audible on every
+//!   format and host (assumes the downstream +-2 st bend range).
 //! - **Mod Brightness** - the mod wheel (CC 1) routed to per-note
 //!   brightness (`PerNoteCC` 74) on every held note, on its own channel.
+//!
+//! `Vibrato Depth` is in semitones; both modes scale it into their
+//! wire's bend range.
 //!
 //! `midi2_output = true` in `truce.toml` makes the output carry native
 //! UMP on CLAP / AU v3; on formats without a UMP transport the wrapper
@@ -31,8 +41,12 @@ use SpreaderParamsParamId as P;
 const CC_MOD_WHEEL: u8 = 1;
 /// MIDI 2.0 per-note brightness controller number.
 const CC_BRIGHTNESS: u8 = 74;
-/// Centre of a 32-bit per-note pitch bend (no detune).
+/// Centre of a 32-bit pitch bend (no detune).
 const PITCH_CENTER: u32 = 0x8000_0000;
+/// Downstream per-note bend range (MPE convention), semitones each way.
+const PER_NOTE_BEND_RANGE_SEMIS: f64 = 48.0;
+/// Downstream channel bend range (GM default), semitones each way.
+const CHANNEL_BEND_RANGE_SEMIS: f64 = 2.0;
 
 /// Note addressing. `ParamEnum` derives `Clone` / `Copy` / `PartialEq`.
 #[derive(ParamEnum)]
@@ -41,10 +55,47 @@ pub enum Algo {
     Passthrough,
     #[name = "Channel Fan"]
     ChannelFan,
-    #[name = "Auto Vibrato"]
-    AutoVibrato,
+    #[name = "Per-Note Vibrato"]
+    PerNoteVibrato,
+    #[name = "MPE Vibrato"]
+    MpeVibrato,
     #[name = "Mod Brightness"]
     ModBrightness,
+}
+
+/// The wire a vibrato mode bends on, kept while bends are live so a
+/// note-off or mode switch can recentre on the same wire.
+#[derive(Clone, Copy, PartialEq)]
+enum VibratoKind {
+    /// 32-bit `PerNotePitchBend` (needs a 2.0-capable path downstream).
+    PerNote,
+    /// Channel-level `PitchBend2` (down-converts to 14-bit everywhere).
+    Channel,
+}
+
+fn vibrato_kind(algo: Algo) -> Option<VibratoKind> {
+    match algo {
+        Algo::PerNoteVibrato => Some(VibratoKind::PerNote),
+        Algo::MpeVibrato => Some(VibratoKind::Channel),
+        Algo::Passthrough | Algo::ChannelFan | Algo::ModBrightness => None,
+    }
+}
+
+/// A centre-bend event for `(group, channel, note)` on `kind`'s wire.
+fn recentre_body(kind: VibratoKind, group: u8, channel: u8, note: u8) -> EventBody {
+    match kind {
+        VibratoKind::PerNote => EventBody::PerNotePitchBend {
+            group,
+            channel,
+            note,
+            value: PITCH_CENTER,
+        },
+        VibratoKind::Channel => EventBody::PitchBend2 {
+            group,
+            channel,
+            value: PITCH_CENTER,
+        },
+    }
 }
 
 #[derive(Params)]
@@ -68,9 +119,9 @@ pub struct SpreaderParams {
     pub vib_rate: FloatParam,
     #[param(
         name = "Vibrato Depth",
-        range = "linear(0, 1)",
-        default = 0.25,
-        unit = "%"
+        range = "linear(0, 2)",
+        default = 0.5,
+        unit = "st"
     )]
     pub vib_depth: FloatParam,
 }
@@ -92,11 +143,11 @@ pub struct Spreader {
     /// `NoteOn` of the same pitch overwrites (a test tool, not a full
     /// voice allocator).
     held: [Option<Held>; 128],
-    /// Next channel to hand out for `Channel Fan`.
+    /// Next channel to hand out for `Channel Fan` / `MPE Vibrato`.
     next_channel: u8,
-    /// Whether `Auto Vibrato` emitted bends last block, so a note-off or
-    /// a mode change can recentre the note instead of leaving it detuned.
-    vibrato_active: bool,
+    /// The wire vibrato bent on last block, so a note-off or a mode
+    /// change can recentre the note instead of leaving it detuned.
+    vibrato: Option<VibratoKind>,
 }
 
 impl Spreader {
@@ -107,7 +158,7 @@ impl Spreader {
             sample_rate: 44100.0,
             held: [None; 128],
             next_channel: 0,
-            vibrato_active: false,
+            vibrato: None,
         }
     }
 }
@@ -152,7 +203,7 @@ impl PluginLogic for Spreader {
         self.sample_rate = sample_rate;
         self.held = [None; 128];
         self.next_channel = 0;
-        self.vibrato_active = false;
+        self.vibrato = None;
     }
 
     // One arm per promoted event type - long but flat.
@@ -205,16 +256,12 @@ impl PluginLogic for Spreader {
                     // ends, so its release tail isn't stuck at the last
                     // bend. (Playback stop sends note-offs, so this covers
                     // "recentre on stop" too.)
-                    if self.vibrato_active && held.is_some() {
-                        context.output_events.push(Event::new(
-                            off,
-                            EventBody::PerNotePitchBend {
-                                group: g,
-                                channel: ch,
-                                note,
-                                value: PITCH_CENTER,
-                            },
-                        ));
+                    if let Some(kind) = self.vibrato
+                        && held.is_some()
+                    {
+                        context
+                            .output_events
+                            .push(Event::new(off, recentre_body(kind, g, ch, note)));
                     }
                     context.output_events.push(Event::new(
                         off,
@@ -333,16 +380,19 @@ impl PluginLogic for Spreader {
         }
 
         // Vibrato runs whenever notes are held - live on a stopped
-        // transport or during playback. Leaving the mode recentres held
-        // notes; a released note is recentred at its note-off (in the arm
-        // above) so its release tail isn't left detuned - which also
-        // covers a transport stop, since the host sends note-offs then.
-        if algo == Algo::AutoVibrato {
-            self.emit_vibrato(buffer.num_samples(), context);
-            self.vibrato_active = true;
-        } else if self.vibrato_active {
-            self.recentre_held(context);
-            self.vibrato_active = false;
+        // transport or during playback. Switching modes recentres held
+        // notes on the old wire; a released note is recentred at its
+        // note-off (in the arm above) - which also covers a transport
+        // stop, since the host sends note-offs then.
+        let kind = vibrato_kind(algo);
+        if self.vibrato != kind {
+            if let Some(old) = self.vibrato {
+                self.recentre_held(old, context);
+            }
+            self.vibrato = kind;
+        }
+        if let Some(kind) = kind {
+            self.emit_vibrato(kind, buffer.num_samples(), context);
         }
 
         ProcessStatus::Normal
@@ -364,57 +414,67 @@ impl PluginLogic for Spreader {
 
 impl Spreader {
     /// Resolve the output `(group, channel)` for a fresh note and advance
-    /// any round-robin counters. Only called on `NoteOn`.
+    /// any round-robin counters. Only called on `NoteOn`. `MPE Vibrato`
+    /// fans like `Channel Fan` so each channel bend lands on one note.
     fn route(&mut self, algo: Algo, width: u8, group: u8, channel: u8) -> (u8, u8) {
         match algo {
-            Algo::ChannelFan => {
+            Algo::ChannelFan | Algo::MpeVibrato => {
                 let ch = self.next_channel % width;
                 self.next_channel = (self.next_channel + 1) % width;
                 (group, ch)
             }
-            Algo::Passthrough | Algo::AutoVibrato | Algo::ModBrightness => (group, channel),
+            Algo::Passthrough | Algo::PerNoteVibrato | Algo::ModBrightness => (group, channel),
         }
     }
 
-    /// Emit a centre `PerNotePitchBend` for every held note, cancelling
-    /// residual vibrato detune when the mode leaves Auto Vibrato.
-    fn recentre_held(&mut self, context: &mut ProcessContext) {
+    /// Emit a centre bend on `kind`'s wire for every held note,
+    /// cancelling residual vibrato detune when the mode switches.
+    fn recentre_held(&mut self, kind: VibratoKind, context: &mut ProcessContext) {
         for note in 0u8..128 {
             if let Some(h) = self.held[usize::from(note)].as_mut() {
                 h.phase = 0.0;
-                context.output_events.push(Event::new(
-                    0,
-                    EventBody::PerNotePitchBend {
-                        group: h.group,
-                        channel: h.channel,
-                        note,
-                        value: PITCH_CENTER,
-                    },
-                ));
+                context
+                    .output_events
+                    .push(Event::new(0, recentre_body(kind, h.group, h.channel, note)));
             }
         }
     }
 
-    /// Advance every held note's vibrato LFO by one block and emit a
-    /// `PerNotePitchBend` for it on the note's own channel.
-    fn emit_vibrato(&mut self, block_samples: usize, context: &mut ProcessContext) {
+    /// Advance every held note's vibrato LFO by one block and emit its
+    /// bend on `kind`'s wire. The semitone depth param scales into the
+    /// wire's bend range.
+    fn emit_vibrato(
+        &mut self,
+        kind: VibratoKind,
+        block_samples: usize,
+        context: &mut ProcessContext,
+    ) {
         let rate = self.params.vib_rate.raw_target();
-        let depth = self.params.vib_depth.raw_target();
+        let range = match kind {
+            VibratoKind::PerNote => PER_NOTE_BEND_RANGE_SEMIS,
+            VibratoKind::Channel => CHANNEL_BEND_RANGE_SEMIS,
+        };
+        let depth = (self.params.vib_depth.raw_target() / range).min(1.0);
         let n = u32::try_from(block_samples).unwrap_or(0);
         let inc = rate * f64::from(n) / self.sample_rate;
         for note in 0u8..128 {
             if let Some(h) = self.held[usize::from(note)].as_mut() {
                 h.phase = (h.phase + inc).fract();
                 let value = lfo_bend(depth, (h.phase * TAU).sin());
-                context.output_events.push(Event::new(
-                    0,
-                    EventBody::PerNotePitchBend {
+                let body = match kind {
+                    VibratoKind::PerNote => EventBody::PerNotePitchBend {
                         group: h.group,
                         channel: h.channel,
                         note,
                         value,
                     },
-                ));
+                    VibratoKind::Channel => EventBody::PitchBend2 {
+                        group: h.group,
+                        channel: h.channel,
+                        value,
+                    },
+                };
+                context.output_events.push(Event::new(0, body));
             }
         }
     }
@@ -542,21 +602,21 @@ mod tests {
     }
 
     #[test]
-    fn auto_vibrato_emits_per_note_pitch_bend() {
-        let out = run(Algo::AutoVibrato, 16, &[note_on(0, 60)]);
+    fn per_note_vibrato_emits_per_note_pitch_bend() {
+        let out = run(Algo::PerNoteVibrato, 16, &[note_on(0, 60)]);
         assert!(
             out.iter()
                 .any(|e| matches!(e.body, EventBody::PerNotePitchBend { .. })),
-            "auto vibrato emits a per-note pitch bend"
+            "per-note vibrato emits a per-note pitch bend"
         );
     }
 
-    // Hold note 60 under Auto Vibrato (bends it), then run one more block
-    // with the given mode + events; returns the recentre bend for note 60
-    // if one was emitted.
-    fn recentre_after(second_algo: Algo, second_events: &[EventBody]) -> Option<u32> {
+    // Hold note 60 under `first_algo` (bends it), then run one more
+    // block with `second_algo` + events; returns the second block's
+    // output for recentre assertions.
+    fn second_block(first_algo: Algo, second_algo: Algo, second_events: &[EventBody]) -> EventList {
         let params = Arc::new(SpreaderParams::new());
-        params.algo.set_value(Algo::AutoVibrato);
+        params.algo.set_value(first_algo);
         let mut plugin = Spreader::new(Arc::clone(&params));
         plugin.reset(44100.0, 64);
 
@@ -579,8 +639,11 @@ mod tests {
         let mut out2 = EventList::default();
         let mut ctx2 = ProcessContext::new(&transport, 44100.0, 64, &mut out2);
         plugin.process(&mut buffer, &ev2, &mut ctx2);
+        out2
+    }
 
-        out2.iter().find_map(|e| match e.body {
+    fn per_note_bend_for_60(out: &EventList) -> Option<u32> {
+        out.iter().find_map(|e| match e.body {
             EventBody::PerNotePitchBend {
                 note: 60, value, ..
             } => Some(value),
@@ -588,26 +651,76 @@ mod tests {
         })
     }
 
+    fn channel_bend(out: &EventList) -> Option<u32> {
+        out.iter().find_map(|e| match e.body {
+            EventBody::PitchBend2 { value, .. } => Some(value),
+            _ => None,
+        })
+    }
+
+    fn note_off_60() -> EventBody {
+        EventBody::NoteOff {
+            group: 0,
+            channel: 0,
+            note: 60,
+            velocity: 0,
+        }
+    }
+
     #[test]
     fn leaving_vibrato_recentres_held_notes() {
-        // Switching mode away from Auto Vibrato recentres held notes.
-        assert_eq!(recentre_after(Algo::Passthrough, &[]), Some(PITCH_CENTER));
+        // Switching mode away from Per-Note Vibrato recentres held notes.
+        let out = second_block(Algo::PerNoteVibrato, Algo::Passthrough, &[]);
+        assert_eq!(per_note_bend_for_60(&out), Some(PITCH_CENTER));
     }
 
     #[test]
     fn note_off_under_vibrato_recentres_the_note() {
         // A note-off while vibrato is active recentres the note - which is
         // also how a transport stop lands (the host sends note-offs).
-        let off = EventBody::NoteOff {
-            group: 0,
-            channel: 0,
-            note: 60,
-            velocity: 0,
-        };
-        assert_eq!(
-            recentre_after(Algo::AutoVibrato, &[off]),
-            Some(PITCH_CENTER)
+        let out = second_block(Algo::PerNoteVibrato, Algo::PerNoteVibrato, &[note_off_60()]);
+        assert_eq!(per_note_bend_for_60(&out), Some(PITCH_CENTER));
+    }
+
+    #[test]
+    fn mpe_vibrato_fans_channels_and_bends_the_channel() {
+        let out = run(Algo::MpeVibrato, 4, &[note_on(0, 60), note_on(0, 61)]);
+        let channels: Vec<u8> = out
+            .iter()
+            .filter_map(|e| match e.body {
+                EventBody::NoteOn2 { channel, .. } => Some(channel),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(channels, vec![0, 1], "notes fan like Channel Fan");
+        let bend_channels: Vec<u8> = out
+            .iter()
+            .filter_map(|e| match e.body {
+                EventBody::PitchBend2 { channel, .. } => Some(channel),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bend_channels, vec![0, 1], "one channel bend per note");
+        assert!(
+            !out.iter()
+                .any(|e| matches!(e.body, EventBody::PerNotePitchBend { .. })),
+            "MPE Vibrato bends the channel, not the note"
         );
+    }
+
+    #[test]
+    fn note_off_under_mpe_vibrato_recentres_the_channel() {
+        let out = second_block(Algo::MpeVibrato, Algo::MpeVibrato, &[note_off_60()]);
+        assert_eq!(channel_bend(&out), Some(PITCH_CENTER));
+    }
+
+    #[test]
+    fn switching_vibrato_wires_recentres_the_old_wire() {
+        // Per-Note Vibrato -> MPE Vibrato must recentre the
+        // per-note wire before bending the channel wire.
+        let out = second_block(Algo::PerNoteVibrato, Algo::MpeVibrato, &[]);
+        assert_eq!(per_note_bend_for_60(&out), Some(PITCH_CENTER));
+        assert!(channel_bend(&out).is_some(), "new wire starts bending");
     }
 
     #[test]
