@@ -189,24 +189,22 @@ const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioB
                 EventBody::NoteOn { group, channel, note, velocity } => {
                     let shifted = (i32::from(*note) + self.params.semitones.value_i32())
                         .clamp(0, 127) as u8;
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        port: 0,
-                        body: EventBody::NoteOn {
+                    context.output_events.push(Event::new(
+                        event.sample_offset,
+                        EventBody::NoteOn {
                             group: *group, channel: *channel, note: shifted, velocity: *velocity,
                         },
-                    });
+                    ));
                 }
                 EventBody::NoteOff { group, channel, note, velocity } => {
                     let shifted = (i32::from(*note) + self.params.semitones.value_i32())
                         .clamp(0, 127) as u8;
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        port: 0,
-                        body: EventBody::NoteOff {
+                    context.output_events.push(Event::new(
+                        event.sample_offset,
+                        EventBody::NoteOff {
                             group: *group, channel: *channel, note: shifted, velocity: *velocity,
                         },
-                    });
+                    ));
                 }
                 _ => {}
             }
