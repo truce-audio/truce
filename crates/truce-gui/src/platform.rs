@@ -321,6 +321,43 @@ pub fn note_linux_scale_factor(scale: f64) {
     }
 }
 
+/// Decide the content-scale policy for an editor's baseview child window.
+///
+/// Returns `Some(scale)` when the caller should open with
+/// `WindowScalePolicy::ScaleFactor(scale)` (and render at `scale`), or
+/// `None` when it should keep `WindowScalePolicy::SystemScaleFactor` and
+/// query the OS backing/DPI scale as usual.
+///
+/// The distinction only bites on Linux. There `SystemScaleFactor` reads
+/// `Xft.dpi` - the *desktop* scale - which is the right signal for the
+/// standalone app's own top-level window but wrong for a plugin embedded
+/// in a host: a non-DPI-aware host (Bitwig on X11) runs at 1x and
+/// allocates a 1x container regardless of desktop scaling, so honoring
+/// `Xft.dpi` builds a window twice the size of its allocated rect. For an
+/// embedded editor we therefore drive scale from the host's content-scale
+/// callback (default `1.0`; `host_scale_set` flips true once the host
+/// announces one via `set_scale_factor`) rather than the desktop.
+/// macOS/Windows always keep `SystemScaleFactor`: the OS reports a
+/// reliable per-window scale there.
+#[must_use]
+pub fn editor_window_scale(uses_system_scale: bool, host_scale_set: bool, host_scale: f64) -> Option<f64> {
+    #[cfg(target_os = "linux")]
+    {
+        if uses_system_scale {
+            None
+        } else if host_scale_set && host_scale.is_finite() && host_scale > 0.0 {
+            Some(host_scale)
+        } else {
+            Some(1.0)
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (uses_system_scale, host_scale_set, host_scale);
+        None
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn main_screen_scale() -> f64 {
     // Priority: TRUCE_SCALE env var (dev/test override) → cached scale

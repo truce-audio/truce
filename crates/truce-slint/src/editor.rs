@@ -79,6 +79,10 @@ pub type SetupFn<P> = Arc<dyn Fn(PluginContext<P>) -> SyncFn<P> + Send + Sync>;
 ///     })
 /// })
 /// ```
+// Several independent one-shot flags (scale mode + host-scale-seen, plus
+// the resize/size flags below). They're genuinely distinct booleans, not
+// a state enum in disguise, so grouping them would obscure more than help.
+#[allow(clippy::struct_excessive_bools)]
 pub struct SlintEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
@@ -93,6 +97,15 @@ pub struct SlintEditor<P: Params + ?Sized> {
     /// each frame and reconfigures the slint window / wgpu surface /
     /// blit pipeline when the value diverges from `last_applied_scale`.
     scale: EditorScale,
+    /// Standalone hosts set this (via `set_uses_system_scale`) so the
+    /// editor honors the desktop `Xft.dpi` scale on Linux; plugins leave
+    /// it false and drive scale from the host instead. See
+    /// [`truce_gui::platform::editor_window_scale`]. No effect off Linux.
+    use_system_scale: bool,
+    /// Whether the host announced a content scale via `set_scale_factor`.
+    /// On Linux this gates whether an embedded editor trusts `scale`
+    /// (host-announced) or defaults to 1.0.
+    host_scale_set: bool,
     window: Option<baseview::WindowHandle>,
     /// Pending logical size shared with the baseview handler. Packed
     /// as `(width << 32) | height`. `Editor::set_size` writes here;
@@ -246,6 +259,8 @@ impl<P: Params + 'static> SlintEditor<P> {
             size,
             setup: Arc::new(setup),
             scale: EditorScale::new(truce_gui::backing_scale()),
+            use_system_scale: false,
+            host_scale_set: false,
             window: None,
             pending_size: Arc::new(AtomicU64::new(0)),
             can_resize: false,
@@ -841,7 +856,21 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // `backingScaleFactor` differs from `NSScreen.mainScreen`'s.
         // Any `set_scale_factor` the host issues *after* open will
         // override on the next frame via the shared cell.
-        self.scale.set(platform::query_backing_scale(&parent));
+        // Pick the baseview scale policy. On Linux an embedded plugin
+        // follows the host's scale (default 1.0) rather than the desktop
+        // Xft.dpi, which a non-DPI-aware host (Bitwig) doesn't share; the
+        // standalone and every macOS/Windows path keep SystemScaleFactor.
+        let scale_policy = if let Some(s) = truce_gui::platform::editor_window_scale(
+            self.use_system_scale,
+            self.host_scale_set,
+            self.scale.get(),
+        ) {
+            self.scale.set(s);
+            WindowScalePolicy::ScaleFactor(s)
+        } else {
+            self.scale.set(platform::query_backing_scale(&parent));
+            WindowScalePolicy::SystemScaleFactor
+        };
         let scale = self.scale.get();
         let typed_ctx = context.with_params(self.params.clone());
         let setup = Arc::clone(&self.setup);
@@ -851,7 +880,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         let options = WindowOpenOptions {
             title: String::from("truce-slint"),
             size: baseview::Size::new(f64::from(lw), f64::from(lh)),
-            scale: WindowScalePolicy::SystemScaleFactor,
+            scale: scale_policy,
         };
 
         let parent_wrapper = ParentWindow(parent);
@@ -937,7 +966,12 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // change on its next frame and reconfigures the slint window
         // / wgpu surface / blit pipeline. The trait's default no-op
         // would silently swallow host scale changes here.
+        self.host_scale_set = true;
         self.scale.set(factor);
+    }
+
+    fn set_uses_system_scale(&mut self, yes: bool) {
+        self.use_system_scale = yes;
     }
 
     fn can_resize(&self) -> bool {

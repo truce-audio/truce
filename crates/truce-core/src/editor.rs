@@ -186,6 +186,21 @@ pub trait Editor: Send {
     /// multiply `size()` by (which caused double-scaling on macOS VST3).
     fn set_scale_factor(&mut self, _factor: f64) {}
 
+    /// Opt the editor into honoring the desktop (system) scale.
+    ///
+    /// The standalone app calls this with `true` before [`open`] because
+    /// it owns a real top-level window that should match the desktop
+    /// (`Xft.dpi` on Linux). Plugin formats leave the default: an
+    /// embedded editor drives its Linux scale from the host's
+    /// content-scale callback (default 1.0) instead of the desktop,
+    /// since a non-DPI-aware host (e.g. Bitwig on X11) runs at 1x
+    /// regardless of desktop scaling and would otherwise get a
+    /// double-sized window. No-op on macOS/Windows, where the OS
+    /// reports a reliable per-window scale.
+    ///
+    /// [`open`]: Editor::open
+    fn set_uses_system_scale(&mut self, _yes: bool) {}
+
     /// Plugin state was restored (preset recall, undo, session load).
     ///
     /// Called after `load_state()` while the editor is open. Re-read any
