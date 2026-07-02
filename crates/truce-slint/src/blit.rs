@@ -4,6 +4,13 @@
 //! textured triangle to present it.
 
 const BLIT_SHADER: &str = r"
+struct Params {
+    // texture size / surface size, per axis.
+    scale: vec2<f32>,
+    _pad: vec2<f32>,
+};
+@group(0) @binding(2) var<uniform> params: Params;
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -11,20 +18,27 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
-    // Fullscreen triangle: 3 vertices cover the entire clip space.
-    var pos = array<vec2<f32>, 3>(
-        vec2(-1.0, -1.0),
-        vec2( 3.0, -1.0),
-        vec2(-1.0,  3.0),
-    );
-    var uv = array<vec2<f32>, 3>(
+    // Unit quad as a triangle strip: (0,0) (1,0) (0,1) (1,1).
+    var unit = array<vec2<f32>, 4>(
+        vec2(0.0, 0.0),
+        vec2(1.0, 0.0),
         vec2(0.0, 1.0),
-        vec2(2.0, 1.0),
-        vec2(0.0, -1.0),
+        vec2(1.0, 1.0),
     );
+    let u = unit[idx];
     var out: VertexOutput;
-    out.position = vec4(pos[idx], 0.0, 1.0);
-    out.uv = uv[idx];
+    // Top-left anchored: the quad spans [-1, -1 + 2*scale] in x (from the
+    // left edge) and [+1, +1 - 2*scale] in y (from the top edge), where
+    // `scale` = texture / surface. Leftover surface falls on the right /
+    // bottom as the black clear margin. Matches the built-in editor and the
+    // other backends' top-left convention.
+    out.position = vec4(
+        -1.0 + 2.0 * params.scale.x * u.x,
+        1.0 - 2.0 * params.scale.y * u.y,
+        0.0,
+        1.0,
+    );
+    out.uv = u;
     return out;
 }
 
@@ -52,6 +66,9 @@ pub struct BlitPipeline {
     bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// Holds the `texture / surface` scale (vec2 + padding) the vertex
+    /// shader reads to anchor the quad top-left.
+    uniform_buf: wgpu::Buffer,
     width: u32,
     height: u32,
 }
@@ -94,6 +111,16 @@ impl BlitPipeline {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -122,15 +149,29 @@ impl BlitPipeline {
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
-            primitive: wgpu::PrimitiveState::default(),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
         });
 
+        // 16 bytes: `scale` (vec2<f32>) + vec2 padding to meet the uniform's
+        // 16-byte size/alignment. Seeded to 1:1 (fills the surface) until the
+        // first `render` writes the real texture/surface ratio.
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("blit-uniform"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let texture = Self::create_texture(device, width, height);
-        let bind_group = Self::create_bind_group(device, &bind_group_layout, &texture, &sampler);
+        let bind_group =
+            Self::create_bind_group(device, &bind_group_layout, &texture, &sampler, &uniform_buf);
 
         Self {
             pipeline,
@@ -138,6 +179,7 @@ impl BlitPipeline {
             bind_group,
             bind_group_layout,
             sampler,
+            uniform_buf,
             width,
             height,
         }
@@ -166,8 +208,27 @@ impl BlitPipeline {
         );
     }
 
-    /// Draw the texture to a render target.
-    pub fn render(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+    /// Draw the texture to a render target, anchored top-left. `surf_w` /
+    /// `surf_h` are the render target's physical extent; the texture is drawn
+    /// at its native size in the top-left with a black margin filling any
+    /// larger surface.
+    pub fn render(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        surf_w: u32,
+        surf_h: u32,
+    ) {
+        #[allow(clippy::cast_precision_loss)]
+        let sx = self.width as f32 / surf_w.max(1) as f32;
+        #[allow(clippy::cast_precision_loss)]
+        let sy = self.height as f32 / surf_h.max(1) as f32;
+        let mut bytes = [0u8; 16];
+        bytes[0..4].copy_from_slice(&sx.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&sy.to_ne_bytes());
+        queue.write_buffer(&self.uniform_buf, 0, &bytes);
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("blit-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -184,7 +245,8 @@ impl BlitPipeline {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.draw(0..3, 0..1);
+        // 4-vertex triangle strip = one quad.
+        pass.draw(0..4, 0..1);
     }
 
     /// Resize the blit texture. Call when the window size changes.
@@ -200,6 +262,7 @@ impl BlitPipeline {
             &self.bind_group_layout,
             &self.texture,
             &self.sampler,
+            &self.uniform_buf,
         );
     }
 
@@ -225,6 +288,7 @@ impl BlitPipeline {
         layout: &wgpu::BindGroupLayout,
         texture: &wgpu::Texture,
         sampler: &wgpu::Sampler,
+        uniform_buf: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -238,6 +302,10 @@ impl BlitPipeline {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: uniform_buf.as_entire_binding(),
                 },
             ],
         })

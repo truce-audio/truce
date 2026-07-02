@@ -308,12 +308,12 @@ impl EguiRenderer {
                         view: &frame_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.12,
-                                g: 0.12,
-                                b: 0.14,
-                                a: 1.0,
-                            }),
+                            // Black margin around the centered editor content,
+                            // matching the built-in editor's blit clear. Any
+                            // uncovered window/host background is also black, so
+                            // the two read as a single margin rather than a
+                            // black + dark-grey double border.
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                             store: wgpu::StoreOp::Store,
                         },
                         depth_slice: None,

@@ -169,11 +169,6 @@ impl<P: Params + 'static> GpuWindowHandler<P> {
                 // frame size during a drag; we only follow it.
                 let new_size = inner.size();
                 if new_size != self.current_size {
-                    // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                    eprintln!(
-                        "[truce-scale gpu] window.resize({}x{}) (was {:?})",
-                        new_size.0, new_size.1, self.current_size
-                    );
                     gpu.resize(new_size.0, new_size.1);
                     window.resize(baseview::Size::new(
                         f64::from(new_size.0),
@@ -262,11 +257,6 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                             // an out-of-bounds host size renders clamped.
                             let (fw, fh) =
                                 fit_size(lw, lh, inner.min_size(), inner.max_size(), None);
-                            // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                            eprintln!(
-                                "[truce-scale gpu] Resized phys={}x{} info.scale()={} logical_in={}x{} fitted={}x{} inner.size={:?}",
-                                phys.width, phys.height, info.scale(), lw, lh, fw, fh, inner.size(),
-                            );
                             if (fw, fh) != inner.size() {
                                 inner.set_size(fw, fh);
                             }
@@ -349,11 +339,6 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 .set(crate::platform::query_backing_scale(&parent));
             WindowScalePolicy::SystemScaleFactor
         };
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!(
-            "[truce-scale gpu] open use_system_scale={} host_scale_set={} effective_scale={} size={:?}",
-            self.use_system_scale, self.host_scale_set, self.scale.get(), self.size,
-        );
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
@@ -403,8 +388,6 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         // + MSAA target via `WgpuBackend::set_scale` + `resize`. The
         // trait's default no-op would silently swallow host scale
         // changes for the GPU path.
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!("[truce-scale gpu] set_scale_factor({factor})");
         self.host_scale_set = true;
         self.scale.set(factor);
     }

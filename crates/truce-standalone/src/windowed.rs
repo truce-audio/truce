@@ -34,6 +34,16 @@ use crate::midi::{MidiController, MidiInputThread};
 use crate::transport::Transport;
 use crate::vlog;
 
+fn category_label(category: PluginCategory) -> &'static str {
+    match category {
+        PluginCategory::Effect => "effect",
+        PluginCategory::Instrument => "instrument",
+        PluginCategory::NoteEffect => "midi effect",
+        PluginCategory::Analyzer => "analyzer",
+        PluginCategory::Tool => "tool",
+    }
+}
+
 /// Run the plugin with a window. Blocks until the window closes.
 ///
 /// # Panics
@@ -43,21 +53,16 @@ use crate::vlog;
 /// transport / MIDI threads return a fatal error that has no
 /// recovery path. Plugin-side panics propagate through the poisoned
 /// mutex unchanged.
+// Linear top-level orchestration: start audio/MIDI/transport, open the
+// window, pump the event loop, tear down. Splitting it further would
+// just thread the same locals through helpers without aiding clarity.
+#[allow(clippy::too_many_lines)]
 pub fn run<P: PluginExport>(opts: &Options)
 where
     P::Params: 'static,
 {
     vlog!("Plugin: {}", P::info().name);
-    vlog!(
-        "Category: {}",
-        match P::info().category {
-            PluginCategory::Effect => "effect",
-            PluginCategory::Instrument => "instrument",
-            PluginCategory::NoteEffect => "midi effect",
-            PluginCategory::Analyzer => "analyzer",
-            PluginCategory::Tool => "tool",
-        }
-    );
+    vlog!("Category: {}", category_label(P::info().category));
 
     #[cfg_attr(not(feature = "playback"), allow(unused_mut))]
     let mut audio_handles = match audio::start_audio::<P>(opts) {

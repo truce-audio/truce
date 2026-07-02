@@ -482,6 +482,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         let pending = unpack_size(self.pending_size.swap(0, Ordering::Acquire));
         if pending.0 > 0 && pending.1 > 0 && pending != (self.width, self.height) {
             let scale = f64::from(self.last_applied_scale);
+            // Reflow to fill: render the scene, blit texture, and surface all
+            // at the same physical extent so the UI fills the window. A
+            // host-driven `Resized` handles the window case directly; this
+            // path covers programmatic `set_size` (window then follows).
             let phys_w = truce_gui::to_physical_px(pending.0, scale);
             let phys_h = truce_gui::to_physical_px(pending.1, scale);
             window.resize(baseview::Size::new(
@@ -594,7 +598,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        blit.render(&mut encoder, &view);
+        blit.render(
+            &self.queue,
+            &mut encoder,
+            &view,
+            self.surface_config.width,
+            self.surface_config.height,
+        );
         self.queue.submit(iter::once(encoder.finish()));
         frame.present();
     }

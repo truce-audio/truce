@@ -385,6 +385,22 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     max_size: (u32, u32),
     aspect_ratio: Option<(u32, u32)>,
     resize_corrector: ResizeCorrector,
+    /// The window's *actual* physical size from the last host-driven
+    /// `Resized` (`(0,0)` = none). The wgpu surface is configured to cover
+    /// this exact extent - which may exceed `to_physical_px(fitted)` when a
+    /// Linux host (Bitwig) forces an oversized window - so the editor
+    /// content renders at its fitted size *centered* in the surface with a
+    /// solid margin, instead of stretching or leaving bare window
+    /// background. Paired with [`Self::last_resize_fitted`] to tell a
+    /// host-driven resize (adopt this size) from a programmatic / macOS one
+    /// (size the surface from the logical value we're resizing to).
+    last_resize_phys: (u32, u32),
+    /// The fitted (bounds- + aspect-clamped) logical size the last
+    /// `Resized` produced, i.e. what it wrote to `pending_size`. When
+    /// `on_frame`'s pending equals this, the resize is host-driven and
+    /// `last_resize_phys` is its authoritative window extent; otherwise the
+    /// pending came from `set_size` and `last_resize_phys` is stale.
+    last_resize_fitted: (u32, u32),
 }
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
@@ -417,19 +433,34 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         renderer: Option<&mut EguiRenderer>,
         new_size: (u32, u32),
         scale: f64,
+        surface_phys: Option<(u32, u32)>,
+        resize_window: bool,
     ) {
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!(
-            "[truce-scale egui] window.resize({}x{}) scale={}",
-            new_size.0, new_size.1, scale
-        );
-        window.resize(baseview::Size::new(
-            f64::from(new_size.0),
-            f64::from(new_size.1),
-        ));
+        // On Linux, a host/WM-driven resize that already satisfies the
+        // editor's bounds + aspect (`surface_phys` matched) is authoritative:
+        // the X11 WM owns the interactive drag grab and enforces the same
+        // constraints via size-increment hints. Counter-resizing the window
+        // here fights that grab and, at fractional/×2 DPI, disagrees with the
+        // WM by a pixel every frame - the resize jitter. Adopt the size (the
+        // surface + `self.size` still update); only resize when the size came
+        // from us (programmatic `set_size`) or the host handed us an
+        // out-of-bounds box that needs correcting.
+        if resize_window {
+            window.resize(baseview::Size::new(
+                f64::from(new_size.0),
+                f64::from(new_size.1),
+            ));
+        }
         if let Some(renderer) = renderer {
-            let phys_w = truce_gui::to_physical_px(new_size.0, scale);
-            let phys_h = truce_gui::to_physical_px(new_size.1, scale);
+            // Prefer the window's authoritative physical extent (host-driven
+            // `Resized`); fall back to `to_physical_px(logical)` for
+            // programmatic resizes and platforms that don't report it.
+            let (phys_w, phys_h) = surface_phys.unwrap_or_else(|| {
+                (
+                    truce_gui::to_physical_px(new_size.0, scale),
+                    truce_gui::to_physical_px(new_size.1, scale),
+                )
+            });
             renderer.resize(phys_w, phys_h);
         }
     }
@@ -457,12 +488,23 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         }
 
         let ppp = self.last_applied_scale;
-        let (lw, lh) = self.size; // logical points
+
+        // Lay out egui at the fitted (bounds- + aspect-clamped) editor size,
+        // anchored top-left. Within `[min, max]` the fitted size equals the
+        // window, so egui fills it (reflow); beyond max, or off the aspect
+        // ratio, egui stays at the fitted size and the extra window area on
+        // the right / bottom is the render pass's black clear (letterbox).
+        // The surface always covers the whole window (see `apply_resize`).
+        #[allow(clippy::cast_precision_loss)]
+        let (lw, lh) = {
+            let (fw, fh) = self.size;
+            (fw as f32, fh as f32)
+        };
 
         let mut raw_input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(lw as f32, lh as f32),
+                egui::vec2(lw, lh),
             )),
             time: Some(self.start_time.elapsed().as_secs_f64()),
             modifiers: self.modifiers,
@@ -605,15 +647,46 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 // the host's main-thread pool.
                 let new_size = pending;
                 let scale = self.scale.get();
+                // A host/WM-driven resize is one whose fitted result equals
+                // what the last `Resized` produced - then `last_resize_phys`
+                // is the window's authoritative physical extent and the
+                // surface must cover it (possibly larger than the content, so
+                // the content centers with a margin). A programmatic
+                // `set_size` writes a `pending` that doesn't match, so the
+                // surface is sized from the logical value we're resizing to.
+                let host_driven =
+                    self.last_resize_phys != (0, 0) && new_size == self.last_resize_fitted;
+                let surface_phys = host_driven.then_some(self.last_resize_phys);
+                // On Linux, adopt a host/WM-driven size rather than
+                // counter-resizing: the WM owns the interactive drag grab and
+                // enforces bounds/aspect via size-increment hints, so
+                // `window.resize` here fights that grab and jitters by a pixel
+                // at ×2 / fractional DPI. macOS / Windows and programmatic
+                // resizes still resize.
+                let resize_window = cfg!(not(target_os = "linux")) || !host_driven;
                 #[cfg(target_os = "macos")]
                 {
                     let renderer = self.renderer.as_mut();
                     objc::rc::autoreleasepool(|| {
-                        Self::apply_resize(window, renderer, new_size, scale);
+                        Self::apply_resize(
+                            window,
+                            renderer,
+                            new_size,
+                            scale,
+                            surface_phys,
+                            resize_window,
+                        );
                     });
                 }
                 #[cfg(not(target_os = "macos"))]
-                Self::apply_resize(window, self.renderer.as_mut(), new_size, scale);
+                Self::apply_resize(
+                    window,
+                    self.renderer.as_mut(),
+                    new_size,
+                    scale,
+                    surface_phys,
+                    resize_window,
+                );
                 self.size = new_size;
                 // The freshly-sized surface must be painted next frame
                 // regardless of the idle gate.
@@ -789,6 +862,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     if let baseview::WindowEvent::Resized(info) = win {
                         let pw = info.physical_size().width;
                         let ph = info.physical_size().height;
+                        // Authoritative window extent for the wgpu surface -
+                        // see `last_resize_phys`. `on_frame` reads it when it
+                        // matches the pending logical size.
+                        self.last_resize_phys = (pw, ph);
                         // Display scale never exceeds 4.0 in practice.
                         #[allow(clippy::cast_possible_truncation)]
                         let scale = info.scale() as f32;
@@ -816,14 +893,6 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             self.max_size,
                             self.aspect_ratio,
                         );
-                        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                        eprintln!(
-                            "[truce-scale egui] Resized phys={}x{} info.scale()={} logical_in={}x{} fitted={}x{} correct={:?} self.size={}x{} bounds min={:?} max={:?} aspect={:?}",
-                            pw, ph, info.scale(), logical_in.0, logical_in.1,
-                            logical_size.0, logical_size.1, correct,
-                            self.size.0, self.size.1,
-                            self.min_size, self.max_size, self.aspect_ratio,
-                        );
                         if let Some((rw, rh)) = correct {
                             // On Linux, hosts that bypass size negotiation
                             // (Bitwig) ignore this request and react by
@@ -836,10 +905,6 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             // negotiate via `checkSizeConstraint` anyway.
                             #[cfg(not(target_os = "linux"))]
                             {
-                                // [truce-scale] DIAGNOSTIC - remove after debugging #163
-                                eprintln!(
-                                    "[truce-scale egui] request_resize({rw}x{rh}) -> host"
-                                );
                                 let _ = self.context.request_resize(rw, rh);
                             }
                             #[cfg(target_os = "linux")]
@@ -858,6 +923,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         // up the present queue until the GPU's timeout-detection
                         // (TDR) fires and hangs the host. `on_frame` coalesces
                         // the pending size to one reconfigure per frame.
+                        self.last_resize_fitted = logical_size;
                         self.pending_size
                             .store(pack_size(logical_size), Ordering::Relaxed);
                     }
@@ -1027,14 +1093,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             self.scale.set(s);
             WindowScalePolicy::ScaleFactor(s)
         } else {
-            self.scale.set(crate::platform::query_backing_scale(&parent));
+            self.scale
+                .set(crate::platform::query_backing_scale(&parent));
             WindowScalePolicy::SystemScaleFactor
         };
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!(
-            "[truce-scale egui] open use_system_scale={} host_scale_set={} effective_scale={} size={:?}",
-            self.use_system_scale, self.host_scale_set, self.scale.get(), self.size,
-        );
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
@@ -1053,8 +1115,16 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         let parent_wrapper = ParentWindow(parent);
         let handler_ctx = typed_ctx.clone();
-        let min_size = self.min_size;
-        let max_size = self.max_size;
+        // A non-resizable editor pins to its natural size: report it as
+        // both the min and the max so the `ResizeCorrector` clamps any
+        // host-driven resize back to it. The editor then renders at its
+        // natural size (letterboxed in black if the host grew the window
+        // past it) rather than reflowing/stretching to fill.
+        let (min_size, max_size) = if self.can_resize {
+            (self.min_size, self.max_size)
+        } else {
+            (self.size, self.size)
+        };
         let aspect_ratio = self.aspect_ratio;
         // Seed the idle gate's param snapshot so the first automation
         // change is detected as a change rather than as "differs from
@@ -1139,6 +1209,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     max_size,
                     aspect_ratio,
                     resize_corrector: ResizeCorrector::default(),
+                    last_resize_phys: (0, 0),
+                    last_resize_fitted: (0, 0),
                 }
             },
         );
@@ -1201,8 +1273,6 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // change on its next frame and resizes the wgpu surface +
         // renderer to match. No explicit notification needed -
         // baseview's frame loop polls.
-        // [truce-scale] DIAGNOSTIC - remove after debugging #163
-        eprintln!("[truce-scale egui] set_scale_factor({factor})");
         self.host_scale_set = true;
         self.scale.set(factor);
     }

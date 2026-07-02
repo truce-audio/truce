@@ -272,6 +272,16 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
         let transport_slot = TransportSlot::new();
 
+        // Read the host's `ui:scaleFactor` (HiDPI display scale) from the
+        // options feature and hand it to the editor before `open()`, so it
+        // configures its backing surface at the right physical resolution
+        // rather than defaulting to 1.0. Hosts that don't expose the option
+        // (or run at 1x) leave the editor at its default scale.
+        let host_scale = read_ui_scale_factor(parsed.options, &urid_map);
+        if let Some(scale) = host_scale {
+            editor.set_scale_factor(scale);
+        }
+
         // Build PluginContext closures driven by write_function / shadow params.
         let ctx = build_editor_context::<P>(
             params_arc.clone(),
@@ -289,14 +299,12 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // (Reaper's LV2 runner, for one) need us to hand back a correctly-
         // sized parent before the first repaint.
         //
-        // On Windows and X11 the host works in physical pixels, so we scale
-        // logical-point `editor.size()` by the editor's DPI. On macOS the
-        // native view coordinate system is logical points - no scaling.
+        // `editor.size()` is in logical points. `ui:resize` on X11 / Windows
+        // wants *physical* pixels - REAPER sets the container's physical size
+        // to the value verbatim (it does not multiply by `ui:scaleFactor`), so
+        // we scale by `host_scale` below. macOS Cocoa is logical (Retina via
+        // the backing scale), so `resize_ns_view` uses the logical value here.
         let (pref_w, pref_h) = editor.size();
-        // LV2 hosts on X11 conventionally expect pixel sizes, but we have
-        // no host-provided scale channel today; report logical points and
-        // let the host resize accordingly. macOS CocoaUI handles Retina
-        // backing automatically.
 
         #[cfg(target_os = "macos")]
         let handle = RawWindowHandle::AppKit(parent_ptr);
@@ -322,10 +330,38 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         if let Some(resize) = parsed.resize
             && let Some(func) = resize.ui_resize
         {
+            // macOS: logical points. Windows: physical pixels (the host
+            // sizes the container to the value verbatim, matching the
+            // `logical * scale` child baseview opened). Linux/REAPER (X11):
+            // REAPER interprets `ui:resize` as physical then *divides by
+            // the scale* to size its 1x pane (observed: 554 -> 277 pane;
+            // and even with no call it made a 270 pane from a 540 child).
+            // So to land the pane at `logical * scale` physical - matching
+            // baseview's child - pre-multiply by `scale^2`.
+            #[cfg(target_os = "macos")]
+            let (rw, rh) = (pref_w, pref_h);
+            #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let (rw, rh) = {
+                let s = host_scale.unwrap_or(1.0);
+                (
+                    (f64::from(pref_w) * s).round() as u32,
+                    (f64::from(pref_h) * s).round() as u32,
+                )
+            };
+            #[cfg(target_os = "linux")]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let (rw, rh) = {
+                let s = host_scale.unwrap_or(1.0);
+                (
+                    (f64::from(pref_w) * s * s).round() as u32,
+                    (f64::from(pref_h) * s * s).round() as u32,
+                )
+            };
             // LV2 ui:resize takes int32_t; editor dimensions in u32
             // are bounded by display size, well below i32::MAX.
             #[allow(clippy::cast_possible_wrap)]
-            let (w, h) = (pref_w as i32, pref_h as i32);
+            let (w, h) = (rw as i32, rh as i32);
             func(resize.handle, w, h);
         }
 
@@ -384,12 +420,22 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // the host's pane, or regions exposed when the FX window is
         // resized - reads as black, not uninitialised server memory),
         // and for a non-resizable editor pin the parent + child to the
-        // editor's natural size. REAPER ignores `ui:resize` here and
-        // (unlike Windows) drives the embedded child directly, so
-        // without the pin it would bilinear-upscale a fixed editor's
-        // surface (blurry GUI). Resizable editors keep host-driven size.
+        // editor's natural *physical* size. baseview opens the child at
+        // `logical * scale`, so the pin must match that (pinning to the
+        // logical value would halve a HiDPI editor). Resizable editors
+        // keep host-driven size.
         #[cfg(all(unix, not(target_os = "macos")))]
-        prepare_x11_parent_window(parent_ptr, pref_w, pref_h, !editor.can_resize());
+        {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let (px, py) = {
+                let s = host_scale.unwrap_or(1.0);
+                (
+                    (f64::from(pref_w) * s).round() as u32,
+                    (f64::from(pref_h) * s).round() as u32,
+                )
+            };
+            prepare_x11_parent_window(parent_ptr, px, py, !editor.can_resize());
+        }
 
         // Set widget out-param. Strict X11UI / CocoaUI hosts want the
         // child window / view we created; pragmatic ones (Ardour,
@@ -654,6 +700,26 @@ struct UridMapFeature {
     map: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> crate::urid::Urid>,
 }
 
+/// Layout of a single `LV2_Options_Option` from the `options:options`
+/// feature. The feature's `data` points at a `[LV2OptionsOption]` array
+/// terminated by a zeroed entry (`key == 0`). We only read it for
+/// `ui:scaleFactor`, but the fields must match the spec ABI exactly.
+#[repr(C)]
+struct LV2OptionsOption {
+    /// `LV2_Options_Context` - blank/resource/instance/port.
+    context: u32,
+    /// Subject the option applies to (unused for `ui:scaleFactor`).
+    subject: u32,
+    /// Interned URID of the option key.
+    key: crate::urid::Urid,
+    /// Value size in bytes.
+    size: u32,
+    /// Interned URID of the value's atom type.
+    type_: crate::urid::Urid,
+    /// Pointer to the value (`size` bytes of `type_`).
+    value: *const c_void,
+}
+
 /// One-pass parse of the host's null-terminated feature array.
 ///
 /// Replaces three separate walks (`ui:parent`, `ui:resize`,
@@ -679,6 +745,10 @@ struct ParsedFeatures {
     /// intern step doesn't re-walk the array.
     urid_map_handle: *mut c_void,
     urid_map_fn: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> crate::urid::Urid>,
+    /// Head of the host's `LV2_Options_Option` array (null-terminated by a
+    /// zeroed entry), or null when the host doesn't expose `options:options`.
+    /// Read after the URID map is resolved so we can match option keys.
+    options: *const LV2OptionsOption,
 }
 
 unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
@@ -688,6 +758,7 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
         touch: None,
         urid_map_handle: std::ptr::null_mut(),
         urid_map_fn: None,
+        options: std::ptr::null(),
     };
     unsafe {
         if features.is_null() {
@@ -697,6 +768,7 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
         let resize_uri = CString::new(LV2_UI__RESIZE).unwrap();
         let touch_uri = CString::new(LV2_UI__TOUCH).unwrap();
         let map_uri = CString::new(crate::types::LV2_URID__MAP).unwrap();
+        let options_uri = CString::new(crate::types::LV2_OPTIONS__OPTIONS).unwrap();
 
         let mut i = 0usize;
         loop {
@@ -725,12 +797,54 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
                         out.urid_map_handle = (*map_feat).handle;
                         out.urid_map_fn = (*map_feat).map;
                     }
+                } else if out.options.is_null() && feat_uri == options_uri.as_c_str() {
+                    out.options = feat.data as *const LV2OptionsOption;
                 }
             }
             i += 1;
         }
     }
     out
+}
+
+/// Read the host's `ui:scaleFactor` (an `atom:Float`) from the options
+/// array, or `None` when the option is absent / malformed / non-positive.
+///
+/// # Safety
+/// `options` must be null or point at a spec-conformant, zero-terminated
+/// `LV2_Options_Option` array whose `value` pointers are valid for their
+/// declared `size`.
+unsafe fn read_ui_scale_factor(
+    options: *const LV2OptionsOption,
+    urid_map: &UridMap,
+) -> Option<f64> {
+    if options.is_null() {
+        return None;
+    }
+    let scale_key = urid_map.intern(crate::types::LV2_UI__SCALE_FACTOR);
+    // `intern` returns 0 only if the host map failed; nothing to match then.
+    if scale_key == 0 {
+        return None;
+    }
+    unsafe {
+        let mut opt = options;
+        // The array is terminated by a zeroed option (`key == 0`).
+        while (*opt).key != 0 {
+            let o = &*opt;
+            if o.key == scale_key
+                && o.type_ == urid_map.atom_float
+                && o.size as usize >= std::mem::size_of::<f32>()
+                && !o.value.is_null()
+            {
+                let v = f64::from(*(o.value.cast::<f32>()));
+                if v.is_finite() && v > 0.0 {
+                    return Some(v);
+                }
+            }
+            opt = opt.add(1);
+        }
+    }
+    None
 }
 
 /// Resize the host-supplied parent HWND so its client area exactly
