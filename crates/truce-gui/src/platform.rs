@@ -482,6 +482,14 @@ pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,
 ) -> Option<wgpu::Surface<'static>> {
+    #[cfg(target_os = "windows")]
+    {
+        let RwhRawWindowHandle::Win32(handle) = window.raw_window_handle() else {
+            return None;
+        };
+        unsafe { create_wgpu_surface_from_hwnd(instance, handle.hwnd as isize) }
+    }
+    #[cfg(not(target_os = "windows"))]
     unsafe {
         let rwh = window.raw_window_handle();
         let surface_target = match rwh {
@@ -496,27 +504,6 @@ pub unsafe fn create_wgpu_surface(
                 );
                 let rwh6_display =
                     wgpu::rwh::RawDisplayHandle::AppKit(wgpu::rwh::AppKitDisplayHandle::new());
-                wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: Some(rwh6_display),
-                    raw_window_handle: rwh6_window,
-                }
-            }
-            #[cfg(target_os = "windows")]
-            RwhRawWindowHandle::Win32(handle) => {
-                let hwnd = handle.hwnd;
-                if hwnd.is_null() {
-                    return None;
-                }
-                let mut win32 =
-                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd as isize)?);
-                // wgpu's Vulkan backend requires `hinstance` to be set
-                // (`vkCreateWin32SurfaceKHR` rejects a null HINSTANCE).
-                // baseview leaves the rwh 0.5 `hinstance` field at null,
-                // so populate it here with the running module's HMODULE.
-                win32.hinstance = current_module_hinstance();
-                let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(win32);
-                let rwh6_display =
-                    wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
                 wgpu::SurfaceTargetUnsafe::RawHandle {
                     raw_display_handle: Some(rwh6_display),
                     raw_window_handle: rwh6_window,
@@ -544,4 +531,35 @@ pub unsafe fn create_wgpu_surface(
 
         instance.create_surface_unsafe(surface_target).ok()
     }
+}
+
+/// Windows-only variant of [`create_wgpu_surface`] that takes the raw
+/// HWND value instead of a `&baseview::Window`. An `isize` is `Send`,
+/// so callers can create the surface on a worker thread and keep the
+/// host's GUI thread free while the graphics driver initializes (a
+/// wedged driver can block device/surface creation indefinitely).
+///
+/// # Safety
+/// `hwnd` must be a live window handle that outlives the returned
+/// surface. If the window is destroyed first, swapchain creation fails
+/// with a driver error (DXGI validates the HWND) rather than UB.
+#[cfg(target_os = "windows")]
+#[must_use]
+pub unsafe fn create_wgpu_surface_from_hwnd(
+    instance: &wgpu::Instance,
+    hwnd: isize,
+) -> Option<wgpu::Surface<'static>> {
+    let mut win32 = wgpu::rwh::Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd)?);
+    // wgpu's Vulkan backend requires `hinstance` to be set
+    // (`vkCreateWin32SurfaceKHR` rejects a null HINSTANCE).
+    // baseview leaves the rwh 0.5 `hinstance` field at null,
+    // so populate it here with the running module's HMODULE.
+    win32.hinstance = current_module_hinstance();
+    let surface_target = wgpu::SurfaceTargetUnsafe::RawHandle {
+        raw_display_handle: Some(wgpu::rwh::RawDisplayHandle::Windows(
+            wgpu::rwh::WindowsDisplayHandle::new(),
+        )),
+        raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(win32),
+    };
+    unsafe { instance.create_surface_unsafe(surface_target).ok() }
 }

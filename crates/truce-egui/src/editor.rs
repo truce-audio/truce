@@ -15,7 +15,7 @@ use truce_core::editor::{
 use truce_params::Params;
 
 use crate::platform::ParentWindow;
-use crate::renderer::EguiRenderer;
+use crate::renderer::{EguiRenderer, RendererInit};
 use truce_gui::EditorScale;
 
 /// Trait for stateful egui UI implementations.
@@ -337,6 +337,11 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     context: PluginContext<P>,
     egui_ctx: egui::Context,
     renderer: Option<EguiRenderer>,
+    /// Set when GPU init outlived `from_window`'s bounded wait and is
+    /// still running on its worker thread (Windows). Polled at the top
+    /// of `on_frame`; the renderer is adopted if init ever completes.
+    /// Until then the editor is blank but the host stays responsive.
+    pending_renderer: Option<std::sync::mpsc::Receiver<Option<EguiRenderer>>>,
     pending_events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
     start_time: std::time::Instant,
@@ -413,8 +418,13 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         let phys_w = truce_gui::to_physical_px(self.size.0, f64::from(self.last_applied_scale));
         let phys_h = truce_gui::to_physical_px(self.size.1, f64::from(self.last_applied_scale));
         self.renderer = None;
-        self.renderer =
-            unsafe { EguiRenderer::from_window(window, phys_w, phys_h, device_lost.clone()) };
+        match unsafe { EguiRenderer::from_window(window, phys_w, phys_h, device_lost.clone()) } {
+            RendererInit::Ready(renderer) => {
+                self.renderer = renderer;
+                self.pending_renderer = None;
+            }
+            RendererInit::Deferred(rx) => self.pending_renderer = Some(rx),
+        }
         let egui_ctx = egui::Context::default();
         egui_ctx.set_visuals(self.visuals.clone());
         if let Some(font_data) = self.font {
@@ -423,6 +433,34 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         self.egui_ctx = egui_ctx;
         self.device_lost = device_lost;
     }
+    /// Poll a deferred GPU init (see [`Self::pending_renderer`]) and
+    /// adopt the renderer once the worker delivers it. The worker
+    /// configured the surface at open-time dimensions; re-apply the
+    /// current size in case the host resized while init was pending.
+    fn adopt_pending_renderer(&mut self) {
+        let Some(rx) = &self.pending_renderer else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Some(mut renderer)) => {
+                self.pending_renderer = None;
+                let scale = self.scale.get();
+                renderer.resize(
+                    truce_gui::to_physical_px(self.size.0, scale),
+                    truce_gui::to_physical_px(self.size.1, scale),
+                );
+                self.renderer = Some(renderer);
+                self.force_paint = true;
+                log::info!("egui gpu init completed after deferral; adopting renderer");
+            }
+            Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_renderer = None;
+                log::error!("egui gpu init failed after deferral; editor stays blank");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
     /// Apply a pending resize: `NSView` frame (baseview's
     /// `Window::resize`) first, then the wgpu surface. Reverse
     /// order would leave the surface oversized vs. the layer that
@@ -590,6 +628,9 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         // mid-resize - would cross a C frame and abort the host. Swallow
         // and log instead, mirroring the builtin GPU editor's handler.
         let frame_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Adopt a renderer whose init outlived the bounded wait at
+            // open (worker thread still running, editor blank so far).
+            self.adopt_pending_renderer();
             // Rebuild the renderer if the device was lost (flagged by the
             // device-lost callback or a swallowed render panic). Skip the rest
             // of this frame; the next tick renders against the fresh device.
@@ -1169,8 +1210,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                 let scale = system_scale as f32;
                 let phys_w = truce_gui::to_physical_px(size.0, system_scale);
                 let phys_h = truce_gui::to_physical_px(size.1, system_scale);
-                let renderer = unsafe {
+                let (renderer, pending_renderer) = match unsafe {
                     EguiRenderer::from_window(window, phys_w, phys_h, device_lost_for_renderer)
+                } {
+                    RendererInit::Ready(renderer) => (renderer, None),
+                    RendererInit::Deferred(rx) => (None, Some(rx)),
                 };
 
                 if let Some(font_data) = font {
@@ -1190,6 +1234,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     context: handler_ctx,
                     egui_ctx,
                     renderer,
+                    pending_renderer,
                     pending_events: Vec::new(),
                     modifiers: egui::Modifiers::NONE,
                     start_time: std::time::Instant::now(),
