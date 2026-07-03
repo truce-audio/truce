@@ -392,6 +392,12 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 };
                 eprint!("  {} ... ", p.name);
                 let mut cmd = Command::new(&pv);
+                // `cargo run -- validate` injects DYLD_FALLBACK_LIBRARY_PATH
+                // (target/debug deps) into our env; inherited by pluginval
+                // it breaks the bundle's dylib resolution and the scan
+                // reports zero types. Scrub the DYLD vars for the child.
+                cmd.env_remove("DYLD_FALLBACK_LIBRARY_PATH");
+                cmd.env_remove("DYLD_LIBRARY_PATH");
                 cmd.args([
                     "--validate",
                     validate_path.to_str().unwrap(),

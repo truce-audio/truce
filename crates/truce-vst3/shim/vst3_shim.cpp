@@ -258,7 +258,7 @@ struct UnitEntry { int32 id; int32 parentId; char name[128]; };
 static UnitEntry g_units[kMaxUnits];
 static int g_num_units = 0;
 // Maps param index → unit ID
-static int32 g_param_unit_id[1024];
+static int32 g_param_unit_id[4096];
 
 static void build_unit_map() {
     // Unit 0 = root (always exists)
@@ -267,7 +267,7 @@ static void build_unit_map() {
     g_units[0].parentId = -1; // kNoParentUnitId
     strncpy(g_units[0].name, "Root", sizeof(g_units[0].name));
 
-    for (uint32_t i = 0; i < g_num_params && i < 1024; i++) {
+    for (uint32_t i = 0; i < g_num_params && i < 4096; i++) {
         const char* group = g_params[i].group;
         if (!group || group[0] == 0) {
             g_param_unit_id[i] = 0; // root unit
@@ -1179,7 +1179,7 @@ public:
         str_to_char16(info->units, p.units, 128);
         info->stepCount = p.step_count;
         info->defaultNormalizedValue = p.default_normalized;
-        info->unitId = ((uint32_t)index < 1024) ? g_param_unit_id[index] : 0;
+        info->unitId = ((uint32_t)index < 4096) ? g_param_unit_id[index] : 0;
         info->flags = p.flags;
         return kResultOk;
     }

@@ -120,6 +120,12 @@ struct Vst3Instance<P: PluginExport> {
     /// value is whatever the plugin reports immediately after `init()`.
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
+    /// Last-seen values of the hidden MIDI proxy params (f64 bits),
+    /// indexed by `id - MIDI_PROXY_ID_BASE`. Empty when the plugin
+    /// doesn't accept MIDI input. Atomic because the shim writes the
+    /// last automation point from the audio thread while the host
+    /// reads `getParamNormalized` on the main thread.
+    midi_proxy_values: Vec<std::sync::atomic::AtomicU64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +179,14 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         pending_state: Arc::new(StateLoadQueue::new(1)),
         latency_cache,
         tail_cache,
+        midi_proxy_values: (0..midi_proxy_len::<P>())
+            .map(|i| {
+                // Bounded by MIDI_PROXY_COUNT.
+                #[allow(clippy::cast_possible_truncation)]
+                let controller = (i as u32) % MIDI_PROXY_PER_CHANNEL;
+                std::sync::atomic::AtomicU64::new(midi_proxy_default(controller).to_bits())
+            })
+            .collect(),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
@@ -351,6 +365,20 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 // offsets are non-negative and bounded by block size.
                 #[allow(clippy::cast_sign_loss)]
                 let sample_offset = pc.sample_offset as u32;
+                // Unbound MIDI controllers arrive on the hidden proxy
+                // ids: decode straight to the event. No `ParamChange`
+                // and no `Params` write - a proxy is not a plugin
+                // parameter. The shim's denormalize is identity for
+                // proxy ids, so `pc.value` is the host's raw `0..=1`.
+                if let Some((channel, controller)) = midi_proxy_decode(pc.id) {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let normalized = pc.value.clamp(0.0, 1.0) as f32;
+                    inst.event_list.push(Event::new(
+                        sample_offset,
+                        midi_proxy_event(channel, controller, normalized),
+                    ));
+                    continue;
+                }
                 // MIDI-mapped controllers (pitch bend, CC, pressure,
                 // program) arrive here as parameter changes because
                 // VST3 has no native input event for them. Bridge them
@@ -464,7 +492,7 @@ unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void)
         // free per-call but consistent with the cache-first pattern
         // the rest of the file uses.
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        len_u32(inst.param_ranges.len())
+        len_u32(inst.param_ranges.len() + inst.midi_proxy_values.len())
     }
 }
 
@@ -474,6 +502,11 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
 ) -> f64 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        if let Some(rel) = id.checked_sub(MIDI_PROXY_ID_BASE)
+            && let Some(slot) = inst.midi_proxy_values.get(rel as usize)
+        {
+            return f64::from_bits(slot.load(std::sync::atomic::Ordering::Relaxed));
+        }
         inst.params_arc.get_plain(id).unwrap_or(0.0)
     }
 }
@@ -485,6 +518,15 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        if let Some(rel) = id.checked_sub(MIDI_PROXY_ID_BASE)
+            && let Some(slot) = inst.midi_proxy_values.get(rel as usize)
+        {
+            slot.store(
+                value.clamp(0.0, 1.0).to_bits(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            return;
+        }
         inst.params_arc.set_plain(id, value);
     }
 }
@@ -773,6 +815,96 @@ fn midi_event_from_param(info: &ParamInfo, plain: f64) -> Option<EventBody> {
             program: denorm_7bit(norm),
         },
     })
+}
+
+// ---------------------------------------------------------------------------
+// MIDI input proxy parameters
+//
+// VST3 has no input events for channel-level MIDI; hosts deliver CC /
+// pitch bend / channel pressure only to a parameter advertised through
+// `IMidiMapping`. Explicit `midi_map` bindings cover parameters the
+// plugin *wants* as parameters; these hidden proxies cover everything
+// else, so event-consuming plugins hear the same MIDI on VST3 as on
+// AU / CLAP / LV2 / VST2. Proxies are not real parameters: never
+// serialized into state, never visible to `Params`, only an
+// `IMidiMapping` target that turns back into the matching `EventBody`.
+// ---------------------------------------------------------------------------
+
+/// Base id for the proxy range. Real param ids can't collide: derive
+/// hash ids are masked into `0..METER_ID_BASE` (`1 << 24`), meters
+/// count up from there, and explicit ids at or above `METER_ID_BASE`
+/// are rejected at derive time.
+const MIDI_PROXY_ID_BASE: u32 = 1 << 25;
+/// Controllers per channel: CC 0..=127, 128 = channel pressure,
+/// 129 = pitch bend. Program change (VST3 controller 130) is
+/// deliberately not proxied - `kIsProgramChange` parameters interact
+/// with unit/program-list metadata, so it stays explicit-binding-only.
+const MIDI_PROXY_PER_CHANNEL: u32 = 130;
+const MIDI_PROXY_COUNT: u32 = 16 * MIDI_PROXY_PER_CHANNEL;
+const MIDI_PROXY_PRESSURE: u32 = 128;
+const MIDI_PROXY_PITCH_BEND: u32 = 129;
+
+fn midi_proxy_id(channel: u8, controller: u32) -> u32 {
+    MIDI_PROXY_ID_BASE + u32::from(channel.min(15)) * MIDI_PROXY_PER_CHANNEL + controller
+}
+
+/// `(channel, controller)` for a proxy id, `None` for real param ids.
+fn midi_proxy_decode(id: u32) -> Option<(u8, u32)> {
+    let rel = id.checked_sub(MIDI_PROXY_ID_BASE)?;
+    if rel >= MIDI_PROXY_COUNT {
+        return None;
+    }
+    // rel / 130 is bounded to 0..16 by the check above.
+    #[allow(clippy::cast_possible_truncation)]
+    Some((
+        (rel / MIDI_PROXY_PER_CHANNEL) as u8,
+        rel % MIDI_PROXY_PER_CHANNEL,
+    ))
+}
+
+/// Wheel-centred default for pitch bend, zero for everything else.
+fn midi_proxy_default(controller: u32) -> f64 {
+    if controller == MIDI_PROXY_PITCH_BEND {
+        0.5
+    } else {
+        0.0
+    }
+}
+
+/// The MIDI event a proxy change decodes to. `normalized` is the
+/// host's `0..=1` wheel/controller position (the shim's denormalize is
+/// identity for proxy ids, so the plain value passes through).
+fn midi_proxy_event(channel: u8, controller: u32, normalized: f32) -> EventBody {
+    use truce_core::midi::{denorm_7bit, denorm_pitch_bend};
+    match controller {
+        MIDI_PROXY_PITCH_BEND => EventBody::PitchBend {
+            group: 0,
+            channel,
+            value: denorm_pitch_bend(normalized * 2.0 - 1.0),
+        },
+        MIDI_PROXY_PRESSURE => EventBody::ChannelPressure {
+            group: 0,
+            channel,
+            pressure: denorm_7bit(normalized),
+        },
+        cc => EventBody::ControlChange {
+            group: 0,
+            channel,
+            // Bounded to 0..=127 by `midi_proxy_decode`.
+            cc: u8::try_from(cc).unwrap_or(0) & 0x7F,
+            value: denorm_7bit(normalized),
+        },
+    }
+}
+
+/// Proxy count for this plugin: the full bank when it accepts MIDI
+/// input, zero otherwise (no surface change for non-MIDI plugins).
+fn midi_proxy_len<P: PluginExport>() -> usize {
+    if P::info().accepts_midi_in {
+        MIDI_PROXY_COUNT as usize
+    } else {
+        0
+    }
 }
 
 unsafe extern "C" fn cb_get_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
@@ -1216,14 +1348,23 @@ unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport>(
     };
     let channel = u8::try_from(channel).unwrap_or(0);
     // Returns a hit-flag (1/0); the shim maps it to kResultOk /
-    // kResultFalse for the VST3 boundary.
-    match truce_params::map_source_to_param(&P::param_infos_static(), channel, source) {
-        Some(id) => {
-            unsafe { out_param_id.write(id) };
-            1
-        }
-        None => 0,
+    // kResultFalse for the VST3 boundary. Explicit bindings win;
+    // everything unbound falls through to the hidden proxy for the
+    // `(channel, controller)` so event-consuming plugins still hear
+    // the MIDI (program change excepted - not proxied).
+    if let Some(id) = truce_params::map_source_to_param(&P::param_infos_static(), channel, source) {
+        unsafe { out_param_id.write(id) };
+        return 1;
     }
+    if P::info().accepts_midi_in
+        && channel < 16
+        && let Ok(controller) = u32::try_from(controller)
+        && controller < MIDI_PROXY_PER_CHANNEL
+    {
+        unsafe { out_param_id.write(midi_proxy_id(channel, controller)) };
+        return 1;
+    }
+    0
 }
 
 /// Convert physical pixels (what the VST3 host speaks) to logical
@@ -1431,6 +1572,47 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         });
     }
 
+    // Hidden MIDI input proxies (see the MIDI-proxy block above):
+    // appended *after* the real params so the shim's index-based
+    // structures (unit table, ParameterInfo enumeration) keep their
+    // positions. Non-automatable (flags 0), identity 0..=1 range,
+    // grouped under a "MIDI" unit. The CStrings intentionally leak -
+    // registration runs once per process, matching the real params'
+    // `into_raw` pattern.
+    if info.accepts_midi_in {
+        let empty_units = || CString::default().into_raw();
+        for channel in 0u8..16 {
+            for controller in 0..MIDI_PROXY_PER_CHANNEL {
+                let (name, short) = match controller {
+                    MIDI_PROXY_PITCH_BEND => (
+                        format!("MIDI Ch {} Pitch Bend", channel + 1),
+                        format!("M{}PB", channel + 1),
+                    ),
+                    MIDI_PROXY_PRESSURE => (
+                        format!("MIDI Ch {} Pressure", channel + 1),
+                        format!("M{}Pr", channel + 1),
+                    ),
+                    cc => (
+                        format!("MIDI Ch {} CC {cc}", channel + 1),
+                        format!("M{}C{cc}", channel + 1),
+                    ),
+                };
+                param_descs.push(Vst3ParamDescriptor {
+                    id: midi_proxy_id(channel, controller),
+                    name: CString::new(name).unwrap_or_default().into_raw(),
+                    short_name: CString::new(short).unwrap_or_default().into_raw(),
+                    units: empty_units(),
+                    min: 0.0,
+                    max: 1.0,
+                    default_normalized: midi_proxy_default(controller),
+                    step_count: 0,
+                    flags: 0,
+                    group: CString::new("MIDI").unwrap_or_default().into_raw(),
+                });
+            }
+        }
+    }
+
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
     let url = CString::new(info.url).unwrap_or_default();
@@ -1618,6 +1800,81 @@ macro_rules! export_vst3 {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod midi_proxy_tests {
+    use super::{
+        MIDI_PROXY_ID_BASE, MIDI_PROXY_PER_CHANNEL, MIDI_PROXY_PITCH_BEND, MIDI_PROXY_PRESSURE,
+        midi_proxy_decode, midi_proxy_default, midi_proxy_event, midi_proxy_id,
+    };
+    use truce_core::events::EventBody;
+
+    #[test]
+    fn id_round_trips_across_the_bank() {
+        for channel in 0u8..16 {
+            for controller in 0..MIDI_PROXY_PER_CHANNEL {
+                let id = midi_proxy_id(channel, controller);
+                assert_eq!(midi_proxy_decode(id), Some((channel, controller)));
+            }
+        }
+    }
+
+    #[test]
+    fn real_param_ids_never_decode() {
+        // Hash ids live below METER_ID_BASE, meters just above it -
+        // both far under the proxy base.
+        const _: () = assert!(MIDI_PROXY_ID_BASE > truce_params::METER_ID_BASE);
+        assert_eq!(midi_proxy_decode(0), None);
+        assert_eq!(midi_proxy_decode(truce_params::METER_ID_BASE), None);
+        assert_eq!(midi_proxy_decode(MIDI_PROXY_ID_BASE - 1), None);
+        // One past the bank is out again.
+        assert_eq!(
+            midi_proxy_decode(midi_proxy_id(15, MIDI_PROXY_PER_CHANNEL - 1) + 1),
+            None
+        );
+    }
+
+    #[test]
+    fn pitch_bend_endpoints_and_center() {
+        let bend = |norm: f32| match midi_proxy_event(3, MIDI_PROXY_PITCH_BEND, norm) {
+            EventBody::PitchBend { channel, value, .. } => {
+                assert_eq!(channel, 3);
+                value
+            }
+            other => panic!("expected PitchBend, got {other:?}"),
+        };
+        assert_eq!(bend(0.0), 0);
+        assert_eq!(bend(0.5), 8192);
+        assert_eq!(bend(1.0), 16383);
+    }
+
+    #[test]
+    fn cc_and_pressure_decode_to_their_events() {
+        match midi_proxy_event(0, 74, 1.0) {
+            EventBody::ControlChange { cc, value, .. } => {
+                assert_eq!(cc, 74);
+                assert_eq!(value, 127);
+            }
+            other => panic!("expected ControlChange, got {other:?}"),
+        }
+        match midi_proxy_event(9, MIDI_PROXY_PRESSURE, 0.0) {
+            EventBody::ChannelPressure {
+                channel, pressure, ..
+            } => {
+                assert_eq!(channel, 9);
+                assert_eq!(pressure, 0);
+            }
+            other => panic!("expected ChannelPressure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn defaults_center_only_the_wheel() {
+        assert!((midi_proxy_default(MIDI_PROXY_PITCH_BEND) - 0.5).abs() < f64::EPSILON);
+        assert!(midi_proxy_default(0).abs() < f64::EPSILON);
+        assert!(midi_proxy_default(MIDI_PROXY_PRESSURE).abs() < f64::EPSILON);
+    }
 }
 
 #[cfg(test)]
