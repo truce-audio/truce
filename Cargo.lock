@@ -4208,27 +4208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-hyper-synth"
-version = "1.0.5"
-dependencies = [
- "clap-sys",
- "truce",
- "truce-aax",
- "truce-au",
- "truce-clap",
- "truce-core",
- "truce-gui",
- "truce-gui-types",
- "truce-loader",
- "truce-lv2",
- "truce-params",
- "truce-standalone",
- "truce-test",
- "truce-vst2",
- "truce-vst3",
-]
-
-[[package]]
 name = "truce-example-midi-inspector"
 version = "1.0.5"
 dependencies = [
@@ -4272,7 +4251,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-mpe-synth"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4293,7 +4272,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-multiport"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "clap-sys",
  "truce",
