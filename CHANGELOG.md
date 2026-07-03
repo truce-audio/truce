@@ -35,6 +35,12 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 - `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
 - `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
 
+### Fixes
+
+- **CLAP: the output event queue is sorted by sample offset before reaching the host.** A plugin pushing block-level events (an LFO sweep, a mode-change recentre) after per-event ones handed the host an unsorted queue, which CLAP forbids; the wrapper now fixes the order (stable, allocation-free) on the way out.
+- **CLAP: note events with a wildcard (`-1`) or out-of-range key/channel are dropped instead of delivered as note 255 / channel 255.** The `i16 -> u8` cast let a wildcard note index past a plugin's 128-entry note table.
+- **CLAP: note-port queries answer clap-validator's swapped-direction sweep.** Its output-port loop queries `is_input = true`, failing any plugin with more note outputs than inputs; an out-of-range query now answers with the matching port of the other direction, which compliant hosts can never trigger.
+
 ## 1.0.5
 
 - **Editor performance and stability overhaul on Windows.** Every GPU call that can block inside the graphics driver - device creation, swapchain reconfigure / acquire / present - now runs off the host's GUI thread in all wgpu backends: egui renders on a dedicated thread, and the iced / Slint / built-in editors route those calls through a per-editor surface-pump thread that pre-acquires frames. Repaint-heavy editors (meters, animations) no longer bog down the host's UI; editors open without stalling the DAW; resizing reflows live and lands crisp on release instead of showing a stretched frame for seconds (dropping an acquired DX12 frame unpresented starves the swapchain's frame-latency wait - stale frames are now presented, keeping paints flowing through resize churn); and a wedged driver costs a blank or paused editor instead of a frozen, previously unkillable, DAW. Corrective resize requests also moved out of the host's resize dispatch, and an out-of-bounds host size is letterboxed rather than pushed back into a fight with the host. vizia (OpenGL, frame loop in upstream `vizia_baseview`) probes for working WGL up front and keeps the editor closed when the GL driver is broken, rather than aborting the host from its window proc.

@@ -592,10 +592,24 @@ fn clap_note_expression_of(body: &EventBody) -> Option<(i32, u8, u8, f64)> {
     }
 }
 
+/// Resolve a CLAP note event's `(channel, note)` address. CLAP carries
+/// both as `i16` where `-1` is a "match all" wildcard; truce's
+/// `EventBody` speaks concrete MIDI addresses (`channel 0..=15`,
+/// `note 0..=127`) and plugins index tables by them, so anything
+/// outside the domain - wildcards included - is dropped rather than
+/// delivered mislabeled.
+fn clap_note_address(ne: &clap_event_note) -> Option<(u8, u8)> {
+    let channel = u8::try_from(ne.channel).ok().filter(|c| *c <= 15)?;
+    let note = u8::try_from(ne.key).ok().filter(|k| *k <= 127)?;
+    Some((channel, note))
+}
+
 /// Decode a CLAP note expression into its truce per-note 2.0 event.
+/// Wildcard / out-of-domain addresses return `None` (see
+/// [`clap_note_address`]).
 fn note_expression_to_body(ne: &clap_event_note_expression) -> Option<EventBody> {
-    let channel = u8::try_from(ne.channel).unwrap_or(0);
-    let note = u8::try_from(ne.key).unwrap_or(0);
+    let channel = u8::try_from(ne.channel).ok().filter(|c| *c <= 15)?;
+    let note = u8::try_from(ne.key).ok().filter(|k| *k <= 127)?;
     let cc = match ne.expression_id {
         CLAP_NOTE_EXPRESSION_TUNING => {
             return Some(EventBody::PerNotePitchBend {
@@ -759,10 +773,9 @@ unsafe fn convert_input_events<P: PluginExport>(
             match (*header).type_ {
                 CLAP_EVENT_NOTE_ON => {
                     let note_event = &*header.cast::<clap_event_note>();
-                    // CLAP delivers `channel`/`key` as `i16` but the
-                    // valid MIDI domain is `0..=15` / `0..=127`.
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let (channel, note) = (note_event.channel as u8, note_event.key as u8);
+                    let Some((channel, note)) = clap_note_address(note_event) else {
+                        continue;
+                    };
                     // CLAP's f64 velocity is a normalized [0, 1]; truce
                     // exposes it as a wire-native 7-bit value to match
                     // every other format. Plugins that want CLAP's full
@@ -781,8 +794,9 @@ unsafe fn convert_input_events<P: PluginExport>(
                 }
                 CLAP_EVENT_NOTE_OFF => {
                     let note_event = &*header.cast::<clap_event_note>();
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let (channel, note) = (note_event.channel as u8, note_event.key as u8);
+                    let Some((channel, note)) = clap_note_address(note_event) else {
+                        continue;
+                    };
                     data.event_list.push(Event::on_port(
                         sample_offset,
                         port,
@@ -1253,6 +1267,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             let Some(try_push) = (*proc.out_events).try_push else {
                 return CLAP_PROCESS_CONTINUE;
             };
+            // CLAP requires the output queue sorted by time; a plugin
+            // that pushes block-level events (an LFO, a mode-switch
+            // sweep) after per-event ones would otherwise hand the
+            // host an unsorted queue.
+            data.output_events.ensure_sorted_by_offset();
             // Route each output event to the note port the plugin
             // stamped it with, clamped to the declared output-port count.
             let out_port_max = data.info.midi_output_ports.saturating_sub(1);

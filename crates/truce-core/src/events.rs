@@ -393,6 +393,28 @@ impl EventList {
         self.events.push(event);
     }
 
+    /// Sort the list by `sample_offset` if it isn't already, keeping
+    /// the push order of equal-offset events (a recentre bend must stay
+    /// ahead of the note-off it precedes). Hosts require output queues
+    /// ordered by time; wrappers call this before draining so a plugin
+    /// that pushed block-level events after per-event ones can't hand
+    /// the host an unsorted queue. Audio-thread safe: the common
+    /// already-sorted case is one linear scan, and the fix-up is an
+    /// in-place insertion sort - no allocation (`sort_by_key` would
+    /// allocate; `sort_unstable` would reorder equal offsets).
+    pub fn ensure_sorted_by_offset(&mut self) {
+        if self.events.is_sorted_by_key(|event| event.sample_offset) {
+            return;
+        }
+        for i in 1..self.events.len() {
+            let mut j = i;
+            while j > 0 && self.events[j - 1].sample_offset > self.events[j].sample_offset {
+                self.events.swap(j - 1, j);
+                j -= 1;
+            }
+        }
+    }
+
     /// Append a `SysEx` event whose payload is copied into the pool.
     /// `data` is the inner `SysEx` bytes **without** the leading
     /// `0xF0` / trailing `0xF7` - wrappers strip those at the
@@ -634,5 +656,31 @@ mod tests {
         let mut list = EventList::with_capacity(8);
         list.push_sysex_on_port(0, 2, b"\x10\x11").unwrap();
         assert_eq!(list.iter().next().unwrap().port, 2);
+    }
+
+    #[test]
+    fn ensure_sorted_orders_offsets_and_keeps_equal_offset_order() {
+        let on = |ch: u8| EventBody::NoteOn {
+            group: 0,
+            channel: ch,
+            note: 60,
+            velocity: 100,
+        };
+        let mut list = EventList::with_capacity(8);
+        // Per-event pushes at real offsets, then block-level pushes at
+        // the last sample - the shape a vibrato-style emitter produces.
+        list.push(Event::new(10, on(0)));
+        list.push(Event::new(510, on(1)));
+        list.push(Event::new(0, on(2)));
+        list.push(Event::new(510, on(3))); // equal offset: must stay after ch 1
+        list.ensure_sorted_by_offset();
+        let order: Vec<(u32, u8)> = list
+            .iter()
+            .map(|e| match e.body {
+                EventBody::NoteOn { channel, .. } => (e.sample_offset, channel),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(order, vec![(0, 2), (10, 0), (510, 1), (510, 3)]);
     }
 }

@@ -380,19 +380,23 @@ impl PluginLogic for Spreader {
         }
 
         // Vibrato runs whenever notes are held - live on a stopped
-        // transport or during playback. Switching modes recentres held
-        // notes on the old wire; a released note is recentred at its
-        // note-off (in the arm above) - which also covers a transport
-        // stop, since the host sends note-offs then.
+        // transport or during playback. Emitted at the block's last
+        // sample: hosts require output events sorted by offset, and the
+        // loop above pushes at real offsets, so these must not land
+        // earlier in the queue with a smaller offset. Switching modes
+        // recentres held notes on the old wire; a released note is
+        // recentred at its note-off (in the loop above) - which also
+        // covers a transport stop, since the host sends note-offs then.
+        let last = u32::try_from(buffer.num_samples().saturating_sub(1)).unwrap_or(0);
         let kind = vibrato_kind(algo);
         if self.vibrato != kind {
             if let Some(old) = self.vibrato {
-                self.recentre_held(old, context);
+                self.recentre_held(old, last, context);
             }
             self.vibrato = kind;
         }
         if let Some(kind) = kind {
-            self.emit_vibrato(kind, buffer.num_samples(), context);
+            self.emit_vibrato(kind, buffer.num_samples(), last, context);
         }
 
         ProcessStatus::Normal
@@ -429,24 +433,28 @@ impl Spreader {
 
     /// Emit a centre bend on `kind`'s wire for every held note,
     /// cancelling residual vibrato detune when the mode switches.
-    fn recentre_held(&mut self, kind: VibratoKind, context: &mut ProcessContext) {
+    /// `offset` is the block's last sample (see the ordering note at
+    /// the call site).
+    fn recentre_held(&mut self, kind: VibratoKind, offset: u32, context: &mut ProcessContext) {
         for note in 0u8..128 {
             if let Some(h) = self.held[usize::from(note)].as_mut() {
                 h.phase = 0.0;
-                context
-                    .output_events
-                    .push(Event::new(0, recentre_body(kind, h.group, h.channel, note)));
+                context.output_events.push(Event::new(
+                    offset,
+                    recentre_body(kind, h.group, h.channel, note),
+                ));
             }
         }
     }
 
     /// Advance every held note's vibrato LFO by one block and emit its
-    /// bend on `kind`'s wire. The semitone depth param scales into the
-    /// wire's bend range.
+    /// bend on `kind`'s wire at `offset` (the block's last sample). The
+    /// semitone depth param scales into the wire's bend range.
     fn emit_vibrato(
         &mut self,
         kind: VibratoKind,
         block_samples: usize,
+        offset: u32,
         context: &mut ProcessContext,
     ) {
         let rate = self.params.vib_rate.raw_target();
@@ -474,7 +482,7 @@ impl Spreader {
                         value,
                     },
                 };
-                context.output_events.push(Event::new(0, body));
+                context.output_events.push(Event::new(offset, body));
             }
         }
     }
