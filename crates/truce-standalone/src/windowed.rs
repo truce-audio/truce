@@ -364,6 +364,8 @@ where
             current_size: (lw, lh),
             #[cfg(target_os = "macos")]
             editor_reports_size: true,
+            #[cfg(target_os = "macos")]
+            editor_min_max: (editor_limits.0, editor_limits.1),
             #[cfg(target_os = "linux")]
             size_hints_scale: 0.0,
             _plugin: plugin,
@@ -411,6 +413,14 @@ where
     /// size). Updated wherever `set_size` is called.
     #[cfg(target_os = "macos")]
     editor_reports_size: bool,
+    /// Editor min / max snapshot for the per-frame out-of-bounds check.
+    /// `AppKit`'s `contentMinSize` / `contentMaxSize` only bound drags
+    /// and zoom; a programmatic `setFrame:` bypasses them, so the
+    /// `on_frame` poll snaps such a frame back (the counterpart of the
+    /// Windows `WM_GETMINMAXINFO` subclass, which covers programmatic
+    /// resizes natively).
+    #[cfg(target_os = "macos")]
+    editor_min_max: ((u32, u32), (u32, u32)),
     /// Scale factor the X11 WM min/max size hints were last computed
     /// at, or `0.0` if they haven't been set yet. The editor's
     /// min/max bounds are logical, so the physical-pixel hints the WM
@@ -508,6 +518,24 @@ where
             && os_size.0 > 0
             && os_size.1 > 0
         {
+            // A programmatic `setFrame:` bypasses AppKit's
+            // `contentMinSize` / `contentMaxSize`; snap an out-of-bounds
+            // frame back to the clamped size (deferred via baseview's
+            // resize, so it lands next frame). In-bounds sizes are a
+            // no-op, so the correction can't loop. The editor is
+            // forwarded the clamped size below either way, so it never
+            // renders out of bounds.
+            let ((min_w, min_h), (max_w, max_h)) = self.editor_min_max;
+            let os_size = {
+                let clamped = (
+                    os_size.0.clamp(min_w.max(1), max_w),
+                    os_size.1.clamp(min_h.max(1), max_h),
+                );
+                if clamped != os_size {
+                    resize_outer_window(window, clamped.0, clamped.1);
+                }
+                clamped
+            };
             // Some resizes arrive as a `Resized` event (handled in
             // `on_event`); others only surface by polling the content
             // size here. Forward the ones `on_event` didn't see.
