@@ -20,3 +20,13 @@ raw-window-handle = "0.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+
+# For the WGL hardware-OpenGL probe (see `wgl_extensions_available`).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_OpenGL",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -216,3 +216,111 @@ pub fn reanchor_all_children_to_top(parent: *mut std::ffi::c_void) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn reanchor_all_children_to_top(_parent: *mut std::ffi::c_void) {}
+
+/// Whether hardware-accelerated OpenGL (the WGL extension entry
+/// points a modern GL context needs) is available in this process.
+///
+/// When the GPU driver's OpenGL ICD is absent or broken (mismatched
+/// driver packages, disabled adapter, RDP session), `wglCreateContext`
+/// silently hands back Microsoft's software "GDI Generic" GL 1.1
+/// context, which exposes **no** WGL extensions. GL-based editors
+/// (vizia via Skia) then die inside window creation - under the Win32
+/// window proc, where a panic cannot unwind and aborts the entire
+/// host. Callers probe this *before* opening such an editor and skip
+/// the open instead.
+///
+/// The probe mirrors baseview's own bootstrap: a hidden throwaway
+/// window, a basic pixel format, a legacy `wglCreateContext`, then a
+/// `wglGetProcAddress` lookup of the two extensions context creation
+/// requires. Everything is torn down before returning.
+#[cfg(target_os = "windows")]
+#[must_use]
+pub fn wgl_extensions_available() -> bool {
+    use windows_sys::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
+    use windows_sys::Win32::Graphics::OpenGL::{
+        ChoosePixelFormat, SetPixelFormat, wglCreateContext, wglDeleteContext, wglGetProcAddress,
+        wglMakeCurrent, PFD_DRAW_TO_WINDOW, PFD_MAIN_PLANE, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA,
+        PIXELFORMATDESCRIPTOR,
+    };
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, UnregisterClassW,
+        CS_OWNDC, WNDCLASSW,
+    };
+    use windows_sys::core::s;
+
+    // UTF-16, NUL-terminated: "truce-wgl-probe".
+    const CLASS_NAME: &[u16] = &[
+        0x74, 0x72, 0x75, 0x63, 0x65, 0x2d, 0x77, 0x67, 0x6c, 0x2d, 0x70, 0x72, 0x6f, 0x62, 0x65,
+        0,
+    ];
+
+    unsafe {
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        let class = WNDCLASSW {
+            style: CS_OWNDC,
+            lpfnWndProc: Some(DefWindowProcW),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinstance,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: std::ptr::null_mut(),
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: CLASS_NAME.as_ptr(),
+        };
+        let atom = RegisterClassW(&class);
+        if atom == 0 {
+            return false;
+        }
+        let hwnd = CreateWindowExW(
+            0,
+            CLASS_NAME.as_ptr(),
+            CLASS_NAME.as_ptr(),
+            0,
+            0,
+            0,
+            1,
+            1,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            hinstance,
+            std::ptr::null(),
+        );
+        if hwnd.is_null() {
+            UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+            return false;
+        }
+
+        let mut available = false;
+        let hdc = GetDC(hwnd);
+        if !hdc.is_null() {
+            let pfd = PIXELFORMATDESCRIPTOR {
+                nSize: size_of::<PIXELFORMATDESCRIPTOR>() as u16,
+                nVersion: 1,
+                dwFlags: PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL,
+                iPixelType: PFD_TYPE_RGBA as u8,
+                cColorBits: 32,
+                cDepthBits: 24,
+                cStencilBits: 8,
+                iLayerType: PFD_MAIN_PLANE as u8,
+                ..std::mem::zeroed()
+            };
+            let format = ChoosePixelFormat(hdc, &pfd);
+            if format != 0 && SetPixelFormat(hdc, format, &pfd) != 0 {
+                let hglrc = wglCreateContext(hdc);
+                if !hglrc.is_null() {
+                    wglMakeCurrent(hdc, hglrc);
+                    available = wglGetProcAddress(s!("wglChoosePixelFormatARB")).is_some()
+                        && wglGetProcAddress(s!("wglCreateContextAttribsARB")).is_some();
+                    wglMakeCurrent(hdc, std::ptr::null_mut());
+                    wglDeleteContext(hglrc);
+                }
+            }
+            ReleaseDC(hwnd, hdc);
+        }
+        DestroyWindow(hwnd);
+        UnregisterClassW(CLASS_NAME.as_ptr(), hinstance);
+        available
+    }
+}
