@@ -32,17 +32,17 @@ use std::sync::{Arc, OnceLock};
 
 use clap_sys::events::{
     CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_MIDI_SYSEX,
-    CLAP_EVENT_MIDI2, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
-    CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT, CLAP_NOTE_EXPRESSION_BRIGHTNESS,
-    CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE,
-    CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME,
-    CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
-    CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE,
-    CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi,
-    clap_event_midi_sysex, clap_event_midi2, clap_event_note, clap_event_note_expression,
-    clap_event_param_gesture, clap_event_param_value, clap_event_transport, clap_input_events,
-    clap_output_events,
+    CLAP_EVENT_MIDI2, CLAP_EVENT_NOTE_CHOKE, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF,
+    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END,
+    CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT,
+    CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN,
+    CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO,
+    CLAP_NOTE_EXPRESSION_VOLUME, CLAP_TRANSPORT_HAS_BEATS_TIMELINE,
+    CLAP_TRANSPORT_HAS_SECONDS_TIMELINE, CLAP_TRANSPORT_HAS_TEMPO,
+    CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE, CLAP_TRANSPORT_IS_PLAYING,
+    CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi, clap_event_midi_sysex,
+    clap_event_midi2, clap_event_note, clap_event_note_expression, clap_event_param_gesture,
+    clap_event_param_value, clap_event_transport, clap_input_events, clap_output_events,
 };
 use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
@@ -710,6 +710,30 @@ unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
     }
 }
 
+/// `CLAP_EVENT_NOTE_CHOKE` -> `EventBody::NoteOff`.
+///
+/// `truce_core::events::EventBody` has no dedicated choke variant, so
+/// this maps onto `NoteOff`: a choked voice at least gets released
+/// instead of hanging forever (not spec-perfect - a real choke is an
+/// immediate cut, not a release tail). CLAP allows `-1` ("all") on
+/// `channel`/`key` for a group choke; that can't be expressed as a
+/// single concrete `NoteOff`, so wildcard chokes return `None` rather
+/// than choking whatever an `as u8` wraparound would otherwise
+/// (mis)target.
+fn choke_to_note_off(note_event: &clap_event_note) -> Option<EventBody> {
+    if note_event.channel < 0 || note_event.key < 0 {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let (channel, note) = (note_event.channel as u8, note_event.key as u8);
+    Some(EventBody::NoteOff {
+        group: 0,
+        channel,
+        note,
+        velocity: 0,
+    })
+}
+
 /// `sort` controls whether the resulting `event_list` gets a stable
 /// sort by sample offset. `process` needs sorted events (the plugin
 /// iterates them in time order); `params_flush` discards the events
@@ -793,6 +817,13 @@ unsafe fn convert_input_events<P: PluginExport>(
                             velocity: denorm_7bit(f32::from_f64(note_event.velocity)),
                         },
                     ));
+                }
+                CLAP_EVENT_NOTE_CHOKE => {
+                    let note_event = &*header.cast::<clap_event_note>();
+                    if let Some(body) = choke_to_note_off(note_event) {
+                        data.event_list
+                            .push(Event::on_port(sample_offset, port, body));
+                    }
                 }
                 CLAP_EVENT_PARAM_VALUE => {
                     // When a state load was applied at the head of
@@ -917,8 +948,10 @@ unsafe fn convert_input_events<P: PluginExport>(
                     }
                 }
                 _ => {
-                    // Unsupported event type (system real-time, utility)
-                    // - skip silently.
+                    // Unsupported event type (system real-time, utility,
+                    // NOTE_END) - skip silently. NOTE_END is plugin->host
+                    // only (voice lifecycle reporting), nothing to
+                    // convert on the input side.
                 }
             }
         }
@@ -2849,6 +2882,21 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
     descriptor: *const clap_plugin_descriptor,
     host: *const clap_host,
 ) -> *const clap_plugin {
+    // An empty `bus_layouts()` is a plugin-author bug (see
+    // `truce_core::wrapper::first_bus_layout`'s doc) - AAX and VST2
+    // already log and skip registration for it. CLAP had no
+    // equivalent gate: `audio_ports_count`/`audio_ports_get` would
+    // silently report 0 ports and the instance would still be
+    // created, hiding the same author bug that's loud in every other
+    // format. Refusing to create the instance here (returning null,
+    // same as every other `create_plugin_instance` failure path)
+    // covers `audio_ports_count`/`audio_ports_get` too, since neither
+    // is ever called without a live instance.
+    if truce_core::wrapper::first_bus_layout::<P>().is_none() {
+        truce_core::wrapper::log_missing_bus_layout::<P>("clap");
+        return ptr::null();
+    }
+
     let instance = P::create();
     let info = P::info();
     let plugin_id_hash = state::hash_plugin_id(info.clap_id);
@@ -3076,5 +3124,48 @@ mod transport_tests {
         // SAFETY: see above - zeroed POD, no seconds-timeline flag.
         let t: clap_event_transport = unsafe { std::mem::zeroed() };
         assert_eq!(build_transport_info(&t, 48_000.0).position_samples, 0);
+    }
+}
+
+#[cfg(test)]
+mod note_choke_tests {
+    use super::{choke_to_note_off, clap_event_note};
+    use truce_core::events::EventBody;
+
+    fn note_event(channel: i16, key: i16) -> clap_event_note {
+        // SAFETY: clap_event_note is a repr(C) POD; all-zero is a
+        // valid value, fields under test are overwritten below.
+        let mut n: clap_event_note = unsafe { std::mem::zeroed() };
+        n.channel = channel;
+        n.key = key;
+        n
+    }
+
+    #[test]
+    fn concrete_channel_and_key_becomes_note_off() {
+        let n = note_event(3, 60);
+        match choke_to_note_off(&n) {
+            Some(EventBody::NoteOff {
+                channel,
+                note,
+                velocity,
+                ..
+            }) => {
+                assert_eq!(channel, 3);
+                assert_eq!(note, 60);
+                assert_eq!(velocity, 0);
+            }
+            other => panic!("expected NoteOff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wildcard_channel_is_skipped() {
+        assert!(choke_to_note_off(&note_event(-1, 60)).is_none());
+    }
+
+    #[test]
+    fn wildcard_key_is_skipped() {
+        assert!(choke_to_note_off(&note_event(3, -1)).is_none());
     }
 }
