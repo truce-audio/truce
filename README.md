@@ -5,19 +5,16 @@
 </p>
 
 <p align="center">
-  Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3
-  (macOS + iOS), AAX, and standalone from a single Rust codebase.
+  Build audio plugins in Rust. VST3, CLAP, AU v2, AU v3 (macOS + iOS), 
+  AAX, LV2, and standalone from a single Rust codebase.
+
   Dead simple developer experience: in 5 minutes, you can load
   your own plugin in a DAW and test your custom DSP, MIDI, and
   GUI.
 </p>
 
 <p align="center">
-  <a href="https://truce.audio/"><img src="https://img.shields.io/badge/status-stable-green" alt="Status"></a>
   <a href="https://crates.io/crates/cargo-truce"><img src="https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white" alt="crates.io"></a>
-</p>
-
-<p align="center">
   <a href="https://truce.audio/docs/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a>
 </p>
 
