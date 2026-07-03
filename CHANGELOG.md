@@ -8,8 +8,8 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, wired across every form
 
 ### Breaking
 
-- **`clap_id` / `vst3_id` / the state-envelope hash now derive from `bundle_id`, not the display name.** "Truce Envelope" used to produce `com.truce.truceenvelope` (the name lowercased with spaces deleted); it's now `com.truce.envelope`, and renaming a plugin no longer changes its identity. *Migration:* hosts key sessions and presets to these ids, so a plugin already shipped under a 1.x name-derived id will appear as a new plugin after this change - to keep the old id, set `bundle_id` to the old name-derived slug (note it also feeds the LV2 URI and AU v3 appex ids).
-- **`Event` gained a `port` field** - the MIDI port an event arrived on / should go out on (`0` for single-port plugins). Constructing an `Event` with a struct literal now requires it. *Migration:* build events with `Event::new(offset, body)` (port `0`, the common case) or `Event::on_port(offset, port, body)`; `Event::new` is the only form that omits `port`, so a struct literal must spell it out. Reading events (`event.port`) is unaffected.
+- **`Event` gained a `port` field** - the MIDI port an event arrived on / should go out on (`0` for single-port plugins). Constructing an `Event` with a struct literal now requires it. **Migration:** build events with `Event::new(offset, body)` (port `0`, the common case) or `Event::on_port(offset, port, body)`; `Event::new` is the only form that omits `port`, so a struct literal must spell it out. Reading events (`event.port`) is unaffected.
+- **Every plugin identity now derives from the one stable key, `bundle_id`.** `bundle_id` already drove the LV2 URI and the AU v3 appex ids; `clap_id`, `vst3_id`, and the state-envelope hash derived from the display name instead ("Truce Envelope" -> `com.truce.truceenvelope`), so those ids were shaped inconsistently and silently changed when a plugin was renamed. All of them now come from `bundle_id` (`com.truce.envelope`), and renaming a plugin no longer changes its identity anywhere. **Migration:** hosts key sessions and presets to these ids, so a plugin already shipped under a 1.x name-derived id will appear as a new plugin after this change - to keep the old id, set `bundle_id` to the old name-derived slug.
 
 ### MIDI 2.0 / UMP
 
@@ -18,14 +18,15 @@ Opt in per direction in `truce.toml`. `midi2 = true` sets both directions to 2.0
 The direction split exists because opting a plugin's *input* into 2.0 makes the host up-convert incoming 1.0 to 2.0 (`NoteOn` -> `NoteOn2`, `ControlChange` -> `ControlChange2`, ...) before `process()` ever runs. So the three shapes are:
 
 - **2.0 both ways** (`midi2 = true`) - a synth that wants native 16/32-bit velocity and per-note control reads the `NoteOn2` / `PerNoteCC` / ... variants directly.
-- **1.0 in, 2.0 out** (`midi2_output = true` only) - a 1.0 -> 2.0 promoter or an MPE spreader still receives real 1.0 to promote/transform, and emits 2.0. Opting its input into 2.0 as well would make the host promote first and leave a 1.0-only `match` seeing nothing.
+- **1.0 in, 2.0 out** (`midi2_output = true` only) - the plugin receives real 1.0 input and emits 2.0. Opting its input into 2.0 as well would make the host up-convert first, so a plugin that matches on the 1.0 variants would see nothing.
 - **1.0 both ways** (no opt-in) - the host down-converts before delivery (no truce-side step), so an existing 1.0 plugin is untouched.
 
 Across formats:
 
 - **CLAP** decodes UMP (`CLAP_EVENT_MIDI2`) and note expressions (`CLAP_EVENT_NOTE_EXPRESSION`) on input, and emits CLAP-native on output - notes as `clap_event_note` (full 16-bit velocity through CLAP's `f64` field), per-note control as note expressions, channel-level 2.0 down-converted to `CLAP_EVENT_MIDI` - because hosts read a plugin's output as notes + expressions, not raw UMP. A non-2.0 input port down-converts to 1.0.
 - **AU v3** declares `audioUnitMIDIProtocol` from the input dialect and drains output through the host's UMP `MIDIEventList` block from the output dialect (macOS 12+ / iOS 15+); the framework converts the output to the host's own protocol. SysEx output rides the same UMP stream as SysEx-7 packet chains.
-- **VST3 maps the per-note subset through note expression** (it has no UMP): `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - a lossy translation, not UMP. VST2 / AU v2 / AAX / LV2 stay MIDI 1.0.
+- **VST3 maps the per-note subset through note expression** (it has no UMP): `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - a lossy translation, not UMP.
+- **VST2 / AU v2 / AAX / LV2 stay MIDI 1.0.**
 
 ### Multiple MIDI ports
 
