@@ -224,6 +224,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Reclaim unused Xcodes + simulator runtimes; the bake never
+      # touches either and the workspace target is disk-heavy.
+      - name: Free runner disk
+        run: |
+          df -h /
+          sudo xcrun simctl runtime delete all 2>/dev/null || true
+          keep="$(xcode-select -p)"; keep="${keep%/Contents/Developer}"
+          for x in /Applications/Xcode*.app; do
+            [ "$(readlink -f "$x")" = "$(readlink -f "$keep")" ] || sudo rm -rf "$x" &
+          done
+          wait
+          df -h /
+
       - uses: dtolnay/rust-toolchain@stable
 
       # `cache-bin: false` keeps `~/.cargo/bin/` (the rustup proxies)
@@ -415,6 +428,18 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Reclaim the runner's unused Xcode versions. Simulator
+      # runtimes stay: this job boots an iOS simulator.
+      - name: Free runner disk
+        run: |
+          df -h /
+          keep="$(xcode-select -p)"; keep="${keep%/Contents/Developer}"
+          for x in /Applications/Xcode*.app; do
+            [ "$(readlink -f "$x")" = "$(readlink -f "$keep")" ] || sudo rm -rf "$x" &
+          done
+          wait
+          df -h /
 
       # iOS-sim slice needs the `-sim` rustup target; the desktop
       # `cargo-truce` runs on the host triple (already covered by

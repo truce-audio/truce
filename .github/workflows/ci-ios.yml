@@ -37,6 +37,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Reclaim the runner's unused Xcode versions (~15-20 GB each)
+      # before building. Simulator runtimes stay: this job boots an
+      # iOS simulator further down.
+      - name: Free runner disk
+        run: |
+          df -h /
+          keep="$(xcode-select -p)"; keep="${keep%/Contents/Developer}"
+          for x in /Applications/Xcode*.app; do
+            [ "$(readlink -f "$x")" = "$(readlink -f "$keep")" ] || sudo rm -rf "$x" &
+          done
+          wait
+          df -h /
+
       # iOS device + simulator slices have distinct Mach-O platform
       # IDs and can't share a target dir cache key, but installing
       # both rustup targets is cheap. The simulator triple uses the
