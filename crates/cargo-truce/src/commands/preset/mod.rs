@@ -190,7 +190,7 @@ fn ctx<'a>(
 ) -> Result<PluginCtx<'a>, crate::CargoTruceError> {
     let p = single_plugin(config, filter)?;
     crate::commands::install::presets::validate_user_dir(p)?;
-    let clap_id = truce_build::plugin_id(&config.vendor.id, &p.name);
+    let clap_id = truce_build::plugin_id(&config.vendor.id, &p.bundle_id);
     Ok(PluginCtx {
         p,
         config,
@@ -370,7 +370,7 @@ fn encode_native(
     Ok(match format {
         PresetFormat::TrucePreset => truce_utils::preset::write_preset_file(&meta, &blob),
         PresetFormat::Vst3 => {
-            let clap_id = truce_build::plugin_id(&ctx.config.vendor.id, &ctx.p.name);
+            let clap_id = truce_build::plugin_id(&ctx.config.vendor.id, &ctx.p.bundle_id);
             vstpreset_bytes(&vst3_cid(&clap_id), &blob)
         }
         PresetFormat::Au => {
@@ -642,7 +642,7 @@ fn cmd_export(args: &[String]) -> Res {
 
         zip.start_file(format!("vstpreset/{dir}{display}.vstpreset"), options)
             .map_err(zip_err)?;
-        let clap_id = truce_build::plugin_id(&ctx.config.vendor.id, &ctx.p.name);
+        let clap_id = truce_build::plugin_id(&ctx.config.vendor.id, &ctx.p.bundle_id);
         zip.write_all(&vstpreset_bytes(&vst3_cid(&clap_id), &blob))?;
 
         zip.start_file(format!("aupreset/{dir}{display}.aupreset"), options)

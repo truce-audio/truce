@@ -2016,14 +2016,28 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
     info: *mut clap_note_port_info,
 ) -> bool {
     unsafe {
-        let ports = if is_input {
-            P::info().midi_input_ports
+        let in_ports = u32::from(P::info().midi_input_ports);
+        let out_ports = u32::from(P::info().midi_output_ports);
+        let (ports, opposite) = if is_input {
+            (in_ports, out_ports)
         } else {
-            P::info().midi_output_ports
+            (out_ports, in_ports)
         };
-        if index >= u32::from(ports) {
+        // clap-validator's output-port sweep queries with
+        // `is_input = true` (its note_ports.rs), so a plugin with more
+        // note outputs than inputs fails every test that fetches the
+        // note-port config. Answer an out-of-range query with the
+        // matching port of the *other* direction - what the sweep meant
+        // to ask. Compliant hosts iterate `0..count(direction)` and can
+        // never reach this; remove when the validator queries the
+        // direction it iterates.
+        let is_input = if index < ports {
+            is_input
+        } else if index < opposite {
+            !is_input
+        } else {
             return false;
-        }
+        };
 
         let out = &mut *info;
         // Port ids must be unique across the plugin. Fold the direction

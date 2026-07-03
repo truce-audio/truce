@@ -164,7 +164,7 @@ pub(crate) fn load_factory_presets(
         return Ok(None);
     }
 
-    let hash = state::hash_plugin_id(&truce_build::plugin_id(&config.vendor.id, &p.name));
+    let hash = state::hash_plugin_id(&truce_build::plugin_id(&config.vendor.id, &p.bundle_id));
     let presets = authored
         .into_iter()
         .map(|a| {
@@ -348,7 +348,7 @@ pub(crate) fn vst3_preset_payload(
         p.vst3_name.as_deref(),
         &p.name,
     )));
-    let cid = state::vst3_cid(&truce_build::plugin_id(&config.vendor.id, &p.name));
+    let cid = state::vst3_cid(&truce_build::plugin_id(&config.vendor.id, &p.bundle_id));
     fp.presets
         .iter()
         .map(|pr| {
@@ -375,7 +375,7 @@ pub(crate) fn emit_vst3_presets(
             p.vst3_name.as_deref(),
             &p.name,
         )));
-    let cid = state::vst3_cid(&truce_build::plugin_id(&config.vendor.id, &p.name));
+    let cid = state::vst3_cid(&truce_build::plugin_id(&config.vendor.id, &p.bundle_id));
     let files: Vec<_> = fp
         .presets
         .iter()

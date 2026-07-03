@@ -23,13 +23,13 @@ pub use manifest::{BundleEntry, BundleManifest, host_triple};
 /// state wire contract** - every saved session and preset embeds
 /// `hash_plugin_id(plugin_id(...))`, so changing this invalidates
 /// them all.
+///
+/// Derived from `bundle_id`, the stable per-plugin key, so the id
+/// survives display-name changes ("Truce Envelope" -> `com.truce.envelope`,
+/// not `com.truce.truceenvelope`).
 #[must_use]
-pub fn plugin_id(vendor_id: &str, plugin_name: &str) -> String {
-    format!(
-        "{}.{}",
-        vendor_id,
-        plugin_name.to_lowercase().replace(' ', "")
-    )
+pub fn plugin_id(vendor_id: &str, bundle_id: &str) -> String {
+    format!("{}.{}", vendor_id, bundle_id.to_lowercase())
 }
 
 /// Resolve a plugin's `(accepts_midi_in, emits_midi)` capability pair

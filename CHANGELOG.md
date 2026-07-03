@@ -8,6 +8,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, wired across every form
 
 ### Breaking
 
+- **`clap_id` / `vst3_id` / the state-envelope hash now derive from `bundle_id`, not the display name.** "Truce Envelope" used to produce `com.truce.truceenvelope` (the name lowercased with spaces deleted); it's now `com.truce.envelope`, and renaming a plugin no longer changes its identity. *Migration:* hosts key sessions and presets to these ids, so a plugin already shipped under a 1.x name-derived id will appear as a new plugin after this change - to keep the old id, set `bundle_id` to the old name-derived slug (note it also feeds the LV2 URI and AU v3 appex ids).
 - **`Event` gained a `port` field** - the MIDI port an event arrived on / should go out on (`0` for single-port plugins). Constructing an `Event` with a struct literal now requires it. *Migration:* build events with `Event::new(offset, body)` (port `0`, the common case) or `Event::on_port(offset, port, body)`; `Event::new` is the only form that omits `port`, so a struct literal must spell it out. Reading events (`event.port`) is unaffected.
 
 ### MIDI 2.0 / UMP
