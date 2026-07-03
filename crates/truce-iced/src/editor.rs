@@ -305,6 +305,11 @@ struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
     max_size: (u32, u32),
     aspect_ratio: Option<(u32, u32)>,
     resize_corrector: ResizeCorrector,
+    /// Corrective size to push back to the host, queued by the
+    /// `Resized` handler and issued from `on_frame` - never from
+    /// inside the host's own resize dispatch.
+    #[cfg(not(target_os = "linux"))]
+    pending_correct: Option<(u32, u32)>,
 }
 
 // The explicit `Idle | None => Default` arm documents iced's known
@@ -383,6 +388,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                 let ok = self.runtime.recover_device(window);
                 log::warn!("iced device-loss recovery: rebuilt ok={ok}");
                 return;
+            }
+            // Issue a queued corrective resize (see `pending_correct`)
+            // now that we're outside the host's resize dispatch.
+            #[cfg(not(target_os = "linux"))]
+            if let Some((rw, rh)) = self.pending_correct.take()
+                && let Some(ref program) = self.runtime.program
+            {
+                let _ = program.context.request_resize(rw, rh);
             }
             // Pick up host-driven `set_size` requests since the last
             // frame. Without this the wgpu surface would be at the new
@@ -548,9 +561,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                             // but never ask the host to resize its frame.
                             // mac/windows honor it (and negotiate via
                             // `checkSizeConstraint`) anyway.
+                            // Deferred to `on_frame`: issued inline, this
+                            // re-enters the host's own resize dispatch
+                            // (VST3 forbids `resizeView` inside `onSize`;
+                            // Ableton hangs on it).
                             #[cfg(not(target_os = "linux"))]
-                            if let Some(ref program) = runtime.program {
-                                let _ = program.context.request_resize(rw, rh);
+                            {
+                                self.pending_correct = Some((rw, rh));
                             }
                             #[cfg(target_os = "linux")]
                             let _ = (rw, rh);
@@ -700,6 +717,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                     max_size,
                     aspect_ratio,
                     resize_corrector: ResizeCorrector::default(),
+                    #[cfg(not(target_os = "linux"))]
+                    pending_correct: None,
                 }
             },
         );

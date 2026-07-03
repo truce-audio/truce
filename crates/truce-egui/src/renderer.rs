@@ -475,8 +475,8 @@ impl EguiRenderer {
     /// DPI display can't trip `surface.configure`'s validation
     /// panic (which previously unwound through Reaper's CLAP
     /// callback as a foreign C++ exception and aborted the host).
-    /// How long the last `render` blocked in the swapchain acquire.
-    /// See [`Self::last_acquire_wait`].
+    /// How long the last `render` blocked in the swapchain acquire
+    /// waiting for the compositor to free a frame slot.
     #[must_use]
     pub fn acquire_wait(&self) -> std::time::Duration {
         self.last_acquire_wait

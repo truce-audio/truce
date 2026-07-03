@@ -235,6 +235,9 @@ pub fn reanchor_all_children_to_top(_parent: *mut std::ffi::c_void) {}
 /// requires. Everything is torn down before returning.
 #[cfg(target_os = "windows")]
 #[must_use]
+// Win32 ABI struct-filling: the casts and `as`-conversions mirror the
+// C headers' field types.
+#[allow(clippy::cast_possible_truncation, clippy::unnecessary_cast)]
 pub fn wgl_extensions_available() -> bool {
     use windows_sys::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
     use windows_sys::Win32::Graphics::OpenGL::{
@@ -269,7 +272,7 @@ pub fn wgl_extensions_available() -> bool {
             lpszMenuName: std::ptr::null(),
             lpszClassName: CLASS_NAME.as_ptr(),
         };
-        let atom = RegisterClassW(&class);
+        let atom = RegisterClassW(&raw const class);
         if atom == 0 {
             return false;
         }
@@ -306,8 +309,8 @@ pub fn wgl_extensions_available() -> bool {
                 iLayerType: PFD_MAIN_PLANE as u8,
                 ..std::mem::zeroed()
             };
-            let format = ChoosePixelFormat(hdc, &pfd);
-            if format != 0 && SetPixelFormat(hdc, format, &pfd) != 0 {
+            let format = ChoosePixelFormat(hdc, &raw const pfd);
+            if format != 0 && SetPixelFormat(hdc, format, &raw const pfd) != 0 {
                 let hglrc = wglCreateContext(hdc);
                 if !hglrc.is_null() {
                     wglMakeCurrent(hdc, hglrc);
