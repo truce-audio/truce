@@ -2,7 +2,7 @@
 
 Notable changes per release.
 
-## 1.1.0
+## 2.0.0
 
 A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, wired across every format that can carry them. Both are opt-in and leave existing MIDI-1.0, single-port plugins unchanged at runtime - but the shared `Event` change below is a breaking API change.
 
