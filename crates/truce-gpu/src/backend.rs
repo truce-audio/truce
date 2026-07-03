@@ -135,14 +135,13 @@ impl GlyphAtlas {
         clippy::cast_sign_loss,
         clippy::cast_precision_loss
     )]
-    fn ensure_glyph(&mut self, font: &fontdue::Font, ch: char, size: f32) {
+    fn ensure_glyph(&mut self, font: &truce_font::raster::FontRaster, ch: char, size: f32) {
         let key = (ch, (size * 10.0) as u32);
         if self.glyphs.contains_key(&key) {
             return;
         }
-        let (metrics, bitmap) = font.rasterize(ch, size);
-        let gw = len_u32(metrics.width);
-        let gh = len_u32(metrics.height);
+        let glyph = font.rasterize(ch, size);
+        let (gw, gh) = (glyph.width, glyph.height);
 
         // Shelf-pack: does it fit on the current shelf?
         if self.cursor_x + gw > ATLAS_SIZE {
@@ -170,7 +169,7 @@ impl GlyphAtlas {
         let u1 = (x + gw) as f32 / ATLAS_SIZE as f32;
         let v1 = (y + gh) as f32 / ATLAS_SIZE as f32;
 
-        self.pending.push((x, y, gw, gh, bitmap));
+        self.pending.push((x, y, gw, gh, glyph.coverage));
 
         self.glyphs.insert(
             key,
@@ -179,10 +178,10 @@ impl GlyphAtlas {
                 v0,
                 u1,
                 v1,
-                advance: metrics.advance_width,
+                advance: glyph.advance,
                 width: gw as f32,
                 height: gh as f32,
-                y_offset: metrics.ymin as f32,
+                y_offset: glyph.y_min,
             },
         );
     }
@@ -308,7 +307,7 @@ pub struct WgpuBackend {
     /// appended when `draw_image` needs to switch to an image bind group.
     batches: Vec<DrawBatch>,
     glyph_atlas: GlyphAtlas,
-    font: fontdue::Font,
+    font: truce_font::raster::FontRaster,
     atlas_texture: wgpu::Texture,
     atlas_bind_group: wgpu::BindGroup,
     /// Layout shared between the atlas bind group and every per-image
@@ -582,9 +581,7 @@ impl WgpuBackend {
         });
 
         // Font
-        let font =
-            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
-                .expect("failed to parse embedded font");
+        let font = truce_font::raster::FontRaster::new();
 
         Self {
             device,
@@ -966,9 +963,7 @@ impl WgpuBackend {
         // MSAA
         let msaa_texture = Self::create_msaa_view(&device, target_format, width, height);
 
-        let font =
-            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
-                .expect("failed to parse embedded font");
+        let font = truce_font::raster::FontRaster::new();
 
         Some(Self {
             device,
@@ -1476,8 +1471,7 @@ impl RenderBackend for WgpuBackend {
         let s = self.scale;
         let phys_size = size * s;
         let c = Self::color_arr(color);
-        let line_metrics = self.font.horizontal_line_metrics(phys_size);
-        let ascent = line_metrics.map_or(phys_size * 0.8, |m| m.ascent);
+        let ascent = self.font.ascent(phys_size);
 
         let mut cursor_x = x * s;
 
@@ -1524,13 +1518,11 @@ impl RenderBackend for WgpuBackend {
 
     fn text_width(&self, text: &str, size: f32) -> f32 {
         let phys_size = size * self.scale;
-        // Sum advance widths via the local fontdue instance. This used
-        // to delegate to `truce_gui::font::text_width_fontdue` (a
-        // glyph-cached version); doing the math inline keeps
-        // truce-gpu independent of truce-gui.
+        // Sum advance widths via the local rasterizer. Doing the math
+        // inline keeps truce-gpu independent of truce-gui.
         let phys: f32 = text
             .chars()
-            .map(|ch| self.font.metrics(ch, phys_size).advance_width)
+            .map(|ch| self.font.advance(ch, phys_size))
             .sum();
         phys / self.scale
     }
@@ -2094,9 +2086,7 @@ impl WgpuBackend {
             cache: None,
         });
 
-        let font =
-            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
-                .expect("failed to parse embedded font");
+        let font = truce_font::raster::FontRaster::new();
 
         Some(Self {
             device,
@@ -2290,9 +2280,7 @@ mod tests {
 
     #[test]
     fn glyph_atlas_shelf_packing() {
-        let font =
-            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
-                .unwrap();
+        let font = truce_font::raster::FontRaster::new();
         let mut atlas = GlyphAtlas::new();
 
         // Pack a few glyphs

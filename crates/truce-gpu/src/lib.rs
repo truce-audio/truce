@@ -1,6 +1,6 @@
 //! GPU rendering primitives for truce plugins.
 //!
-//! Provides [`WgpuBackend`], the wgpu+lyon+fontdue implementation of
+//! Provides [`WgpuBackend`], the wgpu+lyon+skrifa implementation of
 //! [`truce_gui_types::RenderBackend`]. Used by the user-facing
 //! editor wrappers (`truce_gui::GpuEditor`, `truce_egui::EguiEditor`,
 //! `truce_iced::IcedEditor`, `truce_slint::SlintEditor`) and as the

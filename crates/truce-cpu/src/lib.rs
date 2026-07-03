@@ -1,9 +1,9 @@
-// `draw_text_fontdue` and the tiny-skia path take several
+// `draw_text` and the tiny-skia path take several
 // independent geometry / color arguments; bundling them into a
 // struct would obscure the call sites without simplifying any.
 #![allow(clippy::too_many_arguments)]
 
-//! CPU rendering backend for truce plugins (tiny-skia + fontdue).
+//! CPU rendering backend for truce plugins (tiny-skia + skrifa).
 //!
 //! Parallels [`truce-gpu`](../truce_gpu/) at the same level of the
 //! crate graph: both implement [`truce_gui_types::RenderBackend`] on

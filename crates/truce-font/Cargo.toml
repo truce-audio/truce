@@ -4,8 +4,8 @@ version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
-# Plain Apache 2.0 - this crate is a tiny font-loading wrapper plus
-# the bundled JetBrains Mono asset; no Framework License carve-out
+# Plain Apache 2.0 - this crate is a small font crate (bundled bytes plus
+# an optional glyph rasterizer); no Framework License carve-out
 # applies. The bundled `JetBrainsMono-Regular.ttf` asset is governed
 # separately by the SIL Open Font License 1.1, included alongside
 # the font as `fonts/OFL.txt` per the OFL's distribution terms.
@@ -23,3 +23,13 @@ include = [
 
 [lints]
 workspace = true
+
+[features]
+# Glyph rasterization over the bundled font (skrifa outlines filled
+# with tiny-skia). Enabled by the CPU / GPU render backends; consumers
+# that only want the font bytes (egui / iced / slint) leave it off.
+raster = ["dep:skrifa", "dep:tiny-skia"]
+
+[dependencies]
+skrifa = { version = "0.43", optional = true }
+tiny-skia = { version = "0.12", optional = true }

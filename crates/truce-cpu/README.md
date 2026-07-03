@@ -5,7 +5,7 @@ CPU rendering backend for the truce built-in GUI.
 ## Overview
 
 Provides `CpuBackend`, a software implementation of
-`truce_gui_types::RenderBackend` built on tiny-skia, plus the fontdue
+`truce_gui_types::RenderBackend` built on tiny-skia, plus the skrifa
 glyph cache (`font`) and the `ColorExt` conversions the rasteriser
 needs. This is the default renderer: it works on every platform without
 a usable GPU, and its output is deterministic, which makes it the
@@ -23,7 +23,7 @@ feature.
 
 - **`CpuBackend`** -- tiny-skia `truce_gui_types::RenderBackend` implementation
 - **`ColorExt`** -- extension trait adding `to_skia()` / `to_premultiplied()` to the light `truce_gui_types::theme::Color` type, so that type stays tiny-skia-free
-- **`font`** -- fontdue glyph cache + text measurement, fed by the bundled JetBrains Mono from [`truce-font`](../truce-font)
+- **`font`** -- glyph cache + text measurement (skrifa outlines rasterized with tiny-skia), fed by the bundled JetBrains Mono from [`truce-font`](../truce-font)
 
 ## Usage
 

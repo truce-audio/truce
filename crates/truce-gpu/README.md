@@ -7,7 +7,7 @@ wgpu rendering backend for the truce built-in GUI.
 Provides `WgpuBackend`, a hardware-accelerated implementation of
 `truce_gui_types::RenderBackend` via wgpu (Metal on macOS, DX12 on
 Windows, Vulkan on Linux), plus the wgpu surface / swapchain glue. Uses
-lyon for path tessellation and fontdue for glyph atlas generation.
+lyon for path tessellation and skrifa for glyph atlas generation.
 Widgets render identically to the CPU path but with better performance
 on complex UIs.
 

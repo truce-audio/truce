@@ -222,7 +222,7 @@ impl RenderBackend for CpuBackend {
         let s = self.scale;
         let w = self.pixmap.width();
         let h = self.pixmap.height();
-        crate::font::draw_text_fontdue(
+        crate::font::draw_text(
             self.pixmap.data_mut(),
             w,
             h,
@@ -239,7 +239,7 @@ impl RenderBackend for CpuBackend {
 
     fn text_width(&self, text: &str, size: f32) -> f32 {
         let s = self.scale;
-        crate::font::text_width_fontdue(text, size * s) / s
+        crate::font::text_width(text, size * s) / s
     }
 
     fn register_image(&mut self, rgba: &[u8], width: u32, height: u32) -> ImageId {

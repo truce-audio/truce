@@ -1,4 +1,5 @@
-//! Font rendering using fontdue (TrueType rasterization).
+//! Font rendering over the shared glyph rasterizer
+//! (`truce_font::raster`, skrifa + tiny-skia).
 //!
 //! The bundled `JetBrains` Mono ships in the dedicated `truce-font`
 //! crate. Advanced users can override the bundled font via Cargo's
@@ -7,8 +8,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::LazyLock;
-
-use truce_core::cast::len_u32;
 
 pub use truce_font::JETBRAINS_MONO;
 
@@ -22,7 +21,7 @@ struct CachedGlyph {
 }
 
 struct GlyphCache {
-    font: fontdue::Font,
+    font: truce_font::raster::FontRaster,
     glyphs: HashMap<(char, u32), CachedGlyph>,
 }
 
@@ -40,13 +39,9 @@ thread_local! {
 fn with_cache<R>(f: impl FnOnce(&mut GlyphCache) -> R) -> R {
     CACHE.with(|cell| {
         let mut guard = cell.borrow_mut();
-        let cache = guard.get_or_insert_with(|| {
-            let font = fontdue::Font::from_bytes(JETBRAINS_MONO, fontdue::FontSettings::default())
-                .expect("failed to parse embedded font");
-            GlyphCache {
-                font,
-                glyphs: HashMap::new(),
-            }
+        let cache = guard.get_or_insert_with(|| GlyphCache {
+            font: truce_font::raster::FontRaster::new(),
+            glyphs: HashMap::new(),
         });
         f(cache)
     })
@@ -60,27 +55,23 @@ fn size_key(size: f32) -> u32 {
 }
 
 /// Rasterize and cache a glyph, returning its cached data.
-//
-// Glyph metrics widen i32 metric values to f32 - bitmap heights and
-// pixel offsets are tiny (a glyph fits in screen-space pixels).
-#[allow(clippy::cast_precision_loss)]
 fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
     let key = (ch, size_key(size));
     let GlyphCache { font, glyphs } = cache;
     glyphs.entry(key).or_insert_with(|| {
-        let (metrics, bitmap) = font.rasterize(ch, size);
+        let glyph = font.rasterize(ch, size);
         CachedGlyph {
-            bitmap,
-            width: len_u32(metrics.width),
-            height: len_u32(metrics.height),
-            advance: metrics.advance_width,
-            y_offset: metrics.ymin as f32,
+            bitmap: glyph.coverage,
+            width: glyph.width,
+            height: glyph.height,
+            advance: glyph.advance,
+            y_offset: glyph.y_min,
         }
     })
 }
 
 /// sRGB-to-linear lookup for byte-encoded color channels. Used by
-/// `draw_text_fontdue` to composite glyphs in linear space - see the
+/// `draw_text` to composite glyphs in linear space - see the
 /// gamma rationale on that function.
 #[allow(clippy::cast_precision_loss)]
 static SRGB_TO_LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
@@ -145,7 +136,7 @@ fn linear_to_srgb_u8(lin: f32) -> u8 {
     clippy::cast_possible_wrap,
     clippy::many_single_char_names
 )]
-pub fn draw_text_fontdue(
+pub fn draw_text(
     pixmap_data: &mut [u8],
     pixmap_width: u32,
     pixmap_height: u32,
@@ -161,8 +152,7 @@ pub fn draw_text_fontdue(
     with_cache(|cache| {
         let mut cursor_x = x;
 
-        let line_metrics = cache.font.horizontal_line_metrics(size);
-        let ascent = line_metrics.map_or(size * 0.8, |m| m.ascent);
+        let ascent = cache.font.ascent(size);
 
         // Pre-compute the source color in linear space; only the
         // glyph-coverage alpha varies per pixel.
@@ -233,7 +223,7 @@ pub fn draw_text_fontdue(
 
 /// Measure text width in pixels.
 #[must_use]
-pub fn text_width_fontdue(text: &str, size: f32) -> f32 {
+pub fn text_width(text: &str, size: f32) -> f32 {
     with_cache(|cache| {
         let mut width = 0.0f32;
         for ch in text.chars() {

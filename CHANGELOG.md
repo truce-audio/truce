@@ -36,6 +36,10 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 - `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
 - `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
 
+### Internals
+
+- **The built-in font stack moved from fontdue to skrifa.** The CPU and GPU editor backends now share one glyph rasterizer in `truce-font` (skrifa outlines filled with tiny-skia, behind the `raster` feature), dropping the unmaintained `ttf-parser 0.21` / fontdue pair from the default dependency tree. Metrics (ascent, advances) are unchanged; glyph edge anti-aliasing differs slightly.
+
 ### Fixes
 
 - **CLAP: `CLAP_EVENT_NOTE_CHOKE` is delivered as a `NoteOff` instead of being dropped.** Hosts choke voices instead of releasing them (drum choke groups, edit re-triggers); the choked note hung forever. `EventBody` has no choke variant, so a velocity-0 `NoteOff` stands in - a release tail beats a stuck voice. (#174)

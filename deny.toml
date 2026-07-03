@@ -14,8 +14,9 @@
 ignore = [
     "RUSTSEC-2024-0436", # paste - unmaintained (proc-macro, deep transitive)
     # ttf-parser - unmaintained, no vulnerability and no upgrade exists
-    # (the crate is abandoned). Rides in via fontdue <- truce-gpu; the
-    # font stack would have to move to skrifa to drop it.
+    # (the crate is abandoned). Rides in via fontdb <- the iced text
+    # stack (truce-iced); the built-in font stack moved to skrifa and
+    # no longer pulls it.
     "RUSTSEC-2026-0192",
     # quick-xml 0.39 DoS advisories (quadratic duplicate-attribute check;
     # unbounded NsReader namespace allocation). Rides in via plist <-
