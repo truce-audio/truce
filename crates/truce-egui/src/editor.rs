@@ -412,6 +412,11 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     max_size: (u32, u32),
     aspect_ratio: Option<(u32, u32)>,
     resize_corrector: ResizeCorrector,
+    /// Corrective size to push back to the host, queued by the
+    /// `Resized` handler and issued from `on_frame` - never from
+    /// inside the host's own resize dispatch.
+    #[cfg(not(target_os = "linux"))]
+    pending_correct: Option<(u32, u32)>,
     /// `pending_size` value observed on the previous `on_frame` tick.
     /// A pending resize is applied only once it has survived one full
     /// tick unchanged (or [`Self::resize_burst_start`] passes the
@@ -675,6 +680,12 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             // Adopt a renderer whose init outlived the bounded wait at
             // open (worker thread still running, editor blank so far).
             self.adopt_pending_renderer();
+            // Issue a queued corrective resize (see `pending_correct`)
+            // now that we're outside the host's resize dispatch.
+            #[cfg(not(target_os = "linux"))]
+            if let Some((rw, rh)) = self.pending_correct.take() {
+                let _ = self.context.request_resize(rw, rh);
+            }
             // Rebuild the renderer if the device was lost (flagged by the
             // device-lost callback or a swallowed render panic). Skip the rest
             // of this frame; the next tick renders against the fresh device.
@@ -1047,9 +1058,14 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             // our child) but never ask the host to resize its
                             // frame. mac/windows honor the request and
                             // negotiate via `checkSizeConstraint` anyway.
+                            // Deferred to `on_frame`: issued inline, this
+                            // re-enters the host's own resize dispatch
+                            // (VST3 forbids `resizeView` inside `onSize`;
+                            // Ableton hangs on it, e.g. title-bar
+                            // double-click snapping the window back).
                             #[cfg(not(target_os = "linux"))]
                             {
-                                let _ = self.context.request_resize(rw, rh);
+                                self.pending_correct = Some((rw, rh));
                             }
                             #[cfg(target_os = "linux")]
                             let _ = (rw, rh);
@@ -1357,6 +1373,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     max_size,
                     aspect_ratio,
                     resize_corrector: ResizeCorrector::default(),
+                    #[cfg(not(target_os = "linux"))]
+                    pending_correct: None,
                     resize_seen: (0, 0),
                     resize_burst_start: None,
                     last_size_change: None,

@@ -1145,8 +1145,8 @@ impl WgpuBackend {
         tex.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
-    /// How long the last `present` blocked in the swapchain acquire.
-    /// See [`Self::last_acquire_wait`].
+    /// How long the last `present` blocked in the swapchain acquire
+    /// waiting for the compositor to free a frame slot.
     #[must_use]
     pub fn acquire_wait(&self) -> std::time::Duration {
         self.last_acquire_wait

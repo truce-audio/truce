@@ -351,6 +351,11 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     /// the per-tick render/blit can't park the host's GUI thread in
     /// the swapchain acquire - see [`truce_gui::PaintPacer`].
     pacer: truce_gui::PaintPacer,
+    /// Corrective size to push back to the host, queued by the
+    /// `Resized` handler and issued from `on_frame` - never from
+    /// inside the host's own resize dispatch (see the handler).
+    #[cfg(not(target_os = "linux"))]
+    pending_correct: Option<(u32, u32)>,
     /// Last known cursor position in logical points.
     last_pos: LogicalPosition,
     /// Shared with the parent `SlintEditor`. `Editor::set_size`
@@ -475,6 +480,12 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         {
             use raw_window_handle::HasRawWindowHandle;
             truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
+        }
+        // Issue a queued corrective resize (see `pending_correct`)
+        // now that we're outside the host's resize dispatch.
+        #[cfg(not(target_os = "linux"))]
+        if let Some((rw, rh)) = self.pending_correct.take() {
+            let _ = self.state.request_resize(rw, rh);
         }
         // Pick up host-driven `set_size` requests posted to the
         // shared `pending_size` cell since the last frame. Calls
@@ -734,51 +745,41 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                         self.max_size,
                         self.aspect_ratio,
                     );
-                    if let Some((rw, rh)) = correct {
-                        // On Linux, hosts that bypass size negotiation (Bitwig)
-                        // ignore this request and react by *growing* the embed
-                        // window - a resize loop. Counter-resize our own child
-                        // to the fitted size but never ask the host to resize
-                        // its frame. mac/windows honor it (and negotiate via
-                        // `checkSizeConstraint`) anyway.
+                    // Defer BOTH the corrective host request and the
+                    // surface reconfigure to `on_frame`. Inline, the
+                    // request re-enters the host's own resize dispatch
+                    // (VST3 forbids `resizeView` from inside `onSize`;
+                    // Ableton deadlocks on it), and reconfiguring the
+                    // swapchain per event floods the driver with buffer
+                    // destroy/create work mid-drag (measured hanging
+                    // the AMD driver in `NtGdiDdDDIDestroyAllocation2`).
+                    // `on_frame`'s pending path applies one coalesced
+                    // window+surface resize per tick instead.
+                    if correct.is_some() {
                         #[cfg(not(target_os = "linux"))]
-                        let _ = self.state.request_resize(rw, rh);
-                        #[cfg(target_os = "linux")]
-                        let _ = (rw, rh);
-                        self.pending_size
-                            .store(pack_size((fw, fh)), Ordering::Release);
+                        {
+                            // On Linux, hosts that bypass size negotiation
+                            // (Bitwig) ignore the request and react by
+                            // *growing* the embed window - a resize loop -
+                            // so only the child is counter-resized there.
+                            self.pending_correct = correct;
+                        }
                     }
-                    self.width = lw;
-                    self.height = lh;
+                    self.pending_size
+                        .store(pack_size((fw, fh)), Ordering::Release);
                     // Mirror the OS-reported scale into the shared
                     // cell (so a follow-up host `set_scale_factor`
                     // reads a fresh baseline) and bump `last_applied`
-                    // so `on_frame`'s diff-check stays a no-op - we
-                    // apply the reconfigure inline below.
+                    // so `on_frame`'s diff-check stays a no-op.
                     self.scale.set(scale);
                     #[allow(clippy::cast_possible_truncation)]
                     let scale_f32 = scale as f32;
                     self.last_applied_scale = scale_f32;
-
                     self.slint_window
                         .window()
                         .dispatch_event(WindowEvent::ScaleFactorChanged {
                             scale_factor: scale_f32,
                         });
-                    self.slint_window
-                        .set_size(slint::WindowSize::Physical(PhysicalSize::new(
-                            phys_w, phys_h,
-                        )));
-
-                    self.surface_config.width = phys_w;
-                    self.surface_config.height = phys_h;
-                    self.surface.configure(&self.device, &self.surface_config);
-                    self.last_phys_w = phys_w;
-                    self.last_phys_h = phys_h;
-
-                    if let Some(ref mut blit) = self.blit {
-                        blit.resize(&self.device, phys_w, phys_h);
-                    }
                 }
                 EventStatus::Ignored
             }
@@ -985,6 +986,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     last_phys_w: phys_w,
                     last_phys_h: phys_h,
                     pacer: truce_gui::PaintPacer::default(),
+                    #[cfg(not(target_os = "linux"))]
+                    pending_correct: None,
                     last_pos: LogicalPosition::default(),
                     pending_size: pending_size_handle,
                     device_lost,
