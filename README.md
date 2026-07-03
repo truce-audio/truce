@@ -6,7 +6,7 @@
 
 <p align="center">
   Build audio plugins in Rust. VST3, CLAP, AU v2, AU v3 (macOS + iOS), 
-  AAX, LV2, and standalone from a single Rust codebase. 
+  AAX (Pro Tools), LV2, and standalone from a single Rust codebase. 
   Dead simple developer experience: in 5 minutes, you can load
   your own plugin in a DAW and test your custom DSP, MIDI, and
   GUI.
