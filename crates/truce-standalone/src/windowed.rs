@@ -110,10 +110,11 @@ where
     // meaningful when `editor_can_resize`; a non-resizable editor is
     // already pinned to a fixed size.
     let editor_can_maximize = editor.can_maximize();
-    // Constraint snapshot for the Windows outer-frame limits
-    // (`windowed_windows::install_size_limits`); read here for the
+    // Constraint snapshot for the outer-frame limits
+    // (`windowed_windows::install_size_limits` /
+    // `windowed_macos::install_content_limits`); read here for the
     // same borrow reason as the flags above.
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     let editor_limits = (editor.min_size(), editor.max_size(), editor.aspect_ratio());
 
     // Logical-points size handoff between the editor (via the
@@ -305,6 +306,16 @@ where
             if !editor_can_maximize {
                 // SAFETY: same live `ns_window`, same main thread.
                 unsafe { crate::windowed_macos::disable_zoom(h.ns_window) };
+            }
+            // Enforce the editor's min / max / aspect on the frame
+            // itself, mirroring Windows `install_size_limits`: backends
+            // whose `set_size` accepts any size verbatim (egui / iced /
+            // Slint letterbox instead of clamping) otherwise let drags
+            // or zoom take the window out of bounds.
+            let (emin, emax, easpect) = editor_limits;
+            // SAFETY: same live `ns_window`, same main thread.
+            unsafe {
+                crate::windowed_macos::install_content_limits(h.ns_window, emin, emax, easpect);
             }
         }
 

@@ -68,6 +68,60 @@ pub unsafe fn pin_content_size(ns_window: *mut std::ffi::c_void, w: u32, h: u32)
     let _: () = unsafe { msg_send![window, setContentMaxSize: size] };
 }
 
+/// Enforce the editor's `min_size` / `max_size` / `aspect_ratio` on the
+/// resizable standalone `NSWindow` through `AppKit`'s native constraint
+/// properties: `contentMinSize` / `contentMaxSize` clamp edge-drags and
+/// the zoom button's standard frame, and `contentAspectRatio` keeps
+/// interactive drags on ratio. All content-space logical points -
+/// matching the editor's units; `AppKit` accounts for the title bar
+/// itself. macOS counterpart of
+/// `windowed_windows::install_size_limits`.
+///
+/// Programmatic `setFrame:` bypasses `AppKit`'s min/max (the hole
+/// `WM_GETMINMAXINFO` closes on Windows), but the standalone's own
+/// programmatic resizes already route through the editor's clamped
+/// `request_resize` path, so drags and zoom are the paths that matter
+/// here.
+///
+/// # Safety
+///
+/// Must run on the main thread and only after baseview has finished
+/// its `NSWindow` initialisation. The caller is responsible for
+/// ensuring `ns_window` is a live Objective-C pointer.
+pub unsafe fn install_content_limits(
+    ns_window: *mut std::ffi::c_void,
+    min: (u32, u32),
+    max: (u32, u32),
+    aspect: Option<(u32, u32)>,
+) {
+    if ns_window.is_null() {
+        return;
+    }
+    let window = ns_window.cast::<Object>();
+    let min_size = NsSize {
+        width: f64::from(min.0.max(1)),
+        height: f64::from(min.1.max(1)),
+    };
+    let _: () = unsafe { msg_send![window, setContentMinSize: min_size] };
+    // `u32::MAX` (the trait's "unbounded") maps to a max far beyond any
+    // display; AppKit treats it the same as its own FLT_MAX default.
+    let max_size = NsSize {
+        width: f64::from(max.0),
+        height: f64::from(max.1),
+    };
+    let _: () = unsafe { msg_send![window, setContentMaxSize: max_size] };
+    if let Some((num, denom)) = aspect
+        && num > 0
+        && denom > 0
+    {
+        let ratio = NsSize {
+            width: f64::from(num),
+            height: f64::from(denom),
+        };
+        let _: () = unsafe { msg_send![window, setContentAspectRatio: ratio] };
+    }
+}
+
 /// Disable maximize (zoom) and native fullscreen on the standalone
 /// `NSWindow` while keeping it edge-drag resizable.
 ///
