@@ -36,6 +36,10 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 - `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
 - `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
 
+### Native f64 processing
+
+- **`prelude64` plugins now take the host's 64-bit wire directly where the format has one**, instead of squeezing through f32 and widening back: VST3 (`kSample64`), VST2 (`processDoubleReplacing` + `effSetProcessPrecision`), and CLAP (`CLAP_AUDIO_PORT_SUPPORTS_64BITS`). Full precision and zero conversion end to end when the host runs a 64-bit chain; the f32 wire stays as the fallback when it doesn't. AU v2 / LV2 / AAX / standalone keep the f32 wire with the existing widen/narrow pass. f32 plugins are unchanged and never advertise 64-bit.
+
 ### Internals
 
 - **The built-in font stack moved from fontdue to skrifa.** The CPU and GPU editor backends now share one glyph rasterizer in `truce-font` (skrifa outlines filled with tiny-skia, behind the `raster` feature), dropping the unmaintained `ttf-parser 0.21` / fontdue pair from the default dependency tree. Metrics (ascent, advances) are unchanged; glyph edge anti-aliasing differs slightly.
@@ -43,7 +47,7 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 ### Fixes
 
 - **The standalone pre-grows the f64 widening scratch before the stream starts.** An `f64` plugin's first cpal callback allocated its per-channel widen/narrow buffers on the real-time thread; the scratch is now sized to the stream's frame bound up front, matching every format wrapper.
-- **VST3 rejects a 64-bit processing setup instead of reinterpreting the buffers.** The wire is f32-only (`canProcessSampleSize` already said so); a host that set up `kSample64` anyway would have its `double**` channel pointers read as `float*`. `setupProcessing` and `process` now refuse the mismatch.
+- **VST3 rejects a processing setup or block whose sample size was never negotiated.** A host that ignored `canProcessSampleSize` would have its channel pointers reinterpreted at the wrong width; `setupProcessing` and `process` now refuse the mismatch.
 - **`cargo truce validate` scrubs cargo-injected `DYLD_*` vars before spawning pluginval.** Under `cargo run -- validate`, the inherited `DYLD_FALLBACK_LIBRARY_PATH` broke the bundle load inside pluginval and the scan reported zero types.
 - **CLAP: `CLAP_EVENT_NOTE_CHOKE` is delivered as a `NoteOff` instead of being dropped.** Hosts choke voices instead of releasing them (drum choke groups, edit re-triggers); the choked note hung forever. `EventBody` has no choke variant, so a velocity-0 `NoteOff` stands in - a release tail beats a stuck voice. (#174)
 - **CLAP: the output event queue is sorted by sample offset before reaching the host.** A plugin pushing block-level events (an LFO sweep, a mode-change recentre) after per-event ones handed the host an unsorted queue, which CLAP forbids; the wrapper now fixes the order (stable, allocation-free) on the way out.

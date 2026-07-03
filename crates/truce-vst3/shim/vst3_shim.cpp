@@ -82,7 +82,7 @@ static const TUID IPlugViewContentScaleSupport_iid =
 enum { kAudio = 0, kEvent = 1 };
 enum { kInput = 0, kOutput = 1 };
 enum { kMain = 0, kAux = 1 };
-enum { kSample32 = 0 };
+enum { kSample32 = 0, kSample64 = 1 };
 
 static bool iid_equal(const TUID a, const TUID b) {
     return memcmp(a, b, 16) == 0;
@@ -123,6 +123,9 @@ struct Vst3PluginDescriptor {
      * `num_inputs` so an audio effect (with audio inputs) can still
      * take MIDI. Zero means no MIDI input. */
     int32_t midi_input_ports;
+    /* Non-zero when the plugin processes natively in f64. Enables
+     * kSample64 negotiation; blocks then route through process_f64. */
+    int32_t supports_f64;
 };
 
 struct Vst3ParamDescriptor {
@@ -181,6 +184,11 @@ struct Vst3Callbacks {
     void (*process)(void*, const float**, float**, uint32_t, uint32_t, uint32_t,
                     const Vst3MidiEvent*, uint32_t,
                     const Vst3Transport*, const Vst3ParamChange*, uint32_t);
+    /* 64-bit twin of process. Exactly one of the two runs per block,
+     * chosen by the sample size negotiated in setupProcessing. */
+    void (*process_f64)(void*, const double**, double**, uint32_t, uint32_t, uint32_t,
+                        const Vst3MidiEvent*, uint32_t,
+                        const Vst3Transport*, const Vst3ParamChange*, uint32_t);
     uint32_t (*param_count)(void*);
     double (*param_get_value)(void*, uint32_t);
     void (*param_set_value)(void*, uint32_t, double);
@@ -412,6 +420,9 @@ class TruceComponent {
     void* ctx;
     double sampleRate;
     uint32_t maxFrames;
+    /* Sample size negotiated in setupProcessing; process() rejects a
+     * block whose symbolicSampleSize disagrees. */
+    int32 procSampleSize = kSample32;
 public:
     void* componentHandler;  // IComponentHandler*, stored with addRef
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
@@ -645,7 +656,9 @@ public:
     }
 
     tresult canProcessSampleSize(int32 symbolicSize) {
-        return (symbolicSize == kSample32) ? kResultOk : kResultFalse;
+        if (symbolicSize == kSample32) return kResultOk;
+        if (symbolicSize == kSample64 && g_desc && g_desc->supports_f64) return kResultOk;
+        return kResultFalse;
     }
 
     uint32 getLatencySamples() {
@@ -654,10 +667,12 @@ public:
 
     tresult setupProcessing(ProcessSetup* setup) {
         if (!setup) return kInvalidArgument;
-        // Only the f32 wire is implemented; a host that sets up kSample64
-        // despite canProcessSampleSize refusing it would hand double**
-        // buffers that the Rust side reinterprets as float*.
-        if (setup->symbolicSampleSize != kSample32) return kResultFalse;
+        // Refuse a sample size we never advertised - accepting it
+        // would reinterpret the host's channel pointers at the wrong
+        // width in process().
+        if (canProcessSampleSize(setup->symbolicSampleSize) != kResultOk)
+            return kResultFalse;
+        procSampleSize = setup->symbolicSampleSize;
         sampleRate = setup->sampleRate;
         maxFrames = setup->maxSamplesPerBlock;
         return kResultOk;
@@ -667,8 +682,9 @@ public:
 
     tresult process(ProcessData* data) {
         if (!data || !g_cb || !ctx) return kResultOk;
-        // Never reinterpret 64-bit sample buffers as f32 (see setupProcessing).
-        if (data->symbolicSampleSize != kSample32) return kResultFalse;
+        // Never reinterpret buffers at a width other than the one
+        // negotiated in setupProcessing.
+        if (data->symbolicSampleSize != procSampleSize) return kResultFalse;
 
         // Collect ALL param change points (sample-accurate automation)
         Vst3ParamChange paramChanges[512];
@@ -727,29 +743,35 @@ public:
         int32 numFrames = data->numSamples;
         if (numFrames == 0) return kResultOk;
 
-        // Collect input/output channel pointers
-        const float* inPtrs[32] = {};
-        float* outPtrs[32] = {};
+        // Collect input/output channel pointers. channelBuffers32 /
+        // channelBuffers64 are one union field; use64 records which
+        // arm the negotiated sample size selects.
+        const bool use64 = (procSampleSize == kSample64);
+        const size_t sampleBytes = use64 ? sizeof(double) : sizeof(float);
+        const void* inPtrs[32] = {};
+        void* outPtrs[32] = {};
         uint32_t numIn = 0, numOut = 0;
 
         if (data->numInputs > 0 && data->inputs) {
             auto& bus = data->inputs[0];
             numIn = bus.numChannels;
             for (int32 c = 0; c < bus.numChannels && c < 32; c++)
-                inPtrs[c] = bus.channelBuffers32[c];
+                inPtrs[c] = use64 ? (const void*)bus.channelBuffers64[c]
+                                  : (const void*)bus.channelBuffers32[c];
         }
         if (data->numOutputs > 0 && data->outputs) {
             auto& bus = data->outputs[0];
             numOut = bus.numChannels;
             for (int32 c = 0; c < bus.numChannels && c < 32; c++)
-                outPtrs[c] = bus.channelBuffers32[c];
+                outPtrs[c] = use64 ? (void*)bus.channelBuffers64[c]
+                                   : (void*)bus.channelBuffers32[c];
         }
 
         // Copy input to output for in-place processing
         uint32_t copyChannels = (numIn < numOut) ? numIn : numOut;
         for (uint32_t c = 0; c < copyChannels; c++) {
             if (inPtrs[c] && outPtrs[c] && inPtrs[c] != outPtrs[c])
-                memcpy(outPtrs[c], inPtrs[c], numFrames * sizeof(float));
+                memcpy(outPtrs[c], inPtrs[c], numFrames * sampleBytes);
         }
 
         // Convert VST3 input events (note on/off) to Vst3MidiEvent
@@ -893,9 +915,16 @@ public:
             }
         }
 
-        g_cb->process(ctx, inPtrs, outPtrs, numIn, numOut, numFrames,
-                      midiEvents, numMidi,
-                      transportPtr, paramChanges, numParamChanges);
+        if (use64)
+            g_cb->process_f64(ctx, (const double**)inPtrs, (double**)outPtrs,
+                              numIn, numOut, numFrames,
+                              midiEvents, numMidi,
+                              transportPtr, paramChanges, numParamChanges);
+        else
+            g_cb->process(ctx, (const float**)inPtrs, (float**)outPtrs,
+                          numIn, numOut, numFrames,
+                          midiEvents, numMidi,
+                          transportPtr, paramChanges, numParamChanges);
 
         // Forward output events (MIDI output from instruments/effects)
         if (data->outputEvents && g_cb->get_output_event_count) {

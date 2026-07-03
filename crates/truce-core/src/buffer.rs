@@ -466,7 +466,7 @@ impl<S: Sample, const N: usize> ChunksMut<'_, '_, S, N> {
 /// host buffer is a different precision, the input is widened/narrowed
 /// into per-channel scratch; the output is rendered into scratch and
 /// the wrapper copies + casts it back to the host buffer at the end
-/// of the block via [`Self::finish_widening_f32`].
+/// of the block via [`Self::finish_widening`].
 pub struct RawBufferScratch<S: Sample = f32> {
     pub input_slices: Vec<&'static [S]>,
     pub output_slices: Vec<&'static mut [S]>,
@@ -480,33 +480,36 @@ pub struct RawBufferScratch<S: Sample = f32> {
     /// Per-channel output scratch. Only populated by [`Self::build`]
     /// when the host buffer precision differs from `S`; the wrapper
     /// copies + casts these back to the host buffer at the end of the
-    /// block via [`Self::finish_widening_f32`].
+    /// block via [`Self::finish_widening`].
     output_buffers: Vec<Vec<S>>,
 }
 
 impl<S: Sample> RawBufferScratch<S> {
-    /// Build an `AudioBuffer<S>` from raw `f32` host pointers - the
-    /// common case (CLAP, LV2, AAX always; VST3/VST2/AU 32-bit mode).
+    /// Build an `AudioBuffer<S>` from raw host pointers of wire
+    /// precision `H` - `f32` in the common case (CLAP, LV2, AAX
+    /// always; VST3/VST2/AU 32-bit mode), `f64` when the host
+    /// negotiated a double-precision wire (VST3 `kSample64`, VST2
+    /// `processDoubleReplacing`).
     ///
-    /// When `S = f32`, slices point directly into host memory (modulo
-    /// in-place input copying). When `S = f64`, every channel is
-    /// widened into per-channel scratch and the wrapper must call
-    /// [`Self::finish_widening_f32`] at the end of the block to copy
-    /// the rendered samples back to the host's `f32` output pointers.
+    /// When `S = H`, slices point directly into host memory (modulo
+    /// in-place input copying). Otherwise every channel is converted
+    /// into per-channel scratch and the wrapper must call
+    /// [`Self::finish_widening`] at the end of the block to copy the
+    /// rendered samples back to the host's output pointers.
     ///
     /// # Safety
-    /// - `inputs` must point to `num_in` valid `*const f32` pointers
+    /// - `inputs` must point to `num_in` valid `*const H` pointers
     ///   (each non-null pointer must address at least `num_frames`
     ///   readable samples; null is allowed and yields an empty slice).
-    /// - `outputs` must point to `num_out` valid `*mut f32` pointers
+    /// - `outputs` must point to `num_out` valid `*mut H` pointers
     ///   (each non-null pointer must address at least `num_frames`
     ///   writable samples; null is allowed and yields an empty slice).
     /// - The pointed-to memory must remain valid for the lifetime of
     ///   the returned `AudioBuffer`.
-    pub unsafe fn build(
+    pub unsafe fn build<H: Sample>(
         &mut self,
-        inputs: *const *const f32,
-        outputs: *mut *mut f32,
+        inputs: *const *const H,
+        outputs: *mut *mut H,
         num_in: u32,
         num_out: u32,
         num_frames: u32,
@@ -525,21 +528,21 @@ impl<S: Sample> RawBufferScratch<S> {
         }
     }
 
-    /// Copy + narrow the rendered `S` output back to the host's
-    /// `f32` output pointers. No-op when `S = f32` (the slices the
-    /// plugin wrote already point directly at host memory).
+    /// Copy + convert the rendered `S` output back to the host's `H`
+    /// output pointers. No-op when `S = H` (the slices the plugin
+    /// wrote already point directly at host memory).
     ///
     /// # Safety
     /// `outputs` and `num_out` / `num_frames` must match the values
     /// passed to the prior [`Self::build`] call on this scratch.
-    pub unsafe fn finish_widening_f32(
+    pub unsafe fn finish_widening<H: Sample>(
         &self,
-        outputs: *mut *mut f32,
+        outputs: *mut *mut H,
         num_out: u32,
         num_frames: u32,
     ) {
-        // When the plugin is `f32` we wrote straight into host memory.
-        if std::any::TypeId::of::<S>() == std::any::TypeId::of::<f32>() {
+        // Same precision: the plugin wrote straight into host memory.
+        if S::IS_F64 == H::IS_F64 {
             return;
         }
         unsafe {
@@ -552,16 +555,16 @@ impl<S: Sample> RawBufferScratch<S> {
                 let host = std::slice::from_raw_parts_mut(ptr, nf);
                 let plugin_out = &self.output_buffers[ch];
                 for (h, &p) in host.iter_mut().zip(plugin_out.iter()) {
-                    *h = p.to_f32();
+                    *h = H::from_f64(p.to_f64());
                 }
             }
         }
     }
 
-    unsafe fn build_inner<'a>(
+    unsafe fn build_inner<'a, H: Sample>(
         &'a mut self,
-        inputs: *const *const f32,
-        outputs: *mut *mut f32,
+        inputs: *const *const H,
+        outputs: *mut *mut H,
         num_in: u32,
         num_out: u32,
         num_frames: u32,
@@ -570,9 +573,10 @@ impl<S: Sample> RawBufferScratch<S> {
         const MAX_CHANNELS_TRACKED: usize = 64;
         // Whether the plugin's chosen precision matches the host's.
         // When matched, we zero-copy host pointers into the slice
-        // arrays; when not, we widen/narrow through input_copies and
-        // output_buffers.
-        let same_precision = std::any::TypeId::of::<S>() == std::any::TypeId::of::<f32>();
+        // arrays; when not, we convert through input_copies and
+        // output_buffers. The traits are sealed at f32/f64, so equal
+        // IS_F64 flags mean S and H are the same type.
+        let same_precision = S::IS_F64 == H::IS_F64;
 
         unsafe {
             let nf = num_frames as usize;
@@ -584,7 +588,7 @@ impl<S: Sample> RawBufferScratch<S> {
                  output channels; got {num_out_u}. Channels beyond the cap won't be \
                  detected as aliased.",
             );
-            let out_ptrs: [Option<*mut f32>; MAX_CHANNELS_TRACKED] = std::array::from_fn(|ch| {
+            let out_ptrs: [Option<*mut H>; MAX_CHANNELS_TRACKED] = std::array::from_fn(|ch| {
                 if ch < num_out_u {
                     let p = *outputs.add(ch);
                     if p.is_null() { None } else { Some(p) }
@@ -592,16 +596,16 @@ impl<S: Sample> RawBufferScratch<S> {
                     None
                 }
             });
-            let aliases_any_output = |in_ptr: *const f32| -> bool {
+            let aliases_any_output = |in_ptr: *const H| -> bool {
                 let in_start = in_ptr as usize;
-                let in_end = in_start + nf * std::mem::size_of::<f32>();
+                let in_end = in_start + nf * std::mem::size_of::<H>();
                 out_ptrs
                     .iter()
                     .take(num_out_u.min(MAX_CHANNELS_TRACKED))
                     .any(|o| {
                         o.is_some_and(|op| {
                             let o_start = op as usize;
-                            let o_end = o_start + nf * std::mem::size_of::<f32>();
+                            let o_end = o_start + nf * std::mem::size_of::<H>();
                             !(in_end <= o_start || o_end <= in_start)
                         })
                     })
@@ -636,15 +640,16 @@ impl<S: Sample> RawBufferScratch<S> {
                         // the cross-precision path always copies.
                         &[]
                     } else {
-                        // Snapshot the input (and widen if needed)
-                        // before the plugin overwrites the shared
-                        // buffer.
+                        // Snapshot the input (converting precision if
+                        // needed) before the plugin overwrites the
+                        // shared buffer. Routing through f64 is
+                        // lossless in the widening direction.
                         let host = std::slice::from_raw_parts(ptr, nf);
                         let copy = &mut self.input_copies[ch];
                         copy.clear();
                         copy.reserve(nf);
                         for &h in host {
-                            copy.push(S::from_f32(h));
+                            copy.push(S::from_f64(h.to_f64()));
                         }
                         let p = copy.as_ptr();
                         let l = copy.len();
@@ -653,20 +658,20 @@ impl<S: Sample> RawBufferScratch<S> {
                         std::slice::from_raw_parts(p, l)
                     }
                 } else if same_precision {
-                    // SAFETY: the in-precision case is `&[f32]`. We
-                    // transmute via raw parts because the function
-                    // signature is generic over S but the runtime
-                    // branch knows S == f32.
+                    // SAFETY: same-precision branch - host pointer is
+                    // already `*const S` modulo runtime type identity;
+                    // the cast reinterprets `*const H` as `*const S`.
                     let raw = ptr.cast::<S>();
                     std::slice::from_raw_parts(raw, nf)
                 } else {
-                    // Different precision, no aliasing: widen into scratch.
+                    // Different precision, no aliasing: convert into
+                    // scratch (f64 round-trip, lossless when widening).
                     let host = std::slice::from_raw_parts(ptr, nf);
                     let copy = &mut self.input_copies[ch];
                     copy.clear();
                     copy.reserve(nf);
                     for &h in host {
-                        copy.push(S::from_f32(h));
+                        copy.push(S::from_f64(h.to_f64()));
                     }
                     let p = copy.as_ptr();
                     let l = copy.len();
@@ -688,7 +693,7 @@ impl<S: Sample> RawBufferScratch<S> {
                     std::slice::from_raw_parts_mut(raw, nf)
                 } else {
                     // Different precision: render into per-channel
-                    // scratch; finish_widening_f32 copies+narrows back.
+                    // scratch; finish_widening copies+converts back.
                     let buf = &mut self.output_buffers[ch];
                     buf.clear();
                     buf.resize(nf, S::default());
@@ -750,5 +755,79 @@ impl<S: Sample> Default for RawBufferScratch<S> {
             input_copies: Vec::with_capacity(2),
             output_buffers: Vec::with_capacity(2),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drive one block through `build` / `finish_widening` with
+    /// plugin precision `S` on host wire `H`: the plugin doubles a
+    /// `[1, 2, 3, 4]` input ramp into the output.
+    fn double_one_block<S: Sample, H: Sample>() -> Vec<H> {
+        let input: Vec<H> = (1..=4).map(|v| H::from_f64(f64::from(v))).collect();
+        let mut output: Vec<H> = vec![H::default(); 4];
+        let in_ptrs = [input.as_ptr()];
+        let mut out_ptrs = [output.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<S>::default();
+        // SAFETY: both pointers address 4 valid samples that outlive
+        // the buffer; the finish call reuses the same layout.
+        unsafe {
+            let mut buf = scratch.build(in_ptrs.as_ptr(), out_ptrs.as_mut_ptr(), 1, 1, 4, false);
+            for i in 0..4 {
+                let v = buf.input(0)[i];
+                buf.output(0)[i] = v + v;
+            }
+            scratch.finish_widening(out_ptrs.as_mut_ptr(), 1, 4);
+        }
+        output
+    }
+
+    fn assert_doubled<H: Sample>(output: &[H]) {
+        let got: Vec<f64> = output.iter().map(|v| v.to_f64()).collect();
+        assert_eq!(got, vec![2.0, 4.0, 6.0, 8.0]);
+    }
+
+    #[test]
+    fn f32_wire_f32_plugin_zero_copy() {
+        assert_doubled(&double_one_block::<f32, f32>());
+    }
+
+    #[test]
+    fn f32_wire_f64_plugin_widens() {
+        assert_doubled(&double_one_block::<f64, f32>());
+    }
+
+    #[test]
+    fn f64_wire_f64_plugin_zero_copy() {
+        assert_doubled(&double_one_block::<f64, f64>());
+    }
+
+    #[test]
+    fn f64_wire_f32_plugin_narrows() {
+        assert_doubled(&double_one_block::<f32, f64>());
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn f64_wire_in_place_snapshots_input() {
+        // Host hands the same f64 buffer for input and output; the
+        // input reads must see the pre-write values.
+        let mut io: Vec<f64> = vec![1.0, 2.0, 3.0, 4.0];
+        let in_ptrs = [io.as_ptr()];
+        let mut out_ptrs = [io.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<f64>::default();
+        // SAFETY: the aliased pointer addresses 4 valid samples that
+        // outlive the buffer.
+        unsafe {
+            let mut buf = scratch.build(in_ptrs.as_ptr(), out_ptrs.as_mut_ptr(), 1, 1, 4, false);
+            assert!(buf.is_in_place(0));
+            for i in 0..4 {
+                let v = buf.input(0)[i];
+                buf.output(0)[i] = v * 10.0;
+            }
+        }
+        assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
     }
 }

@@ -291,6 +291,15 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             return 0;
         }
 
+        /* opcode 77 - VST 2.4 host announces the precision it will
+         * process with (`value`: 0 = f32, 1 = f64). Both entry points
+         * stay valid regardless, so this is just an ack: accept f32
+         * always, f64 only when advertised. */
+        case 77 /* effSetProcessPrecision */:
+            if (value == 0) return 1;
+            return (value == 1 && g_vst2_descriptor
+                    && g_vst2_descriptor->supports_f64) ? 1 : 0;
+
         /* opcode 44 - host announces bypass on/off. Route to the
          * IS_BYPASS-flagged param (if any) so the param value tracks
          * the host's master-bypass UI. `value` is 0 (off) or 1 (on). */
@@ -414,29 +423,41 @@ static float getParameter(AEffect* e, int32_t index) {
  * Process (in-place replacing)
  * --------------------------------------------------------------------------- */
 
-static void processReplacing(AEffect* e, float** inputs, float** outputs,
-                             int32_t sampleFrames) {
+/* Width-agnostic body shared by processReplacing (f32) and
+ * processDoubleReplacing (f64): the two differ only in the in-place
+ * memcpy width and which Rust callback runs. */
+static void processAnyReplacing(AEffect* e, void** inputs, void** outputs,
+                                int32_t sampleFrames, int use64) {
     TruceVst2* inst = (TruceVst2*)e;
     if (!g_vst2_callbacks || !inst->rust_ctx) return;
 
     uint32_t numIn = g_vst2_descriptor->num_inputs;
     uint32_t numOut = g_vst2_descriptor->num_outputs;
+    size_t sampleBytes = use64 ? sizeof(double) : sizeof(float);
 
     /* For effects: copy input to output before processing (in-place). */
     if (numIn > 0) {
         uint32_t ch = numIn < numOut ? numIn : numOut;
         for (uint32_t c = 0; c < ch; c++) {
             if (inputs[c] != outputs[c])
-                memcpy(outputs[c], inputs[c], (size_t)sampleFrames * sizeof(float));
+                memcpy(outputs[c], inputs[c], (size_t)sampleFrames * sampleBytes);
         }
     }
 
-    g_vst2_callbacks->process(
-        inst->rust_ctx,
-        (const float**)inputs, outputs,
-        numIn, numOut,
-        (uint32_t)sampleFrames,
-        inst->midi_buf, inst->midi_count);
+    if (use64)
+        g_vst2_callbacks->process_f64(
+            inst->rust_ctx,
+            (const double**)inputs, (double**)outputs,
+            numIn, numOut,
+            (uint32_t)sampleFrames,
+            inst->midi_buf, inst->midi_count);
+    else
+        g_vst2_callbacks->process(
+            inst->rust_ctx,
+            (const float**)inputs, (float**)outputs,
+            numIn, numOut,
+            (uint32_t)sampleFrames,
+            inst->midi_buf, inst->midi_count);
 
     inst->midi_count = 0;
 
@@ -529,6 +550,16 @@ static void processReplacing(AEffect* e, float** inputs, float** outputs,
     }
 }
 
+static void processReplacing(AEffect* e, float** inputs, float** outputs,
+                             int32_t sampleFrames) {
+    processAnyReplacing(e, (void**)inputs, (void**)outputs, sampleFrames, 0);
+}
+
+static void processDoubleReplacing(AEffect* e, double** inputs, double** outputs,
+                                   int32_t sampleFrames) {
+    processAnyReplacing(e, (void**)inputs, (void**)outputs, sampleFrames, 1);
+}
+
 /* ---------------------------------------------------------------------------
  * Entry point
  * --------------------------------------------------------------------------- */
@@ -577,6 +608,8 @@ AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
 
     inst->effect.flags = effFlagsCanReplacing | effFlagsProgramChunks;
     if (is_synth) inst->effect.flags |= effFlagsIsSynth;
+    if (g_vst2_descriptor->supports_f64)
+        inst->effect.flags |= effFlagsCanDoubleReplacing;
     if (inst->rust_ctx && g_vst2_callbacks->gui_has_editor(inst->rust_ctx))
         inst->effect.flags |= effFlagsHasEditor;
     inst->effect.uniqueID = FOURCC(g_vst2_descriptor->component_subtype);
@@ -584,7 +617,8 @@ AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
     inst->effect.initialDelay = (inst->rust_ctx && g_vst2_callbacks->get_latency)
         ? (int32_t)g_vst2_callbacks->get_latency(inst->rust_ctx) : 0;
     inst->effect.processReplacing = processReplacing;
-    inst->effect.processDoubleReplacing = NULL;
+    inst->effect.processDoubleReplacing = g_vst2_descriptor->supports_f64
+        ? processDoubleReplacing : NULL;
     inst->effect.object = inst;
 
     inst->master = audioMaster;

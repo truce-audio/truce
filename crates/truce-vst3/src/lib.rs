@@ -25,6 +25,7 @@ use truce_core::wrapper::{
     default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
     run_register,
 };
+use truce_params::sample::{Float, Sample};
 use truce_params::{ParamInfo, ParamRange, Params};
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
@@ -229,11 +230,82 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     }
 }
 
-#[allow(clippy::too_many_lines)]
 unsafe extern "C" fn cb_process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     inputs: *const *const f32,
     outputs: *mut *mut f32,
+    num_input_channels: u32,
+    num_output_channels: u32,
+    num_frames: u32,
+    events: *const Vst3MidiEvent,
+    num_events: u32,
+    transport_ptr: *const ffi::Vst3Transport,
+    param_changes: *const ffi::Vst3ParamChange,
+    num_param_changes: u32,
+) {
+    // SAFETY: forwarded - the shim's contract is the same.
+    unsafe {
+        process_block::<P, f32>(
+            ctx,
+            inputs,
+            outputs,
+            num_input_channels,
+            num_output_channels,
+            num_frames,
+            events,
+            num_events,
+            transport_ptr,
+            param_changes,
+            num_param_changes,
+        );
+    }
+}
+
+/// 64-bit wire twin of [`cb_process`]. The shim routes here when the
+/// host negotiated `kSample64` in `setupProcessing` (only offered for
+/// `f64` plugins), so an `f64` plugin reads and writes host memory
+/// directly with no widen/narrow pass.
+unsafe extern "C" fn cb_process_f64<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    inputs: *const *const f64,
+    outputs: *mut *mut f64,
+    num_input_channels: u32,
+    num_output_channels: u32,
+    num_frames: u32,
+    events: *const Vst3MidiEvent,
+    num_events: u32,
+    transport_ptr: *const ffi::Vst3Transport,
+    param_changes: *const ffi::Vst3ParamChange,
+    num_param_changes: u32,
+) {
+    // SAFETY: forwarded - the shim's contract is the same.
+    unsafe {
+        process_block::<P, f64>(
+            ctx,
+            inputs,
+            outputs,
+            num_input_channels,
+            num_output_channels,
+            num_frames,
+            events,
+            num_events,
+            transport_ptr,
+            param_changes,
+            num_param_changes,
+        );
+    }
+}
+
+/// Shared body of [`cb_process`] / [`cb_process_f64`], generic over
+/// the host wire precision `H`. `RawBufferScratch` zero-copies when
+/// `H` matches the plugin's `Sample` and converts through scratch
+/// otherwise, so both wires work for both plugin precisions.
+// The parameter list mirrors the C ABI callback signature 1:1.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+unsafe fn process_block<P: PluginExport, H: Sample>(
+    ctx: *mut std::ffi::c_void,
+    inputs: *const *const H,
+    outputs: *mut *mut H,
     num_input_channels: u32,
     num_output_channels: u32,
     num_frames: u32,
@@ -461,7 +533,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // No-op for `f32` plugins (output already pointed at the
         // host buffer).
         inst.scratch
-            .finish_widening_f32(outputs, num_output_channels, len_u32(num_frames));
+            .finish_widening(outputs, num_output_channels, len_u32(num_frames));
 
         // Refresh latency / tail caches so the host's main-thread
         // queries don't have to call into `inst.plugin`.
@@ -1662,6 +1734,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         num_outputs,
         midi_output_ports,
         midi_input_ports,
+        supports_f64: i32::from(<P as truce_core::plugin::PluginRuntime>::Sample::IS_F64),
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {
@@ -1669,6 +1742,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         destroy: cb_destroy::<P>,
         reset: cb_reset::<P>,
         process: cb_process::<P>,
+        process_f64: cb_process_f64::<P>,
         param_count: cb_param_count::<P>,
         param_get_value: cb_param_get_value::<P>,
         param_set_value: cb_param_set_value::<P>,

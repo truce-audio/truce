@@ -51,6 +51,12 @@ pub trait Float:
     + Mul<Output = Self>
     + Div<Output = Self>
 {
+    /// Whether this precision is `f64`. The trait is sealed at `f32`
+    /// and `f64`, so two types with equal `IS_F64` are the same type -
+    /// wrapper code uses this to pick zero-copy vs. convert-through-
+    /// scratch without a `TypeId` comparison.
+    const IS_F64: bool;
+
     /// Widen an `f32` to this precision. Lossless for `f64`; identity
     /// for `f32`.
     #[must_use]
@@ -105,6 +111,8 @@ mod sealed {
 }
 
 impl Float for f32 {
+    const IS_F64: bool = false;
+
     #[inline]
     fn from_f32(v: f32) -> Self {
         v
@@ -148,6 +156,8 @@ impl Float for f32 {
 }
 
 impl Float for f64 {
+    const IS_F64: bool = true;
+
     #[inline]
     fn from_f32(v: f32) -> Self {
         f64::from(v)

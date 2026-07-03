@@ -919,7 +919,7 @@ pub unsafe fn _process<P: PluginExport>(
             // Narrow rendered f64 output back to host f32 when needed.
             // No-op for `f32` plugins.
             inst.scratch
-                .finish_widening_f32(outputs, num_out, len_u32(num_frames));
+                .finish_widening(outputs, num_out, len_u32(num_frames));
 
             // Refresh latency / tail caches so the host's main-thread
             // queries don't have to call into `inst.plugin`.

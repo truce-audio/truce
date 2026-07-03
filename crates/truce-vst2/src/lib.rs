@@ -10,7 +10,6 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
-use truce_core::Float;
 use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
@@ -23,6 +22,7 @@ use truce_core::wrapper::{
     default_io_channels, first_bus_layout, log_midi_ports_clamped, log_missing_bus_layout,
     run_audio_block, run_extern_callback_with, run_register,
 };
+use truce_core::{Float, Sample};
 use truce_params::{ParamFlags, ParamInfo, Params};
 
 use ffi::{Vst2Callbacks, Vst2MidiEvent, Vst2ParamDescriptor, Vst2PluginDescriptor};
@@ -81,8 +81,10 @@ struct Vst2Instance<P: PluginExport> {
     /// Reused per-block scratch for `RawBufferScratch::build`. Lives
     /// on the instance so the audio thread doesn't heap-allocate.
     ///
-    /// Parameterised by `P::Sample`; widens/narrows host-`f32`
-    /// buffers around `plugin.process()` for plugins on `prelude64`.
+    /// Parameterised by `P::Sample`; converts around
+    /// `plugin.process()` whenever the host wire precision
+    /// (`processReplacing` f32 / `processDoubleReplacing` f64)
+    /// differs from the plugin's.
     scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// `AEffect` pointer, set by the C shim after creation. Used for host callbacks.
@@ -301,6 +303,66 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     events: *const Vst2MidiEvent,
     num_events: u32,
 ) {
+    // SAFETY: forwarded - the shim's contract is the same.
+    unsafe {
+        process_block::<P, f32>(
+            ctx,
+            inputs,
+            outputs,
+            num_input_channels,
+            num_output_channels,
+            num_frames,
+            events,
+            num_events,
+        );
+    }
+}
+
+/// 64-bit wire twin of [`cb_process`], reached through
+/// `AEffect::processDoubleReplacing` (only wired for `f64` plugins),
+/// so an `f64` plugin reads and writes host memory directly with no
+/// widen/narrow pass.
+unsafe extern "C" fn cb_process_f64<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    inputs: *const *const f64,
+    outputs: *mut *mut f64,
+    num_input_channels: u32,
+    num_output_channels: u32,
+    num_frames: u32,
+    events: *const Vst2MidiEvent,
+    num_events: u32,
+) {
+    // SAFETY: forwarded - the shim's contract is the same.
+    unsafe {
+        process_block::<P, f64>(
+            ctx,
+            inputs,
+            outputs,
+            num_input_channels,
+            num_output_channels,
+            num_frames,
+            events,
+            num_events,
+        );
+    }
+}
+
+/// Shared body of [`cb_process`] / [`cb_process_f64`], generic over
+/// the host wire precision `H`. `RawBufferScratch` zero-copies when
+/// `H` matches the plugin's `Sample` and converts through scratch
+/// otherwise, so both wires work for both plugin precisions.
+// The parameter list mirrors the C ABI callback signature 1:1.
+#[allow(clippy::too_many_arguments)]
+unsafe fn process_block<P: PluginExport, H: Sample>(
+    ctx: *mut std::ffi::c_void,
+    inputs: *const *const H,
+    outputs: *mut *mut H,
+    num_input_channels: u32,
+    num_output_channels: u32,
+    num_frames: u32,
+    events: *const Vst2MidiEvent,
+    num_events: u32,
+) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("VST2", || unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
@@ -405,7 +467,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // Narrow rendered f64 output back to host f32 when needed.
         // No-op for `f32` plugins.
         inst.scratch
-            .finish_widening_f32(outputs, num_output_channels, len_u32(num_frames));
+            .finish_widening(outputs, num_output_channels, len_u32(num_frames));
         notify_process_param_changes(inst);
 
         // Refresh latency / tail caches so the host's main-thread
@@ -1024,6 +1086,7 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         bypass_param_id,
         accepts_midi_in: i32::from(info.accepts_midi_in),
         emits_midi: i32::from(info.emits_midi),
+        supports_f64: i32::from(<P as truce_core::plugin::PluginRuntime>::Sample::IS_F64),
     }));
 
     let callbacks = Box::leak(Box::new(Vst2Callbacks {
@@ -1031,6 +1094,7 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         destroy: cb_destroy::<P>,
         reset: cb_reset::<P>,
         process: cb_process::<P>,
+        process_f64: cb_process_f64::<P>,
         param_count: cb_param_count::<P>,
         param_get_normalized: cb_param_get_normalized::<P>,
         param_set_normalized: cb_param_set_normalized::<P>,

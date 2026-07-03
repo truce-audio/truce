@@ -45,8 +45,9 @@ use clap_sys::events::{
     clap_event_param_value, clap_event_transport, clap_input_events, clap_output_events,
 };
 use clap_sys::ext::audio_ports::{
-    CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
-    clap_audio_port_info, clap_plugin_audio_ports,
+    CLAP_AUDIO_PORT_IS_MAIN, CLAP_AUDIO_PORT_PREFERS_64BITS, CLAP_AUDIO_PORT_SUPPORTS_64BITS,
+    CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO, clap_audio_port_info,
+    clap_plugin_audio_ports,
 };
 use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_plugin_latency};
 use clap_sys::ext::note_ports::{
@@ -84,7 +85,6 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use clap_sys::string_sizes::{CLAP_NAME_SIZE, CLAP_PATH_SIZE};
 use clap_sys::version::CLAP_VERSION;
 
-use truce_core::Float;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
 use truce_core::cast::{len_u32, size_of_u32};
@@ -102,6 +102,7 @@ use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
 use truce_core::state;
 use truce_core::wrapper::{run_audio_block_with, run_extern_callback_with};
+use truce_core::{Float, Sample};
 use truce_params::Params;
 use truce_params::{ParamFlags, ParamInfo, ParamRange};
 
@@ -228,21 +229,91 @@ struct ClapPluginData<P: PluginExport> {
     /// dangling pointer lives between blocks.
     input_slices: Vec<&'static [<P as PluginRuntime>::Sample]>,
     output_slices: Vec<&'static mut [<P as PluginRuntime>::Sample]>,
-    /// Per-channel widening scratch. Empty when `P::Sample == f32`
-    /// (slices point straight into host memory). When `P::Sample ==
-    /// f64`, each channel's f32 host input is widened into the
-    /// matching slot here and the slice in `input_slices` points
-    /// there.
+    /// Per-channel input conversion scratch. A slot stays empty when
+    /// the host wire for its port matches `P::Sample` (the slice in
+    /// `input_slices` points straight into host memory); on a
+    /// precision mismatch the channel is converted into the matching
+    /// slot here and the slice points there.
     input_widen: Vec<Vec<<P as PluginRuntime>::Sample>>,
-    /// Per-channel narrowing scratch. Same shape: only used when
-    /// `P::Sample == f64`, in which case the plugin writes here and
-    /// the wrapper copies + casts back to the host's f32 output
+    /// Per-channel output conversion scratch. Same shape: only used
+    /// on a precision mismatch, in which case the plugin writes here
+    /// and the wrapper copies + converts back to the host's output
     /// pointers after `process()` returns.
     output_narrow: Vec<Vec<<P as PluginRuntime>::Sample>>,
     /// Cached pointers to host output channels, captured at slice
-    /// build time so the post-`process` narrow loop can copy back
-    /// without re-walking the CLAP bus structures.
-    host_out_ptrs: Vec<*mut f32>,
+    /// build time so the post-`process` convert-back loop can copy
+    /// without re-walking the CLAP bus structures. Each entry is
+    /// tagged with the wire precision the host picked for its port.
+    host_out_ptrs: Vec<HostOutPtr>,
+}
+
+/// Host output channel pointer, tagged with the port's wire
+/// precision (the host picks 32- or 64-bit per port; 64-bit only on
+/// ports that advertised `CLAP_AUDIO_PORT_SUPPORTS_64BITS`).
+#[derive(Copy, Clone)]
+enum HostOutPtr {
+    Null,
+    F32(*mut f32),
+    F64(*mut f64),
+}
+
+/// Build the plugin-facing input slice for one host channel of wire
+/// precision `H`: zero-copy when `H` matches the plugin's sample
+/// type `S`, otherwise converted into `scratch` (f64 round-trip,
+/// lossless in the widening direction).
+///
+/// # Safety
+/// A non-null `host_ptr` must address `num_frames` readable samples
+/// that stay valid for the block; the returned slice's `'static`
+/// lifetime is fictional (same convention as `input_slices`).
+unsafe fn input_channel_slice<S: Sample, H: Sample>(
+    host_ptr: *const H,
+    num_frames: usize,
+    scratch: &mut Vec<S>,
+) -> &'static [S] {
+    if host_ptr.is_null() {
+        return &[];
+    }
+    unsafe {
+        if S::IS_F64 == H::IS_F64 {
+            // SAFETY: sealed traits - equal IS_F64 means S == H.
+            return std::slice::from_raw_parts(host_ptr.cast::<S>(), num_frames);
+        }
+        scratch.clear();
+        scratch.reserve(num_frames);
+        let host = std::slice::from_raw_parts(host_ptr, num_frames);
+        for &h in host {
+            scratch.push(S::from_f64(h.to_f64()));
+        }
+        std::slice::from_raw_parts(scratch.as_ptr(), num_frames)
+    }
+}
+
+/// Output twin of [`input_channel_slice`]: zero-copy into host
+/// memory when precisions match, otherwise the plugin renders into
+/// `scratch` and the post-`process` loop converts back to the host
+/// pointer.
+///
+/// # Safety
+/// Same contract as [`input_channel_slice`], with `num_frames`
+/// writable samples.
+unsafe fn output_channel_slice<S: Sample, H: Sample>(
+    host_ptr: *mut H,
+    num_frames: usize,
+    scratch: &mut Vec<S>,
+) -> &'static mut [S] {
+    if host_ptr.is_null() {
+        return &mut [];
+    }
+    unsafe {
+        if S::IS_F64 == H::IS_F64 {
+            // SAFETY: sealed traits - equal IS_F64 means S == H.
+            return std::slice::from_raw_parts_mut(host_ptr.cast::<S>(), num_frames);
+        }
+        scratch.clear();
+        scratch.resize(num_frames, S::default());
+        std::slice::from_raw_parts_mut(scratch.as_mut_ptr(), num_frames)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -436,8 +507,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         // do here is push the inner per-channel `Vec<P::Sample>`s up
         // to `max_block_size` frames so the per-block `.clear() +
         // .reserve()` path is no-op-on-the-allocator.
-        let same_precision = std::any::TypeId::of::<P::Sample>() == std::any::TypeId::of::<f32>();
-        if !same_precision {
+        if <P as PluginRuntime>::Sample::IS_F64 {
             let max_in = data.input_widen.capacity();
             let max_out = data.output_narrow.capacity();
             while data.input_widen.len() < max_in {
@@ -457,7 +527,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
                 }
             }
             while data.host_out_ptrs.len() < max_out {
-                data.host_out_ptrs.push(std::ptr::null_mut());
+                data.host_out_ptrs.push(HostOutPtr::Null);
             }
         }
 
@@ -1105,67 +1175,52 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         );
 
         // Build per-channel slices preserving channel index across
-        // every bus. A null bus (`buf.data32 == null`) emits empty
-        // slices for each of its declared channels rather than being
-        // skipped - skipping would shift downstream buses' channel
-        // indices and silently re-route audio onto the wrong bus for
-        // multi-bus plugins.
+        // every bus. A null bus (neither data pointer set) emits
+        // empty slices for each of its declared channels rather than
+        // being skipped - skipping would shift downstream buses'
+        // channel indices and silently re-route audio onto the wrong
+        // bus for multi-bus plugins.
         //
-        // CLAP audio is always `f32` on the wire. If `P::Sample` is
-        // also `f32`, slices point straight at host memory (zero-
-        // copy). If `P::Sample` is `f64`, each channel's host input
-        // is widened into per-channel scratch in `input_widen`, and
-        // the matching `output_narrow` slot is what the plugin
-        // writes into - we copy + narrow back to the host's f32
-        // output pointers after `process()` returns. Compares
-        // `TypeId` at runtime; the same-precision path stays a
-        // single pointer cast.
-        let same_precision = std::any::TypeId::of::<P::Sample>() == std::any::TypeId::of::<f32>();
-
+        // The host picks the wire precision per port: `data64` is
+        // only set on ports that advertised
+        // `CLAP_AUDIO_PORT_SUPPORTS_64BITS` (f64 plugins). When the
+        // wire matches `P::Sample`, slices point straight at host
+        // memory (zero-copy); otherwise the channel is converted
+        // through the matching `input_widen` / `output_narrow` slot
+        // and copied back after `process()` returns.
         data.input_slices.clear();
         // Reset each inner scratch buffer's length to 0 (preserves
         // its heap allocation), don't `.clear()` the outer
         // `Vec<Vec<_>>` - that would drop every inner Vec and force
-        // the per-channel `Vec::with_capacity` push below to
-        // re-allocate every block, defeating the activate-time
-        // pre-grow.
+        // the per-channel push below to re-allocate every block,
+        // defeating the activate-time pre-grow.
         for buf in &mut data.input_widen {
             buf.clear();
         }
         // The outer Vec is pre-sized in `clap_plugin_activate`; the
-        // while-loop below only runs as a fallback if the pre-grow
+        // while-loops below only run as a fallback if the pre-grow
         // didn't cover the bus layout the host actually picked.
+        // `Vec::new()` keeps the fallback allocation-free; the inner
+        // scratch only allocates if that channel actually converts.
         let mut flat_in_idx = 0usize;
         for bus_idx in 0..proc.audio_inputs_count {
             let buf = &*proc.audio_inputs.add(bus_idx as usize);
+            let bus_is_f64 = !buf.data64.is_null();
             for ch in 0..buf.channel_count {
-                let host_ptr: *const f32 = if buf.data32.is_null() {
-                    std::ptr::null()
-                } else {
-                    *buf.data32.add(ch as usize)
-                };
-                let slice: &[P::Sample] = if host_ptr.is_null() {
+                while data.input_widen.len() <= flat_in_idx {
+                    data.input_widen.push(Vec::new());
+                }
+                let scratch = &mut data.input_widen[flat_in_idx];
+                let slice: &'static [P::Sample] = if bus_is_f64 {
+                    let host_ptr: *const f64 = *buf.data64.add(ch as usize);
+                    input_channel_slice::<P::Sample, f64>(host_ptr, num_frames, scratch)
+                } else if buf.data32.is_null() {
                     &[]
-                } else if same_precision {
-                    // SAFETY: runtime check above proved P::Sample == f32.
-                    let raw = host_ptr.cast::<P::Sample>();
-                    std::slice::from_raw_parts(raw, num_frames)
                 } else {
-                    while data.input_widen.len() <= flat_in_idx {
-                        data.input_widen.push(Vec::with_capacity(num_frames));
-                    }
-                    let scratch = &mut data.input_widen[flat_in_idx];
-                    scratch.clear();
-                    scratch.reserve(num_frames);
-                    let host = std::slice::from_raw_parts(host_ptr, num_frames);
-                    for &h in host {
-                        scratch.push(P::Sample::from_f32(h));
-                    }
-                    // SAFETY: `scratch` lives in `data` which outlives this block.
-                    std::slice::from_raw_parts(scratch.as_ptr(), num_frames)
+                    let host_ptr: *const f32 = *buf.data32.add(ch as usize);
+                    input_channel_slice::<P::Sample, f32>(host_ptr, num_frames, scratch)
                 };
-                data.input_slices
-                    .push(transmute::<&[P::Sample], &'static [P::Sample]>(slice));
+                data.input_slices.push(slice);
                 flat_in_idx += 1;
             }
         }
@@ -1180,31 +1235,34 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         let mut flat_out_idx = 0usize;
         for bus_idx in 0..proc.audio_outputs_count {
             let buf = &mut *proc.audio_outputs.add(bus_idx as usize);
+            let bus_is_f64 = !buf.data64.is_null();
             for ch in 0..buf.channel_count {
-                let host_ptr: *mut f32 = if buf.data32.is_null() {
-                    std::ptr::null_mut()
+                while data.output_narrow.len() <= flat_out_idx {
+                    data.output_narrow.push(Vec::new());
+                }
+                let scratch = &mut data.output_narrow[flat_out_idx];
+                let slice: &'static mut [P::Sample] = if bus_is_f64 {
+                    let host_ptr: *mut f64 = *buf.data64.add(ch as usize);
+                    data.host_out_ptrs.push(if host_ptr.is_null() {
+                        HostOutPtr::Null
+                    } else {
+                        HostOutPtr::F64(host_ptr)
+                    });
+                    output_channel_slice::<P::Sample, f64>(host_ptr, num_frames, scratch)
                 } else {
-                    *buf.data32.add(ch as usize)
+                    let host_ptr: *mut f32 = if buf.data32.is_null() {
+                        std::ptr::null_mut()
+                    } else {
+                        *buf.data32.add(ch as usize)
+                    };
+                    data.host_out_ptrs.push(if host_ptr.is_null() {
+                        HostOutPtr::Null
+                    } else {
+                        HostOutPtr::F32(host_ptr)
+                    });
+                    output_channel_slice::<P::Sample, f32>(host_ptr, num_frames, scratch)
                 };
-                data.host_out_ptrs.push(host_ptr);
-                let slice: &mut [P::Sample] = if host_ptr.is_null() {
-                    &mut []
-                } else if same_precision {
-                    let raw = host_ptr.cast::<P::Sample>();
-                    std::slice::from_raw_parts_mut(raw, num_frames)
-                } else {
-                    while data.output_narrow.len() <= flat_out_idx {
-                        data.output_narrow.push(Vec::with_capacity(num_frames));
-                    }
-                    let scratch = &mut data.output_narrow[flat_out_idx];
-                    scratch.clear();
-                    scratch.resize(num_frames, P::Sample::default());
-                    std::slice::from_raw_parts_mut(scratch.as_mut_ptr(), num_frames)
-                };
-                data.output_slices
-                    .push(transmute::<&mut [P::Sample], &'static mut [P::Sample]>(
-                        slice,
-                    ));
+                data.output_slices.push(slice);
                 flat_out_idx += 1;
             }
         }
@@ -1252,26 +1310,31 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             chunk_args,
         );
 
-        // Narrow + copy back to host f32 outputs if the plugin ran
-        // in f64. No-op when `P::Sample == f32`: the plugin wrote
-        // directly into host memory and `output_narrow` is empty.
-        // `zip` over the two slices instead of indexing - if either
-        // vector is shorter (it shouldn't be, but a future drift
-        // would hit this), iteration stops at the min cleanly
-        // rather than panicking on an out-of-bounds index.
-        if !same_precision {
-            debug_assert_eq!(
-                data.host_out_ptrs.len(),
-                data.output_narrow.len(),
-                "CLAP narrow-back: host_out_ptrs / output_narrow drifted out of lockstep",
-            );
-            for (host_ptr, plugin) in data.host_out_ptrs.iter().zip(data.output_narrow.iter()) {
-                if host_ptr.is_null() {
-                    continue;
+        // Convert + copy back to host outputs for every channel that
+        // rendered into scratch (wire precision differed from
+        // `P::Sample`). Zero-copy channels leave their scratch slot
+        // empty and are skipped - the plugin already wrote host
+        // memory. `zip` over the two vectors instead of indexing -
+        // if either is shorter (it shouldn't be, but a future drift
+        // would hit this), iteration stops at the min cleanly rather
+        // than panicking on an out-of-bounds index.
+        for (host_ptr, plugin) in data.host_out_ptrs.iter().zip(data.output_narrow.iter()) {
+            if plugin.is_empty() {
+                continue;
+            }
+            match *host_ptr {
+                HostOutPtr::Null => {}
+                HostOutPtr::F32(p) => {
+                    let host = std::slice::from_raw_parts_mut(p, num_frames);
+                    for (h, &s) in host.iter_mut().zip(plugin.iter()) {
+                        *h = s.to_f32();
+                    }
                 }
-                let host = std::slice::from_raw_parts_mut(*host_ptr, num_frames);
-                for (h, &p) in host.iter_mut().zip(plugin.iter()) {
-                    *h = p.to_f32();
+                HostOutPtr::F64(p) => {
+                    let host = std::slice::from_raw_parts_mut(p, num_frames);
+                    for (h, &s) in host.iter_mut().zip(plugin.iter()) {
+                        *h = s.to_f64();
+                    }
                 }
             }
         }
@@ -2012,6 +2075,12 @@ unsafe extern "C" fn audio_ports_get<P: PluginExport>(
         } else {
             0
         };
+        // f64 plugins take the host's 64-bit wire directly (zero
+        // copy, no precision loss at the boundary); the process loop
+        // reads whichever of data32/data64 the host picked per port.
+        if <P as PluginRuntime>::Sample::IS_F64 {
+            out.flags |= CLAP_AUDIO_PORT_SUPPORTS_64BITS | CLAP_AUDIO_PORT_PREFERS_64BITS;
+        }
         out.port_type = match bus.channels {
             ChannelConfig::Mono => CLAP_PORT_MONO.as_ptr(),
             ChannelConfig::Stereo => CLAP_PORT_STEREO.as_ptr(),

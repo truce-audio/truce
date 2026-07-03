@@ -31,6 +31,12 @@ pub struct Vst3PluginDescriptor {
     /// `kEvent | kInput` buses and stamps each event's `Event::port`
     /// from the bus it arrived on.
     pub midi_input_ports: i32,
+    /// Non-zero when the plugin's `Sample` is `f64`. The shim then
+    /// answers `canProcessSampleSize(kSample64)` with `kResultOk`,
+    /// accepts a 64-bit `setupProcessing`, and routes blocks through
+    /// `process_f64` so the plugin reads/writes host memory directly
+    /// with no precision conversion.
+    pub supports_f64: i32,
 }
 
 /// Parameter descriptor.
@@ -101,6 +107,23 @@ pub struct Vst3Callbacks {
         ctx: *mut c_void,
         inputs: *const *const f32,
         outputs: *mut *mut f32,
+        num_input_channels: u32,
+        num_output_channels: u32,
+        num_frames: u32,
+        events: *const Vst3MidiEvent,
+        num_events: u32,
+        transport: *const Vst3Transport,
+        param_changes: *const Vst3ParamChange,
+        num_param_changes: u32,
+    ),
+    /// 64-bit twin of `process`. The shim calls exactly one of the
+    /// two per block, chosen by the sample size the host negotiated
+    /// in `setupProcessing` (only offered when
+    /// `Vst3PluginDescriptor::supports_f64` is set).
+    pub process_f64: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        inputs: *const *const f64,
+        outputs: *mut *mut f64,
         num_input_channels: u32,
         num_output_channels: u32,
         num_frames: u32,

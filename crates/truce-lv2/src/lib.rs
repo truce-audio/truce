@@ -597,7 +597,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             let _ = audio;
             // Narrow rendered output back to host f32 pointers when
             // the plugin's `Sample = f64`. No-op for f32 plugins.
-            s.scratch.finish_widening_f32(out_ptrs, num_out, n_samples);
+            s.scratch.finish_widening(out_ptrs, num_out, n_samples);
         }
 
         // Copy meter readings out to the host. The plugin's process() has

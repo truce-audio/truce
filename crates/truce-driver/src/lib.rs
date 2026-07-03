@@ -928,7 +928,7 @@ impl<P: PluginExport> PluginDriver<P> {
             // when the plugin's `Sample = f64`. No-op otherwise.
             // SAFETY: same pointers + counts as the `build` call above.
             unsafe {
-                scratch.finish_widening_f32(out_ptrs.as_mut_ptr(), num_out_u32, block_u32);
+                scratch.finish_widening(out_ptrs.as_mut_ptr(), num_out_u32, block_u32);
             }
 
             // Capture audio. `out_bufs` is reused across iterations,

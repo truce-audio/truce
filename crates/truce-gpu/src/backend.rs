@@ -714,7 +714,7 @@ impl WgpuBackend {
     /// `logical_w` / `logical_h` are in logical points; `scale` is the
     /// layer's `contentsScale` (2.0 on Retina). The surface is
     /// configured at `logical × scale` physical pixels, matching the
-    /// contract of [`Self::from_surface`] / [`Self::from_window`].
+    /// contract of [`Self::from_surface`].
     ///
     /// # Safety
     /// `metal_layer` must be a valid `CAMetalLayer*` that outlives the backend.

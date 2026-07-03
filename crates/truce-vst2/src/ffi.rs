@@ -23,6 +23,12 @@ pub struct Vst2PluginDescriptor {
     /// `1` if the plugin emits MIDI to the host. Gates the `sendVst*`
     /// canDo replies.
     pub emits_midi: i32,
+    /// Non-zero when the plugin's `Sample` is `f64`. The shim then
+    /// sets `effFlagsCanDoubleReplacing`, wires
+    /// `AEffect::processDoubleReplacing`, and routes those blocks
+    /// through `process_f64` so the plugin reads/writes host memory
+    /// directly with no precision conversion.
+    pub supports_f64: i32,
 }
 
 #[repr(C)]
@@ -61,6 +67,19 @@ pub struct Vst2Callbacks {
         ctx: *mut c_void,
         inputs: *const *const f32,
         outputs: *mut *mut f32,
+        num_input_channels: u32,
+        num_output_channels: u32,
+        num_frames: u32,
+        events: *const Vst2MidiEvent,
+        num_events: u32,
+    ),
+    /// 64-bit twin of `process`, called from
+    /// `AEffect::processDoubleReplacing` (only wired when
+    /// `Vst2PluginDescriptor::supports_f64` is set).
+    pub process_f64: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        inputs: *const *const f64,
+        outputs: *mut *mut f64,
         num_input_channels: u32,
         num_output_channels: u32,
         num_frames: u32,

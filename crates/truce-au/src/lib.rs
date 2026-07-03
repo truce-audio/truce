@@ -451,7 +451,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // Narrow rendered f64 output back to host f32 when needed.
         // No-op for `f32` plugins.
         inst.scratch
-            .finish_widening_f32(outputs, num_output_channels, len_u32(num_frames));
+            .finish_widening(outputs, num_output_channels, len_u32(num_frames));
 
         // AU v2 (macOS): notify the host of process-emitted parameter
         // changes so its UI / automation reflect values the plugin

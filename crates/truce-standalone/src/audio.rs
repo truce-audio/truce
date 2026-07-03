@@ -1487,7 +1487,7 @@ fn audio_callback<P: PluginExport>(
     // SAFETY: `ptr_scratch.outputs` lives through this function;
     // `num_out_u32` / `num_frames_u32` match the build above.
     unsafe {
-        scratch.finish_widening_f32(
+        scratch.finish_widening(
             ptr_scratch.outputs.as_mut_ptr(),
             num_out_u32,
             num_frames_u32,
