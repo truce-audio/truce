@@ -110,6 +110,11 @@ where
     // meaningful when `editor_can_resize`; a non-resizable editor is
     // already pinned to a fixed size.
     let editor_can_maximize = editor.can_maximize();
+    // Constraint snapshot for the Windows outer-frame limits
+    // (`windowed_windows::install_size_limits`); read here for the
+    // same borrow reason as the flags above.
+    #[cfg(target_os = "windows")]
+    let editor_limits = (editor.min_size(), editor.max_size(), editor.aspect_ratio());
 
     // Logical-points size handoff between the editor (via the
     // `request_resize` closure) and the outer baseview window handler.
@@ -213,13 +218,27 @@ where
             // the full Windows non-client frame; the `Resized`
             // event flows back to `editor.set_size` via `on_event`.
             // Linux equivalent: `windowed_x11::pin_size` below.
-            if !editor_can_resize {
+            if editor_can_resize {
+                if !editor_can_maximize {
+                    // Resizable but maximize opted out: keep the resize
+                    // border + minimize, drop only the maximize box so the
+                    // window can't jump past the editor's max_size.
+                    crate::windowed_windows::disable_maximize(h.hwnd);
+                }
+                // Enforce the editor's min / max / aspect on the outer
+                // frame itself (WM_GETMINMAXINFO / WM_SIZING): backends
+                // whose `set_size` accepts any size verbatim (egui /
+                // iced / Slint letterbox instead of clamping) otherwise
+                // let the window shrink below min or grow past max.
+                let (emin, emax, easpect) = editor_limits;
+                crate::windowed_windows::install_size_limits(h.hwnd, emin, emax, easpect);
+            } else {
                 crate::windowed_windows::lock_window(h.hwnd);
-            } else if !editor_can_maximize {
-                // Resizable but maximize opted out: keep the resize
-                // border + minimize, drop only the maximize box so the
-                // window can't jump past the editor's max_size.
-                crate::windowed_windows::disable_maximize(h.hwnd);
+                // The cleared sizing border only stops interactive
+                // resizes; programmatic `SetWindowPos` (scripting,
+                // automation tools) bypasses window styles. Pin via
+                // the min-max path too, at the editor's natural size.
+                crate::windowed_windows::install_size_limits(h.hwnd, (lw, lh), (lw, lh), None);
             }
             // Title-bar / taskbar icon from the icon embedded in the
             // packaged .exe (no-op in un-packaged dev builds).

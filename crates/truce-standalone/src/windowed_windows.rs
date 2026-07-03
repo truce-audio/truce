@@ -21,14 +21,17 @@
 
 use std::ffi::c_void;
 
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
+use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GWL_STYLE, GetMenu, GetSystemMetrics, GetWindowLongW, ICON_BIG, ICON_SMALL, IMAGE_ICON,
-    LR_DEFAULTSIZE, LR_SHARED, LoadImageW, SM_CXSMICON, SM_CYMENU, SM_CYSMICON, SWP_FRAMECHANGED,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetWindowLongW, SetWindowPos, WM_SETICON,
-    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SIZEBOX,
+    GWL_EXSTYLE, GWL_STYLE, GetMenu, GetSystemMetrics, GetWindowLongW, ICON_BIG, ICON_SMALL,
+    IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED, LoadImageW, MINMAXINFO, SM_CXSMICON, SM_CYMENU,
+    SM_CYSMICON, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOSIZE as SWP_NOSIZE_FLAG,
+    SWP_NOZORDER, SendMessageW, SetWindowLongW, SetWindowPos, WINDOWPOS, WM_GETMINMAXINFO,
+    WM_NCDESTROY, WM_SETICON, WM_SIZING, WM_WINDOWPOSCHANGING, WMSZ_BOTTOM, WMSZ_LEFT, WMSZ_RIGHT,
+    WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SIZEBOX,
 };
 
 /// Resource name of the embedded app-icon group. `cargo truce`'s
@@ -122,6 +125,213 @@ pub fn disable_maximize(hwnd: *mut c_void) {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
         );
+    }
+}
+
+/// Editor size limits installed on the outer window by
+/// [`install_size_limits`]. Logical points; converted with the
+/// window's live DPI on every message so monitor moves stay correct.
+struct SizeLimits {
+    min_w: u32,
+    min_h: u32,
+    max_w: u32,
+    max_h: u32,
+    aspect: Option<(u32, u32)>,
+}
+
+/// Subclass id for the size-limits subclass (arbitrary tag, unique
+/// within this window).
+const SIZE_LIMITS_SUBCLASS: usize = 0x7472_6373; // "trcs"
+
+/// Enforce the editor's `min_size` / `max_size` (and `aspect_ratio`,
+/// when set) on the outer standalone window itself.
+///
+/// Only backends whose `Editor::set_size` clamps (the built-in grid)
+/// kept the outer window in bounds before; egui / iced / Slint accept
+/// any size verbatim and letterbox the content, which left the OS
+/// window free to shrink below `min_size` (clipping the UI) or grow
+/// past `max_size` (a sea of letterbox). A `WM_GETMINMAXINFO`
+/// subclass clamps both interactive drags and programmatic
+/// `SetWindowPos` calls (`DefWindowProc` consults it from
+/// `WM_WINDOWPOSCHANGING`); `WM_SIZING` reshapes interactive drags to
+/// the locked aspect ratio.
+///
+/// Sizes are logical editor points; the non-client frame (border,
+/// title bar, menu) is added per-message at the window's current DPI.
+/// `u32::MAX` on a max axis means unbounded. Must run on the window's
+/// thread. No-op on a null handle.
+pub fn install_size_limits(
+    hwnd: *mut c_void,
+    min: (u32, u32),
+    max: (u32, u32),
+    aspect: Option<(u32, u32)>,
+) {
+    if hwnd.is_null() {
+        return;
+    }
+    let limits = Box::new(SizeLimits {
+        min_w: min.0,
+        min_h: min.1,
+        max_w: max.0,
+        max_h: max.1,
+        aspect,
+    });
+    // SAFETY: `hwnd` is the live baseview window on its own thread.
+    // The box rides along as the subclass reference data and is
+    // reclaimed in the `WM_NCDESTROY` arm of `size_limits_proc`.
+    unsafe {
+        SetWindowSubclass(
+            hwnd as HWND,
+            Some(size_limits_proc),
+            SIZE_LIMITS_SUBCLASS,
+            Box::into_raw(limits) as usize,
+        );
+    }
+}
+
+/// Physical pixels the window's non-client frame (border + caption +
+/// menu bar) adds around the client area at `dpi`.
+fn chrome_extents(hwnd: HWND, dpi: u32) -> (i32, i32) {
+    // SAFETY: read-only queries against the live window plus a pure
+    // rect computation.
+    unsafe {
+        let style = GetWindowLongW(hwnd, GWL_STYLE).cast_unsigned();
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE).cast_unsigned();
+        let has_menu = i32::from(!GetMenu(hwnd).is_null());
+        let mut r = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        AdjustWindowRectExForDpi(&raw mut r, style, has_menu, ex_style, dpi);
+        (r.right - r.left, r.bottom - r.top)
+    }
+}
+
+/// Logical editor points → physical pixels at `dpi`.
+// Editor sizes stay far below i32::MAX at any real DPI.
+#[allow(clippy::cast_possible_truncation)]
+fn to_phys(logical: u32, dpi: u32) -> i32 {
+    (f64::from(logical) * f64::from(dpi) / 96.0).round() as i32
+}
+
+/// The size-limits subclass procedure - see [`install_size_limits`].
+// Win32 callback: the pointer casts on `lparam` follow the message
+// contracts (MINMAXINFO* for WM_GETMINMAXINFO, RECT* for WM_SIZING).
+unsafe extern "system" fn size_limits_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    refdata: usize,
+) -> LRESULT {
+    unsafe {
+        match msg {
+            WM_GETMINMAXINFO => {
+                let limits = &*(refdata as *const SizeLimits);
+                let dpi = match GetDpiForWindow(hwnd) {
+                    0 => 96,
+                    d => d,
+                };
+                let (chrome_w, chrome_h) = chrome_extents(hwnd, dpi);
+                let mmi = &mut *(lparam as *mut MINMAXINFO);
+                mmi.ptMinTrackSize.x = to_phys(limits.min_w, dpi) + chrome_w;
+                mmi.ptMinTrackSize.y = to_phys(limits.min_h, dpi) + chrome_h;
+                if limits.max_w != u32::MAX {
+                    mmi.ptMaxTrackSize.x = to_phys(limits.max_w, dpi) + chrome_w;
+                }
+                if limits.max_h != u32::MAX {
+                    mmi.ptMaxTrackSize.y = to_phys(limits.max_h, dpi) + chrome_h;
+                }
+                0
+            }
+            WM_WINDOWPOSCHANGING => {
+                // Belt-and-braces clamp for programmatic resizes.
+                // `DefWindowProc` only honors WM_GETMINMAXINFO track
+                // sizes for windows with a sizing frame, so a
+                // `lock_window`-pinned (fixed-size) window would
+                // still follow any `SetWindowPos` verbatim.
+                let limits = &*(refdata as *const SizeLimits);
+                let wp = &mut *(lparam as *mut WINDOWPOS);
+                if wp.flags & SWP_NOSIZE_FLAG == 0 {
+                    let dpi = match GetDpiForWindow(hwnd) {
+                        0 => 96,
+                        d => d,
+                    };
+                    let (chrome_w, chrome_h) = chrome_extents(hwnd, dpi);
+                    let max_px = |v: u32, chrome: i32| {
+                        if v == u32::MAX {
+                            i32::MAX
+                        } else {
+                            to_phys(v, dpi) + chrome
+                        }
+                    };
+                    wp.cx = wp.cx.clamp(
+                        to_phys(limits.min_w, dpi) + chrome_w,
+                        max_px(limits.max_w, chrome_w),
+                    );
+                    wp.cy = wp.cy.clamp(
+                        to_phys(limits.min_h, dpi) + chrome_h,
+                        max_px(limits.max_h, chrome_h),
+                    );
+                }
+                DefSubclassProc(hwnd, msg, wparam, lparam)
+            }
+            WM_SIZING => {
+                let limits = &*(refdata as *const SizeLimits);
+                let Some((aw, ah)) = limits.aspect else {
+                    return DefSubclassProc(hwnd, msg, wparam, lparam);
+                };
+                let dpi = match GetDpiForWindow(hwnd) {
+                    0 => 96,
+                    d => d,
+                };
+                let (chrome_w, chrome_h) = chrome_extents(hwnd, dpi);
+                let r = &mut *(lparam as *mut RECT);
+                let client_w = (r.right - r.left) - chrome_w;
+                let client_h = (r.bottom - r.top) - chrome_h;
+                // Derive the axis the user isn't dragging from the one
+                // they are (corners derive height from width), clamped
+                // to the limits so the derived edge can't escape them.
+                let clamp = |v: i32, lo: u32, hi: u32| -> i32 {
+                    let lo = to_phys(lo, dpi);
+                    let hi = if hi == u32::MAX {
+                        i32::MAX
+                    } else {
+                        to_phys(hi, dpi)
+                    };
+                    v.clamp(lo, hi)
+                };
+                // WMSZ_* edge codes are tiny (1..=8); the truncation
+                // is nominal.
+                #[allow(clippy::cast_possible_truncation)]
+                let edge = wparam as u32;
+                // Aspect numerator / denominator are small ratio
+                // terms (e.g. 2:3), nowhere near the sign bit.
+                let (aw, ah) = (aw.cast_signed(), ah.cast_signed());
+                if edge == WMSZ_TOP || edge == WMSZ_BOTTOM {
+                    let w = clamp(client_h * aw / ah, limits.min_w, limits.max_w);
+                    r.right = r.left + w + chrome_w;
+                } else {
+                    let h = clamp(client_w * ah / aw, limits.min_h, limits.max_h);
+                    if edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT || edge == WMSZ_TOP {
+                        r.top = r.bottom - h - chrome_h;
+                    } else {
+                        r.bottom = r.top + h + chrome_h;
+                    }
+                }
+                let _ = (WMSZ_LEFT, WMSZ_RIGHT);
+                1
+            }
+            WM_NCDESTROY => {
+                RemoveWindowSubclass(hwnd, Some(size_limits_proc), SIZE_LIMITS_SUBCLASS);
+                drop(Box::from_raw(refdata as *mut SizeLimits));
+                DefSubclassProc(hwnd, msg, wparam, lparam)
+            }
+            _ => DefSubclassProc(hwnd, msg, wparam, lparam),
+        }
     }
 }
 
