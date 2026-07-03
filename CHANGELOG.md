@@ -25,7 +25,7 @@ Across formats:
 
 - **CLAP** decodes UMP (`CLAP_EVENT_MIDI2`) and note expressions (`CLAP_EVENT_NOTE_EXPRESSION`) on input, and emits CLAP-native on output - notes as `clap_event_note` (full 16-bit velocity through CLAP's `f64` field), per-note control as note expressions, channel-level 2.0 down-converted to `CLAP_EVENT_MIDI` - because hosts read a plugin's output as notes + expressions, not raw UMP. A non-2.0 input port down-converts to 1.0.
 - **AU v3** declares `audioUnitMIDIProtocol` from the input dialect and drains output through the host's UMP `MIDIEventList` block from the output dialect (macOS 12+ / iOS 15+); the framework converts the output to the host's own protocol. SysEx output rides the same UMP stream as SysEx-7 packet chains.
-- **VST3 maps the per-note subset through note expression** (it has no UMP): `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - a lossy translation, not UMP.
+- **VST3 has no UMP, so it gets two translations.** Per-note control rides note expression: `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - lossy, but the MPE subset survives. Channel-level MIDI input rides hidden proxy parameters: VST3 delivers CC / pitch bend / channel pressure only to `IMidiMapping` parameters, so a plugin consuming MIDI *events* heard nothing on VST3 while the same build heard everything elsewhere - every MIDI-accepting plugin now advertises 16 channels x 130 hidden, non-automatable mapping targets that decode straight back into events. Explicit `midi_cc`-style bindings keep priority for their controller; program change stays binding-only; proxies never enter saved state.
 - **VST2 / AU v2 / AAX / LV2 stay MIDI 1.0.**
 
 ### Multiple MIDI ports
@@ -42,6 +42,7 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 
 ### Fixes
 
+- **`cargo truce validate` scrubs cargo-injected `DYLD_*` vars before spawning pluginval.** Under `cargo run -- validate`, the inherited `DYLD_FALLBACK_LIBRARY_PATH` broke the bundle load inside pluginval and the scan reported zero types.
 - **CLAP: `CLAP_EVENT_NOTE_CHOKE` is delivered as a `NoteOff` instead of being dropped.** Hosts choke voices instead of releasing them (drum choke groups, edit re-triggers); the choked note hung forever. `EventBody` has no choke variant, so a velocity-0 `NoteOff` stands in - a release tail beats a stuck voice. (#174)
 - **CLAP: the output event queue is sorted by sample offset before reaching the host.** A plugin pushing block-level events (an LFO sweep, a mode-change recentre) after per-event ones handed the host an unsorted queue, which CLAP forbids; the wrapper now fixes the order (stable, allocation-free) on the way out.
 - **CLAP: note events with a wildcard (`-1`) or out-of-range key/channel are dropped instead of delivered as note 255 / channel 255.** The `i16 -> u8` cast let a wildcard note index past a plugin's 128-entry note table.
