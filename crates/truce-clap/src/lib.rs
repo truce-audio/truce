@@ -32,17 +32,17 @@ use std::sync::{Arc, OnceLock};
 
 use clap_sys::events::{
     CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_MIDI_SYSEX,
-    CLAP_EVENT_MIDI2, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
-    CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT, CLAP_NOTE_EXPRESSION_BRIGHTNESS,
-    CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN, CLAP_NOTE_EXPRESSION_PRESSURE,
-    CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO, CLAP_NOTE_EXPRESSION_VOLUME,
-    CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
-    CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE,
-    CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi,
-    clap_event_midi_sysex, clap_event_midi2, clap_event_note, clap_event_note_expression,
-    clap_event_param_gesture, clap_event_param_value, clap_event_transport, clap_input_events,
-    clap_output_events,
+    CLAP_EVENT_MIDI2, CLAP_EVENT_NOTE_CHOKE, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF,
+    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END,
+    CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT,
+    CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_EXPRESSION, CLAP_NOTE_EXPRESSION_PAN,
+    CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VIBRATO,
+    CLAP_NOTE_EXPRESSION_VOLUME, CLAP_TRANSPORT_HAS_BEATS_TIMELINE,
+    CLAP_TRANSPORT_HAS_SECONDS_TIMELINE, CLAP_TRANSPORT_HAS_TEMPO,
+    CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE, CLAP_TRANSPORT_IS_PLAYING,
+    CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi, clap_event_midi_sysex,
+    clap_event_midi2, clap_event_note, clap_event_note_expression, clap_event_param_gesture,
+    clap_event_param_value, clap_event_transport, clap_input_events, clap_output_events,
 };
 use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
@@ -707,7 +707,7 @@ fn build_transport_info(t: &clap_event_transport, sample_rate: f64) -> Transport
 unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
     unsafe {
         let idx: i32 = match type_ {
-            CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF => {
+            CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF | CLAP_EVENT_NOTE_CHOKE => {
                 i32::from((*header.cast::<clap_event_note>()).port_index)
             }
             CLAP_EVENT_NOTE_EXPRESSION => {
@@ -805,6 +805,29 @@ unsafe fn convert_input_events<P: PluginExport>(
                             channel,
                             note,
                             velocity: denorm_7bit(f32::from_f64(note_event.velocity)),
+                        },
+                    ));
+                }
+                CLAP_EVENT_NOTE_CHOKE => {
+                    // A choke is an immediate voice cut (drum choke
+                    // groups, edit re-triggers). `EventBody` has no
+                    // choke variant, so deliver a `NoteOff`: a release
+                    // tail beats a voice hanging forever. A wildcard
+                    // "choke all" (`-1` channel/key) can't target one
+                    // concrete `NoteOff` and is skipped by
+                    // `clap_note_address`.
+                    let note_event = &*header.cast::<clap_event_note>();
+                    let Some((channel, note)) = clap_note_address(note_event) else {
+                        continue;
+                    };
+                    data.event_list.push(Event::on_port(
+                        sample_offset,
+                        port,
+                        EventBody::NoteOff {
+                            group: 0,
+                            channel,
+                            note,
+                            velocity: 0,
                         },
                     ));
                 }
@@ -3109,5 +3132,35 @@ mod transport_tests {
         // SAFETY: see above - zeroed POD, no seconds-timeline flag.
         let t: clap_event_transport = unsafe { std::mem::zeroed() };
         assert_eq!(build_transport_info(&t, 48_000.0).position_samples, 0);
+    }
+}
+
+#[cfg(test)]
+mod note_address_tests {
+    use super::{clap_event_note, clap_note_address};
+
+    fn note(channel: i16, key: i16) -> clap_event_note {
+        // SAFETY: clap_event_note is a repr(C) POD; all-zero is valid.
+        let mut ne: clap_event_note = unsafe { std::mem::zeroed() };
+        ne.channel = channel;
+        ne.key = key;
+        ne
+    }
+
+    #[test]
+    fn concrete_address_resolves() {
+        assert_eq!(clap_note_address(&note(15, 127)), Some((15, 127)));
+        assert_eq!(clap_note_address(&note(0, 0)), Some((0, 0)));
+    }
+
+    #[test]
+    fn wildcard_and_out_of_range_are_dropped() {
+        // `-1` is CLAP's "match all" wildcard; anything past the MIDI
+        // domain is a hostile/buggy host. Neither may reach a plugin
+        // that indexes tables by note/channel.
+        assert_eq!(clap_note_address(&note(-1, 60)), None);
+        assert_eq!(clap_note_address(&note(0, -1)), None);
+        assert_eq!(clap_note_address(&note(16, 60)), None);
+        assert_eq!(clap_note_address(&note(0, 128)), None);
     }
 }

@@ -38,6 +38,7 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 
 ### Fixes
 
+- **CLAP: `CLAP_EVENT_NOTE_CHOKE` is delivered as a `NoteOff` instead of being dropped.** Hosts choke voices instead of releasing them (drum choke groups, edit re-triggers); the choked note hung forever. `EventBody` has no choke variant, so a velocity-0 `NoteOff` stands in - a release tail beats a stuck voice. (#174)
 - **CLAP: the output event queue is sorted by sample offset before reaching the host.** A plugin pushing block-level events (an LFO sweep, a mode-change recentre) after per-event ones handed the host an unsorted queue, which CLAP forbids; the wrapper now fixes the order (stable, allocation-free) on the way out.
 - **CLAP: note events with a wildcard (`-1`) or out-of-range key/channel are dropped instead of delivered as note 255 / channel 255.** The `i16 -> u8` cast let a wildcard note index past a plugin's 128-entry note table.
 - **CLAP: note-port queries answer clap-validator's swapped-direction sweep.** Its output-port loop queries `is_input = true`, failing any plugin with more note outputs than inputs; an out-of-range query now answers with the matching port of the other direction, which compliant hosts can never trigger.
