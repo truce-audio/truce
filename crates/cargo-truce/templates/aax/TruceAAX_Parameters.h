@@ -46,6 +46,10 @@ public:
     AAX_Result GetChunkSize(AAX_CTypeID chunkID, uint32_t* oSize) const override;
     AAX_Result GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* oChunk) const override;
     AAX_Result SetChunk(AAX_CTypeID chunkID, const AAX_SPlugInChunk* iChunk) override;
+    // Declared so Pro Tools hands old sessions' legacy chunks
+    // (descriptor legacy_chunk_ids) to SetChunk for migration.
+    AAX_Result GetNumberOfChunks(int32_t* oNumChunks) const override;
+    AAX_Result GetChunkIDFromIndex(int32_t index, AAX_CTypeID* oChunkID) const override;
 
     void* GetRustCtx() const { return mRustCtx; }
 

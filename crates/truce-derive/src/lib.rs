@@ -210,6 +210,15 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let mute_preview_output = plugin.mute_preview_output;
     let min_subblock_samples = config.automation.min_subblock_samples;
 
+    // `[plugin.legacy_state]` probe lists, baked as static slices.
+    let str_slice = |items: &[String]| -> proc_macro2::TokenStream {
+        quote! { &[#(#items),*] }
+    };
+    let legacy = plugin.legacy_state.as_ref();
+    let legacy_au_keys = str_slice(legacy.map_or(&[][..], |l| &l.au_keys));
+    let legacy_lv2_uris = str_slice(legacy.map_or(&[][..], |l| &l.lv2_uris));
+    let legacy_aax_chunk_ids = str_slice(legacy.map_or(&[][..], |l| &l.aax_chunk_ids));
+
     // `include_bytes!` registers `truce.toml` as a build-time dependency
     // through the compiler's normal dep-info tracking. Without it, edits
     // to truce.toml don't trigger a rebuild - proc macros on stable Rust
@@ -253,6 +262,9 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 automation: ::truce::core::info::AutomationConfig {
                     min_subblock_samples: #min_subblock_samples,
                 },
+                legacy_au_keys: #legacy_au_keys,
+                legacy_lv2_uris: #legacy_lv2_uris,
+                legacy_aax_chunk_ids: #legacy_aax_chunk_ids,
             }
         }
     };

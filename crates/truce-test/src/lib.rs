@@ -80,6 +80,55 @@ macro_rules! driver {
 // Static plugin checks (no audio render)
 // ---------------------------------------------------------------------------
 
+/// Assert legacy-state migration: route `foreign_bytes` through the
+/// same parse-or-migrate path every format wrapper's state callback
+/// uses, and verify the plugin's `migrate_state` hook translated them
+/// into params that actually apply (and extra that `load_state`
+/// accepts) on a fresh instance. Returns the migrated state for
+/// further assertions.
+///
+/// # Panics
+///
+/// Panics if the bytes are refused (default `migrate_state`, or the
+/// hook returned `None`), if a migrated param id isn't registered, if
+/// an applied value differs from the migrated one by more than
+/// `1e-4`, or if the migrated extra blob fails `load_state`.
+#[must_use = "assertions run internally, but the returned state carries the migrated params/extra for further checks"]
+pub fn assert_state_migration<P: PluginExport>(
+    format: truce_core::state::PluginFormat,
+    source_key: Option<&str>,
+    foreign_bytes: &[u8],
+) -> truce_core::state::DeserializedState {
+    let info = P::info();
+    let hash = state::shared_plugin_state_hash(&info);
+    let Some(migrated) = state::parse_or_migrate::<P>(foreign_bytes, hash, format, source_key)
+    else {
+        panic!(
+            "migrate_state refused the foreign bytes ({format:?}, key {source_key:?}) - \
+             the wrapper would report load failure to the host"
+        );
+    };
+
+    let mut plugin = P::create();
+    state::apply_params(plugin.params(), &migrated);
+    for (id, value) in &migrated.params {
+        let applied = plugin
+            .params()
+            .get_plain(*id)
+            .unwrap_or_else(|| panic!("migrated param id {id} is not registered on the plugin"));
+        assert!(
+            (applied - value).abs() < 1e-4,
+            "migrated param {id} applied as {applied}, expected {value}"
+        );
+    }
+    if let Some(extra) = &migrated.extra {
+        plugin
+            .load_state(extra)
+            .expect("migrated extra blob failed load_state");
+    }
+    migrated
+}
+
 /// Assert state save/load round-trips correctly.
 ///
 /// Saves state, creates a new instance, loads state, and verifies

@@ -755,8 +755,8 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     data: *const u8,
     len: u32,
-) {
-    run_extern_callback_with::<P, ()>("vst2", "load_state", (), || unsafe {
+) -> i32 {
+    run_extern_callback_with::<P, i32>("vst2", "load_state", 0, || unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
 
         // `slice::from_raw_parts(null, 0)` is sound but `from_raw_parts(null, n)`
@@ -771,7 +771,15 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // next process block.
         let restored = if !data.is_null() && len > 0 {
             let blob = slice::from_raw_parts(data, len as usize);
-            if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+            // Not this plugin's envelope? Offer the bytes to the
+            // plugin's `migrate_state` hook (legacy sessions from a
+            // pre-truce build); `None` fails the load honestly.
+            if let Some(deserialized) = state::parse_or_migrate::<P>(
+                blob,
+                inst.plugin_id_hash,
+                state::PluginFormat::Vst2,
+                None,
+            ) {
                 // Apply params synchronously so host-thread reads of
                 // `effGetParameter` after `effSetChunk` see the
                 // restored values without waiting for `cb_process`
@@ -809,14 +817,15 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             (_, _, Some(parent)) => {
                 inst.state_loaded = true;
                 open_editor_inner(inst, parent);
-                return;
+                return i32::from(restored);
             }
             // No editor + restore failed / null buffer: nothing to notify.
             _ => {}
         }
 
         inst.state_loaded = true;
-    });
+        i32::from(restored)
+    })
 }
 
 /// Free a state blob handed out by [`cb_state_save`].

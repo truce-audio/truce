@@ -281,14 +281,17 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
 
         case effSetChunk: {
             if (!g_vst2_callbacks || !inst->rust_ctx || !ptr) return 0;
-            g_vst2_callbacks->state_load(inst->rust_ctx, (const uint8_t*)ptr, (uint32_t)value);
+            /* 1 when the blob was accepted (truce envelope, or the
+             * plugin's migrate_state translated it), 0 otherwise. */
+            VstIntPtr ok = g_vst2_callbacks->state_load(
+                inst->rust_ctx, (const uint8_t*)ptr, (uint32_t)value);
             inst->state_loaded = 1;
             /* If the editor was opened before state was restored, open it now */
             if (inst->deferred_parent) {
                 g_vst2_callbacks->gui_open(inst->rust_ctx, inst->deferred_parent);
                 inst->deferred_parent = NULL;
             }
-            return 0;
+            return ok;
         }
 
         /* opcode 77 - VST 2.4 host announces the precision it will

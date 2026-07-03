@@ -52,35 +52,79 @@ pub struct DeserializedState {
     pub extra: Option<Vec<u8>>,
 }
 
-/// Deserialize plugin state.
+/// Outcome of [`parse_state`]: what the bytes turned out to be.
+/// Splits the causes [`deserialize_state`] collapses into one `None`
+/// so callers can route each one differently (fail the load, offer
+/// the bytes to the plugin's `migrate_state` hook, ...).
+pub enum StateParse {
+    Ok(DeserializedState),
+    /// Wrong magic / too short to carry the header: not a truce
+    /// envelope at all. Candidate for legacy-state migration.
+    NotAnEnvelope,
+    /// Valid magic, `version` field newer than this build understands.
+    /// Reserved for truce-side envelope evolution: never handed to
+    /// the plugin, the load fails with a distinct log line.
+    UnknownVersion(u32),
+    /// Structurally valid envelope whose `plugin_id_hash` isn't the
+    /// expected one - a renamed / re-identified plugin. Params and
+    /// extra are already decoded; the caller decides whether to
+    /// offer them to the plugin.
+    WrongPlugin {
+        found: u64,
+        state: DeserializedState,
+    },
+    /// Magic + version matched but the param / extra blocks are
+    /// truncated or inconsistent. Never migrated, the load fails.
+    Corrupt,
+}
+
+/// Deserialize plugin state. Thin wrapper over [`parse_state`] for
+/// callers that only care about the strict-success case (preset
+/// codecs, tests).
 #[must_use]
 pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<DeserializedState> {
-    if data.len() < 16 {
-        return None;
+    match parse_state(data, expected_plugin_id) {
+        StateParse::Ok(state) => Some(state),
+        _ => None,
+    }
+}
+
+/// Parse a state blob, distinguishing every failure cause. See
+/// [`StateParse`] for the routing each variant is meant for.
+#[must_use]
+pub fn parse_state(data: &[u8], expected_plugin_id: u64) -> StateParse {
+    if data.len() < 8 || &data[0..4] != STATE_MAGIC {
+        return StateParse::NotAnEnvelope;
     }
 
-    // Check magic
-    if &data[0..4] != STATE_MAGIC {
-        return None;
-    }
-
-    let version = u32::from_le_bytes(data[4..8].try_into().ok()?);
+    let Ok(version_bytes) = data[4..8].try_into() else {
+        return StateParse::NotAnEnvelope;
+    };
+    let version = u32::from_le_bytes(version_bytes);
     if version != STATE_VERSION {
-        return None;
+        return StateParse::UnknownVersion(version);
     }
 
-    let plugin_id = u64::from_le_bytes(data[8..16].try_into().ok()?);
-    if plugin_id != expected_plugin_id {
-        return None;
-    }
+    // From here on the bytes claim to be a current-version envelope:
+    // any structural violation is corruption, not foreign data.
+    let Some(id_bytes) = data.get(8..16) else {
+        return StateParse::Corrupt;
+    };
+    let Ok(id_bytes) = id_bytes.try_into() else {
+        return StateParse::Corrupt;
+    };
+    let plugin_id = u64::from_le_bytes(id_bytes);
 
     let mut offset = 16;
 
     // Parameter block
     if offset + 4 > data.len() {
-        return None;
+        return StateParse::Corrupt;
     }
-    let count = u32::from_le_bytes(data[offset..offset + 4].try_into().ok()?) as usize;
+    let Ok(count_bytes) = data[offset..offset + 4].try_into() else {
+        return StateParse::Corrupt;
+    };
+    let count = u32::from_le_bytes(count_bytes) as usize;
     offset += 4;
 
     // Cap the pre-allocation by what the remaining buffer could
@@ -94,24 +138,33 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
     let mut params = Vec::with_capacity(count.min(max_count));
     for _ in 0..count {
         if offset + 12 > data.len() {
-            return None;
+            return StateParse::Corrupt;
         }
-        let id = u32::from_le_bytes(data[offset..offset + 4].try_into().ok()?);
+        let Ok(id_bytes) = data[offset..offset + 4].try_into() else {
+            return StateParse::Corrupt;
+        };
+        let id = u32::from_le_bytes(id_bytes);
         offset += 4;
-        let value = f64::from_le_bytes(data[offset..offset + 8].try_into().ok()?);
+        let Ok(value_bytes) = data[offset..offset + 8].try_into() else {
+            return StateParse::Corrupt;
+        };
+        let value = f64::from_le_bytes(value_bytes);
         offset += 8;
         params.push((id, value));
     }
 
     // Extra state block
     if offset + 8 > data.len() {
-        return None;
+        return StateParse::Corrupt;
     }
+    let Ok(len_bytes) = data[offset..offset + 8].try_into() else {
+        return StateParse::Corrupt;
+    };
     // The wire format encodes `extra_len` as `u64`; on 32-bit
     // targets the cast may truncate, but the next branch validates
     // `offset.checked_add(extra_len)` against the buffer length.
     #[allow(clippy::cast_possible_truncation)]
-    let extra_len = u64::from_le_bytes(data[offset..offset + 8].try_into().ok()?) as usize;
+    let extra_len = u64::from_le_bytes(len_bytes) as usize;
     offset += 8;
 
     let extra = if extra_len > 0 {
@@ -121,13 +174,21 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
         // and reject overflow as malformed.
         match offset.checked_add(extra_len) {
             Some(end) if end <= data.len() => Some(data[offset..end].to_vec()),
-            _ => return None,
+            _ => return StateParse::Corrupt,
         }
     } else {
         None
     };
 
-    Some(DeserializedState { params, extra })
+    let state = DeserializedState { params, extra };
+    if plugin_id == expected_plugin_id {
+        StateParse::Ok(state)
+    } else {
+        StateParse::WrongPlugin {
+            found: plugin_id,
+            state,
+        }
+    }
 }
 
 /// Compute a simple hash of the plugin ID string for state identification.
@@ -195,5 +256,45 @@ mod tests {
         let plugin_id = hash_plugin_id("com.test.plugin");
         let data = serialize_state(plugin_id, &[], &[], &[]);
         assert!(deserialize_state(&data, 12345).is_none());
+    }
+
+    #[test]
+    fn parse_distinguishes_foreign_bytes() {
+        assert!(matches!(
+            parse_state(b"{\"legacy\":true}", 1),
+            StateParse::NotAnEnvelope
+        ));
+        assert!(matches!(parse_state(b"", 1), StateParse::NotAnEnvelope));
+        assert!(matches!(parse_state(b"OAS", 1), StateParse::NotAnEnvelope));
+    }
+
+    #[test]
+    fn parse_distinguishes_future_version() {
+        let mut data = serialize_state(1, &[], &[], &[]);
+        data[4..8].copy_from_slice(&2u32.to_le_bytes());
+        assert!(matches!(
+            parse_state(&data, 1),
+            StateParse::UnknownVersion(2)
+        ));
+    }
+
+    #[test]
+    fn parse_decodes_wrong_plugin_envelope() {
+        let data = serialize_state(99, &[7], &[0.25], b"extra");
+        match parse_state(&data, 1) {
+            StateParse::WrongPlugin { found, state } => {
+                assert_eq!(found, 99);
+                assert_eq!(state.params, vec![(7, 0.25)]);
+                assert_eq!(state.extra.as_deref(), Some(&b"extra"[..]));
+            }
+            _ => panic!("expected WrongPlugin"),
+        }
+    }
+
+    #[test]
+    fn parse_flags_truncated_envelope_as_corrupt() {
+        let data = serialize_state(1, &[7, 8], &[0.25, 0.5], b"extra");
+        // Cut inside the param block: valid header, broken body.
+        assert!(matches!(parse_state(&data[..22], 1), StateParse::Corrupt));
     }
 }

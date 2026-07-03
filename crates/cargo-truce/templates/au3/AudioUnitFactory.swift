@@ -613,12 +613,34 @@ class TruceAUAudioUnit: AUAudioUnit {
         }
         set {
             super.fullState = newValue
-            guard let blob = newValue?["truce_state"] as? Data,
-                  let ctx = rustCtx, let cb = g_callbacks else { return }
-            blob.withUnsafeBytes { ptr in
-                cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
+            guard let ctx = rustCtx, let cb = g_callbacks else { return }
+            if let blob = newValue?["truce_state"] as? Data {
+                blob.withUnsafeBytes { ptr in
+                    cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
+                }
+                syncParameterTreeFromRust()
+                return
             }
-            syncParameterTreeFromRust()
+            // No truce entry: a pre-truce build stored its state under
+            // its own dictionary key. Probe the keys declared in
+            // truce.toml's [plugin.legacy_state] (first present +
+            // accepted wins) so the plugin's migrate_state hook can
+            // translate the old session.
+            guard let dict = newValue,
+                  let keyCount = cb.pointee.legacy_state_key_count,
+                  let keyAt = cb.pointee.legacy_state_key_at,
+                  let loadForeign = cb.pointee.state_load_foreign else { return }
+            for i in 0..<keyCount(ctx) {
+                guard let cKey = keyAt(ctx, i),
+                      let blob = dict[String(cString: cKey)] as? Data else { continue }
+                let accepted = blob.withUnsafeBytes { ptr in
+                    loadForeign(ctx, cKey, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
+                }
+                if accepted != 0 {
+                    syncParameterTreeFromRust()
+                    return
+                }
+            }
         }
     }
 

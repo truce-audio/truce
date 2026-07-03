@@ -24,7 +24,7 @@
 /// The header [`BRIDGE_HEADER`] mirrors this value as
 /// `#define TRUCE_AAX_ABI_VERSION`; a unit test below asserts
 /// the two stay in sync. Bumping requires editing both.
-pub const TRUCE_AAX_ABI_VERSION: u32 = 3;
+pub const TRUCE_AAX_ABI_VERSION: u32 = 4;
 
 /// The C bridge header text, embedded at compile time.
 ///

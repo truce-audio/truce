@@ -42,7 +42,7 @@ use truce_core::denormal::DenormalGuard;
 use truce_core::editor::Editor;
 use truce_core::events::EventList;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_core::state::StateLoadError;
+use truce_core::state::{ForeignState, MigratedState, StateLoadError};
 use truce_gui_types::interaction::WidgetRegion;
 use truce_gui_types::widgets::WidgetType;
 use truce_params::sample::Sample;
@@ -89,6 +89,12 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     /// Forwards whatever the user impl returns - typically a malformed
     /// blob error decoded by `bincode` / `serde` / similar.
     fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError>;
+    /// Translate foreign state into truce shape. See
+    /// [`PluginLogic::migrate_state`].
+    #[must_use]
+    fn migrate_state(foreign: &ForeignState) -> Option<MigratedState>
+    where
+        Self: Sized;
     fn state_changed(&mut self);
     fn latency(&self) -> u32;
     fn tail(&self) -> u32;
@@ -187,6 +193,30 @@ macro_rules! plugin_logic_leaf_trait {
             /// caches the next `process()` reads. Default: no-op.
             fn state_changed(&mut self) {}
 
+            /// Translate foreign state - a previous framework's blob,
+            /// or a truce envelope saved under a different plugin id -
+            /// into truce params + extra, so a plugin ported to truce
+            /// keeps its users' old sessions and presets. Runs on the
+            /// host thread; receiverless so it can't touch (or alias)
+            /// the live instance. Return `None` for bytes you don't
+            /// recognize - the wrapper then reports load failure to
+            /// the host, exactly as if this hook didn't exist.
+            ///
+            /// One-shot by construction: the next save writes a normal
+            /// truce envelope, so this never becomes a permanent
+            /// dual-format reader. Keyed formats (AU / LV2 / AAX) only
+            /// see foreign bytes when `truce.toml` declares the legacy
+            /// keys to probe (`[plugin.legacy_state]`).
+            #[must_use]
+            fn migrate_state(
+                _foreign: &$crate::__plugin_logic_deps::ForeignState,
+            ) -> Option<$crate::__plugin_logic_deps::MigratedState>
+            where
+                Self: Sized,
+            {
+                None
+            }
+
             /// Report latency in samples for plugin delay compensation.
             fn latency(&self) -> u32 {
                 0
@@ -225,7 +255,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::editor::Editor;
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
-    pub use truce_core::state::StateLoadError;
+    pub use truce_core::state::{ForeignState, MigratedState, StateLoadError};
 }
 
 plugin_logic_leaf_trait! {
@@ -314,6 +344,13 @@ macro_rules! plugin_logic_bridge {
 
             fn state_changed(&mut self) {
                 <Self as $leaf>::state_changed(self);
+            }
+
+            fn migrate_state(foreign: &ForeignState) -> Option<MigratedState>
+            where
+                Self: Sized,
+            {
+                <Self as $leaf>::migrate_state(foreign)
             }
 
             fn latency(&self) -> u32 {

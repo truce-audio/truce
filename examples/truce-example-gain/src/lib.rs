@@ -151,6 +151,42 @@ mod tests {
         truce_test::assert_state_round_trip::<Plugin>();
     }
 
+    // State-load routing without a `migrate_state` override (this
+    // plugin keeps the default): a matching envelope loads; foreign
+    // bytes, a future envelope version, and a renamed plugin's
+    // envelope all fail the load instead of resetting to defaults or
+    // eating garbage.
+    #[test]
+    fn state_load_routing_defaults() {
+        use truce_core::plugin::PluginRuntime;
+        use truce_core::state::{
+            PluginFormat, parse_or_migrate, serialize_state, shared_plugin_state_hash,
+        };
+        let hash = shared_plugin_state_hash(&Plugin::info());
+
+        let envelope = serialize_state(hash, &[0], &[-6.0], &[]);
+        let loaded = parse_or_migrate::<Plugin>(&envelope, hash, PluginFormat::Clap, None)
+            .expect("own envelope must load");
+        assert_eq!(loaded.params, vec![(0, -6.0)]);
+
+        let foreign =
+            parse_or_migrate::<Plugin>(b"{\"legacy\":true}", hash, PluginFormat::Clap, None);
+        assert!(foreign.is_none(), "foreign bytes must fail without a hook");
+
+        let mut future = serialize_state(hash, &[], &[], &[]);
+        future[4..8].copy_from_slice(&2u32.to_le_bytes());
+        assert!(
+            parse_or_migrate::<Plugin>(&future, hash, PluginFormat::Clap, None).is_none(),
+            "future envelope version must fail, never reach the hook"
+        );
+
+        let renamed = serialize_state(hash ^ 1, &[0], &[-6.0], &[]);
+        assert!(
+            parse_or_migrate::<Plugin>(&renamed, hash, PluginFormat::Clap, None).is_none(),
+            "wrong-plugin envelope must fail without a hook"
+        );
+    }
+
     #[test]
     fn au_type_codes_ascii() {
         truce_test::assert_au_type_codes_ascii::<Plugin>();

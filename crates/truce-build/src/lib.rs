@@ -246,6 +246,32 @@ pub struct PluginDef {
     /// directory next to the plugin crate if one exists.
     #[serde(default)]
     pub presets: Option<PresetsConfig>,
+    /// Optional `[plugin.legacy_state]` table - where the keyed
+    /// formats should look for a pre-truce build's state when truce's
+    /// own entry is absent, feeding the plugin's `migrate_state`
+    /// hook. Stream formats (CLAP / VST3 / VST2) need no
+    /// declaration: the wrapper already holds the foreign bytes.
+    #[serde(default)]
+    pub legacy_state: Option<LegacyStateConfig>,
+}
+
+/// `[plugin.legacy_state]` - foreign-state probe declarations for the
+/// keyed containers. A legacy build stored its state under *its* own
+/// key / URI / chunk id, which truce never reads; only the developer
+/// knows those, so they're declared here and embedded into
+/// `PluginInfo` at proc-macro expansion time.
+#[derive(Deserialize, Debug, Default)]
+pub struct LegacyStateConfig {
+    /// AU `ClassInfo` dictionary keys to probe when truce's data key
+    /// is absent (e.g. `"jucePluginState"` for a JUCE-era AU).
+    #[serde(default)]
+    pub au_keys: Vec<String>,
+    /// LV2 state property URIs.
+    #[serde(default)]
+    pub lv2_uris: Vec<String>,
+    /// AAX chunk fourccs.
+    #[serde(default)]
+    pub aax_chunk_ids: Vec<String>,
 }
 
 /// `[plugin.presets]` - factory-preset emission settings.

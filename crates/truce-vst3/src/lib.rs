@@ -707,32 +707,42 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     data: *const u8,
     len: u32,
-) {
-    run_extern_callback_with::<P, ()>("vst3", "load_state", (), || unsafe {
+) -> i32 {
+    run_extern_callback_with::<P, i32>("vst3", "load_state", 0, || unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
         // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
         if data.is_null() || len == 0 {
-            return;
+            return 0;
         }
         let blob = slice::from_raw_parts(data, len as usize);
-        if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
-            // Apply params synchronously on the host thread (atomic-safe)
-            // so host-side queries that read parameter values right
-            // after `setState` see the restored values without first
-            // running a process block. pluginval / DAW preset reload
-            // both observe this.
-            state::apply_params(&*inst.params_arc, &deserialized);
-            // Hand the deserialized state to the audio thread for
-            // application. `force_push` overwrites any older pending
-            // blob - see the `pending_state` field comment for why
-            // newest-wins is the right policy.
-            let _ = inst.pending_state.force_push(deserialized);
-            if let Some(ref mut editor) = inst.editor {
-                editor.state_changed();
-            }
+        // Not this plugin's envelope? Offer the bytes to the plugin's
+        // `migrate_state` hook (legacy sessions from a pre-truce
+        // build); `None` fails the load honestly.
+        let Some(deserialized) = state::parse_or_migrate::<P>(
+            blob,
+            inst.plugin_id_hash,
+            state::PluginFormat::Vst3,
+            None,
+        ) else {
+            return 0;
+        };
+        // Apply params synchronously on the host thread (atomic-safe)
+        // so host-side queries that read parameter values right
+        // after `setState` see the restored values without first
+        // running a process block. pluginval / DAW preset reload
+        // both observe this.
+        state::apply_params(&*inst.params_arc, &deserialized);
+        // Hand the deserialized state to the audio thread for
+        // application. `force_push` overwrites any older pending
+        // blob - see the `pending_state` field comment for why
+        // newest-wins is the right policy.
+        let _ = inst.pending_state.force_push(deserialized);
+        if let Some(ref mut editor) = inst.editor {
+            editor.state_changed();
         }
-    });
+        1
+    })
 }
 
 unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {

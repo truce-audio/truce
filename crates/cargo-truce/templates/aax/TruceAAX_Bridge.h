@@ -28,6 +28,7 @@ typedef void   (*fn_format_param)(void*, uint32_t, double, char*, uint32_t);
 typedef uint32_t (*fn_save_state)(void*, uint8_t**);
 typedef void     (*fn_load_state)(void*, const uint8_t*, uint32_t);
 typedef void     (*fn_free_state)(uint8_t*, uint32_t);
+typedef int32_t  (*fn_load_state_foreign)(void*, uint32_t, const uint8_t*, uint32_t);
 
 // GUI
 typedef void     (*fn_editor_create)(void*, TruceAaxEditorInfo*);
@@ -55,6 +56,7 @@ struct TruceBridge {
     fn_save_state          save_state;
     fn_load_state          load_state;
     fn_free_state          free_state;
+    fn_load_state_foreign  load_state_foreign;
     fn_editor_create       editor_create;
     fn_editor_open         editor_open;
     fn_editor_close        editor_close;

@@ -286,6 +286,24 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         result
     }
 
+    fn migrate_state(
+        _foreign: &truce_core::state::ForeignState,
+    ) -> Option<truce_core::state::MigratedState>
+    where
+        Self: Sized,
+    {
+        // Receiverless: the logic type lives behind the loader's
+        // `Box<dyn PluginLogicCore>` per instance, which an
+        // associated function can't reach. Shell mode is a dev
+        // configuration; legacy-state migration only runs in static
+        // builds (the shape every shipped plugin uses).
+        log::warn!(
+            "truce-hot: host offered foreign state but --shell builds don't \
+             route migrate_state; load will be reported as failed"
+        );
+        None
+    }
+
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
         hot_debug!("[truce-hot] editor() called");
         self.try_editor()

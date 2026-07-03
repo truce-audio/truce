@@ -636,6 +636,7 @@ mod suite_tests {
                 midi_input_ports: None,
                 midi_output_ports: None,
                 presets: None,
+                legacy_state: None,
             },
             au3_subtype: None,
             au_tag: default_au_tag(),

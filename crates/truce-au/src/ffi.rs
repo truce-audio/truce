@@ -210,6 +210,22 @@ pub struct AuCallbacks {
     /// block-relative frame (0 for AU v2's untimed `MusicDeviceSysEx`).
     pub push_sysex_input:
         unsafe extern "C" fn(ctx: *mut c_void, sample_offset: u32, bytes: *const u8, len: u32),
+    /// Number of legacy `ClassInfo` dictionary keys to probe when
+    /// truce's own `truce_state` entry is absent (`au_keys` in
+    /// `truce.toml`'s `[plugin.legacy_state]`).
+    pub legacy_state_key_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// The index-th legacy key as a NUL-terminated UTF-8 string owned
+    /// by the Rust side, valid for the instance lifetime.
+    pub legacy_state_key_at: unsafe extern "C" fn(ctx: *mut c_void, index: u32) -> *const c_char,
+    /// Offer bytes found under a legacy key to the plugin's
+    /// `migrate_state` hook. Returns 1 when the plugin translated and
+    /// accepted them, 0 otherwise (the shim then tries the next key).
+    pub state_load_foreign: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        key: *const c_char,
+        data: *const u8,
+        len: u32,
+    ) -> i32,
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

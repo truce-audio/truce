@@ -147,7 +147,10 @@ pub struct Vst3Callbacks {
     ) -> u32,
     pub state_save:
         unsafe extern "C" fn(ctx: *mut c_void, out_data: *mut *mut u8, out_len: *mut u32),
-    pub state_load: unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: u32),
+    /// Returns `1` when the blob was accepted (truce envelope, or
+    /// `migrate_state` translated it), `0` when the load failed -
+    /// the shim's `setState` forwards that as `kResultFalse`.
+    pub state_load: unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: u32) -> i32,
     pub state_free: unsafe extern "C" fn(data: *mut u8, len: u32),
     // Latency + tail
     pub get_latency: unsafe extern "C" fn(ctx: *mut c_void) -> u32,

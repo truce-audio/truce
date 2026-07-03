@@ -923,6 +923,9 @@ mod uri_consistency_tests {
             preset_user_dir: None,
             mute_preview_output: false,
             automation: truce_core::info::AutomationConfig::DEFAULT,
+            legacy_au_keys: &[],
+            legacy_lv2_uris: &[],
+            legacy_aax_chunk_ids: &[],
         }
     }
 

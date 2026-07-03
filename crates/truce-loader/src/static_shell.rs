@@ -153,6 +153,15 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         result
     }
 
+    fn migrate_state(
+        foreign: &truce_core::state::ForeignState,
+    ) -> Option<truce_core::state::MigratedState>
+    where
+        Self: Sized,
+    {
+        <L as PluginLogicCore<S>>::migrate_state(foreign)
+    }
+
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
         Some(PluginLogicCore::editor(&self.logic))
     }
@@ -275,6 +284,15 @@ macro_rules! export_static {
                 data: &[u8],
             ) -> Result<(), $crate::__macro_deps::truce_core::state::StateLoadError> {
                 self.inner.load_state(data)
+            }
+
+            fn migrate_state(
+                foreign: &$crate::__macro_deps::truce_core::state::ForeignState,
+            ) -> Option<$crate::__macro_deps::truce_core::state::MigratedState>
+            where
+                Self: Sized,
+            {
+                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::migrate_state(foreign)
             }
 
             fn editor(

@@ -127,6 +127,29 @@ pub trait PluginRuntime: Send + 'static {
         Ok(())
     }
 
+    /// Translate foreign state - a previous framework's blob, or a
+    /// truce envelope saved under a different plugin id - into truce
+    /// params + extra. Format wrappers call this when the host hands
+    /// them state that isn't this plugin's envelope, so a plugin
+    /// ported to truce can keep its users' old sessions and presets.
+    ///
+    /// Pure and receiverless by design: it runs synchronously on the
+    /// host thread inside the wrapper's state callback (where parsing
+    /// a large legacy blob belongs), and taking no `self` means it
+    /// can't alias the audio thread's `&mut self`. The result rides
+    /// the normal restore pipeline; the next save writes a regular
+    /// envelope.
+    ///
+    /// Default: `None` - unrecognized state fails the load exactly
+    /// as it did before this hook existed.
+    #[must_use]
+    fn migrate_state(_foreign: &crate::state::ForeignState) -> Option<crate::state::MigratedState>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// GUI editor. Return None for headless plugins.
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
         None

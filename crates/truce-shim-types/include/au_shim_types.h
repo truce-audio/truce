@@ -238,6 +238,19 @@ typedef struct {
      * slice of `process` and does not use this callback. */
     void (*push_sysex_input)(void *ctx, uint32_t sample_offset,
                              const uint8_t *bytes, uint32_t len);
+    /* Legacy foreign-state probing (state migration). When a host's
+     * ClassInfo dictionary carries no `truce_state` entry, the shim
+     * asks for the container keys a pre-truce build stored its state
+     * under (`[plugin.legacy_state]` `au_keys` in truce.toml) and
+     * feeds the first present key's bytes to `state_load_foreign`,
+     * which routes them to the plugin's `migrate_state` hook.
+     * `legacy_state_key_at` returns UTF-8 owned by the Rust side,
+     * valid for the instance lifetime. `state_load_foreign` returns 1
+     * when the plugin accepted (translated) the bytes. */
+    uint32_t (*legacy_state_key_count)(void *ctx);
+    const char *(*legacy_state_key_at)(void *ctx, uint32_t index);
+    int32_t (*state_load_foreign)(void *ctx, const char *key,
+                                  const uint8_t *data, uint32_t len);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

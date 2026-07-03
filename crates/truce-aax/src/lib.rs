@@ -81,7 +81,21 @@ pub struct TruceAaxDescriptor {
     /// well-known `cDefaultMasterBypassID` so Pro Tools' master-bypass
     /// UI tracks the param value.
     pub bypass_param_id: u32,
+    /// Chunk fourccs a pre-truce build stored its state under
+    /// (`aax_chunk_ids` in `truce.toml`'s `[plugin.legacy_state]`).
+    /// The template declares them alongside truce's own chunk so
+    /// Pro Tools hands old sessions' chunks to `SetChunk`, which
+    /// routes them to `truce_aax_load_state_foreign` and the
+    /// plugin's `migrate_state`. Fixed capacity keeps the descriptor
+    /// free of pointer lifetimes; only the first
+    /// `num_legacy_chunk_ids` entries are valid.
+    pub num_legacy_chunk_ids: u32,
+    pub legacy_chunk_ids: [u32; MAX_LEGACY_CHUNK_IDS],
 }
+
+/// Capacity of [`TruceAaxDescriptor::legacy_chunk_ids`]; mirrors
+/// `TRUCE_AAX_MAX_LEGACY_CHUNKS` in the bridge header.
+pub const MAX_LEGACY_CHUNK_IDS: usize = 8;
 
 #[repr(C)]
 pub struct TruceAaxEditorInfo {
@@ -388,6 +402,32 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         log_midi_ports_clamped("AAX", "input", info.midi_input_ports);
         log_midi_ports_clamped("AAX", "output", info.midi_output_ports);
 
+        // Legacy chunk fourccs, capped to the descriptor's fixed
+        // capacity. `>4`-byte or short ids are skipped rather than
+        // mangled (a wrong fourcc would silently never match).
+        let mut legacy_chunk_ids = [0u32; MAX_LEGACY_CHUNK_IDS];
+        let mut num_legacy_chunk_ids = 0u32;
+        for id in info.legacy_aax_chunk_ids {
+            if num_legacy_chunk_ids as usize >= MAX_LEGACY_CHUNK_IDS {
+                eprintln!(
+                    "[truce AAX] more than {MAX_LEGACY_CHUNK_IDS} legacy_state aax_chunk_ids; \
+                     ignoring the rest"
+                );
+                break;
+            }
+            let Ok(bytes) = <[u8; 4]>::try_from(id.as_bytes()) else {
+                eprintln!(
+                    "[truce AAX] legacy_state chunk id {id:?} is not a 4-byte fourcc; skipped"
+                );
+                continue;
+            };
+            #[allow(clippy::cast_sign_loss)]
+            {
+                legacy_chunk_ids[num_legacy_chunk_ids as usize] = fourcc(bytes) as u32;
+            }
+            num_legacy_chunk_ids += 1;
+        }
+
         let descriptor = TruceAaxDescriptor {
             name,
             vendor,
@@ -404,6 +444,8 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             category,
             has_editor: 0,             // filled below
             bypass_param_id: u32::MAX, // filled below
+            num_legacy_chunk_ids,
+            legacy_chunk_ids,
         };
 
         // Static metadata path: derive emits a `LazyLock`-cached
@@ -622,6 +664,16 @@ macro_rules! export_aax {
                 len: u32,
             ) {
                 ::truce_aax::_load_state::<$plugin_type>(ctx, data, len);
+            }
+
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_load_state_foreign(
+                ctx: *mut ::std::ffi::c_void,
+                chunk_id: u32,
+                data: *const u8,
+                len: u32,
+            ) -> i32 {
+                ::truce_aax::_load_state_foreign::<$plugin_type>(ctx, chunk_id, data, len)
             }
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_free_state(data: *mut u8, len: u32) {
@@ -1274,7 +1326,12 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             return;
         }
         let blob = slice::from_raw_parts(data, len as usize);
-        if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+        // Not this plugin's envelope? Offer the bytes to the plugin's
+        // `migrate_state` hook (legacy sessions from a pre-truce
+        // build); `None` fails the load.
+        if let Some(deserialized) =
+            state::parse_or_migrate::<P>(blob, inst.plugin_id_hash, state::PluginFormat::Aax, None)
+        {
             // Apply params synchronously on the host thread (atomic-safe)
             // so host queries that read parameter values right after the
             // state load see the restored values without first running a
@@ -1297,6 +1354,52 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             }
         }
     });
+}
+
+/// Bytes Pro Tools restored under a legacy chunk id (declared via
+/// `[plugin.legacy_state]` `aax_chunk_ids`): offer them to the
+/// plugin's `migrate_state` hook and ride the normal restore
+/// pipeline on acceptance. Returns 1 when the plugin translated the
+/// bytes, 0 when it didn't recognize them.
+///
+/// # Safety
+/// Same `ctx` contract as `_load_state`; `data` must address `len`
+/// readable bytes for the duration of the call.
+pub unsafe fn _load_state_foreign<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    chunk_id: u32,
+    data: *const u8,
+    len: u32,
+) -> i32 {
+    run_extern_callback_with::<P, i32>("aax", "migrate_state", 0, || unsafe {
+        let inst = &mut *ctx.cast::<AaxInstance<P>>();
+        if data.is_null() || len == 0 {
+            return 0;
+        }
+        let bytes = slice::from_raw_parts(data, len as usize);
+        // Present the chunk id as its readable fourcc so
+        // `migrate_state` implementations match on the same string
+        // they declared in truce.toml.
+        let id_bytes = chunk_id.to_be_bytes();
+        let key = std::str::from_utf8(&id_bytes).unwrap_or("");
+        let Some(migrated) = P::migrate_state(&state::ForeignState::Raw {
+            format: state::PluginFormat::Aax,
+            source_key: Some(key),
+            bytes,
+        }) else {
+            return 0;
+        };
+        let deserialized: state::DeserializedState = migrated.into();
+        state::apply_params(&*inst.params_arc, &deserialized);
+        let _ = inst.pending_state.force_push(deserialized);
+        if let Ok(mut guard) = inst.state_cache.lock() {
+            *guard = None;
+        }
+        if let Some(ref mut editor) = inst.editor {
+            editor.state_changed();
+        }
+        1
+    })
 }
 
 // ---------------------------------------------------------------------------

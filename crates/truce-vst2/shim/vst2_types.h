@@ -301,7 +301,10 @@ typedef struct {
                             const uint8_t** out_bytes,
                             uint32_t* out_len);
     void (*state_save)(void* ctx, uint8_t** out_data, uint32_t* out_len);
-    void (*state_load)(void* ctx, const uint8_t* data, uint32_t len);
+    /* Returns 1 when the blob was accepted (truce envelope, or the
+     * plugin's migrate_state translated it), 0 when the load failed -
+     * effSetChunk forwards that to the host. */
+    int32_t (*state_load)(void* ctx, const uint8_t* data, uint32_t len);
     void (*state_free)(uint8_t* data, uint32_t len);
     /* Latency + tail */
     uint32_t (*get_latency)(void* ctx);

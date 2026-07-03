@@ -196,7 +196,10 @@ struct Vst3Callbacks {
     double (*param_denormalize)(void*, uint32_t, double);
     uint32_t (*param_format)(void*, uint32_t, double, char*, uint32_t);
     void (*state_save)(void*, uint8_t**, uint32_t*);
-    void (*state_load)(void*, const uint8_t*, uint32_t);
+    /* Returns 1 when the blob was accepted (truce envelope, or the
+     * plugin's migrate_state translated it), 0 when the load failed -
+     * setState forwards that to the host as kResultFalse. */
+    int32_t (*state_load)(void*, const uint8_t*, uint32_t);
     void (*state_free)(uint8_t*, uint32_t);
     // Latency + tail
     uint32_t (*get_latency)(void*);
@@ -604,8 +607,10 @@ public:
             total += bytesRead;
             if (r != kResultOk) break;
         }
+        tresult result = kResultOk;
         if (data && total > 0) {
-            g_cb->state_load(ctx, data, (uint32_t)total);
+            if (!g_cb->state_load(ctx, data, (uint32_t)total))
+                result = kResultFalse;
         }
         free(data);
         stateLoaded = true;
@@ -614,7 +619,7 @@ public:
             g_cb->gui_open(ctx, deferredParent);
             deferredParent = nullptr;
         }
-        return kResultOk;
+        return result;
     }
 
     tresult getState(void* stream) {

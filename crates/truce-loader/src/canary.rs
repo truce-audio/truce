@@ -223,6 +223,15 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
         Ok(())
     }
     fn state_changed(&mut self) {}
+    fn migrate_state(
+        _foreign: &truce_core::state::ForeignState,
+    ) -> Option<truce_core::state::MigratedState>
+    where
+        Self: Sized,
+    {
+        // Receiverless, so it has no vtable slot to probe.
+        None
+    }
     fn latency(&self) -> u32 {
         0xAAAA
     }

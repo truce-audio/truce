@@ -431,8 +431,47 @@ void TruceAAX_Parameters::RenderAudio(
 // keeps the host's chunk table truthful.
 constexpr AAX_CTypeID kTruceControlsChunkID = 'elck';
 
+// True when `chunkID` is one of the legacy chunk fourccs the plugin
+// declared in truce.toml's [plugin.legacy_state] - the ids a
+// pre-truce build of this plugin saved its sessions under.
+static bool is_legacy_chunk(AAX_CTypeID chunkID) {
+    for (uint32_t i = 0; i < g_descriptor.num_legacy_chunk_ids; i++) {
+        if ((AAX_CTypeID)g_descriptor.legacy_chunk_ids[i] == chunkID) return true;
+    }
+    return false;
+}
+
+AAX_Result TruceAAX_Parameters::GetNumberOfChunks(int32_t* oNumChunks) const {
+    // Truce's own chunk plus the declared legacy ids. Declaring the
+    // legacy ids is what makes Pro Tools deliver an old session's
+    // chunk to SetChunk; an undeclared chunk is never offered.
+    *oNumChunks = 1 + (int32_t)g_descriptor.num_legacy_chunk_ids;
+    return AAX_SUCCESS;
+}
+
+AAX_Result TruceAAX_Parameters::GetChunkIDFromIndex(int32_t index, AAX_CTypeID* oChunkID) const {
+    if (index == 0) {
+        *oChunkID = kTruceControlsChunkID;
+        return AAX_SUCCESS;
+    }
+    uint32_t legacy = (uint32_t)(index - 1);
+    if (legacy < g_descriptor.num_legacy_chunk_ids) {
+        *oChunkID = (AAX_CTypeID)g_descriptor.legacy_chunk_ids[legacy];
+        return AAX_SUCCESS;
+    }
+    *oChunkID = 0;
+    return AAX_ERROR_INVALID_CHUNK_INDEX;
+}
+
 AAX_Result TruceAAX_Parameters::GetChunkSize(AAX_CTypeID chunkID, uint32_t* oSize) const {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
+    if (is_legacy_chunk(chunkID)) {
+        // Save direction: truce never writes legacy chunks. Zero size
+        // keeps Pro Tools' chunk table truthful without refusing an
+        // id we declared.
+        *oSize = 0;
+        return AAX_SUCCESS;
+    }
     if (chunkID != kTruceControlsChunkID) {
         *oSize = 0;
         return AAX_ERROR_INVALID_CHUNK_ID;
@@ -448,6 +487,11 @@ AAX_Result TruceAAX_Parameters::GetChunkSize(AAX_CTypeID chunkID, uint32_t* oSiz
 
 AAX_Result TruceAAX_Parameters::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* oChunk) const {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
+    if (is_legacy_chunk(chunkID)) {
+        // Save direction pair of GetChunkSize's zero-size answer.
+        oChunk->fSize = 0;
+        return AAX_SUCCESS;
+    }
     if (chunkID != kTruceControlsChunkID) {
         return AAX_ERROR_INVALID_CHUNK_ID;
     }
@@ -473,6 +517,16 @@ AAX_Result TruceAAX_Parameters::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* 
 
 AAX_Result TruceAAX_Parameters::SetChunk(AAX_CTypeID chunkID, const AAX_SPlugInChunk* iChunk) {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
+    if (is_legacy_chunk(chunkID)) {
+        // An old session's chunk from a pre-truce build: offer the
+        // bytes to the plugin's migrate_state hook.
+        if (g_bridge.load_state_foreign
+            && g_bridge.load_state_foreign(mRustCtx, (uint32_t)chunkID,
+                                           (const uint8_t*)iChunk->fData,
+                                           iChunk->fSize))
+            return AAX_SUCCESS;
+        return AAX_ERROR_INVALID_CHUNK_ID;
+    }
     if (chunkID != kTruceControlsChunkID) {
         return AAX_ERROR_INVALID_CHUNK_ID;
     }

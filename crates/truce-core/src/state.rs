@@ -6,8 +6,67 @@
 //! without inheriting `truce-core`'s runtime dependency chain.
 
 pub use truce_utils::state::{
-    DeserializedState, deserialize_state, hash_plugin_id, serialize_state, vst3_cid,
+    DeserializedState, StateParse, deserialize_state, hash_plugin_id, parse_state, serialize_state,
+    vst3_cid,
 };
+
+/// The plugin format whose wrapper found a foreign state blob.
+/// Carried in [`ForeignState::Raw`] so a `migrate_state`
+/// implementation can branch per format when the old builds
+/// serialized differently per format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PluginFormat {
+    Clap,
+    Vst3,
+    Vst2,
+    Au,
+    Lv2,
+    Aax,
+}
+
+/// What a format wrapper found where truce state should have been.
+/// Handed to [`crate::plugin::PluginRuntime::migrate_state`] on the
+/// host thread; the plugin decides whether it recognizes the bytes.
+pub enum ForeignState<'a> {
+    /// Bytes that aren't a truce envelope: a previous framework's
+    /// state, exactly as the old build saved it.
+    Raw {
+        format: PluginFormat,
+        /// The container key the bytes were found under, for keyed
+        /// formats (AU dict key, LV2 property URI, AAX chunk id).
+        /// `None` for stream formats (CLAP / VST3 / VST2).
+        source_key: Option<&'a str>,
+        bytes: &'a [u8],
+    },
+    /// A valid truce envelope whose `plugin_id_hash` doesn't match:
+    /// the plugin was renamed / re-identified. Params are already
+    /// decoded; the plugin only decides whether to accept them.
+    MismatchedEnvelope {
+        plugin_id_hash: u64,
+        params: &'a [(u32, f64)],
+        extra: Option<&'a [u8]>,
+    },
+}
+
+/// Truce-shaped state produced by a successful
+/// [`crate::plugin::PluginRuntime::migrate_state`]. Rides the normal
+/// restore pipeline as a synthetic [`DeserializedState`]; the next
+/// save writes a regular envelope, so migration is a one-shot door,
+/// not a permanent dual-format reader.
+pub struct MigratedState {
+    pub params: Vec<(u32, f64)>,
+    pub extra: Option<Vec<u8>>,
+}
+
+impl From<MigratedState> for DeserializedState {
+    fn from(migrated: MigratedState) -> Self {
+        Self {
+            params: migrated.params,
+            extra: migrated.extra,
+        }
+    }
+}
 
 /// Reason a [`crate::PluginRuntime::load_state`] /
 /// `truce_plugin::PluginLogic::load_state` implementation failed to
@@ -75,6 +134,58 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
         // this to the host (e.g. CLAP's `state_load` returning `false`)
         // do so synchronously *before* the queue handoff.
         eprintln!("truce: load_state failed: {e}");
+    }
+}
+
+/// Parse a host-supplied state blob and, when it isn't this plugin's
+/// envelope, offer it to the plugin's
+/// [`crate::plugin::PluginRuntime::migrate_state`] hook. One routing
+/// point for every format wrapper's state callback:
+///
+/// - a matching envelope loads as always;
+/// - foreign bytes ([`StateParse::NotAnEnvelope`]) and renamed-plugin
+///   envelopes ([`StateParse::WrongPlugin`]) go to `migrate_state`;
+/// - a future envelope version and a corrupt envelope fail the load
+///   (never handed to the plugin), each with its own log line.
+///
+/// `None` means the load failed and the wrapper must report failure
+/// to the host in its own idiom. Runs on the host thread - that's
+/// where `migrate_state` is allowed to do allocator-heavy parsing.
+pub fn parse_or_migrate<P: PluginExport>(
+    data: &[u8],
+    expected_plugin_id: u64,
+    format: PluginFormat,
+    source_key: Option<&str>,
+) -> Option<DeserializedState> {
+    match truce_utils::state::parse_state(data, expected_plugin_id) {
+        StateParse::Ok(state) => Some(state),
+        StateParse::NotAnEnvelope => P::migrate_state(&ForeignState::Raw {
+            format,
+            source_key,
+            bytes: data,
+        })
+        .map(Into::into),
+        StateParse::WrongPlugin { found, state } => {
+            P::migrate_state(&ForeignState::MismatchedEnvelope {
+                plugin_id_hash: found,
+                params: &state.params,
+                extra: state.extra.as_deref(),
+            })
+            .map(Into::into)
+        }
+        StateParse::UnknownVersion(version) => {
+            // Same logging rationale as `apply_state`: one-shot event,
+            // no `log` dep in the audio-runtime crate.
+            eprintln!(
+                "truce: state blob carries envelope version {version}; this build \
+                 reads version 1 - load failed"
+            );
+            None
+        }
+        StateParse::Corrupt => {
+            eprintln!("truce: state blob is a corrupt truce envelope - load failed");
+            None
+        }
     }
 }
 

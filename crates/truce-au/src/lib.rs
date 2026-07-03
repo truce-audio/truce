@@ -130,6 +130,11 @@ struct AuInstance<P: PluginExport> {
     /// `cb_process` and calls [`state::apply_state`]
     /// under its exclusive `&mut plugin`.
     pending_state: Arc<StateLoadQueue>,
+    /// `legacy_au_keys` from `PluginInfo`, NUL-terminated for the
+    /// shim's `ClassInfo` foreign-key probe. Built once at create;
+    /// pointers handed out via `cb_legacy_state_key_at` stay valid
+    /// for the instance lifetime.
+    legacy_key_cstrings: Vec<CString>,
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +200,11 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
         pending_state: Arc::new(StateLoadQueue::new(1)),
+        legacy_key_cstrings: info
+            .legacy_au_keys
+            .iter()
+            .filter_map(|k| CString::new(*k).ok())
+            .collect(),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
@@ -596,7 +606,16 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             return;
         }
         let blob = slice::from_raw_parts(data, len as usize);
-        if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+        // Not this plugin's envelope? Offer the bytes to the plugin's
+        // `migrate_state` hook (legacy sessions from a pre-truce
+        // build that stored foreign bytes under truce's key, or a
+        // renamed plugin's envelope).
+        if let Some(deserialized) = state::parse_or_migrate::<P>(
+            blob,
+            inst.plugin_id_hash,
+            state::PluginFormat::Au,
+            Some("truce_state"),
+        ) {
             // Apply params synchronously on the host thread (atomic-safe)
             // so host queries that read parameter values right after
             // `setFullState:` see the restored values without first
@@ -612,6 +631,61 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             }
         }
     });
+}
+
+unsafe extern "C" fn cb_legacy_state_key_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        len_u32(inst.legacy_key_cstrings.len())
+    }
+}
+
+unsafe extern "C" fn cb_legacy_state_key_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+) -> *const c_char {
+    unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        inst.legacy_key_cstrings
+            .get(index as usize)
+            .map_or(std::ptr::null(), |k| k.as_ptr())
+    }
+}
+
+/// Bytes found under a legacy `ClassInfo` key (truce's own entry was
+/// absent): offer them to the plugin's `migrate_state` hook and ride
+/// the normal restore pipeline on acceptance. Returns 1 when the
+/// plugin translated the bytes, 0 when it didn't recognize them.
+unsafe extern "C" fn cb_state_load_foreign<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    key: *const c_char,
+    data: *const u8,
+    len: u32,
+) -> i32 {
+    run_extern_callback_with::<P, i32>("au", "migrate_state", 0, || unsafe {
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        if key.is_null() || data.is_null() || len == 0 {
+            return 0;
+        }
+        let Ok(key) = std::ffi::CStr::from_ptr(key).to_str() else {
+            return 0;
+        };
+        let bytes = slice::from_raw_parts(data, len as usize);
+        let Some(migrated) = P::migrate_state(&state::ForeignState::Raw {
+            format: state::PluginFormat::Au,
+            source_key: Some(key),
+            bytes,
+        }) else {
+            return 0;
+        };
+        let deserialized: state::DeserializedState = migrated.into();
+        state::apply_params(&*inst.params_arc, &deserialized);
+        let _ = inst.pending_state.force_push(deserialized);
+        if let Some(ref mut editor) = inst.editor {
+            editor.state_changed();
+        }
+        1
+    })
 }
 
 unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
@@ -1447,6 +1521,9 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         factory_preset_name: cb_factory_preset_name::<P>,
         factory_preset_load: cb_factory_preset_load::<P>,
         push_sysex_input: cb_au_push_sysex_input::<P>,
+        legacy_state_key_count: cb_legacy_state_key_count::<P>,
+        legacy_state_key_at: cb_legacy_state_key_at::<P>,
+        state_load_foreign: cb_state_load_foreign::<P>,
     }));
 
     let param_descs = param_descs.leak();

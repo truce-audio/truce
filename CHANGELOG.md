@@ -36,6 +36,10 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 - `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
 - `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
 
+### Legacy state migration
+
+- **A plugin ported to truce can keep its users' old sessions and presets.** New `migrate_state` hook on `PluginLogic` (default: off): when a host hands a wrapper state that isn't this plugin's envelope - a pre-truce build's blob, or a truce envelope saved under a different plugin id - the wrapper offers it to the hook on the host thread; the translated params + extra ride the normal restore pipeline and the next save writes a regular envelope. Keyed containers probe the old build's storage keys declared in `truce.toml`'s `[plugin.legacy_state]` (`au_keys` / `lv2_uris` / `aax_chunk_ids`); stream formats (CLAP / VST3 / VST2) need no declaration. Unrecognized state now fails the load honestly (VST3 `setState` and VST2 `effSetChunk` report failure instead of silently resetting to defaults), a future envelope version fails cleanly instead of being eaten as garbage, and `truce-example-eq` + `assert_state_migration` in truce-test are the reference. Not routed in `--shell` dev builds.
+
 ### Native f64 processing
 
 - **`prelude64` plugins now take the host's 64-bit wire directly where the format has one**, instead of squeezing through f32 and widening back: VST3 (`kSample64`), VST2 (`processDoubleReplacing` + `effSetProcessPrecision`), and CLAP (`CLAP_AUDIO_PORT_SUPPORTS_64BITS`). Full precision and zero conversion end to end when the host runs a 64-bit chain; the f32 wire stays as the fallback when it doesn't. AU v2 / LV2 / AAX / standalone keep the f32 wire with the existing widen/narrow pass. f32 plugins are unchanged and never advertise 64-bit.

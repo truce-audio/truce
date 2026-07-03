@@ -1933,7 +1933,15 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             return false;
         }
 
-        let Some(deserialized) = state::deserialize_state(&blob, data.plugin_id_hash) else {
+        // Not this plugin's envelope? Offer the bytes to the plugin's
+        // `migrate_state` hook (legacy sessions from a pre-truce
+        // build); `None` fails the load honestly.
+        let Some(deserialized) = state::parse_or_migrate::<P>(
+            &blob,
+            data.plugin_id_hash,
+            state::PluginFormat::Clap,
+            None,
+        ) else {
             return false;
         };
 

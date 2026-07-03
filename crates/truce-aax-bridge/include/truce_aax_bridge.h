@@ -23,8 +23,13 @@ extern "C" {
  * Version history:
  *   1 → 2: initial range_type field on TruceAaxParamInfo (log/discrete).
  *   2 → 3: SysEx I/O - push_sysex_input + output_sysex_count +
- *           output_sysex_at exports. */
-#define TRUCE_AAX_ABI_VERSION 3u
+ *           output_sysex_at exports.
+ *   3 → 4: legacy-state migration - legacy_chunk_ids on the
+ *           descriptor + load_state_foreign export. */
+#define TRUCE_AAX_ABI_VERSION 4u
+
+/* Capacity of TruceAaxDescriptor::legacy_chunk_ids. */
+#define TRUCE_AAX_MAX_LEGACY_CHUNKS 8u
 
 /* Wire values for TruceAaxParamInfo::range_type. The shim picks the
  * matching AAX_ITaperDelegate per param so AAX's normalize/denormalize
@@ -59,6 +64,13 @@ typedef struct {
                                  * AAX C++ template registers this as
                                  * the master bypass via
                                  * cDefaultMasterBypassID. */
+    /* Chunk fourccs a pre-truce build stored its state under
+     * (`aax_chunk_ids` in truce.toml's [plugin.legacy_state]). The
+     * template declares them alongside truce's own chunk so Pro Tools
+     * hands old sessions' chunks to SetChunk, which routes them to
+     * truce_aax_load_state_foreign / the plugin's migrate_state. */
+    uint32_t num_legacy_chunk_ids;
+    uint32_t legacy_chunk_ids[8]; /* TRUCE_AAX_MAX_LEGACY_CHUNKS */
 } TruceAaxDescriptor;
 
 /* Parameter info. */
@@ -189,6 +201,11 @@ void   truce_aax_format_param(void* ctx, uint32_t id, double value,
 uint32_t truce_aax_save_state(void* ctx, uint8_t** out_data);
 void     truce_aax_load_state(void* ctx, const uint8_t* data, uint32_t len);
 void     truce_aax_free_state(uint8_t* data, uint32_t len);
+/* Bytes found under a legacy chunk id (see the descriptor's
+ * legacy_chunk_ids): offered to the plugin's migrate_state hook.
+ * Returns 1 when the plugin translated and accepted them. */
+int32_t  truce_aax_load_state_foreign(void* ctx, uint32_t chunk_id,
+                                      const uint8_t* data, uint32_t len);
 
 /* GUI editor. */
 void truce_aax_editor_create(void* ctx, TruceAaxEditorInfo* out);

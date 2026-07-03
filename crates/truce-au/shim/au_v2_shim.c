@@ -1052,6 +1052,30 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
                 const uint8_t *bytes = CFDataGetBytePtr(cfData);
                 uint32_t len = (uint32_t)CFDataGetLength(cfData);
                 g_callbacks->state_load(inst->rustCtx, bytes, len);
+            } else if (g_callbacks->legacy_state_key_count
+                       && g_callbacks->state_load_foreign) {
+                /* No truce entry: a pre-truce build stored its state
+                 * under its own dictionary key. Probe the keys the
+                 * plugin declared in truce.toml's [plugin.legacy_state]
+                 * (first present + accepted wins) so its migrate_state
+                 * hook can translate the old session. */
+                uint32_t n = g_callbacks->legacy_state_key_count(inst->rustCtx);
+                for (uint32_t i = 0; i < n; i++) {
+                    const char *keyName =
+                        g_callbacks->legacy_state_key_at(inst->rustCtx, i);
+                    if (!keyName) continue;
+                    CFStringRef k = CFStringCreateWithCString(
+                        NULL, keyName, kCFStringEncodingUTF8);
+                    if (!k) continue;
+                    CFTypeRef v = CFDictionaryGetValue(dict, k);
+                    CFRelease(k);
+                    if (!v || CFGetTypeID(v) != CFDataGetTypeID()) continue;
+                    const uint8_t *bytes = CFDataGetBytePtr((CFDataRef)v);
+                    uint32_t len = (uint32_t)CFDataGetLength((CFDataRef)v);
+                    if (g_callbacks->state_load_foreign(inst->rustCtx,
+                                                        keyName, bytes, len))
+                        break;
+                }
             }
             return noErr;
         }

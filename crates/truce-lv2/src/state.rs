@@ -10,7 +10,10 @@ use std::ffi::{CString, c_char, c_void};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use truce_core::export::PluginExport;
-use truce_core::state::{DeserializedState, deserialize_state, serialize_state};
+use truce_core::state::{
+    DeserializedState, ForeignState, PluginFormat, deserialize_state, parse_or_migrate,
+    serialize_state,
+};
 use truce_core::wrapper::run_extern_callback_with;
 use truce_params::Params;
 
@@ -163,19 +166,35 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
             &raw mut type_,
             &raw mut state_flags,
         );
-        if data.is_null() || size == 0 {
-            return 0;
-        }
-        let slice = core::slice::from_raw_parts(data.cast::<u8>(), size);
-        // Hosts that decode the preset's `^^xsd:base64Binary` literal
-        // into a raw `atom:Chunk` (lilv: Ardour, Carla, jalv) hand us
-        // the envelope bytes directly, so they deserialize as-is.
-        // REAPER does NOT decode the literal - it returns the base64
-        // *text* (a string literal, not atom:Chunk, often NUL-padded) -
-        // so when the raw bytes aren't our envelope, strip anything
-        // outside the base64 alphabet and decode before retrying.
-        let state = deserialize_state(slice, inst.plugin_id_hash)
-            .or_else(|| decode_base64_envelope(slice, inst.plugin_id_hash));
+        let state = if data.is_null() || size == 0 {
+            // Truce's own key is absent: a pre-truce build stored its
+            // state under *its* URI, which only the developer knows -
+            // probe the `[plugin.legacy_state]` `lv2_uris` and feed
+            // the first hit to the plugin's `migrate_state` hook.
+            probe_legacy_uris::<P>(inst, retrieve, handle)
+        } else {
+            let slice = core::slice::from_raw_parts(data.cast::<u8>(), size);
+            // Hosts that decode the preset's `^^xsd:base64Binary` literal
+            // into a raw `atom:Chunk` (lilv: Ardour, Carla, jalv) hand us
+            // the envelope bytes directly, so they deserialize as-is.
+            // REAPER does NOT decode the literal - it returns the base64
+            // *text* (a string literal, not atom:Chunk, often NUL-padded) -
+            // so when the raw bytes aren't our envelope, strip anything
+            // outside the base64 alphabet and decode before retrying.
+            // Only after both fail is the blob offered to the plugin's
+            // `migrate_state` hook (renamed-plugin envelope, or foreign
+            // bytes a legacy build stored under truce's key).
+            deserialize_state(slice, inst.plugin_id_hash)
+                .or_else(|| decode_base64_envelope(slice, inst.plugin_id_hash))
+                .or_else(|| {
+                    parse_or_migrate::<P>(
+                        slice,
+                        inst.plugin_id_hash,
+                        PluginFormat::Lv2,
+                        Some(TRUCE_STATE_KEY_URI),
+                    )
+                })
+        };
         if let Some(state) = state {
             inst.plugin.params().restore_values(&state.params);
             inst.plugin.params().snap_smoothers();
@@ -187,6 +206,48 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
         }
         LV2_STATE_SUCCESS
     })
+}
+
+/// Probe the plugin's declared legacy LV2 state URIs (first present
+/// wins) and offer the bytes to `migrate_state`. Called when truce's
+/// own state key is absent from the host's property map - a legacy
+/// build stored its state under its own URI, which truce never reads
+/// unless declared in `truce.toml`'s `[plugin.legacy_state]`.
+///
+/// # Safety
+/// `retrieve` / `handle` must be the live pair the host passed to
+/// `restore()`; returned pointers are only read within this call.
+unsafe fn probe_legacy_uris<P: PluginExport>(
+    inst: &Lv2Instance<P>,
+    retrieve: RetrieveFn,
+    handle: *mut c_void,
+) -> Option<DeserializedState> {
+    for uri in P::info().legacy_lv2_uris {
+        let key = inst.urid_map.intern(uri);
+        if key == 0 {
+            continue;
+        }
+        let mut size = 0usize;
+        let mut type_: Urid = 0;
+        let mut flags: u32 = 0;
+        // SAFETY: host-provided retrieve with its own handle, same
+        // contract as the truce-key call in `restore_cb`.
+        let data = unsafe { retrieve(handle, key, &raw mut size, &raw mut type_, &raw mut flags) };
+        if data.is_null() || size == 0 {
+            continue;
+        }
+        // SAFETY: non-null host pointer valid for `size` bytes for
+        // the duration of the restore call.
+        let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), size) };
+        if let Some(migrated) = P::migrate_state(&ForeignState::Raw {
+            format: PluginFormat::Lv2,
+            source_key: Some(uri),
+            bytes,
+        }) {
+            return Some(migrated.into());
+        }
+    }
+    None
 }
 
 // Quiet unused-import for future generic symbol lookups.

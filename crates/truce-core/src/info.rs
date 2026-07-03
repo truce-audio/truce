@@ -134,6 +134,19 @@ pub struct PluginInfo {
     /// table; defaults to [`AutomationConfig::DEFAULT`] when the
     /// table is absent.
     pub automation: AutomationConfig,
+
+    /// AU `ClassInfo` dictionary keys a pre-truce build stored its
+    /// state under. Probed by `truce-au` when truce's own data key is
+    /// absent; a hit feeds the plugin's `migrate_state` hook. From
+    /// `truce.toml`'s `[plugin.legacy_state]` `au_keys`; empty when
+    /// undeclared (no probing).
+    pub legacy_au_keys: &'static [&'static str],
+    /// LV2 state property URIs a pre-truce build stored its state
+    /// under. See [`Self::legacy_au_keys`].
+    pub legacy_lv2_uris: &'static [&'static str],
+    /// AAX chunk fourccs a pre-truce build stored its state under.
+    /// See [`Self::legacy_au_keys`].
+    pub legacy_aax_chunk_ids: &'static [&'static str],
 }
 
 /// Sample-accurate chunking tunables baked into [`PluginInfo`] at

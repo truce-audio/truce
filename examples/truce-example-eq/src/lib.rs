@@ -200,6 +200,44 @@ impl Eq {
 }
 
 impl PluginLogic for Eq {
+    // A hypothetical pre-truce build of this EQ saved its sessions as
+    // `EQS1` + ten little-endian f64s (low/mid/high x freq/gain/q,
+    // then output) - translating that here keeps users' old sessions
+    // and presets loading after a port to truce. The next save writes
+    // a normal truce envelope, so this runs once per old session.
+    // Runs on the host thread, so constructing a params instance to
+    // resolve the flattened ids is fine.
+    fn migrate_state(foreign: &ForeignState) -> Option<MigratedState> {
+        let ForeignState::Raw { bytes, .. } = foreign else {
+            return None;
+        };
+        let payload = bytes.strip_prefix(b"EQS1")?;
+        if payload.len() != 10 * 8 {
+            return None;
+        }
+        let mut values = payload
+            .chunks_exact(8)
+            .map(|chunk| f64::from_le_bytes(chunk.try_into().expect("chunks_exact(8)")));
+        let mut next = || values.next().expect("length checked above");
+        let p = EqParams::new();
+        let params = vec![
+            (p.low.freq.id(), next()),
+            (p.low.gain.id(), next()),
+            (p.low.q.id(), next()),
+            (p.mid.freq.id(), next()),
+            (p.mid.gain.id(), next()),
+            (p.mid.q.id(), next()),
+            (p.high.freq.id(), next()),
+            (p.high.gain.id(), next()),
+            (p.high.q.id(), next()),
+            (P::Output.into(), next()),
+        ];
+        Some(MigratedState {
+            params,
+            extra: None,
+        })
+    }
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
@@ -363,6 +401,46 @@ truce::plugin! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A legacy `EQS1` blob (the pre-truce format `migrate_state`
+    /// translates) with recognizable per-band values.
+    fn legacy_blob() -> Vec<u8> {
+        let values = [
+            100.0, -3.0, 1.0, // low: freq / gain / q
+            1000.0, 2.0, 0.5, // mid
+            8000.0, 4.5, 2.0,  // high
+            -1.5, // output
+        ];
+        let mut blob = b"EQS1".to_vec();
+        for v in values {
+            blob.extend_from_slice(&f64::to_le_bytes(v));
+        }
+        blob
+    }
+
+    #[test]
+    fn legacy_state_migrates() {
+        let migrated =
+            truce_test::assert_state_migration::<Plugin>(PluginFormat::Clap, None, &legacy_blob());
+        assert_eq!(migrated.params.len(), 10);
+        let p = EqParams::new();
+        assert_eq!(migrated.params[3], (p.mid.freq.id(), 1000.0));
+        assert_eq!(migrated.params[9], (P::Output.into(), -1.5));
+        assert!(migrated.extra.is_none());
+    }
+
+    #[test]
+    fn truncated_legacy_state_is_refused() {
+        let blob = &legacy_blob()[..40];
+        assert!(
+            Eq::migrate_state(&ForeignState::Raw {
+                format: PluginFormat::Clap,
+                source_key: None,
+                bytes: blob,
+            })
+            .is_none()
+        );
+    }
 
     #[test]
     fn info_is_valid() {
