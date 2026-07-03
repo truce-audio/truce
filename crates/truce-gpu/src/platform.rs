@@ -1,6 +1,6 @@
 //! Platform window bridging for baseview / wgpu.
 //!
-//! `WgpuBackend::from_window` consumes a `baseview::Window`; that
+//! `create_wgpu_surface` consumes a `baseview::Window`; that
 //! window exposes raw-window-handle 0.5 handles but wgpu wants 0.6,
 //! so the bridge re-encodes per platform here. Lives in `truce-gpu`
 //! so the wgpu pipeline crate is self-contained; the per-OS
@@ -15,7 +15,7 @@ use raw_window_handle::{
 };
 
 #[cfg(target_os = "windows")]
-fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
+pub(crate) fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
     unsafe extern "system" {
         fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
     }

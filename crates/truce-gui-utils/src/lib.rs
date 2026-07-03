@@ -241,21 +241,20 @@ pub fn reanchor_all_children_to_top(_parent: *mut std::ffi::c_void) {}
 pub fn wgl_extensions_available() -> bool {
     use windows_sys::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
     use windows_sys::Win32::Graphics::OpenGL::{
-        ChoosePixelFormat, SetPixelFormat, wglCreateContext, wglDeleteContext, wglGetProcAddress,
-        wglMakeCurrent, PFD_DRAW_TO_WINDOW, PFD_MAIN_PLANE, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA,
-        PIXELFORMATDESCRIPTOR,
+        ChoosePixelFormat, PFD_DRAW_TO_WINDOW, PFD_MAIN_PLANE, PFD_SUPPORT_OPENGL, PFD_TYPE_RGBA,
+        PIXELFORMATDESCRIPTOR, SetPixelFormat, wglCreateContext, wglDeleteContext,
+        wglGetProcAddress, wglMakeCurrent,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, UnregisterClassW,
-        CS_OWNDC, WNDCLASSW,
+        CS_OWNDC, CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, UnregisterClassW,
+        WNDCLASSW,
     };
     use windows_sys::core::s;
 
     // UTF-16, NUL-terminated: "truce-wgl-probe".
     const CLASS_NAME: &[u16] = &[
-        0x74, 0x72, 0x75, 0x63, 0x65, 0x2d, 0x77, 0x67, 0x6c, 0x2d, 0x70, 0x72, 0x6f, 0x62, 0x65,
-        0,
+        0x74, 0x72, 0x75, 0x63, 0x65, 0x2d, 0x77, 0x67, 0x6c, 0x2d, 0x70, 0x72, 0x6f, 0x62, 0x65, 0,
     ];
 
     unsafe {

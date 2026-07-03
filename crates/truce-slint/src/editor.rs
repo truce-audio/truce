@@ -155,81 +155,83 @@ fn panic_message(e: &(dyn std::any::Any + Send)) -> String {
         .unwrap_or_else(|| "unknown panic".to_string())
 }
 
-/// Created wgpu state for a slint editor surface: the device/queue/surface
-/// plus its configuration. Shared shape between `open` and device-loss
-/// recovery.
+/// The pump's init product for a slint editor surface: the device /
+/// queue plus the local copy of the surface configuration (the
+/// authoritative configure happens on the pump).
 struct SlintWgpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
 }
 
-/// Build the wgpu device + surface for `window` at the given physical size.
-/// `device_lost` is raised by the device's lost callback so `on_frame` can
-/// rebuild. Returns `None` (editor stays blank, host survives) on any failure.
-fn build_wgpu(
+/// Spawn the surface pump for `window` at the given physical size (see
+/// `truce_gpu::pump`): GPU init and every blocking swapchain call run
+/// there - off the host's GUI thread on Windows, where a stalled
+/// driver used to freeze the DAW. `device_lost` is raised by the
+/// device's lost callback (and by a pump-thread panic) so `on_frame`
+/// can rebuild. Returns `None` (editor stays blank, host survives)
+/// when the pump can't spawn.
+fn spawn_wgpu_pump(
     window: &Window,
     phys_w: u32,
     phys_h: u32,
     device_lost: Arc<AtomicBool>,
-) -> Option<SlintWgpu> {
-    let instance = wgpu::Instance::new(truce_gui::platform::editor_instance_descriptor());
-    let surface = unsafe { platform::create_wgpu_surface(&instance, window) }?;
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: Some(&surface),
-        force_fallback_adapter: false,
-    }))
-    .ok()?;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("truce-slint"),
-        required_features: wgpu::Features::empty(),
-        required_limits: adapter.limits(),
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::Performance,
-        trace: wgpu::Trace::Off,
-    }))
-    .ok()?;
-    device.set_device_lost_callback(move |reason, msg| {
-        device_lost.store(true, Ordering::Release);
-        log::warn!("slint wgpu device lost: {reason:?} - {msg}");
-    });
+) -> Option<truce_gpu::pump::SurfacePump<SlintWgpu>> {
+    unsafe {
+        truce_gpu::pump::SurfacePump::spawn(
+            window,
+            &device_lost.clone(),
+            Box::new(move |_, adapter, surface| {
+                let (device, queue) =
+                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                        label: Some("truce-slint"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: adapter.limits(),
+                        experimental_features: wgpu::ExperimentalFeatures::default(),
+                        memory_hints: wgpu::MemoryHints::Performance,
+                        trace: wgpu::Trace::Off,
+                    }))
+                    .ok()?;
+                device.set_device_lost_callback(move |reason, msg| {
+                    device_lost.store(true, Ordering::Release);
+                    log::warn!("slint wgpu device lost: {reason:?} - {msg}");
+                });
 
-    let caps = surface.get_capabilities(&adapter);
-    let format = caps
-        .formats
-        .iter()
-        .find(|f| f.is_srgb())
-        .copied()
-        .unwrap_or(caps.formats[0]);
-    let surface_config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width: phys_w.max(1),
-        height: phys_h.max(1),
-        // Windows: `on_frame` runs on the host's GUI thread, and a
-        // Fifo (AutoVsync) present blocks that thread when the
-        // child-window swapchain backs up - freezing the host (REAPER).
-        // baseview now drives frames at a steady cadence, so a blocking
-        // present stalls every frame instead of rarely; present
-        // non-blocking here to keep the host's message loop alive.
-        // Matches truce-iced / truce-egui. Other platforms keep vsync.
-        #[cfg(target_os = "windows")]
-        present_mode: wgpu::PresentMode::AutoNoVsync,
-        #[cfg(not(target_os = "windows"))]
-        present_mode: wgpu::PresentMode::AutoVsync,
-        desired_maximum_frame_latency: 2,
-        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        view_formats: vec![],
-    };
-    surface.configure(&device, &surface_config);
-    Some(SlintWgpu {
-        device,
-        queue,
-        surface,
-        surface_config,
-    })
+                let caps = surface.get_capabilities(adapter);
+                let format = caps
+                    .formats
+                    .iter()
+                    .find(|f| f.is_srgb())
+                    .copied()
+                    .unwrap_or(caps.formats[0]);
+                let surface_config = wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    format,
+                    width: phys_w.max(1),
+                    height: phys_h.max(1),
+                    // Windows: a Fifo (AutoVsync) present blocks when
+                    // the child-window swapchain backs up - freezing
+                    // the host (REAPER) when it lands on the GUI
+                    // thread. Non-blocking present there; other
+                    // platforms keep vsync. Matches truce-iced /
+                    // truce-egui.
+                    #[cfg(target_os = "windows")]
+                    present_mode: wgpu::PresentMode::AutoNoVsync,
+                    #[cfg(not(target_os = "windows"))]
+                    present_mode: wgpu::PresentMode::AutoVsync,
+                    desired_maximum_frame_latency: 2,
+                    alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                    view_formats: vec![],
+                };
+                let parts = SlintWgpu {
+                    device: device.clone(),
+                    queue,
+                    surface_config: surface_config.clone(),
+                };
+                Some((parts, device, surface_config))
+            }),
+        )
+    }
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -327,10 +329,12 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     sync_fn: SyncFn<P>,
     state: PluginContext<P>,
     blit: Option<BlitPipeline>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
-    surface_config: wgpu::SurfaceConfiguration,
+    /// Owns the wgpu surface + every blocking swapchain call; `gpu`
+    /// below is its init product, adopted in `on_frame` (immediately
+    /// on macOS / Linux, whenever init finishes on Windows).
+    pump: truce_gpu::pump::SurfacePump<SlintWgpu>,
+    client: truce_gpu::pump::PumpClient,
+    gpu: Option<SlintWgpu>,
     px_buf: Vec<PremultipliedRgbaColor>,
     rgba_buf: Vec<u8>,
     width: u32,
@@ -422,45 +426,61 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintHandler<P> {
 }
 
 impl<P: Params + ?Sized> SlintWindowHandler<P> {
-    /// Rebuild the wgpu device/surface/blit after a device loss. The Slint
+    /// Rebuild the pump (device/surface/blit) after a device loss. The Slint
     /// software window is independent of wgpu and is kept; only the GPU side
     /// (and the lazily-recreated blit pipeline) are rebuilt. Returns whether
-    /// the rebuild succeeded; on failure the next `on_frame` retries.
+    /// the respawn succeeded; on failure the next `on_frame` retries.
     fn recover_device(&mut self, window: &Window) -> bool {
         let device_lost = Arc::new(AtomicBool::new(false));
-        let Some(SlintWgpu {
-            device,
-            queue,
-            surface,
-            surface_config,
-        }) = build_wgpu(
+        let Some(pump) = spawn_wgpu_pump(
             window,
             self.last_phys_w.max(1),
             self.last_phys_h.max(1),
             device_lost.clone(),
-        )
-        else {
+        ) else {
             return false;
         };
-        self.device = device;
-        self.queue = queue;
-        self.surface = surface;
-        self.surface_config = surface_config;
+        self.client = pump.client();
+        self.pump = pump;
+        self.gpu = None;
         self.blit = None;
         self.device_lost = device_lost;
         true
+    }
+
+    /// Adopt the pump's init product once it lands, syncing the
+    /// surface to any resize that happened while init was pending.
+    fn adopt_gpu(&mut self) {
+        if self.gpu.is_some() {
+            return;
+        }
+        let Some(mut gpu) = self.pump.take_init() else {
+            return;
+        };
+        let (pw, ph) = (self.last_phys_w.max(1), self.last_phys_h.max(1));
+        if (gpu.surface_config.width, gpu.surface_config.height) != (pw, ph) {
+            gpu.surface_config.width = pw;
+            gpu.surface_config.height = ph;
+            self.client.resize(pw, ph);
+        }
+        self.gpu = Some(gpu);
     }
 }
 
 impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
-        // Rebuild if the device was lost (flagged by the device-lost callback
-        // or a swallowed render panic). Skip the rest of this frame.
+        // Rebuild if the device was lost (flagged by the device-lost callback,
+        // a pump panic, or a swallowed render panic). Skip the rest of this
+        // frame.
         if self.device_lost.load(Ordering::Acquire) {
             let ok = self.recover_device(window);
             log::warn!("slint device-loss recovery: rebuilt ok={ok}");
             return;
         }
+        // Adopt the pump's GPU state once init lands (first frame on
+        // macOS / Linux; whenever the pump thread finishes on Windows -
+        // blank but responsive until then).
+        self.adopt_gpu();
         // Skip the whole frame while the editor isn't presentable:
         // detached / occluded on macOS, host child window hidden /
         // minimized on Windows (no-op on Linux). On Windows this runs
@@ -511,11 +531,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 .set_size(slint::WindowSize::Physical(PhysicalSize::new(
                     phys_w, phys_h,
                 )));
-            self.surface_config.width = phys_w.max(1);
-            self.surface_config.height = phys_h.max(1);
-            self.surface.configure(&self.device, &self.surface_config);
-            if let Some(ref mut blit) = self.blit {
-                blit.resize(&self.device, phys_w, phys_h);
+            if let Some(gpu) = self.gpu.as_mut() {
+                gpu.surface_config.width = phys_w.max(1);
+                gpu.surface_config.height = phys_h.max(1);
+                self.client.resize(phys_w.max(1), phys_h.max(1));
+                if let Some(ref mut blit) = self.blit {
+                    blit.resize(&gpu.device, phys_w, phys_h);
+                }
             }
             self.width = pending.0;
             self.height = pending.1;
@@ -539,11 +561,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 .set_size(slint::WindowSize::Physical(PhysicalSize::new(
                     phys_w, phys_h,
                 )));
-            self.surface_config.width = phys_w.max(1);
-            self.surface_config.height = phys_h.max(1);
-            self.surface.configure(&self.device, &self.surface_config);
-            if let Some(ref mut blit) = self.blit {
-                blit.resize(&self.device, phys_w, phys_h);
+            if let Some(gpu) = self.gpu.as_mut() {
+                gpu.surface_config.width = phys_w.max(1);
+                gpu.surface_config.height = phys_h.max(1);
+                self.client.resize(phys_w.max(1), phys_h.max(1));
+                if let Some(ref mut blit) = self.blit {
+                    blit.resize(&gpu.device, phys_w, phys_h);
+                }
             }
             self.last_phys_w = phys_w;
             self.last_phys_h = phys_h;
@@ -551,9 +575,47 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
 
         // Compositor pacing veto - see `pacer`. Resize / scale
         // handling above still applies during a hold; the render +
-        // present below wait for the compositor to catch up.
-        if self.pacer.should_hold() {
+        // present below wait for the compositor to catch up. Windows
+        // skips the veto: the pump pre-acquires frames off-thread and
+        // `try_take_frame` returning `None` already paces paints to
+        // the compositor, so holding here only adds latency.
+        if cfg!(not(target_os = "windows")) && self.pacer.should_hold() {
             return;
+        }
+
+        // GPU init still pending on the pump (or failed): skip the
+        // whole render - slint repaints every tick, so the first
+        // ready frame paints without any dirty-bit bookkeeping.
+        if self.gpu.is_none() {
+            return;
+        }
+
+        // Take the pump's frame BEFORE any CPU render or GPU upload.
+        // During resize churn no frame is available (the pump is busy
+        // reconfiguring); skipping everything here both saves the
+        // wasted software raster and keeps queue work (texture upload,
+        // submit) off the GUI thread while the pump's configure is in
+        // flight - those contend on wgpu's internal locks. On Windows
+        // this never blocks (pump pre-acquires); elsewhere it acquires
+        // inline with the usual stale-surface recovery.
+        let frame = self.client.try_take_frame();
+        self.pacer.record_acquire(self.client.last_acquire_wait());
+        let Some(frame) = frame else {
+            return;
+        };
+        // A resize raced the acquire: the frame is at the old extent;
+        // discard it (the pump reconfigures + reacquires).
+        {
+            let Some(gpu) = self.gpu.as_ref() else {
+                self.client.discard(frame);
+                return;
+            };
+            if (frame.texture.width(), frame.texture.height())
+                != (gpu.surface_config.width, gpu.surface_config.height)
+            {
+                self.client.discard(frame);
+                return;
+            }
         }
 
         // 1. Drive Slint timers/animations
@@ -578,64 +640,31 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
             &mut self.rgba_buf,
         );
 
-        // 4. Blit to screen
-        let blit = self.blit.get_or_insert_with(|| {
-            BlitPipeline::new(&self.device, self.surface_config.format, phys_w, phys_h)
-        });
-
-        blit.update(&self.queue, &self.rgba_buf);
-
-        // Acquire a swapchain frame, recovering from a stale surface.
-        // After a window resize on X11/Vulkan the surface reports
-        // `Outdated` and stays that way until it is reconfigured - even
-        // reconfiguring to the same size clears the flag, so a plain
-        // skip-the-frame would freeze the editor on its pre-resize image
-        // with the desktop showing through the newly exposed area. On
-        // `Outdated` / `Lost` / `Validation` we reconfigure and retry;
-        // `Timeout` / `Occluded` are transient, so we skip this frame.
-        let acquire_start = std::time::Instant::now();
-        let mut acquired = None;
-        let mut transient_skip = false;
-        for _ in 0..2 {
-            match self.surface.get_current_texture() {
-                wgpu::CurrentSurfaceTexture::Success(frame)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                    acquired = Some(frame);
-                    break;
-                }
-                wgpu::CurrentSurfaceTexture::Outdated
-                | wgpu::CurrentSurfaceTexture::Lost
-                | wgpu::CurrentSurfaceTexture::Validation => {
-                    self.surface.configure(&self.device, &self.surface_config);
-                }
-                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    transient_skip = true;
-                    break;
-                }
-            }
-        }
-        self.pacer.record_acquire(acquire_start.elapsed());
-        if transient_skip {
-            return;
-        }
-        let Some(frame) = acquired else {
+        // 5. Blit to screen
+        let Some(gpu) = self.gpu.as_mut() else {
+            self.client.discard(frame);
             return;
         };
+        let blit = self.blit.get_or_insert_with(|| {
+            BlitPipeline::new(&gpu.device, gpu.surface_config.format, phys_w, phys_h)
+        });
+
+        blit.update(&gpu.queue, &self.rgba_buf);
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
+        let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         blit.render(
-            &self.queue,
+            &gpu.queue,
             &mut encoder,
             &view,
-            self.surface_config.width,
-            self.surface_config.height,
+            gpu.surface_config.width,
+            gpu.surface_config.height,
         );
-        self.queue.submit(iter::once(encoder.finish()));
-        frame.present();
+        gpu.queue.submit(iter::once(encoder.finish()));
+        self.client.present(frame);
     }
 
     // `_window` is unused on macOS / Linux - only the Windows
@@ -756,7 +785,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     // `on_frame`'s pending path applies one coalesced
                     // window+surface resize per tick instead.
                     if correct.is_some() {
-                        #[cfg(not(target_os = "linux"))]
+                        // See the egui editor: push-back only on macOS -
+                        // Bitwig (Linux) and REAPER-maximize (Windows)
+                        // both fight it; content clamps + letterboxes.
+                        #[cfg(target_os = "macos")]
                         {
                             // On Linux, hosts that bypass size negotiation
                             // (Bitwig) ignore the request and react by
@@ -931,20 +963,17 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 // set_platform is per-thread, so re-register here.
                 platform::ensure_platform();
 
-                // Build wgpu. Any failure returns a `Dead` handler rather than
-                // panicking - the open closure runs on baseview's thread, so a
-                // panic would unwind across its FFI boundary and crash the host.
+                // Spawn the surface pump. Failure returns a `Dead` handler
+                // rather than panicking - the open closure runs on baseview's
+                // thread, so a panic would unwind across its FFI boundary and
+                // crash the host. GPU init itself happens on the pump (off
+                // this thread on Windows); `adopt_gpu` picks up the result.
                 let phys_w = truce_gui::to_physical_px(lw, scale);
                 let phys_h = truce_gui::to_physical_px(lh, scale);
                 let device_lost = Arc::new(AtomicBool::new(false));
-                let Some(SlintWgpu {
-                    device,
-                    queue,
-                    surface,
-                    surface_config,
-                }) = build_wgpu(window, phys_w, phys_h, device_lost.clone())
+                let Some(pump) = spawn_wgpu_pump(window, phys_w, phys_h, device_lost.clone())
                 else {
-                    log::error!("truce-slint: failed to create wgpu state; editor disabled");
+                    log::error!("truce-slint: failed to spawn surface pump; editor disabled");
                     return SlintHandler::Dead;
                 };
 
@@ -973,10 +1002,9 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     sync_fn,
                     state: typed_ctx,
                     blit: None,
-                    device,
-                    queue,
-                    surface,
-                    surface_config,
+                    client: pump.client(),
+                    pump,
+                    gpu: None,
                     px_buf: Vec::new(),
                     rgba_buf: Vec::new(),
                     width: lw,

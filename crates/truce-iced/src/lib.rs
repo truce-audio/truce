@@ -40,6 +40,11 @@ pub mod param_cache;
 pub mod param_message;
 #[cfg(not(target_os = "ios"))]
 pub mod platform;
+// Surface pump: owns the wgpu surface + every blocking swapchain call
+// (threaded on Windows, inline elsewhere). Per-wgpu-version copy of
+// `truce_gpu::pump`.
+#[cfg(not(target_os = "ios"))]
+mod pump;
 // Surface-agnostic iced render pipeline (`IcedRuntime`/`RenderState`/
 // `IcedProgram`) shared by the desktop and iOS editors.
 mod runtime;

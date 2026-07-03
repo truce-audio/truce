@@ -45,6 +45,7 @@ homepage = "https://github.com/truce-audio/truce"
 [dependencies]
 truce-core = { version = "1.0.4", path = "../truce-core" }
 truce-gui = { version = "1.0.4", path = "../truce-gui", default-features = false }
+truce-gpu = { version = "1.0.4", path = "../truce-gpu" }
 truce-params = { version = "1.0.4", path = "../truce-params" }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 raw-window-handle = "0.5"

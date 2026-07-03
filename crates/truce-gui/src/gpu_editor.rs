@@ -23,9 +23,12 @@ use crate::platform::ParentWindow;
 
 /// GPU-accelerated editor.
 ///
-/// On `open()`, creates a baseview child window with a wgpu surface.
-/// If wgpu adapter / surface acquisition fails, `from_window` returns
-/// `None` and `on_frame` becomes a no-op for that session.
+/// On `open()`, creates a baseview child window and a surface pump
+/// (see `truce_gpu::pump`): GPU init runs there - off the host's GUI
+/// thread on Windows, where a stalled driver used to freeze the DAW -
+/// and the backend is adopted on a later frame. If init fails,
+/// `on_frame` stays a no-op for that session (blank editor, live
+/// host).
 pub struct GpuEditor<P: Params> {
     inner: Arc<Mutex<BuiltinEditor<P>>>,
     size: (u32, u32),
@@ -100,6 +103,9 @@ impl<P: Params + 'static> GpuEditor<P> {
 
 struct GpuWindowHandler<P: Params> {
     inner: Arc<Mutex<BuiltinEditor<P>>>,
+    /// Owns the wgpu surface + every blocking swapchain call; the
+    /// backend below is its init product, adopted in `on_frame`.
+    pump: Option<truce_gpu::pump::SurfacePump<WgpuBackend>>,
     gpu: Option<WgpuBackend>,
     /// Canonical baseview → `InputEvent` translator. Handles cursor
     /// tracking, double-click synthesis, and line→pixel scroll
@@ -122,6 +128,17 @@ struct GpuWindowHandler<P: Params> {
 
 impl<P: Params + 'static> GpuWindowHandler<P> {
     fn on_frame_inner(&mut self, window: &mut Window) {
+        // Adopt the pump's backend once GPU init lands (first frame on
+        // macOS / Linux where init ran inline; whenever the pump
+        // thread finishes on Windows - the editor is blank until then
+        // and the host stays responsive throughout).
+        if self.gpu.is_none()
+            && let Some(pump) = &mut self.pump
+            && let Some(mut backend) = pump.take_init()
+        {
+            backend.set_pump(pump.client());
+            self.gpu = Some(backend);
+        }
         // Skip the whole frame while the editor isn't presentable:
         // detached / occluded on macOS, host child window hidden /
         // minimized on Windows (no-op on Linux). On Windows this runs
@@ -183,7 +200,11 @@ impl<P: Params + 'static> GpuWindowHandler<P> {
 
                 // Compositor pacing veto - scale/resize above still
                 // apply during a hold; only the render + present skip.
-                if self.pacer.should_hold() {
+                // Windows skips the veto: the pump pre-acquires frames
+                // off-thread and `try_take_frame` returning `None`
+                // already paces paints, so holding here only adds
+                // latency.
+                if cfg!(not(target_os = "windows")) && self.pacer.should_hold() {
                     return;
                 }
                 inner.render_to(gpu);
@@ -376,11 +397,25 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 // Display scale never exceeds 4.0 in practice.
                 #[allow(clippy::cast_possible_truncation)]
                 let scale = system_scale as f32;
-                let gpu = unsafe { WgpuBackend::from_window(window, size.0, size.1, scale) };
+                // Surface + GPU init live with the pump; the backend
+                // arrives via `take_init` in `on_frame`. The panic
+                // flag is unused here (no device-loss rebuild in this
+                // handler) - a dead pump just leaves the editor blank.
+                let device_lost = Arc::new(AtomicBool::new(false));
+                let pump = unsafe {
+                    truce_gpu::pump::SurfacePump::spawn(
+                        window,
+                        &device_lost,
+                        Box::new(move |_, adapter, surface| {
+                            WgpuBackend::pump_init(adapter, surface, size.0, size.1, scale)
+                        }),
+                    )
+                };
 
                 GpuWindowHandler {
                     inner,
-                    gpu,
+                    pump,
+                    gpu: None,
                     translator: crate::interaction::BaseviewTranslator::default(),
                     current_size: size,
                     scale: scale_handle,
