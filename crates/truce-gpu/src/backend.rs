@@ -273,11 +273,20 @@ struct DrawBatch {
 pub struct WgpuBackend {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    /// None for headless mode (snapshot testing) or when using the
-    /// standalone `new()` constructor (caller owns the surface). When
+    /// None for headless mode (snapshot testing), when using the
+    /// standalone `new()` constructor (caller owns the surface), or
+    /// when a pump owns the surface (see [`Self::pump`]). When
     /// present, `present()` renders to the surface frame.
     surface: Option<wgpu::Surface<'static>>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
+    /// When set (windowed editors via `pump_init` + `set_pump`), the
+    /// surface lives with a `crate::pump::SurfacePump` and acquire /
+    /// configure / present route through this client - on Windows
+    /// that keeps every blocking swapchain call off the host's GUI
+    /// thread. `surface` is `None` in this mode; `surface_config`
+    /// stays as the local size/format bookkeeping copy.
+    #[cfg(not(target_os = "ios"))]
+    pump: Option<crate::pump::PumpClient>,
     pipeline: wgpu::RenderPipeline,
     /// Format of the eventual color target. Used to (re)build the MSAA
     /// texture on resize / `begin_frame` size changes.
@@ -349,8 +358,6 @@ impl WgpuBackend {
     ///
     /// Panics if the embedded font fails to parse (a bug in the
     /// bundled font asset, never user input).
-    // Surface dimensions in pixels stay below 2^23, well within f32.
-    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub fn from_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -364,64 +371,34 @@ impl WgpuBackend {
             force_fallback_adapter: false,
         }))
         .ok()?;
+        let (mut backend, device, config) =
+            Self::pump_init(&adapter, &surface, logical_w, logical_h, scale)?;
+        surface.configure(&device, &config);
+        backend.surface = Some(surface);
+        Some(backend)
+    }
 
-        // Request what the adapter actually supports rather than the
-        // fixed `downlevel_defaults` cap (2048 max texture dim). On a
-        // desktop GPU that's typically 8192-16384, which is needed for
-        // any editor whose Retina-physical canvas exceeds 2048px on
-        // either axis (the GUI Zoo's tall layouts). The defensive
-        // clamp below still guards against requesting a surface
-        // larger than whatever the device ended up granting.
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("truce-gpu"),
-            required_features: wgpu::Features::empty(),
-            required_limits: adapter.limits(),
-            experimental_features: wgpu::ExperimentalFeatures::default(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        }))
-        .ok()?;
-        let device = Arc::new(device);
-        let queue = Arc::new(queue);
-
-        let max_dim = device.limits().max_texture_dimension_2d.max(1);
-        let width = truce_gui_types::to_physical_px(logical_w, f64::from(scale)).clamp(1, max_dim);
-        let height = truce_gui_types::to_physical_px(logical_h, f64::from(scale)).clamp(1, max_dim);
-
-        // Prefer `Rgba8Unorm` so the surface format matches
-        // `read_pixels` and the headless screenshot path; fall back to
-        // any non-sRGB format the surface advertises, then to whatever
-        // the surface lists first. Keeping the format aligned across
-        // windowed and headless paths means the same shader-side
-        // gamma/blend assumptions hold.
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .find(|f| **f == wgpu::TextureFormat::Rgba8Unorm)
-            .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()))
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width,
-            height,
-            // Windows: `on_frame` runs on the host's GUI thread; a Fifo
-            // (AutoVsync) present blocks that thread when the child-window
-            // swapchain backs up, freezing the host (REAPER) and risking a
-            // GPU-watchdog (TDR) hang. Non-blocking present elsewhere keeps
-            // vsync.
-            #[cfg(target_os = "windows")]
-            present_mode: wgpu::PresentMode::AutoNoVsync,
-            #[cfg(not(target_os = "windows"))]
-            present_mode: wgpu::PresentMode::AutoVsync,
-            desired_maximum_frame_latency: 2,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
-            view_formats: vec![],
-        };
-        surface.configure(&device, &surface_config);
+    /// Everything downstream of device + surface-configuration
+    /// selection: pipeline, glyph atlas, viewport uniform, MSAA
+    /// target. Shared by [`Self::from_surface`] (surface owned by the
+    /// backend) and [`Self::pump_init`] (surface owned by the pump).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the embedded font fails to parse (a bug in the
+    /// bundled font asset, never user input).
+    // Surface dimensions in pixels stay below 2^23, well within f32.
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+    fn from_parts(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        surface: Option<wgpu::Surface<'static>>,
+        surface_config: wgpu::SurfaceConfiguration,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Self {
+        let surface_format = surface_config.format;
 
         // MSAA texture
         let msaa_texture = Self::create_msaa_texture(&device, &surface_config);
@@ -609,11 +586,13 @@ impl WgpuBackend {
             fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
                 .expect("failed to parse embedded font");
 
-        Some(Self {
+        Self {
             device,
             queue,
-            surface: Some(surface),
+            surface,
             surface_config: Some(surface_config),
+            #[cfg(not(target_os = "ios"))]
+            pump: None,
             pipeline,
             target_format: surface_format,
             msaa_texture,
@@ -637,7 +616,100 @@ impl WgpuBackend {
             width,
             height,
             scale,
-        })
+        }
+    }
+
+    /// Device + surface-configuration selection given an adapter, for
+    /// a surface the backend does NOT take ownership of. Used by
+    /// [`Self::from_surface`] (which then attaches the surface) and by
+    /// `crate::pump::SurfacePump` init closures, where the surface
+    /// stays with the pump: acquire / configure / present route
+    /// through the pump's client, which on Windows runs them on the
+    /// pump thread instead of the host's GUI thread. Pump users call
+    /// [`Self::set_pump`] with the pump's client after adopting the
+    /// backend. Does not configure the surface.
+    pub fn pump_init(
+        adapter: &wgpu::Adapter,
+        surface: &wgpu::Surface<'static>,
+        logical_w: u32,
+        logical_h: u32,
+        scale: f32,
+    ) -> Option<(Self, wgpu::Device, wgpu::SurfaceConfiguration)> {
+        // Request what the adapter actually supports rather than the
+        // fixed `downlevel_defaults` cap (2048 max texture dim). On a
+        // desktop GPU that's typically 8192-16384, which is needed for
+        // any editor whose Retina-physical canvas exceeds 2048px on
+        // either axis (the GUI Zoo's tall layouts). The defensive
+        // clamp below still guards against requesting a surface
+        // larger than whatever the device ended up granting.
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("truce-gpu"),
+            required_features: wgpu::Features::empty(),
+            required_limits: adapter.limits(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
+        .ok()?;
+        let plain_device = device.clone();
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
+        let max_dim = device.limits().max_texture_dimension_2d.max(1);
+        let width = truce_gui_types::to_physical_px(logical_w, f64::from(scale)).clamp(1, max_dim);
+        let height = truce_gui_types::to_physical_px(logical_h, f64::from(scale)).clamp(1, max_dim);
+
+        // Prefer `Rgba8Unorm` so the surface format matches
+        // `read_pixels` and the headless screenshot path; fall back to
+        // any non-sRGB format the surface advertises, then to whatever
+        // the surface lists first. Keeping the format aligned across
+        // windowed and headless paths means the same shader-side
+        // gamma/blend assumptions hold.
+        let surface_caps = surface.get_capabilities(adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| **f == wgpu::TextureFormat::Rgba8Unorm)
+            .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()))
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            // Windows: a Fifo (AutoVsync) present blocks when the
+            // child-window swapchain backs up - freezing the host
+            // (REAPER) when it lands on the GUI thread and risking a
+            // GPU-watchdog (TDR) hang. Non-blocking present there;
+            // elsewhere keeps vsync.
+            #[cfg(target_os = "windows")]
+            present_mode: wgpu::PresentMode::AutoNoVsync,
+            #[cfg(not(target_os = "windows"))]
+            present_mode: wgpu::PresentMode::AutoVsync,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+        };
+
+        let backend = Self::from_parts(
+            device,
+            queue,
+            None,
+            surface_config.clone(),
+            width,
+            height,
+            scale,
+        );
+        Some((backend, plain_device, surface_config))
+    }
+
+    /// Attach the pump client the backend's acquire / configure /
+    /// present calls route through. Pair of [`Self::pump_init`].
+    #[cfg(not(target_os = "ios"))]
+    pub fn set_pump(&mut self, client: crate::pump::PumpClient) {
+        self.pump = Some(client);
     }
 
     /// Create a GPU backend from a raw `CAMetalLayer` pointer (macOS).
@@ -669,34 +741,12 @@ impl WgpuBackend {
         Self::from_surface(&instance, surface, logical_w, logical_h, scale)
     }
 
-    /// Create a GPU backend from a baseview window handle. baseview
-    /// is the macOS / Windows / Linux windowing layer - iOS does not
-    /// compile this constructor (the iOS editor builds its surface
-    /// directly from a `CAMetalLayer` attached to a `UIView`).
-    ///
-    /// # Safety
-    /// The window must remain valid for the lifetime of the backend.
-    #[cfg(not(target_os = "ios"))]
-    #[must_use]
-    pub unsafe fn from_window(
-        window: &baseview::Window,
-        logical_w: u32,
-        logical_h: u32,
-        scale: f32,
-    ) -> Option<Self> {
-        unsafe {
-            let instance = wgpu::Instance::new(crate::platform::editor_instance_descriptor());
-
-            let surface = crate::platform::create_wgpu_surface(&instance, window)?;
-            Self::from_surface(&instance, surface, logical_w, logical_h, scale)
-        }
-    }
-
     /// Build a standalone `WgpuBackend` that records into encoders
     /// supplied per-frame by the caller.
     ///
-    /// Unlike [`Self::from_surface`] / `from_metal_layer` / [`Self::from_window`],
-    /// this constructor does **not** own a `wgpu::Surface` or manage
+    /// Unlike [`Self::from_surface`] / `from_metal_layer` / the
+    /// pump path ([`Self::pump_init`]), this constructor does **not**
+    /// own or reach a `wgpu::Surface` or manage
     /// frame acquisition. The caller is expected to have its own render
     /// loop, allocate command encoders, and present - this backend only
     /// supplies the 2D widget pipeline, glyph atlas, and lyon-tessellated
@@ -723,8 +773,8 @@ impl WgpuBackend {
     /// a subsequent `begin_frame(logical_w, logical_h)` exceeds the
     /// seed, the MSAA texture is reallocated transparently.
     ///
-    /// Matches the coordinate contract of [`Self::from_surface`] /
-    /// [`Self::from_window`]: draw calls and event coordinates are logical
+    /// Matches the coordinate contract of [`Self::from_surface`]:
+    /// draw calls and event coordinates are logical
     /// points; the backend multiplies by `scale` internally when
     /// rasterizing.
     ///
@@ -925,6 +975,8 @@ impl WgpuBackend {
             queue,
             surface: None,
             surface_config: None,
+            #[cfg(not(target_os = "ios"))]
+            pump: None,
             pipeline,
             target_format,
             msaa_texture,
@@ -1180,6 +1232,18 @@ impl WgpuBackend {
             config.width = new_w;
             config.height = new_h;
             surface.configure(&self.device, config);
+            self.msaa_texture = Self::create_msaa_texture(&self.device, config);
+        }
+        // Pump-managed surface: the pump reconfigures (off the GUI
+        // thread on Windows); keep the local config + MSAA in step.
+        #[cfg(not(target_os = "ios"))]
+        if self.surface.is_none()
+            && let Some(ref pump) = self.pump
+            && let Some(ref mut config) = self.surface_config
+        {
+            config.width = new_w;
+            config.height = new_h;
+            pump.resize(new_w, new_h);
             self.msaa_texture = Self::create_msaa_texture(&self.device, config);
         }
 
@@ -1578,6 +1642,43 @@ impl RenderBackend for WgpuBackend {
     }
 
     fn present(&mut self) {
+        // Pump-managed surface: paint into the pump's pre-acquired
+        // frame and hand it back for presentation. The frame is taken
+        // BEFORE any queue work (atlas upload): during resize churn no
+        // frame is available (the pump is busy reconfiguring), and
+        // skipping keeps GUI-thread submissions from contending on
+        // wgpu's internal locks with the pump's in-flight configure.
+        // A skip loses nothing - the editor re-records its geometry
+        // every paint.
+        #[cfg(not(target_os = "ios"))]
+        if let Some(pump) = self.pump.clone() {
+            let frame = pump.try_take_frame();
+            self.last_acquire_wait = pump.last_acquire_wait();
+            let Some(frame) = frame else {
+                return;
+            };
+            // A resize raced the acquire: this frame is at the old
+            // extent. Discard it (the pump reconfigures + reacquires).
+            let expected = self.surface_config.as_ref().map(|c| (c.width, c.height));
+            if expected != Some((frame.texture.width(), frame.texture.height())) {
+                pump.discard(frame);
+                return;
+            }
+            // Upload pending glyph atlas writes now that the paint is
+            // definitely happening.
+            self.flush_atlas();
+            let frame_view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            if self.vertices.is_empty() {
+                self.clear_only_pass(&frame_view);
+            } else {
+                self.render_pass(&frame_view);
+            }
+            pump.present(frame);
+            return;
+        }
+
         // Upload any pending glyph atlas writes (before borrowing surface)
         self.flush_atlas();
 
@@ -2002,6 +2103,8 @@ impl WgpuBackend {
             queue,
             surface: None,
             surface_config: None,
+            #[cfg(not(target_os = "ios"))]
+            pump: None,
             pipeline,
             target_format: texture_format,
             msaa_texture: msaa_view,

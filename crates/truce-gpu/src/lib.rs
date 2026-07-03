@@ -12,5 +12,7 @@
 
 mod backend;
 pub mod platform;
+#[cfg(not(target_os = "ios"))]
+pub mod pump;
 
 pub use backend::WgpuBackend;

@@ -9,16 +9,13 @@
 use std::sync::Arc;
 
 use crate::iced::{Event, Size};
-use iced_wgpu::wgpu;
 use truce_core::editor::{Editor, PluginContext, ResizeCorrector};
 use truce_gui::EditorScale;
 use truce_gui::layout::GridLayout;
 use truce_params::Params;
 
 use crate::param_cache::ParamCache;
-use crate::runtime::{
-    AutoPlugin, IcedPlugin, IcedProgram, IcedRuntime, editor_backends, panic_message,
-};
+use crate::runtime::{AutoPlugin, IcedPlugin, IcedProgram, IcedRuntime, panic_message};
 
 // IcedEditor - main entry point, implements truce_core::Editor
 
@@ -417,21 +414,17 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     // even if the idle gate sees no other change.
                     self.runtime.force_render = true;
                     let scale = self.scale.get();
+                    let pw = truce_gui::to_physical_px(new_w, scale);
+                    let ph = truce_gui::to_physical_px(new_h, scale);
                     if let Some(ref mut render) = self.runtime.render {
-                        let pw = truce_gui::to_physical_px(new_w, scale);
-                        let ph = truce_gui::to_physical_px(new_h, scale);
                         #[allow(clippy::cast_possible_truncation)]
                         let scale_f32 = scale as f32;
                         render.viewport = iced_graphics::Viewport::with_physical_size(
                             Size::new(pw, ph),
                             scale_f32,
                         );
-                        render.surface_config.width = pw;
-                        render.surface_config.height = ph;
-                        render
-                            .surface
-                            .configure(&render.device, &render.surface_config);
                     }
+                    self.runtime.reconfigure_surface_px(pw, ph);
                 }
             }
             self.runtime.tick();
@@ -565,11 +558,17 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                             // re-enters the host's own resize dispatch
                             // (VST3 forbids `resizeView` inside `onSize`;
                             // Ableton hangs on it).
-                            #[cfg(not(target_os = "linux"))]
+                            // Never push back on Linux OR Windows - see
+                            // the egui editor: Bitwig grows the window in
+                            // response (loop) and REAPER re-asserts a
+                            // maximized FX window forever. Content clamps
+                            // and letterboxes instead; macOS keeps the
+                            // push-back.
+                            #[cfg(target_os = "macos")]
                             {
                                 self.pending_correct = Some((rw, rh));
                             }
-                            #[cfg(target_os = "linux")]
+                            #[cfg(not(target_os = "macos"))]
                             let _ = (rw, rh);
                             self.pending_size.store(
                                 (u64::from(fw) << 32) | u64::from(fh),
@@ -577,20 +576,24 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                             );
                         }
                     }
-                    if let Some(ref mut render) = runtime.render {
+                    {
                         let pw = info.physical_size().width;
                         let ph = info.physical_size().height;
-                        render.surface_config.width = pw.max(1);
-                        render.surface_config.height = ph.max(1);
-                        render
-                            .surface
-                            .configure(&render.device, &render.surface_config);
-                        #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
-                        let scale_f32 = info.scale() as f32;
-                        render.viewport = iced_graphics::Viewport::with_physical_size(
-                            Size::new(pw, ph),
-                            scale_f32,
-                        );
+                        if let Some(ref mut render) = runtime.render {
+                            #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
+                            let scale_f32 = info.scale() as f32;
+                            render.viewport = iced_graphics::Viewport::with_physical_size(
+                                Size::new(pw, ph),
+                                scale_f32,
+                            );
+                        }
+                        // Routed through the pump's client: on Windows the
+                        // reconfigure is queued latest-wins to the pump
+                        // thread, so this inline call can no longer flood
+                        // the driver with buffer destroy/create work
+                        // mid-drag (previously hung the AMD driver in
+                        // `NtGdiDdDDIDestroyAllocation2`).
+                        runtime.reconfigure_surface_px(pw, ph);
                     }
                     // The reconfigured surface must be repainted, but
                     // this path deliberately leaves `tick()`'s scale diff
@@ -699,13 +702,12 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                 };
                 let mut runtime = IcedRuntime::new((w, h), scale.clone(), font, program);
 
-                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                    backends: editor_backends(),
-                    ..Default::default()
-                });
-                let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) };
-                if let Some(surface) = surface {
-                    runtime.init_render(instance, surface);
+                // GPU init + every blocking swapchain call run on the
+                // surface pump (off this thread on Windows, inline
+                // elsewhere); `tick()` adopts the pipeline when init
+                // lands. On failure the editor stays blank, host alive.
+                if !runtime.spawn_pump(window) {
+                    log::error!("truce-iced: failed to spawn surface pump; editor disabled");
                 }
 
                 IcedBaseviewHandler::<P, M> {

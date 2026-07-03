@@ -16,7 +16,7 @@ use raw_window_handle::HasRawWindowHandle;
 pub use truce_gui::platform::{ParentWindow, note_linux_scale_factor, query_backing_scale};
 
 #[cfg(target_os = "windows")]
-fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
+pub(crate) fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
     unsafe extern "system" {
         fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
     }

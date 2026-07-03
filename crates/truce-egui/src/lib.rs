@@ -26,6 +26,8 @@
 pub mod editor;
 pub mod font;
 pub mod platform;
+#[cfg(target_os = "windows")]
+mod render_thread;
 pub mod renderer;
 #[cfg(not(target_os = "ios"))]
 mod screenshot;

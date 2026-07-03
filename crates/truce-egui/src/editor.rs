@@ -15,7 +15,10 @@ use truce_core::editor::{
 use truce_params::Params;
 
 use crate::platform::ParentWindow;
-use crate::renderer::{EguiRenderer, RendererInit};
+#[cfg(target_os = "windows")]
+use crate::render_thread::{FramePacket, RenderThread};
+#[cfg(not(target_os = "windows"))]
+use crate::renderer::EguiRenderer;
 use truce_gui::EditorScale;
 
 /// Trait for stateful egui UI implementations.
@@ -332,6 +335,15 @@ fn unpack_size(packed: u64) -> (u32, u32) {
 
 // Baseview WindowHandler - owns the egui frame loop + wgpu renderer
 
+/// Whether paints and swapchain reconfigures must be deferred around
+/// size churn (and paced to the compositor) to protect the thread
+/// running `on_frame`. True on the platforms that render inline on
+/// the host's GUI thread; on Windows the render thread owns every
+/// blocking wgpu call, so the GUI thread can apply resizes and paint
+/// straight through a drag - deferring there only delays the visible
+/// reflow.
+const GUI_THREAD_BLOCKS_ON_GPU: bool = cfg!(not(target_os = "windows"));
+
 /// Ceiling on how long a pending resize may be debounced during a
 /// continuous drag (see `EguiWindowHandler::resize_seen`). ~4
 /// reconfigures per second is what the slowest measured driver path
@@ -358,12 +370,20 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     context: PluginContext<P>,
     egui_ctx: egui::Context,
+    /// wgpu renderer, owned inline on the GUI thread. macOS / Linux
+    /// only - their drivers don't exhibit the unbounded blocking that
+    /// motivated the Windows render thread, and macOS ties Metal layer
+    /// updates to the main thread anyway.
+    #[cfg(not(target_os = "windows"))]
     renderer: Option<EguiRenderer>,
-    /// Set when GPU init outlived `from_window`'s bounded wait and is
-    /// still running on its worker thread (Windows). Polled at the top
-    /// of `on_frame`; the renderer is adopted if init ever completes.
-    /// Until then the editor is blank but the host stays responsive.
-    pending_renderer: Option<std::sync::mpsc::Receiver<Option<EguiRenderer>>>,
+    /// Windows: the renderer lives on a dedicated render thread, which
+    /// owns every blocking wgpu call (init, configure, acquire,
+    /// present) so a stalled graphics driver can't freeze the host's
+    /// GUI thread. `on_frame` ships egui output to it and never
+    /// blocks. `None` means the thread failed to spawn or the window
+    /// opened zero-sized; the editor stays blank.
+    #[cfg(target_os = "windows")]
+    render_thread: Option<RenderThread>,
     pending_events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
     start_time: std::time::Instant,
@@ -466,13 +486,20 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         let device_lost = Arc::new(AtomicBool::new(false));
         let phys_w = truce_gui::to_physical_px(self.size.0, f64::from(self.last_applied_scale));
         let phys_h = truce_gui::to_physical_px(self.size.1, f64::from(self.last_applied_scale));
-        self.renderer = None;
-        match unsafe { EguiRenderer::from_window(window, phys_w, phys_h, device_lost.clone()) } {
-            RendererInit::Ready(renderer) => {
-                self.renderer = renderer;
-                self.pending_renderer = None;
-            }
-            RendererInit::Deferred(rx) => self.pending_renderer = Some(rx),
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.renderer = None;
+            self.renderer =
+                unsafe { EguiRenderer::from_window(window, phys_w, phys_h, device_lost.clone()) };
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // Dropping the handle shuts the old thread down (bounded
+            // join, else detach); the fresh thread re-runs GPU init
+            // against the same child HWND.
+            self.render_thread = None;
+            self.render_thread = crate::render_thread::hwnd_for(window)
+                .and_then(|hwnd| RenderThread::spawn(hwnd, phys_w, phys_h, device_lost.clone()));
         }
         let egui_ctx = egui::Context::default();
         egui_ctx.set_visuals(self.visuals.clone());
@@ -482,32 +509,100 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         self.egui_ctx = egui_ctx;
         self.device_lost = device_lost;
     }
-    /// Poll a deferred GPU init (see [`Self::pending_renderer`]) and
-    /// adopt the renderer once the worker delivers it. The worker
-    /// configured the surface at open-time dimensions; re-apply the
-    /// current size in case the host resized while init was pending.
-    fn adopt_pending_renderer(&mut self) {
-        let Some(rx) = &self.pending_renderer else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(Some(mut renderer)) => {
-                self.pending_renderer = None;
-                let scale = self.scale.get();
-                renderer.resize(
-                    truce_gui::to_physical_px(self.size.0, scale),
-                    truce_gui::to_physical_px(self.size.1, scale),
-                );
-                self.renderer = Some(renderer);
-                self.force_paint = true;
-                log::info!("egui gpu init completed after deferral; adopting renderer");
-            }
-            Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.pending_renderer = None;
-                log::error!("egui gpu init failed after deferral; editor stays blank");
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+    /// Notice the render thread finishing its GPU init. Frames are
+    /// only run/submitted once it's ready (`painter_ready`), so the
+    /// first observation forces a paint of the so-far-blank window.
+    /// Any resize that happened during init is already queued in the
+    /// thread's mailbox and applies before that paint.
+    #[cfg(target_os = "windows")]
+    fn adopt_ready_renderer(&mut self) {
+        if let Some(rt) = &mut self.render_thread
+            && rt.take_ready()
+        {
+            self.force_paint = true;
+            log::info!("egui gpu init completed; render thread ready");
         }
+    }
+
+    /// Whether a frame can actually be painted this tick: the inline
+    /// renderer exists (macOS / Linux) or the render thread finished
+    /// GPU init (Windows).
+    #[cfg(not(target_os = "windows"))]
+    fn painter_ready(&self) -> bool {
+        self.renderer.is_some()
+    }
+    #[cfg(target_os = "windows")]
+    fn painter_ready(&self) -> bool {
+        self.render_thread
+            .as_ref()
+            .is_some_and(RenderThread::is_ready)
+    }
+
+    /// Reconfigure the wgpu surface to a physical pixel size. Inline
+    /// (blocking) on macOS / Linux; queued latest-wins to the render
+    /// thread on Windows, where DXGI `ResizeBuffers` can block in the
+    /// driver until the GPU queue drains.
+    #[cfg(not(target_os = "windows"))]
+    fn painter_resize(&mut self, phys_w: u32, phys_h: u32) {
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.resize(phys_w, phys_h);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    fn painter_resize(&mut self, phys_w: u32, phys_h: u32) {
+        if let Some(rt) = &self.render_thread {
+            rt.resize(phys_w, phys_h);
+        }
+    }
+
+    /// Paint one frame of egui output: render inline (macOS / Linux)
+    /// or submit to the render thread (Windows), which merges texture
+    /// deltas if the previous frame was dropped unconsumed.
+    // Owned args match the Windows variant, which moves them into the
+    // render thread's `FramePacket`; this inline variant only borrows.
+    #[allow(clippy::needless_pass_by_value)]
+    #[cfg(not(target_os = "windows"))]
+    fn painter_paint(
+        &mut self,
+        textures_delta: egui::TexturesDelta,
+        primitives: Vec<egui::ClippedPrimitive>,
+        pixels_per_point: f32,
+    ) {
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.render(&textures_delta, &primitives, pixels_per_point);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    fn painter_paint(
+        &mut self,
+        textures_delta: egui::TexturesDelta,
+        primitives: Vec<egui::ClippedPrimitive>,
+        pixels_per_point: f32,
+    ) {
+        if let Some(rt) = &self.render_thread {
+            rt.submit(FramePacket {
+                textures_delta,
+                primitives,
+                pixels_per_point,
+            });
+        }
+    }
+
+    /// How long the most recent swapchain acquire blocked - measured
+    /// inline on macOS / Linux, reported back from the render thread
+    /// on Windows (one paint delayed, which the pacer's decayed-max
+    /// estimate absorbs).
+    #[cfg(not(target_os = "windows"))]
+    fn painter_acquire_wait(&self) -> std::time::Duration {
+        self.renderer
+            .as_ref()
+            .map_or(std::time::Duration::ZERO, EguiRenderer::acquire_wait)
+    }
+    #[cfg(target_os = "windows")]
+    fn painter_acquire_wait(&self) -> std::time::Duration {
+        self.render_thread
+            .as_ref()
+            .map_or(std::time::Duration::ZERO, RenderThread::last_acquire_wait)
     }
 
     /// Apply a pending resize: `NSView` frame (baseview's
@@ -516,8 +611,8 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     /// hosts it for a frame and Metal could draw against an
     /// undersized drawable.
     fn apply_resize(
+        &mut self,
         window: &mut Window,
-        renderer: Option<&mut EguiRenderer>,
         new_size: (u32, u32),
         scale: f64,
         surface_phys: Option<(u32, u32)>,
@@ -538,18 +633,16 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
                 f64::from(new_size.1),
             ));
         }
-        if let Some(renderer) = renderer {
-            // Prefer the window's authoritative physical extent (host-driven
-            // `Resized`); fall back to `to_physical_px(logical)` for
-            // programmatic resizes and platforms that don't report it.
-            let (phys_w, phys_h) = surface_phys.unwrap_or_else(|| {
-                (
-                    truce_gui::to_physical_px(new_size.0, scale),
-                    truce_gui::to_physical_px(new_size.1, scale),
-                )
-            });
-            renderer.resize(phys_w, phys_h);
-        }
+        // Prefer the window's authoritative physical extent (host-driven
+        // `Resized`); fall back to `to_physical_px(logical)` for
+        // programmatic resizes and platforms that don't report it.
+        let (phys_w, phys_h) = surface_phys.unwrap_or_else(|| {
+            (
+                truce_gui::to_physical_px(new_size.0, scale),
+                truce_gui::to_physical_px(new_size.1, scale),
+            )
+        });
+        self.painter_resize(phys_w, phys_h);
     }
 
     // `(u32, u32)` editor sizes widen to `f32` for egui's screen rect.
@@ -561,7 +654,9 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     /// means idle.
     #[allow(clippy::cast_precision_loss)]
     fn run_frame(&mut self) -> Option<std::time::Duration> {
-        let renderer = self.renderer.as_mut()?;
+        if !self.painter_ready() {
+            return None;
+        }
 
         // Pick up host-driven scale changes (CLAP `set_scale`, VST3
         // `IPlugViewContentScaleSupport`) that arrived via the editor's
@@ -571,7 +666,7 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         if let Some(cur_scale) = self.scale.take_change(&mut self.last_applied_scale) {
             let phys_w = truce_gui::to_physical_px(self.size.0, f64::from(cur_scale));
             let phys_h = truce_gui::to_physical_px(self.size.1, f64::from(cur_scale));
-            renderer.resize(phys_w, phys_h);
+            self.painter_resize(phys_w, phys_h);
         }
 
         let ppp = self.last_applied_scale;
@@ -622,9 +717,9 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             .egui_ctx
             .tessellate(output.shapes, output.pixels_per_point);
 
-        renderer.render(
-            &output.textures_delta,
-            &clipped_primitives,
+        self.painter_paint(
+            output.textures_delta,
+            clipped_primitives,
             output.pixels_per_point,
         );
 
@@ -677,9 +772,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         // mid-resize - would cross a C frame and abort the host. Swallow
         // and log instead, mirroring the builtin GPU editor's handler.
         let frame_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Adopt a renderer whose init outlived the bounded wait at
-            // open (worker thread still running, editor blank so far).
-            self.adopt_pending_renderer();
+            // Notice the render thread finishing GPU init (the editor
+            // opens without waiting on it; blank until ready).
+            #[cfg(target_os = "windows")]
+            self.adopt_ready_renderer();
             // Issue a queued corrective resize (see `pending_correct`)
             // now that we're outside the host's resize dispatch.
             #[cfg(not(target_os = "linux"))]
@@ -752,7 +848,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 if self.resize_burst_start.is_none() {
                     self.resize_burst_start = Some(std::time::Instant::now());
                 }
-                if !stable && !deadline_passed {
+                if GUI_THREAD_BLOCKS_ON_GPU && !stable && !deadline_passed {
                     return;
                 }
                 self.resize_burst_start = None;
@@ -783,28 +879,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 // resizes still resize.
                 let resize_window = cfg!(not(target_os = "linux")) || !host_driven;
                 #[cfg(target_os = "macos")]
-                {
-                    let renderer = self.renderer.as_mut();
-                    objc::rc::autoreleasepool(|| {
-                        Self::apply_resize(
-                            window,
-                            renderer,
-                            new_size,
-                            scale,
-                            surface_phys,
-                            resize_window,
-                        );
-                    });
-                }
+                objc::rc::autoreleasepool(|| {
+                    self.apply_resize(window, new_size, scale, surface_phys, resize_window);
+                });
                 #[cfg(not(target_os = "macos"))]
-                Self::apply_resize(
-                    window,
-                    self.renderer.as_mut(),
-                    new_size,
-                    scale,
-                    surface_phys,
-                    resize_window,
-                );
+                self.apply_resize(window, new_size, scale, surface_phys, resize_window);
                 self.size = new_size;
                 self.last_size_change = Some(std::time::Instant::now());
                 // The freshly-sized surface must be painted next frame
@@ -820,18 +899,24 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             // `RESIZE_SETTLE` - a paint mid-resize blocks the host GUI
             // thread in the swapchain acquire (see the constant).
             // `force_paint` stays armed, so the settled size paints on
-            // the first tick past the window.
-            if self
-                .last_size_change
-                .is_some_and(|t| t.elapsed() < RESIZE_SETTLE)
+            // the first tick past the window. Windows paints straight
+            // through (the render thread absorbs any stall).
+            if GUI_THREAD_BLOCKS_ON_GPU
+                && self
+                    .last_size_change
+                    .is_some_and(|t| t.elapsed() < RESIZE_SETTLE)
             {
                 return;
             }
             // Compositor pacing veto - see `pacer`. Checked outside
             // `should_paint` because a repaint-requesting widget
             // (meter) re-arms `has_requested_repaint` every frame and
-            // would bypass any schedule-based gate.
-            if self.pacer.should_hold() {
+            // would bypass any schedule-based gate. Windows skips the
+            // veto: the render thread's latest-wins mailbox drops
+            // frames the compositor can't take, so pacing there only
+            // adds latency (a resize-time acquire stall inflates the
+            // pace estimate for seconds).
+            if GUI_THREAD_BLOCKS_ON_GPU && self.pacer.should_hold() {
                 return;
             }
             // Idle gate: skip the whole frame (no egui run, no present)
@@ -843,11 +928,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             }
             let repaint_delay = self.run_frame();
             self.force_paint = false;
-            self.pacer.record_acquire(
-                self.renderer
-                    .as_ref()
-                    .map_or(std::time::Duration::ZERO, EguiRenderer::acquire_wait),
-            );
+            self.pacer.record_acquire(self.painter_acquire_wait());
             // Schedule the next forced paint from egui's reported delay:
             // `ZERO` -> paint next frame (animating), a finite delay ->
             // paint then, and anything very large (egui's idle
@@ -1063,11 +1144,22 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             // (VST3 forbids `resizeView` inside `onSize`;
                             // Ableton hangs on it, e.g. title-bar
                             // double-click snapping the window back).
-                            #[cfg(not(target_os = "linux"))]
+                            // Linux AND Windows: never ask the host to
+                            // resize its frame - clamp the content and
+                            // letterbox instead. Bitwig/X11 answers the
+                            // request by growing the window (a loop), and
+                            // REAPER on Windows re-asserts a maximized FX
+                            // window every tick (double-click maximize),
+                            // fighting the correction forever while each
+                            // round trips a driver wait. Windows hosts
+                            // shape interactive drags via
+                            // `checkSizeConstraint` anyway. macOS keeps
+                            // the push-back (hosts honor it, no fights).
+                            #[cfg(target_os = "macos")]
                             {
                                 self.pending_correct = Some((rw, rh));
                             }
-                            #[cfg(target_os = "linux")]
+                            #[cfg(not(target_os = "macos"))]
                             let _ = (rw, rh);
                         }
                         // Write through to the shared scale so `on_frame` /
@@ -1329,12 +1421,20 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                 let scale = system_scale as f32;
                 let phys_w = truce_gui::to_physical_px(size.0, system_scale);
                 let phys_h = truce_gui::to_physical_px(size.1, system_scale);
-                let (renderer, pending_renderer) = match unsafe {
+                #[cfg(not(target_os = "windows"))]
+                let renderer = unsafe {
                     EguiRenderer::from_window(window, phys_w, phys_h, device_lost_for_renderer)
-                } {
-                    RendererInit::Ready(renderer) => (renderer, None),
-                    RendererInit::Deferred(rx) => (None, Some(rx)),
                 };
+                // Windows: GPU init and all blocking wgpu calls run on
+                // the render thread; opening never waits on the driver.
+                // Zero-size guard mirrors `from_window`'s (transient
+                // zero-extent parents during host measurement steps).
+                #[cfg(target_os = "windows")]
+                let render_thread = crate::render_thread::hwnd_for(window)
+                    .filter(|_| phys_w > 0 && phys_h > 0)
+                    .and_then(|hwnd| {
+                        RenderThread::spawn(hwnd, phys_w, phys_h, device_lost_for_renderer)
+                    });
 
                 if let Some(font_data) = font {
                     crate::font::apply_font(&egui_ctx, font_data);
@@ -1352,8 +1452,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     ui,
                     context: handler_ctx,
                     egui_ctx,
+                    #[cfg(not(target_os = "windows"))]
                     renderer,
-                    pending_renderer,
+                    #[cfg(target_os = "windows")]
+                    render_thread,
                     pending_events: Vec::new(),
                     modifiers: egui::Modifiers::NONE,
                     start_time: std::time::Instant::now(),

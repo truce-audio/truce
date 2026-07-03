@@ -667,127 +667,163 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
 // through `truce_gpu::WgpuBackend`) and these wgpu-blit details
 // drop out of the compile.
 
+/// Build the blit backend around a surface pump (see
+/// `truce_gpu::pump`). GPU init runs on the pump - off the host's GUI
+/// thread on Windows, where a stalled driver used to freeze the DAW
+/// at editor open - and [`BlitParts`] is adopted lazily via
+/// [`BlitBackend::parts_mut`]. Returns `None` when the pump can't
+/// spawn at all (blank but harmless editor).
 #[cfg(feature = "cpu")]
-fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) -> BlitBackend {
-    let instance = wgpu::Instance::new(crate::platform::editor_instance_descriptor());
+fn create_wgpu_backend(
+    window: &mut baseview::Window,
+    phys_w: u32,
+    phys_h: u32,
+) -> Option<BlitBackend> {
+    // The panic flag is unused (no device-loss rebuild in this
+    // handler); a dead pump just leaves the editor blank.
+    let device_lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pump = unsafe {
+        truce_gpu::pump::SurfacePump::spawn(
+            window,
+            &device_lost,
+            Box::new(move |_, adapter, surface| {
+                // `downlevel_defaults` caps `max_texture_dimension_2d` at 2048
+                // - on Retina (2x), that means the editor can't physically exceed
+                // 1024 logical points per axis before `surface.configure` panics
+                // with a validation error. Use the adapter's actual limits so a
+                // resizable layout (e.g. the GUI zoo) can grow to its declared
+                // `max_cols` / `max_rows` envelope without tripping the cap, then
+                // belt-and-braces clamp resize requests in `BlitBackend::resize`.
+                let adapter_limits = adapter.limits();
+                let max_texture_dim = adapter_limits.max_texture_dimension_2d;
+                let (device, queue) =
+                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                        label: Some("truce-gui"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: adapter_limits,
+                        experimental_features: wgpu::ExperimentalFeatures::default(),
+                        memory_hints: wgpu::MemoryHints::Performance,
+                        trace: wgpu::Trace::Off,
+                    }))
+                    .ok()?;
 
-    let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) }
-        .expect("failed to create wgpu surface");
+                let caps = surface.get_capabilities(adapter);
+                let format = caps
+                    .formats
+                    .iter()
+                    .find(|f| f.is_srgb())
+                    .copied()
+                    .unwrap_or(caps.formats[0]);
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: Some(&surface),
-        force_fallback_adapter: false,
-    }))
-    .expect("no suitable GPU adapter");
+                // Same belt-and-braces clamp as `BlitBackend::resize` applies on
+                // subsequent reconfigures: a host could open the editor at a
+                // logical * DPI size that already exceeds `max_texture_dim`
+                // (e.g. a fixed-size editor on a 3x display whose physical
+                // dimensions are over the device cap).
+                let init_w = phys_w.clamp(1, max_texture_dim);
+                let init_h = phys_h.clamp(1, max_texture_dim);
+                let surface_config = wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    format,
+                    width: init_w,
+                    height: init_h,
+                    // Windows: a Fifo (AutoVsync) present blocks when the
+                    // child-window swapchain backs up, freezing the host
+                    // (REAPER) when it lands on the GUI thread and risking
+                    // a GPU-watchdog (TDR) hang. Non-blocking present
+                    // there; elsewhere keeps vsync.
+                    #[cfg(target_os = "windows")]
+                    present_mode: wgpu::PresentMode::AutoNoVsync,
+                    #[cfg(not(target_os = "windows"))]
+                    present_mode: wgpu::PresentMode::AutoVsync,
+                    desired_maximum_frame_latency: 2,
+                    alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                    view_formats: vec![],
+                };
 
-    // `downlevel_defaults` caps `max_texture_dimension_2d` at 2048
-    // - on Retina (2x), that means the editor can't physically exceed
-    // 1024 logical points per axis before `surface.configure` panics
-    // with a validation error. Use the adapter's actual limits so a
-    // resizable layout (e.g. the GUI zoo) can grow to its declared
-    // `max_cols` / `max_rows` envelope without tripping the cap, then
-    // belt-and-braces clamp resize requests in `BlitBackend::resize`.
-    let adapter_limits = adapter.limits();
-    let max_texture_dim = adapter_limits.max_texture_dimension_2d;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("truce-gui"),
-        required_features: wgpu::Features::empty(),
-        required_limits: adapter_limits,
-        experimental_features: wgpu::ExperimentalFeatures::default(),
-        memory_hints: wgpu::MemoryHints::Performance,
-        trace: wgpu::Trace::Off,
-    }))
-    .expect("failed to create wgpu device");
+                // Blit texture matches the CPU pixmap, which is sized at
+                // physical pixels (see CpuBackend's scale handling). With texture
+                // and surface at the same physical size, the full-screen-triangle
+                // blit samples 1:1 - no stretch, no Retina blur.
+                let blit = crate::blit::BlitPipeline::new(&device, format, init_w, init_h);
 
-    let caps = surface.get_capabilities(&adapter);
-    let format = caps
-        .formats
-        .iter()
-        .find(|f| f.is_srgb())
-        .copied()
-        .unwrap_or(caps.formats[0]);
-
-    // Same belt-and-braces clamp as `BlitBackend::resize` applies on
-    // subsequent reconfigures: a host could open the editor at a
-    // logical * DPI size that already exceeds `max_texture_dim`
-    // (e.g. a fixed-size editor on a 3x display whose physical
-    // dimensions are over the device cap).
-    let init_w = phys_w.clamp(1, max_texture_dim);
-    let init_h = phys_h.clamp(1, max_texture_dim);
-    let surface_config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width: init_w,
-        height: init_h,
-        // Windows: `on_frame` runs on the host's GUI thread; a Fifo
-        // (AutoVsync) present blocks that thread when the child-window
-        // swapchain backs up, freezing the host (REAPER) and risking a
-        // GPU-watchdog (TDR) hang. Non-blocking present elsewhere keeps
-        // vsync. See `truce_gui::platform` notes on host-thread frames.
-        #[cfg(target_os = "windows")]
-        present_mode: wgpu::PresentMode::AutoNoVsync,
-        #[cfg(not(target_os = "windows"))]
-        present_mode: wgpu::PresentMode::AutoVsync,
-        desired_maximum_frame_latency: 2,
-        alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        view_formats: vec![],
-    };
-    surface.configure(&device, &surface_config);
-
-    // Blit texture matches the CPU pixmap, which is now sized at
-    // physical pixels (see CpuBackend's scale handling). With texture
-    // and surface at the same physical size, the full-screen-triangle
-    // blit samples 1:1 - no stretch, no Retina blur.
-    let blit = crate::blit::BlitPipeline::new(&device, format, init_w, init_h);
-
-    BlitBackend {
-        blit,
-        surface_config,
-        surface,
-        queue,
-        device,
-        max_texture_dim,
-    }
+                let parts = BlitParts {
+                    blit,
+                    surface_config: surface_config.clone(),
+                    queue,
+                    device: device.clone(),
+                    max_texture_dim,
+                };
+                Some((parts, device, surface_config))
+            }),
+        )
+    }?;
+    Some(BlitBackend {
+        client: pump.client(),
+        parts: None,
+        pump,
+    })
 }
 
-// Field-declaration order doubles as the implicit drop order Rust uses
-// when this struct is dropped through the `Option<BlitBackend>` cell
-// directly (e.g. when the host drops the editor without calling
-// `close`). Children before parent: per-pipeline GPU resources, then
-// the surface (releases swap chain / CAMetalLayer), then queue, then
-// device. `BuiltinEditor::close` does the same thing explicitly via
-// destructure - this declaration order keeps the implicit path safe
-// too.
+/// The pump's init product: everything the GUI thread needs to encode
+/// the blit. Field-declaration order doubles as the implicit drop
+/// order - children before parent: per-pipeline GPU resources, then
+/// queue, then device. (The surface itself lives with the pump and
+/// drops with it.)
 #[cfg(feature = "cpu")]
-struct BlitBackend {
+struct BlitParts {
     blit: crate::blit::BlitPipeline,
+    /// Local bookkeeping copy; the authoritative configure happens on
+    /// the pump.
     surface_config: wgpu::SurfaceConfiguration,
-    surface: wgpu::Surface<'static>,
     queue: wgpu::Queue,
     device: wgpu::Device,
     /// Adapter-reported `max_texture_dimension_2d`. `resize` clamps
-    /// each axis against this before `surface.configure` so a host-
-    /// or DPI-driven resize past the device's texture cap can't
-    /// trip a wgpu validation panic (which unwinds out of the
-    /// editor on the host's UI thread and aborts the standalone /
-    /// the DAW).
+    /// each axis against this before reconfiguring so a host- or
+    /// DPI-driven resize past the device's texture cap can't trip a
+    /// wgpu validation panic (which unwinds out of the editor on the
+    /// host's UI thread and aborts the standalone / the DAW).
     max_texture_dim: u32,
+}
+
+/// The blit pipeline plus the surface pump that owns its swapchain.
+/// `parts` stays `None` until the pump finishes GPU init (immediately
+/// on macOS / Linux, where init runs inline).
+#[cfg(feature = "cpu")]
+struct BlitBackend {
+    client: truce_gpu::pump::PumpClient,
+    parts: Option<BlitParts>,
+    pump: truce_gpu::pump::SurfacePump<BlitParts>,
 }
 
 #[cfg(feature = "cpu")]
 impl BlitBackend {
+    /// The pump's init product, adopting it if it just landed. `None`
+    /// while GPU init is still running (or after it failed).
+    fn parts_mut(&mut self) -> Option<&mut BlitParts> {
+        if self.parts.is_none()
+            && let Some(parts) = self.pump.take_init()
+        {
+            self.parts = Some(parts);
+        }
+        self.parts.as_mut()
+    }
+
     /// Reconfigure the wgpu surface and blit texture for a new physical
     /// size. Used when `Editor::set_scale_factor` reports a host-driven
     /// DPI change - the logical editor size doesn't change, but the
     /// physical pixmap and surface need to grow / shrink to match.
     fn resize(&mut self, phys_w: u32, phys_h: u32) {
-        let phys_w = phys_w.clamp(1, self.max_texture_dim);
-        let phys_h = phys_h.clamp(1, self.max_texture_dim);
-        self.surface_config.width = phys_w;
-        self.surface_config.height = phys_h;
-        self.surface.configure(&self.device, &self.surface_config);
-        self.blit.resize(&self.device, phys_w, phys_h);
+        let client = self.client.clone();
+        let Some(parts) = self.parts_mut() else {
+            return;
+        };
+        let phys_w = phys_w.clamp(1, parts.max_texture_dim);
+        let phys_h = phys_h.clamp(1, parts.max_texture_dim);
+        parts.surface_config.width = phys_w;
+        parts.surface_config.height = phys_h;
+        client.resize(phys_w, phys_h);
+        parts.blit.resize(&parts.device, phys_w, phys_h);
     }
 
     /// Reconfigure only the swapchain surface to a new physical size,
@@ -804,14 +840,18 @@ impl BlitBackend {
     /// fill - no gap. Called from the `Resized` handler, where the
     /// window's actual physical size is authoritative.
     fn configure_surface(&mut self, phys_w: u32, phys_h: u32) {
-        let phys_w = phys_w.clamp(1, self.max_texture_dim);
-        let phys_h = phys_h.clamp(1, self.max_texture_dim);
-        if self.surface_config.width == phys_w && self.surface_config.height == phys_h {
+        let client = self.client.clone();
+        let Some(parts) = self.parts_mut() else {
+            return;
+        };
+        let phys_w = phys_w.clamp(1, parts.max_texture_dim);
+        let phys_h = phys_h.clamp(1, parts.max_texture_dim);
+        if parts.surface_config.width == phys_w && parts.surface_config.height == phys_h {
             return;
         }
-        self.surface_config.width = phys_w;
-        self.surface_config.height = phys_h;
-        self.surface.configure(&self.device, &self.surface_config);
+        parts.surface_config.width = phys_w;
+        parts.surface_config.height = phys_h;
+        client.resize(phys_w, phys_h);
     }
 }
 
@@ -978,13 +1018,48 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
         editor.detect_meter_changes();
         // Compositor pacing veto - before `take_needs_repaint` so the
         // dirty bit survives the held ticks and the deferred paint
-        // still happens.
-        if self.pacer.should_hold() {
+        // still happens. Windows skips the veto: the pump pre-acquires
+        // frames off-thread and `try_take_frame` returning `None`
+        // already paces paints to the compositor, so holding here only
+        // adds latency.
+        if cfg!(not(target_os = "windows")) && self.pacer.should_hold() {
             return;
         }
         if !editor.take_needs_repaint() {
             return;
         }
+        // Get the pump's frame BEFORE rasterizing or uploading. During
+        // resize churn no frame is available (the pump is busy
+        // reconfiguring); skipping everything here saves the wasted
+        // CPU raster and keeps queue work (texture upload, submit) off
+        // the GUI thread while the pump's configure is in flight -
+        // those contend on wgpu's internal locks. On Windows the take
+        // never blocks (pump pre-acquires); elsewhere it acquires
+        // inline with the usual stale-surface recovery.
+        let client = {
+            let backend = guard
+                .as_mut()
+                .expect("guard was checked Some above and the lock is still held");
+            if backend.parts_mut().is_none() {
+                // GPU init still pending on the pump (Windows) or
+                // failed; re-arm the dirty bit so the first ready
+                // frame paints instead of waiting for the next edit.
+                editor.request_repaint();
+                return;
+            }
+            backend.client.clone()
+        };
+        let frame = client.try_take_frame();
+        self.pacer.record_acquire(client.last_acquire_wait());
+        let Some(frame) = frame else {
+            // Windows: the pump is still acquiring - re-arm the
+            // dirty bit so the paint lands when the frame is
+            // ready. Elsewhere `None` is a transient Timeout /
+            // Occluded; skip and let the next edit repaint.
+            #[cfg(target_os = "windows")]
+            editor.request_repaint();
+            return;
+        };
         editor.render();
         editor.stash_painted_values();
 
@@ -992,58 +1067,28 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
             let backend = guard
                 .as_mut()
                 .expect("guard was checked Some above and the lock is still held");
-            let BlitBackend {
-                device,
-                queue,
-                surface,
-                surface_config,
-                blit,
-                ..
-            } = backend;
-            blit.update(queue, pixels);
-            // Acquire a swapchain frame, recovering from a stale surface.
-            // After a window resize on X11/Vulkan the surface goes
-            // `Outdated` and stays that way until it is reconfigured -
-            // even reconfiguring to the *same* size clears the flag, so a
-            // plain skip-the-frame leaves the editor frozen on its
-            // pre-resize image with the desktop showing through the newly
-            // exposed area. On `Outdated` / `Lost` / `Validation` we
-            // reconfigure (`surface_config` already holds the correct
-            // physical size) and retry; `Timeout` / `Occluded` are
-            // transient, so we skip this frame and try again next tick.
-            let acquire_start = std::time::Instant::now();
-            let mut acquired = None;
-            let mut transient_skip = false;
-            for _ in 0..2 {
-                match surface.get_current_texture() {
-                    wgpu::CurrentSurfaceTexture::Success(frame)
-                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                        acquired = Some(frame);
-                        break;
-                    }
-                    wgpu::CurrentSurfaceTexture::Outdated
-                    | wgpu::CurrentSurfaceTexture::Lost
-                    | wgpu::CurrentSurfaceTexture::Validation => {
-                        surface.configure(device, surface_config);
-                    }
-                    wgpu::CurrentSurfaceTexture::Timeout
-                    | wgpu::CurrentSurfaceTexture::Occluded => {
-                        transient_skip = true;
-                        break;
-                    }
-                }
-            }
-            self.pacer.record_acquire(acquire_start.elapsed());
-            if transient_skip {
-                return;
-            }
-            let Some(frame) = acquired else {
-                // Couldn't recover the swapchain this tick - ask for
-                // another frame so we retry next on_frame rather than
-                // freezing until some unrelated edit flips the dirty bit.
+            let Some(parts) = backend.parts_mut() else {
+                client.discard(frame);
                 editor.request_repaint();
                 return;
             };
+            let BlitParts {
+                device,
+                queue,
+                surface_config,
+                blit,
+                ..
+            } = parts;
+            // A resize raced the acquire: the frame is at the old
+            // extent; discard it (the pump reconfigures + reacquires).
+            if (frame.texture.width(), frame.texture.height())
+                != (surface_config.width, surface_config.height)
+            {
+                client.discard(frame);
+                editor.request_repaint();
+                return;
+            }
+            blit.update(queue, pixels);
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1057,7 +1102,9 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 surface_config.height,
             );
             queue.submit(std::iter::once(encoder.finish()));
-            frame.present();
+            client.present(frame);
+        } else {
+            client.discard(frame);
         }
     }
 
@@ -1392,46 +1439,50 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             &parent_wrapper,
             options,
             move |window: &mut baseview::Window| {
-                let mut backend = create_wgpu_backend(window, phys_w, phys_h);
+                let backend = create_wgpu_backend(window, phys_w, phys_h);
 
                 // Render + present an initial frame synchronously, before
                 // baseview shows the window. Without this, the window briefly
                 // displays whatever garbage is in the surface buffer until the
                 // first `on_frame` tick - especially noticeable on VST2
                 // (Windows), where `effEditOpen` creates and shows the window
-                // in one call.
+                // in one call. On Windows the pump is still initializing here
+                // (`parts_mut` is `None`), so this paint is skipped and the
+                // dirty bit set at `open()` covers the first ready frame.
                 let editor = unsafe { &mut *(editor_addr as *mut BuiltinEditor<P>) };
                 editor.render();
-                if let Some(pixels) = editor.pixel_data() {
-                    let BlitBackend {
-                        device,
-                        queue,
-                        surface,
-                        surface_config,
-                        blit,
-                        ..
-                    } = &mut backend;
-                    blit.update(queue, pixels);
-                    if let wgpu::CurrentSurfaceTexture::Success(frame)
-                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) =
-                        surface.get_current_texture()
-                    {
-                        let view = frame
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
-                        let mut encoder =
-                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: None,
-                            });
-                        blit.render(
+                let mut backend = backend;
+                if let Some(pixels) = editor.pixel_data()
+                    && let Some(backend) = backend.as_mut()
+                {
+                    let client = backend.client.clone();
+                    if let Some(parts) = backend.parts_mut() {
+                        let BlitParts {
+                            device,
                             queue,
-                            &mut encoder,
-                            &view,
-                            surface_config.width,
-                            surface_config.height,
-                        );
-                        queue.submit(std::iter::once(encoder.finish()));
-                        frame.present();
+                            surface_config,
+                            blit,
+                            ..
+                        } = parts;
+                        blit.update(queue, pixels);
+                        if let Some(frame) = client.try_take_frame() {
+                            let view = frame
+                                .texture
+                                .create_view(&wgpu::TextureViewDescriptor::default());
+                            let mut encoder =
+                                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                    label: None,
+                                });
+                            blit.render(
+                                queue,
+                                &mut encoder,
+                                &view,
+                                surface_config.width,
+                                surface_config.height,
+                            );
+                            queue.submit(std::iter::once(encoder.finish()));
+                            client.present(frame);
+                        }
                     }
                 }
 
@@ -1442,7 +1493,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 // mutex side will simply replace Some(None) → Some
                 // and everything drops at the usual time.
                 if let Ok(mut guard) = shared_for_handler.lock() {
-                    *guard = Some(backend);
+                    *guard = backend;
                 }
 
                 BuiltinWindowHandler {
@@ -1493,25 +1544,36 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // makes the drop order explicit rather than depending on
         // `BlitPipeline`'s field-declaration order. Order: per-pipeline
         // GPU resources first (textures, bind groups, sampler), then
-        // the surface (releases the swap chain / CAMetalLayer), then
-        // queue, then device last - children before parent.
+        // the pump (which owns and releases the surface / swap chain /
+        // CAMetalLayer), then queue, then device last - children
+        // before parent.
         if let Some(shared) = self.blit_backend.take()
             && let Ok(mut guard) = shared.lock()
             && let Some(backend) = guard.take()
         {
             let BlitBackend {
+                client,
+                parts,
+                pump,
+            } = backend;
+            if let Some(BlitParts {
                 blit,
-                surface,
                 surface_config,
                 queue,
                 device,
                 max_texture_dim: _,
-            } = backend;
-            drop(surface_config);
-            drop(blit);
-            drop(surface);
-            drop(queue);
-            drop(device);
+            }) = parts
+            {
+                drop(surface_config);
+                drop(blit);
+                drop(client);
+                drop(pump);
+                drop(queue);
+                drop(device);
+            } else {
+                drop(client);
+                drop(pump);
+            }
         }
 
         if let Some(mut window) = self.window.take() {

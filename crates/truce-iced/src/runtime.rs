@@ -248,6 +248,27 @@ pub(crate) struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     /// repaint-heavy editors can't park the host's GUI thread in the
     /// swapchain acquire - see [`truce_gui::PaintPacer`].
     pub(crate) pacer: truce_gui::PaintPacer,
+    /// Owns the wgpu surface + every blocking swapchain call (see
+    /// `crate::pump`); [`Self::adopt_pump`] builds the pipeline from
+    /// its init product. Desktop only - iOS keeps the surface inline
+    /// in [`RenderState`].
+    #[cfg(not(target_os = "ios"))]
+    pub(crate) pump: Option<crate::pump::SurfacePump<PumpProduct>>,
+    #[cfg(not(target_os = "ios"))]
+    pub(crate) client: Option<crate::pump::PumpClient>,
+}
+
+/// What the pump's init closure hands back to the GUI thread: the
+/// initialized device bundle the iced pipeline is built from in
+/// [`IcedRuntime::adopt_pump`]. The iced program/model must never
+/// cross threads (no `Send` bound on plugin models), so the pipeline
+/// itself is built at adoption, not inside the closure.
+#[cfg(not(target_os = "ios"))]
+pub(crate) struct PumpProduct {
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    surface_config: wgpu::SurfaceConfiguration,
 }
 
 /// The iced subscription runtime, parameterised by the editor's message
@@ -269,7 +290,12 @@ pub(crate) struct RenderState<P: Params + 'static, M: IcedPlugin<P>> {
     /// Cloned wgpu handle for surface (re)configuration. The "primary"
     /// device + queue handles live inside `renderer`'s `Engine`.
     pub(crate) device: wgpu::Device,
-    pub(crate) surface: wgpu::Surface<'static>,
+    /// iOS only: the surface owned inline (`CAMetalLayer` path), with
+    /// every swapchain call on the calling thread. Desktop editors
+    /// leave this `None` - the surface lives with the pump
+    /// (`IcedRuntime::client`), which on Windows keeps blocking
+    /// swapchain calls off the host's GUI thread.
+    pub(crate) surface: Option<wgpu::Surface<'static>>,
     pub(crate) surface_config: wgpu::SurfaceConfiguration,
     pub(crate) renderer: iced_wgpu::Renderer,
     pub(crate) program: IcedProgram<P, M>,
@@ -331,31 +357,166 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             animate: false,
             redraw_at: None,
             pacer: truce_gui::PaintPacer::default(),
+            #[cfg(not(target_os = "ios"))]
+            pump: None,
+            #[cfg(not(target_os = "ios"))]
+            client: None,
         }
     }
 
-    /// Initialize the wgpu + iced rendering pipeline from a pre-created surface.
+    /// Spawn the surface pump for the editor window (see `crate::pump`):
+    /// GPU init and every blocking swapchain call run there - off the
+    /// host's GUI thread on Windows, where a stalled driver used to
+    /// freeze the DAW. [`Self::adopt_pump`] builds the iced pipeline
+    /// once init lands. Returns whether the pump spawned.
+    #[cfg(not(target_os = "ios"))]
+    pub(crate) fn spawn_pump(&mut self, window: &baseview::Window) -> bool {
+        let (lw, lh) = self.size;
+        let render_scale = self.scale.get();
+        let w = truce_gui::to_physical_px(lw, render_scale).max(1);
+        let h = truce_gui::to_physical_px(lh, render_scale).max(1);
+        let lost_flag = self.device_lost.clone();
+        // SAFETY: the editor drops the pump (via this runtime) before
+        // closing its baseview window.
+        let pump = unsafe {
+            crate::pump::SurfacePump::spawn(
+                window,
+                &self.device_lost,
+                Box::new(move |_, adapter, surface| {
+                    let (device, queue) =
+                        match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                            label: Some("truce-iced"),
+                            required_features: wgpu::Features::empty(),
+                            required_limits: adapter.limits(),
+                            experimental_features: wgpu::ExperimentalFeatures::default(),
+                            memory_hints: wgpu::MemoryHints::default(),
+                            trace: wgpu::Trace::Off,
+                        })) {
+                            Ok(dq) => dq,
+                            Err(e) => {
+                                log::error!("failed to create wgpu device: {e}");
+                                return None;
+                            }
+                        };
+                    // Raise the shared flag on device loss (GPU reset) so the
+                    // next `on_frame` rebuilds the pipeline instead of rendering
+                    // against a dead device.
+                    device.set_device_lost_callback(move |reason, msg| {
+                        lost_flag.store(true, std::sync::atomic::Ordering::Release);
+                        log::warn!("iced wgpu device lost: {reason:?} - {msg}");
+                    });
+
+                    let surface_caps = surface.get_capabilities(adapter);
+                    if surface_caps.formats.is_empty() {
+                        log::warn!("no surface formats available");
+                        return None;
+                    }
+                    let surface_format = surface_caps.formats[0];
+                    let alpha_mode = if surface_caps
+                        .alpha_modes
+                        .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+                    {
+                        wgpu::CompositeAlphaMode::PostMultiplied
+                    } else {
+                        surface_caps.alpha_modes[0]
+                    };
+                    let surface_config = wgpu::SurfaceConfiguration {
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                        format: surface_format,
+                        width: w,
+                        height: h,
+                        // Windows: a Fifo (AutoVsync) present blocks when the
+                        // child-window swapchain backs up - freezing the host
+                        // (REAPER) when it lands on the GUI thread and risking
+                        // a GPU-watchdog (TDR) hang. Non-blocking present
+                        // there; other platforms keep vsync.
+                        #[cfg(target_os = "windows")]
+                        present_mode: wgpu::PresentMode::AutoNoVsync,
+                        #[cfg(not(target_os = "windows"))]
+                        present_mode: wgpu::PresentMode::AutoVsync,
+                        desired_maximum_frame_latency: 2,
+                        alpha_mode,
+                        view_formats: vec![],
+                    };
+                    let product = PumpProduct {
+                        adapter: adapter.clone(),
+                        device: device.clone(),
+                        queue,
+                        surface_config: surface_config.clone(),
+                    };
+                    Some((product, device, surface_config))
+                }),
+            )
+        };
+        if let Some(p) = pump {
+            self.client = Some(p.client());
+            self.pump = Some(p);
+            true
+        } else {
+            log::warn!("iced: failed to spawn surface pump; editor stays blank");
+            false
+        }
+    }
+
+    /// Adopt the pump's init product and build the iced pipeline
+    /// around it (first tick on macOS / Linux, whenever the pump
+    /// thread finishes on Windows - the editor is blank until then
+    /// and the host stays responsive throughout).
+    #[cfg(not(target_os = "ios"))]
+    pub(crate) fn adopt_pump(&mut self) {
+        if self.render.is_some() {
+            return;
+        }
+        let Some(pump) = self.pump.as_mut() else {
+            return;
+        };
+        let Some(product) = pump.take_init() else {
+            return;
+        };
+        let PumpProduct {
+            adapter,
+            device,
+            queue,
+            surface_config,
+        } = product;
+        self.finish_init(&adapter, device, queue, surface_config, None);
+    }
+
+    /// Reconfigure the surface to a physical size, keeping the local
+    /// configuration copy in step. Routes through the pump's client
+    /// (queued latest-wins; never blocks on Windows).
+    #[cfg(not(target_os = "ios"))]
+    pub(crate) fn reconfigure_surface_px(&mut self, pw: u32, ph: u32) {
+        if let Some(render) = self.render.as_mut() {
+            render.surface_config.width = pw.max(1);
+            render.surface_config.height = ph.max(1);
+            if let Some(surface) = &render.surface {
+                surface.configure(&render.device, &render.surface_config);
+            } else if let Some(client) = &self.client {
+                client.resize(pw.max(1), ph.max(1));
+            }
+        }
+    }
+
+    /// Initialize the wgpu + iced rendering pipeline from a pre-created
+    /// surface. iOS (`CAMetalLayer`) only: the surface is owned inline
+    /// by the `RenderState`. Desktop editors go through
+    /// [`Self::spawn_pump`] + [`Self::adopt_pump`] instead.
     //
     // `instance` and `surface` are threaded into the iced renderer; the
     // owned-arg shape avoids a clone at the call site.
+    #[cfg(target_os = "ios")]
     #[allow(clippy::needless_pass_by_value)]
     pub(crate) fn init_render(
         &mut self,
         instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
     ) -> bool {
-        let Some(program) = self.program.take() else {
-            return false;
-        };
-
         let (lw, lh) = self.size;
         // Read from the shared cell (clone of the editor's scale). Re-
         // querying `truce_gui::backing_scale()` would drop a host-
-        // supplied value and on Linux the process-wide cache may not
-        // have been populated yet, so the first frame would render at
-        // 1.0 even on a HiDPI display.
+        // supplied value.
         let render_scale = self.scale.get();
-        self.last_applied_scale = render_scale;
         let w = truce_gui::to_physical_px(lw, render_scale);
         let h = truce_gui::to_physical_px(lh, render_scale);
 
@@ -368,7 +529,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
                 Ok(a) => a,
                 Err(e) => {
                     log::warn!("no suitable GPU adapter found: {e}");
-                    self.program = Some(program);
                     return false;
                 }
             };
@@ -385,12 +545,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
                 Ok(dq) => dq,
                 Err(e) => {
                     log::error!("failed to create wgpu device: {e}");
-                    self.program = Some(program);
                     return false;
                 }
             };
         // Raise the shared flag on device loss (GPU reset) so the next
-        // `on_frame` rebuilds the pipeline instead of rendering against a dead
+        // frame rebuilds the pipeline instead of rendering against a dead
         // device. The flag is per-generation (see `recover_device`).
         let lost_flag = self.device_lost.clone();
         device.set_device_lost_callback(move |reason, msg| {
@@ -401,7 +560,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         let surface_caps = surface.get_capabilities(&adapter);
         if surface_caps.formats.is_empty() {
             log::warn!("no surface formats available");
-            self.program = Some(program);
             return false;
         }
 
@@ -420,15 +578,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             format: surface_format,
             width: w.max(1),
             height: h.max(1),
-            // Windows: `on_frame` runs on the host's GUI thread, and a
-            // Fifo (AutoVsync) present blocks that thread when the
-            // child-window swapchain backs up - freezing the host
-            // (REAPER) and risking a GPU-watchdog (TDR) hang. A
-            // non-blocking present keeps a slow frame from stalling the
-            // host's message loop. Other platforms keep vsync.
-            #[cfg(target_os = "windows")]
-            present_mode: wgpu::PresentMode::AutoNoVsync,
-            #[cfg(not(target_os = "windows"))]
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode,
@@ -436,15 +585,55 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         };
         surface.configure(&device, &surface_config);
 
+        self.finish_init(&adapter, device, queue, surface_config, Some(surface))
+    }
+
+    /// Build the iced `Engine` / renderer / [`RenderState`] around an
+    /// initialized device. `surface` is `Some` on iOS (inline
+    /// swapchain) and `None` on desktop, where the pump owns it.
+    fn finish_init(
+        &mut self,
+        adapter: &wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        mut surface_config: wgpu::SurfaceConfiguration,
+        surface: Option<wgpu::Surface<'static>>,
+    ) -> bool {
+        let Some(program) = self.program.take() else {
+            return false;
+        };
+
+        let (lw, lh) = self.size;
+        let render_scale = self.scale.get();
+        self.last_applied_scale = render_scale;
+        let w = truce_gui::to_physical_px(lw, render_scale).max(1);
+        let h = truce_gui::to_physical_px(lh, render_scale).max(1);
+        // The configuration was sized when init started; a host resize
+        // or scale change may have landed since (on Windows init runs
+        // on the pump thread). Re-sync before the first paint.
+        if (surface_config.width, surface_config.height) != (w, h) {
+            surface_config.width = w;
+            surface_config.height = h;
+            if let Some(s) = &surface {
+                s.configure(&device, &surface_config);
+            }
+            #[cfg(not(target_os = "ios"))]
+            if surface.is_none()
+                && let Some(client) = &self.client
+            {
+                client.resize(w, h);
+            }
+        }
+
         // wgpu::Device / Queue are cheaply Clone-able (internally Arc'd);
         // hand the canonical pair to `Engine::new` and keep clones for
         // post-init surface reconfiguration.
         let surface_device = device.clone();
         let engine = iced_wgpu::Engine::new(
-            &adapter,
+            adapter,
             device,
             queue,
-            surface_format,
+            surface_config.format,
             Some(iced_graphics::Antialiasing::MSAAx4),
             iced_graphics::Shell::headless(),
         );
@@ -480,46 +669,56 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             bg_color: bg,
         });
 
+        // The fresh pipeline must paint even if the idle gate sees no
+        // other change.
+        self.force_render = true;
         log::info!("gpu active (wgpu, {w}x{h})");
         true
     }
 
-    /// Rebuild the device + surface + renderer after a device loss, salvaging
-    /// the plugin program. Widget state in `ui_cache` is lost. Returns whether
-    /// the rebuild succeeded; on failure `render` stays `None` and the next
-    /// `on_frame` retries.
+    /// Rebuild the pump + renderer after a device loss, salvaging the
+    /// plugin program. Widget state in `ui_cache` is lost. Returns
+    /// whether the pump respawned; the pipeline itself is rebuilt by
+    /// `adopt_pump` once the new init lands.
     #[cfg(not(target_os = "ios"))]
     pub(crate) fn recover_device(&mut self, window: &baseview::Window) -> bool {
         // Give the new device generation a fresh lost-flag so the dying
         // device's own callback can't re-arm recovery and cause a redundant
-        // second rebuild; `init_render` clones this into the new callback.
+        // second rebuild; `spawn_pump` clones this into the new callback.
         self.device_lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
         // The rebuilt surface starts blank - force a paint on the next
         // tick even if the idle gate would otherwise skip it.
         self.force_render = true;
-        // Drop the old device/surface/renderer; keep the program.
+        // Drop the old pump/device/renderer; keep the program.
         if let Some(RenderState { program, .. }) = self.render.take() {
             self.program = Some(program);
         }
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: editor_backends(),
-            ..Default::default()
-        });
-        let Some(surface) = (unsafe { crate::platform::create_wgpu_surface(&instance, window) })
-        else {
-            return false;
-        };
-        self.init_render(instance, surface)
+        self.pump = None;
+        self.client = None;
+        self.spawn_pump(window)
     }
 
     /// Drive one frame: update iced state + present to surface.
+    // One frame's full pipeline (sync, gate, build, draw, present) in
+    // source order; splitting it would scatter the borrow of `render`.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn tick(&mut self) {
+        // Adopt the pump's GPU init product once it lands (first tick
+        // on macOS / Linux; whenever the pump thread finishes on
+        // Windows - blank but responsive until then).
+        #[cfg(not(target_os = "ios"))]
+        self.adopt_pump();
         // Compositor pacing veto - see `pacer`. Everything this tick
         // would do (state sync, view rebuild, present) is deferred a
         // few ticks; input events stay queued in `pending_events` and
         // subscription messages stay in the channel, so nothing is
-        // lost, and the paced paint drains them.
-        if self.pacer.should_hold() {
+        // lost, and the paced paint drains them. Windows skips the
+        // veto: the pump pre-acquires frames off-thread and
+        // `try_take_frame` returning `None` already paces paints to
+        // the compositor, so holding here only adds latency (a
+        // resize-time acquire stall inflates the pace estimate for
+        // seconds).
+        if cfg!(not(target_os = "windows")) && self.pacer.should_hold() {
             return;
         }
         let Some(render) = self.render.as_mut() else {
@@ -549,9 +748,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             let ph = truce_gui::to_physical_px(lh, cur_scale);
             render.surface_config.width = pw;
             render.surface_config.height = ph;
-            render
-                .surface
-                .configure(&render.device, &render.surface_config);
+            if let Some(surface) = &render.surface {
+                surface.configure(&render.device, &render.surface_config);
+            }
+            #[cfg(not(target_os = "ios"))]
+            if render.surface.is_none()
+                && let Some(client) = &self.client
+            {
+                client.resize(pw.max(1), ph.max(1));
+            }
             #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
             let scale_f32 = cur_scale as f32;
             render.viewport =
@@ -716,20 +921,52 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // Present: get surface texture, render, submit. iced 0.14's
         // `Renderer::present` builds its own encoder + submits to the
         // queue internally, so we no longer manage either by hand.
-        let acquire_start = std::time::Instant::now();
-        let acquire_result = render.surface.get_current_texture();
-        self.pacer.record_acquire(acquire_start.elapsed());
-        let frame = match acquire_result {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Outdated) => {
-                render
-                    .surface
-                    .configure(&render.device, &render.surface_config);
-                return;
+        let inline_surface = render.surface.is_some();
+        let frame = if let Some(surface) = &render.surface {
+            // iOS: acquire inline on the calling thread.
+            let acquire_start = std::time::Instant::now();
+            let acquire_result = surface.get_current_texture();
+            self.pacer.record_acquire(acquire_start.elapsed());
+            match acquire_result {
+                Ok(f) => f,
+                Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Outdated) => {
+                    surface.configure(&render.device, &render.surface_config);
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("surface error: {e}");
+                    return;
+                }
             }
-            Err(e) => {
-                log::warn!("surface error: {e}");
-                return;
+        } else {
+            // Desktop: take the pump's frame. On Windows this never
+            // blocks (the pump pre-acquires on its own thread).
+            #[cfg(target_os = "ios")]
+            return;
+            #[cfg(not(target_os = "ios"))]
+            {
+                let Some(client) = &self.client else {
+                    return;
+                };
+                let frame = client.try_take_frame();
+                self.pacer.record_acquire(client.last_acquire_wait());
+                let Some(frame) = frame else {
+                    // Pump still acquiring, or a transient error - the
+                    // frame's CPU work is done; repaint once one is
+                    // ready instead of waiting for the next change.
+                    self.force_render = true;
+                    return;
+                };
+                if (frame.texture.width(), frame.texture.height())
+                    != (render.surface_config.width, render.surface_config.height)
+                {
+                    // A resize raced the acquire; discard the stale-
+                    // size frame (the pump reconfigures + reacquires).
+                    client.discard(frame);
+                    self.force_render = true;
+                    return;
+                }
+                frame
             }
         };
 
@@ -744,7 +981,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             &render.viewport,
         );
 
-        frame.present();
+        if inline_surface {
+            frame.present();
+            return;
+        }
+        #[cfg(not(target_os = "ios"))]
+        if let Some(client) = &self.client {
+            client.present(frame);
+        }
     }
 
     /// Queue a cursor move event. Coordinates are in logical points.

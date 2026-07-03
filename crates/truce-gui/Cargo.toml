@@ -65,7 +65,9 @@ objc2-quartz-core = { version = "0.3", features = ["CALayer", "CAMetalLayer"] }
 # `default-features = false, features = ["gpu"]` keeps truce-cpu
 # (and tiny-skia + fontdue) out of the dep tree.
 default = ["cpu"]
-cpu = ["dep:truce-cpu"]
+# Both features need truce-gpu: `gpu` for `WgpuBackend`, `cpu` for the
+# surface pump (`truce_gpu::pump`) its blit presentation runs through.
+cpu = ["dep:truce-cpu", "dep:truce-gpu"]
 gpu = ["dep:truce-gpu"]
 
 [lints]
