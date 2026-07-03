@@ -239,6 +239,20 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
+        // Refuse to open without hardware OpenGL. Without the WGL
+        // extensions, baseview's GL bootstrap panics inside the Win32
+        // window proc during `open_parented` - a context where a panic
+        // cannot unwind and aborts the entire host, out of reach of
+        // the `catch_unwind` below. A blank editor beats a dead DAW.
+        #[cfg(target_os = "windows")]
+        {
+            if !truce_gui_utils::wgl_extensions_available() {
+                log::error!(
+                    "vizia editor: hardware OpenGL (WGL extensions) unavailable;                      not opening the editor. A broken or mismatched GPU driver                      (or a remote session) is the usual cause"
+                );
+                return;
+            }
+        }
         let (lw, lh) = self.size;
         let setup = Arc::clone(&self.setup);
         let stylesheets = self.stylesheets.clone();
@@ -356,8 +370,27 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             })
         };
 
-        let window = app.open_parented(&parent_wrapper);
-        self.window = Some(window);
+        // Catch panics at the FFI boundary, like the other GUI
+        // backends' handlers: this `open` runs inside the plugin
+        // format's `extern "C"` callback, where an escaping panic
+        // aborts the entire host. The known case is OpenGL context
+        // creation inside `open_parented` - baseview unwraps WGL
+        // extension pointers that a software-GL environment (broken
+        // ICD, RDP session) doesn't provide. The editor stays
+        // unopened; the host keeps running.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app.open_parented(&parent_wrapper)
+        })) {
+            Ok(window) => self.window = Some(window),
+            Err(e) => {
+                let msg = e
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| e.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                log::error!("vizia editor failed to open: {msg}");
+            }
+        }
     }
 
     fn close(&mut self) {

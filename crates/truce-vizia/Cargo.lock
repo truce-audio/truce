@@ -2992,6 +2992,7 @@ version = "1.0.4"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
