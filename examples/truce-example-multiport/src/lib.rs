@@ -6,8 +6,9 @@
 //! instance addressed by port so it can hold more than 16 channels' worth
 //! of parts, each with its own sound.
 //!
-//! Each port is a distinct patch, so two routed tracks make two different
-//! sounds:
+//! Each port is a full control lane (wave / cutoff / release / volume),
+//! so two routed tracks make two independently-shaped sounds. The
+//! defaults keep the classic split:
 //!
 //! - **Port 0** -> a pure sine pad.
 //! - **Port 1** -> a buzzy saw lead.
@@ -15,7 +16,7 @@
 //! Voices are keyed by `(port, channel, note)`, so the same pitch on both
 //! ports is two independent voices. VST3 (event input buses) and CLAP
 //! (note ports) carry the port to the plugin; formats without a multi-port
-//! MIDI transport clamp to one port, and everything plays patch 0.
+//! MIDI transport clamp to one port, and everything plays lane 0.
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -23,20 +24,104 @@ use std::sync::Arc;
 use truce::prelude::*;
 use truce_core::midi::norm_7bit;
 use truce_gui::IntoLayoutEditor;
-use truce_gui_types::layout::{GridLayout, knob, widgets};
-
-use MultiportParamsParamId as P;
+use truce_gui_types::layout::{GridLayout, dropdown, knob, section};
 
 const NUM_VOICES: usize = 16;
 
+/// Oscillator waveform per lane. `ParamEnum` derives `Clone` / `Copy` /
+/// `PartialEq`.
+#[derive(ParamEnum)]
+pub enum Wave {
+    #[name = "Sine"]
+    Sine,
+    #[name = "Saw"]
+    Saw,
+    #[name = "Square"]
+    Square,
+    #[name = "Triangle"]
+    Triangle,
+}
+
+// One lane per input port. Two distinct structs rather than one reused
+// type because a param's display name is fixed on the type, and hosts
+// list both lanes' params in one flat namespace.
+#[derive(Params)]
+pub struct PortZeroLane {
+    // Default Sine: port 0 is the pad lane.
+    #[param(name = "P0 Wave", short_name = "P0Wave", group = "Port 0", default = 0)]
+    pub wave: EnumParam<Wave>,
+    #[param(
+        name = "P0 Cutoff",
+        short_name = "P0Cut",
+        group = "Port 0",
+        range = "linear(0, 1)",
+        default = 0.7,
+        unit = "%"
+    )]
+    pub cutoff: FloatParam,
+    #[param(
+        name = "P0 Release",
+        short_name = "P0Rel",
+        group = "Port 0",
+        range = "linear(0.01, 4)",
+        default = 0.3,
+        unit = "s"
+    )]
+    pub release: FloatParam,
+    #[param(
+        name = "P0 Volume",
+        short_name = "P0Vol",
+        group = "Port 0",
+        range = "linear(-60, 6)",
+        default = -6.0,
+        unit = "dB"
+    )]
+    pub volume: FloatParam,
+}
+
+#[derive(Params)]
+pub struct PortOneLane {
+    // Default Saw: port 1 is the lead lane.
+    #[param(name = "P1 Wave", short_name = "P1Wave", group = "Port 1", default = 1)]
+    pub wave: EnumParam<Wave>,
+    #[param(
+        name = "P1 Cutoff",
+        short_name = "P1Cut",
+        group = "Port 1",
+        range = "linear(0, 1)",
+        default = 0.7,
+        unit = "%"
+    )]
+    pub cutoff: FloatParam,
+    #[param(
+        name = "P1 Release",
+        short_name = "P1Rel",
+        group = "Port 1",
+        range = "linear(0.01, 4)",
+        default = 0.3,
+        unit = "s"
+    )]
+    pub release: FloatParam,
+    #[param(
+        name = "P1 Volume",
+        short_name = "P1Vol",
+        group = "Port 1",
+        range = "linear(-60, 6)",
+        default = -6.0,
+        unit = "dB"
+    )]
+    pub volume: FloatParam,
+}
+
+// Bases pinned (0 / 4) so the flattened ids survive adding a param to
+// lane 0 without shifting lane 1 - the stability saved state and host
+// automation depend on.
 #[derive(Params)]
 pub struct MultiportParams {
-    #[param(name = "Cutoff", range = "linear(0, 1)", default = 0.7, unit = "%")]
-    pub cutoff: FloatParam,
-    #[param(name = "Release", range = "linear(0.01, 4)", default = 0.3, unit = "s")]
-    pub release: FloatParam,
-    #[param(name = "Volume", range = "linear(-60, 6)", default = -6.0, unit = "dB")]
-    pub volume: FloatParam,
+    #[nested(base = 0)]
+    pub port0: PortZeroLane,
+    #[nested(base = 4)]
+    pub port1: PortOneLane,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -120,16 +205,27 @@ impl Multiport {
     }
 }
 
-// Naive (not band-limited) oscillator; the waveform is the patch, chosen
-// by the input port the note arrived on.
+// Naive (not band-limited) oscillator; the waveform comes from the
+// lane of the input port the note arrived on.
 #[allow(clippy::cast_possible_truncation)]
-fn osc(port: u8, phase: f64) -> f32 {
-    let s = if port == 0 {
-        (phase * TAU).sin() // port 0: sine pad
-    } else {
-        2.0 * phase - 1.0 // port 1: saw lead
+fn osc(wave: Wave, phase: f64) -> f32 {
+    let s = match wave {
+        Wave::Sine => (phase * TAU).sin(),
+        Wave::Saw => 2.0 * phase - 1.0,
+        Wave::Square => f64::from(i8::from(phase >= 0.5)) * 2.0 - 1.0,
+        Wave::Triangle => 4.0 * (phase - 0.5).abs() - 1.0,
     };
     s as f32
+}
+
+/// Per-block snapshot of one lane's controls, in render-ready units.
+#[derive(Clone, Copy)]
+struct Lane {
+    wave: Wave,
+    cutoff: f32,
+    volume: f32,
+    /// Per-sample release-envelope decrement.
+    rel_step: f32,
 }
 
 impl PluginLogic for Multiport {
@@ -152,11 +248,23 @@ impl PluginLogic for Multiport {
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         let n = buffer.num_samples();
-        let cutoff = self.params.cutoff.raw_smoothed_current().clamp(0.002, 1.0);
-        let volume = db_to_linear(self.params.volume.raw_smoothed_current());
-        let rel_s = self.params.release.raw_target().max(0.01);
         let atk_step = (1.0 / (0.005 * self.sample_rate)) as f32; // ~5 ms attack
-        let rel_step = (1.0 / (rel_s * self.sample_rate)) as f32;
+        let p0 = &self.params.port0;
+        let p1 = &self.params.port1;
+        let lanes = [
+            Lane {
+                wave: p0.wave.value(),
+                cutoff: p0.cutoff.raw_smoothed_current().clamp(0.002, 1.0),
+                volume: db_to_linear(p0.volume.raw_smoothed_current()),
+                rel_step: (1.0 / (p0.release.raw_target().max(0.01) * self.sample_rate)) as f32,
+            },
+            Lane {
+                wave: p1.wave.value(),
+                cutoff: p1.cutoff.raw_smoothed_current().clamp(0.002, 1.0),
+                volume: db_to_linear(p1.volume.raw_smoothed_current()),
+                rel_step: (1.0 / (p1.release.raw_target().max(0.01) * self.sample_rate)) as f32,
+            },
+        ];
 
         let mut next = 0;
         for i in 0..n {
@@ -170,11 +278,12 @@ impl PluginLogic for Multiport {
 
             let mut mix = 0.0f32;
             for v in self.voices.iter_mut().filter(|v| v.active) {
-                let raw = osc(v.port, v.phase);
+                let lane = &lanes[usize::from(v.port.min(1))];
+                let raw = osc(lane.wave, v.phase);
                 v.phase = (v.phase + v.freq / self.sample_rate).fract();
-                v.lp += cutoff * (raw - v.lp);
+                v.lp += lane.cutoff * (raw - v.lp);
                 if v.releasing {
-                    v.env -= rel_step;
+                    v.env -= lane.rel_step;
                     if v.env <= 0.0 {
                         v.env = 0.0;
                         v.active = false;
@@ -182,10 +291,10 @@ impl PluginLogic for Multiport {
                 } else if v.env < 1.0 {
                     v.env = (v.env + atk_step).min(1.0);
                 }
-                mix += v.lp * v.env * v.amp;
+                mix += v.lp * v.env * v.amp * lane.volume;
             }
 
-            let s = (mix * volume).clamp(-1.0, 1.0);
+            let s = mix.clamp(-1.0, 1.0);
             buffer.output(0)[i] = s;
             buffer.output(1)[i] = s;
         }
@@ -198,11 +307,28 @@ impl PluginLogic for Multiport {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        GridLayout::build(vec![widgets(vec![
-            knob(P::Cutoff, "Cutoff"),
-            knob(P::Release, "Release"),
-            knob(P::Volume, "Volume"),
-        ])])
+        // Nested-group params are addressed by their flattened id
+        // (`base + local`), read off each lane.
+        GridLayout::build(vec![
+            section(
+                "PORT 0",
+                vec![
+                    dropdown(self.params.port0.wave.id(), "Wave"),
+                    knob(self.params.port0.cutoff.id(), "Cutoff"),
+                    knob(self.params.port0.release.id(), "Release"),
+                    knob(self.params.port0.volume.id(), "Volume"),
+                ],
+            ),
+            section(
+                "PORT 1",
+                vec![
+                    dropdown(self.params.port1.wave.id(), "Wave"),
+                    knob(self.params.port1.cutoff.id(), "Cutoff"),
+                    knob(self.params.port1.release.id(), "Release"),
+                    knob(self.params.port1.volume.id(), "Volume"),
+                ],
+            ),
+        ])
         .with_title("MULTIPORT")
         .into_editor(&self.params)
     }
@@ -218,7 +344,14 @@ mod tests {
     use super::*;
 
     fn render(input: &[Event]) -> (Multiport, Vec<f32>) {
+        render_with(|_| {}, input)
+    }
+
+    // Render one block with the given param tweaks applied before
+    // `reset` (which snaps smoothers onto the tweaked values).
+    fn render_with(setup: impl Fn(&MultiportParams), input: &[Event]) -> (Multiport, Vec<f32>) {
         let params = Arc::new(MultiportParams::new());
+        setup(&params);
         let mut plugin = Multiport::new(Arc::clone(&params));
         plugin.reset(44100.0, 64);
 
@@ -277,13 +410,43 @@ mod tests {
 
     #[test]
     fn port_selects_distinct_patch() {
-        // Port 0 is a sine, port 1 a saw: the same note renders different
-        // waveforms, so the two output blocks differ sample-for-sample.
+        // Default lanes: port 0 sine, port 1 saw - the same note renders
+        // different waveforms, so the two output blocks differ.
         let (_p0, a) = render(&[note_on_port(0, 60)]);
         let (_p1, b) = render(&[note_on_port(1, 60)]);
         assert!(
             a.iter().zip(&b).any(|(x, y)| (x - y).abs() > 1e-4),
             "sine and saw patches should render differently"
+        );
+    }
+
+    #[test]
+    fn lane_volume_is_per_port() {
+        // Duck lane 1's volume only: a port-1 note gets quiet while the
+        // same note on port 0 stays at full level.
+        let duck = |p: &MultiportParams| p.port1.volume.set_value(-60.0);
+        let (_p, loud) = render_with(duck, &[note_on_port(0, 60)]);
+        let (_p, quiet) = render_with(duck, &[note_on_port(1, 60)]);
+        assert!(
+            peak(&quiet) < peak(&loud) * 0.01,
+            "lane 1's volume must not affect lane 0 (loud={}, quiet={})",
+            peak(&loud),
+            peak(&quiet)
+        );
+    }
+
+    #[test]
+    fn lane_wave_is_selectable() {
+        // Switch lane 0 to Saw: both ports now render the same waveform
+        // (all other lane controls at defaults), so the blocks match.
+        let (_p, a) = render_with(
+            |p| p.port0.wave.set_value(Wave::Saw),
+            &[note_on_port(0, 60)],
+        );
+        let (_p, b) = render(&[note_on_port(1, 60)]);
+        assert!(
+            a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-6),
+            "lane 0 set to Saw should match lane 1's default Saw"
         );
     }
 
