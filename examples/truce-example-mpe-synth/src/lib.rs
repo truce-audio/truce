@@ -299,7 +299,7 @@ impl PluginLogic for Synth {
             knob(P::Release, "Release"),
             knob(P::Volume, "Volume"),
         ])])
-        .with_title("MPE")
+        .with_title("MPE SYNTH")
         .into_editor(&self.params)
     }
 }
