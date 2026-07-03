@@ -18,11 +18,37 @@
 use std::any::type_name;
 use std::ffi::CString;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
 use truce_params::ParamInfo;
 
 use crate::bus::BusLayout;
 use crate::export::PluginExport;
+
+/// The mediation lock every format wrapper puts around its plugin
+/// instance. The audio thread holds the lock for the duration of a
+/// block (`process`, `reset`, the queued state apply); host-thread
+/// state callbacks lock for the serialization; GUI closures use
+/// `try_lock` with an empty fallback so an editor frame never blocks
+/// on the audio thread. `parking_lot`'s uncontended path is a single
+/// CAS - noise next to the atomics a block already pays.
+///
+/// A `Mutex` rather than an `RwLock`: the only non-audio accessors
+/// are a host state save and an editor preset capture - both rare -
+/// so reader parallelism buys nothing, and `Mutex<P>: Sync` needs
+/// only `P: Send` (an `RwLock` would force `Sync` onto every plugin
+/// type).
+///
+/// The `Arc` is what makes GUI closures sound: they clone the handle
+/// instead of stashing a raw pointer into the instance struct (whose
+/// `&mut` the audio thread holds during callbacks).
+pub type SharedPlugin<P> = Arc<parking_lot::Mutex<P>>;
+
+/// Wrap a freshly created plugin in the wrapper-standard mediation
+/// lock. See [`SharedPlugin`].
+pub fn shared_plugin<P>(plugin: P) -> SharedPlugin<P> {
+    Arc::new(parking_lot::Mutex::new(plugin))
+}
 
 /// `CStrings` derived from a single `ParamInfo`. All four conversions
 /// follow the same pattern (`unwrap_or_default()` so a `\0` in metadata

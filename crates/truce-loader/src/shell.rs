@@ -68,7 +68,7 @@ pub struct HotShell<P: Params, S: Sample = f32> {
     pub params: Arc<P>,
     loader: Arc<Mutex<NativeLoader<S>>>,
     /// Meter values written by DSP, read by GUI.
-    meters: Arc<[AtomicU32; 256]>,
+    meters: Arc<truce_core::meters::MeterStore>,
     sample_rate: f64,
     max_block_size: usize,
     /// Last `load_counter` value the audio path observed. When the
@@ -85,7 +85,7 @@ pub struct HotShell<P: Params, S: Sample = f32> {
 
 // SAFETY: `HotShell` holds `Arc<P>` (params, `Sync` by the trait
 // contract on `Params`), `Arc<Mutex<NativeLoader<S>>>` (already
-// `Send + Sync`), atomics, and a `meters` array of `AtomicU32`. The
+// `Send + Sync`), atomics, and an atomic-slot `MeterStore`. The
 // `Mutex` is the synchronisation point for every access to the
 // underlying `Box<dyn PluginLogicCore<S>>` - audio thread takes
 // `try_lock`, GUI thread takes `try_lock_for(GUI_LOCK_WAIT)`, file
@@ -106,13 +106,20 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
         Self {
             params,
             loader,
-            meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
+            meters: truce_core::meters::MeterStore::new(),
             sample_rate: 44100.0,
             max_block_size: 1024,
             last_seen_load_counter: initial_counter,
             latency_cache: AtomicU32::new(0),
             tail_cache: AtomicU32::new(0),
         }
+    }
+
+    /// Shared meter storage handle - the GUI-thread-safe channel
+    /// for meter reads (see `PluginExport::meter_store`).
+    #[must_use]
+    pub fn meter_store(&self) -> Arc<truce_core::meters::MeterStore> {
+        Arc::clone(&self.meters)
     }
 
     /// Try to construct the loaded plugin's editor.
@@ -221,12 +228,7 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         let params = &self.params;
         let meters = &self.meters;
         let param_fn = |id: u32| -> f64 { params.get_plain(id).unwrap_or(0.0) };
-        let meter_fn = |id: u32, v: f32| {
-            let idx = id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
-            if let Some(slot) = meters.get(idx) {
-                slot.store(v.to_bits(), Ordering::Relaxed);
-            }
-        };
+        let meter_fn = |id: u32, v: f32| meters.write(id, v);
         let mut ctx = ProcessContext::new(
             context.transport,
             context.sample_rate,
@@ -322,10 +324,7 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
-        let idx = meter_id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
-        self.meters
-            .get(idx)
-            .map_or(0.0, |v| f32::from_bits(v.load(Ordering::Relaxed)))
+        self.meters.read(meter_id)
     }
 }
 

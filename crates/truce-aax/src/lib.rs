@@ -28,8 +28,8 @@ use truce_core::info::PluginCategory;
 use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, first_bus_layout, log_midi_ports_clamped, log_missing_bus_layout,
-    run_audio_block, run_extern_callback_with, run_register,
+    SharedPlugin, default_io_channels, first_bus_layout, log_midi_ports_clamped,
+    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
@@ -196,13 +196,21 @@ pub struct TruceAaxTransportSnapshot {
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct AaxInstance<P: PluginExport> {
-    plugin: P,
+    /// The plugin behind the wrapper-standard mediation lock: the
+    /// audio thread locks per block, `_save_state` (host thread)
+    /// locks for the serialization, the editor's `get_state` closure
+    /// `try_lock`s. See `truce_core::wrapper::SharedPlugin`.
+    plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`_get_param`, `_set_param`,
-    /// `_format_value`, `_save_state`'s param walk) read params through
-    /// this handle so they never form a `&inst.plugin` reference.
-    /// Params are atomic-backed and `Sync`.
+    /// `_format_value`, `_save_state`'s param walk) read params
+    /// through this handle so a param query never contends on the
+    /// plugin lock. Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
+    /// Shared meter storage, set once at instance creation. The
+    /// editor's `get_meter` closure reads these atomic slots instead
+    /// of the plugin instance.
+    meter_store: Arc<truce_core::meters::MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `_reset`).
     latency_cache: AtomicU32,
@@ -784,11 +792,13 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
     let info = P::info();
     let param_infos = plugin.params().param_infos();
     let params_arc = plugin.params_arc();
+    let meter_store = plugin.meter_store();
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(AaxInstance::<P> {
-        plugin,
+        plugin: shared_plugin(plugin),
         params_arc,
+        meter_store,
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
@@ -832,12 +842,15 @@ pub unsafe fn _reset<P: PluginExport>(
     let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
     inst.scratch
         .ensure_capacity(num_in as usize, num_out as usize, max_frames);
-    inst.plugin.reset(sample_rate, max_frames);
-    inst.plugin.params().set_sample_rate(sample_rate);
-    inst.plugin.params().snap_smoothers();
-    inst.latency_cache
-        .store(inst.plugin.latency(), Ordering::Relaxed);
-    inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+    {
+        let mut plugin = inst.plugin.lock();
+        plugin.reset(sample_rate, max_frames);
+        plugin.params().set_sample_rate(sample_rate);
+        plugin.params().snap_smoothers();
+        inst.latency_cache
+            .store(plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
+    }
     inst.prepared = true;
 }
 
@@ -879,8 +892,16 @@ pub unsafe fn _process<P: PluginExport>(
         // policy. Bumps `state_revision` so the next `_save_state` call
         // re-captures the restored values rather than handing back the
         // stale cache.
+        // Lock the plugin for the whole block. Uncontended this is
+        // one CAS; contended only when a host/GUI state callback is
+        // mid-serialization, which then delays this block by the
+        // remainder of that `save_state` call. Lock through a local
+        // Arc clone so the guard doesn't pin a borrow of `inst`.
+        let plugin_arc = Arc::clone(&inst.plugin);
+        let mut plugin = plugin_arc.lock();
+
         if let Some(state) = inst.pending_state.pop() {
-            state::apply_state(&mut inst.plugin, &state);
+            state::apply_state(&mut *plugin, &state);
             inst.state_revision.fetch_add(1, Ordering::Release);
         }
 
@@ -962,7 +983,7 @@ pub unsafe fn _process<P: PluginExport>(
                 min_subblock_samples: inst.min_subblock_samples,
             };
             process_chunked(
-                &mut inst.plugin,
+                &mut *plugin,
                 inst.params_arc.as_ref() as &dyn Params,
                 &mut buffer,
                 chunk_args,
@@ -974,10 +995,10 @@ pub unsafe fn _process<P: PluginExport>(
                 .finish_widening(outputs, num_out, len_u32(num_frames));
 
             // Refresh latency / tail caches so the host's main-thread
-            // queries don't have to call into `inst.plugin`.
+            // queries don't have to take the plugin lock.
             inst.latency_cache
-                .store(inst.plugin.latency(), Ordering::Relaxed);
-            inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+                .store(plugin.latency(), Ordering::Relaxed);
+            inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
         }
     });
     if !ok {
@@ -1234,12 +1255,9 @@ unsafe fn save_state_body<P: PluginExport>(
     //      call re-serializes.
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
         let (ids, values) = inst.params_arc.collect_values();
-        // `plugin.save_state()` reads through the plugin reference: a
-        // user impl that mutates non-atomic state from `process` while
-        // also reading it from `save_state` races here. The contract
-        // is "save_state must be safe to call concurrently with
-        // process"; impls that copy from atomic params are fine.
-        let extra = inst.plugin.save_state();
+        // Lock the plugin for the serialization; a block in flight
+        // holds the lock, so this waits for the block boundary.
+        let extra = inst.plugin.lock().save_state();
         state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra)
     };
 
@@ -1409,7 +1427,9 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
 pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceAaxEditorInfo) {
     unsafe {
         let inst = &mut *ctx.cast::<AaxInstance<P>>();
-        inst.editor = inst.plugin.editor();
+        // Editor construction needs `&mut P`; the lock waits out at
+        // most one in-flight audio block.
+        inst.editor = inst.plugin.lock().editor();
         let info = match &inst.editor {
             Some(editor) => {
                 // Report logical size; the patched baseview CGLayer path
@@ -1461,8 +1481,9 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let set_fn = cb.set_param;
         let release_fn = cb.release_param;
         let resize_fn = cb.request_resize;
-        let params = inst.plugin.params_arc();
-        let plugin_ptr = SendPtr::new(&raw const inst.plugin);
+        let params = Arc::clone(&inst.params_arc);
+        let meter_store = Arc::clone(&inst.meter_store);
+        let plugin_lock = Arc::clone(&inst.plugin);
         let params_for_set = params.clone();
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
@@ -1494,13 +1515,15 @@ pub unsafe fn _editor_open<P: PluginExport>(
                         .format_value(id, val)
                         .unwrap_or_else(|| format!("{val:.1}"))
                 }),
-                get_meter: Box::new(move |id| {
-                    let plugin = plugin_ptr.get();
-                    plugin.get_meter(id)
-                }),
+                get_meter: Box::new(move |id| meter_store.read(id)),
                 get_state: Box::new(move || {
-                    let plugin = plugin_ptr.get();
-                    plugin.save_state()
+                    // Editor preset capture: never block the GUI on
+                    // the audio thread. Losing the race to an
+                    // in-flight block returns empty; the editor
+                    // retries on a later frame.
+                    plugin_lock
+                        .try_lock()
+                        .map_or_else(Vec::new, |plugin| plugin.save_state())
                 }),
                 set_state: Box::new(move |bytes| {
                     // The editor sends RAW custom-state bytes - exactly

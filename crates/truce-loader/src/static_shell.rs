@@ -4,7 +4,6 @@
 //! but zero runtime overhead. Use via `export_static!`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
@@ -29,15 +28,15 @@ use truce_plugin::PluginLogicCore;
 pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
     pub params: Arc<P>,
     logic: L,
-    meters: Arc<[AtomicU32; 256]>,
+    meters: Arc<truce_core::meters::MeterStore>,
     sample_rate: f64,
     _sample: std::marker::PhantomData<fn() -> S>,
 }
 
 // SAFETY: `StaticShell` owns `Arc<P>` (params, `Sync` by the
 // `Params` trait contract), `L` (the user's logic - `Send + 'static`
-// per the `PluginLogicCore` bound), an `AtomicU32`-backed meters
-// array, and a `PhantomData<fn() -> S>`. No raw pointers, no
+// per the `PluginLogicCore` bound), an atomic-slot `MeterStore`,
+// and a `PhantomData<fn() -> S>`. No raw pointers, no
 // `!Send` fields, no interior mutability that escapes the shell's
 // own `&mut` borrows. The host contract that format wrappers
 // invoke methods on a single thread at a time per instance is what
@@ -54,10 +53,16 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
         Self {
             params,
             logic,
-            meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
+            meters: truce_core::meters::MeterStore::new(),
             sample_rate: 44100.0,
             _sample: std::marker::PhantomData,
         }
+    }
+
+    /// Shared meter storage handle - the GUI-thread-safe channel
+    /// for meter reads (see `PluginExport::meter_store`).
+    pub fn meter_store(&self) -> Arc<truce_core::meters::MeterStore> {
+        Arc::clone(&self.meters)
     }
 
     /// Access the plugin logic (for testing).
@@ -119,14 +124,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         let params = &self.params;
         let meters = &self.meters;
         let param_fn = |id: u32| -> f64 { params.get_plain(id).unwrap_or(0.0) };
-        let meter_fn = |id: u32, v: f32| {
-            // Meter IDs are offset by `truce_params::METER_ID_BASE`;
-            // mirror the offset in `get_meter` exactly.
-            let idx = id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
-            if let Some(slot) = meters.get(idx) {
-                slot.store(v.to_bits(), Ordering::Relaxed);
-            }
-        };
+        let meter_fn = |id: u32, v: f32| meters.write(id, v);
         let mut ctx = ProcessContext::new(
             context.transport,
             context.sample_rate,
@@ -174,16 +172,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
-        // Meter IDs live in a dedicated high range starting at
-        // `truce_params::METER_ID_BASE`; storage is offset into
-        // `self.meters`. `wrapping_sub` keeps out-of-range ids from
-        // panicking - they fall through to the `get` -> None path.
-        let idx = meter_id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
-        if let Some(slot) = self.meters.get(idx) {
-            f32::from_bits(slot.load(Ordering::Relaxed))
-        } else {
-            0.0
-        }
+        self.meters.read(meter_id)
     }
 }
 
@@ -329,6 +318,12 @@ macro_rules! export_static {
 
             fn params_arc(&self) -> std::sync::Arc<$params> {
                 std::sync::Arc::clone(&self.inner.params)
+            }
+
+            fn meter_store(
+                &self,
+            ) -> std::sync::Arc<$crate::__macro_deps::truce_core::meters::MeterStore> {
+                self.inner.meter_store()
             }
         }
     };

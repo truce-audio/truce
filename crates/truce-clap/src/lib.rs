@@ -101,7 +101,9 @@ use truce_core::midi::{
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
 use truce_core::state;
-use truce_core::wrapper::{run_audio_block_with, run_extern_callback_with};
+use truce_core::wrapper::{
+    SharedPlugin, run_audio_block_with, run_extern_callback_with, shared_plugin,
+};
 use truce_core::{Float, Sample};
 use truce_params::Params;
 use truce_params::{ParamFlags, ParamInfo, ParamRange};
@@ -146,16 +148,22 @@ type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 // ---------------------------------------------------------------------------
 
 struct ClapPluginData<P: PluginExport> {
-    /// The user's plugin instance.
-    plugin: P,
+    /// The user's plugin instance behind the wrapper-standard
+    /// mediation lock: the audio thread locks per block, `state_save`
+    /// (host thread) locks for the serialization, the editor's
+    /// `get_state` closure `try_lock`s. See
+    /// `truce_core::wrapper::SharedPlugin`.
+    plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`params_get_value`, `params_value_to_text`,
-    /// `params_text_to_value`, `state_save`) read params through this
-    /// handle so they never form a `&data.plugin` reference - the audio
-    /// thread's `&mut data.plugin` would otherwise let LLVM deduce
-    /// noalias on the plugin field and reorder loads past the audio
-    /// thread's stores. Params are atomic-backed and `Sync`.
+    /// `params_text_to_value`) read params through this handle so a
+    /// param query never contends on the plugin lock. Params are
+    /// atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
+    /// Shared meter storage, set once at instance creation. The
+    /// editor's `get_meter` closure reads these atomic slots instead
+    /// of the plugin instance.
+    meter_store: Arc<truce_core::meters::MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `init`/`reset`) so
     /// `latency_get` / `tail_get` read the value without touching
@@ -446,8 +454,11 @@ unsafe fn data_from_plugin<P: PluginExport>(
 unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugin) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.plugin.init();
-        data.param_infos = data.plugin.params().param_infos();
+        {
+            let mut instance = data.plugin.lock();
+            instance.init();
+            data.param_infos = instance.params().param_infos();
+        }
         // Query host params extension for request_flush support
         if !data.host.is_null()
             && let Some(get_ext) = (*data.host).get_extension
@@ -494,9 +505,12 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         data.sample_rate = sample_rate;
         let max_block = max_frames_count as usize;
         data.max_block_size = max_block;
-        data.plugin.reset(sample_rate, max_block);
-        data.plugin.params().set_sample_rate(sample_rate);
-        data.plugin.params().snap_smoothers();
+        {
+            let mut instance = data.plugin.lock();
+            instance.reset(sample_rate, max_block);
+            instance.params().set_sample_rate(sample_rate);
+            instance.params().snap_smoothers();
+        }
 
         // Pre-grow the widening / narrowing scratch on the f64 path.
         // Without this, the first audio block after `activate` hits
@@ -552,8 +566,9 @@ unsafe extern "C" fn clap_plugin_stop_processing<P: PluginExport>(_plugin: *cons
 unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.plugin.reset(data.sample_rate, data.max_block_size);
-        data.plugin.params().snap_smoothers();
+        let mut instance = data.plugin.lock();
+        instance.reset(data.sample_rate, data.max_block_size);
+        instance.params().snap_smoothers();
     }
 }
 
@@ -1126,6 +1141,15 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             return CLAP_PROCESS_CONTINUE;
         }
 
+        // Lock the plugin for the whole block. Uncontended this is
+        // one CAS; contended only when a host/GUI state callback is
+        // mid-serialization, which then delays this block by the
+        // remainder of that `save_state` call. Lock through a local
+        // Arc clone so the guard doesn't pin a borrow of `data`
+        // (later per-block work needs `&mut data`).
+        let plugin_arc = Arc::clone(&data.plugin);
+        let mut instance = plugin_arc.lock();
+
         // Apply any state-load that the host or editor handed us
         // since the last block. Runs before per-block work so the
         // plugin sees consistent params for the entire block. The
@@ -1133,7 +1157,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // newest blob and the older one is dropped - preferred to
         // the audio thread chasing stale state across blocks.
         let state_loaded = data.pending_state.pop().is_some_and(|state| {
-            state::apply_state(&mut data.plugin, &state);
+            state::apply_state(&mut *instance, &state);
             true
         });
 
@@ -1304,7 +1328,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             min_subblock_samples: data.info.automation.min_subblock_samples,
         };
         let status = process_chunked(
-            &mut data.plugin,
+            &mut *instance,
             data.params_arc.as_ref() as &dyn Params,
             &mut audio_buffer,
             chunk_args,
@@ -1340,10 +1364,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         }
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to call into `data.plugin`.
+        // queries don't have to take the plugin lock.
         data.latency_cache
-            .store(data.plugin.latency(), Ordering::Relaxed);
-        data.tail_cache.store(data.plugin.tail(), Ordering::Relaxed);
+            .store(instance.latency(), Ordering::Relaxed);
+        data.tail_cache.store(instance.tail(), Ordering::Relaxed);
 
         // Flush GUI-initiated param changes to host output events
         flush_gui_changes::<P>(data, proc.out_events);
@@ -1871,7 +1895,9 @@ unsafe extern "C" fn state_save<P: PluginExport>(
         // also reading it from `save_state` races here. The contract
         // is "save_state must be safe to call concurrently with
         // process"; impls that copy from atomic params are fine.
-        let extra = data.plugin.save_state();
+        // Lock the plugin for the serialization; a block in flight
+        // holds the lock, so this waits for the block boundary.
+        let extra = data.plugin.lock().save_state();
         let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, &extra);
 
         // Write to the CLAP output stream
@@ -2289,7 +2315,9 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
         if data.gui_created {
             return true;
         }
-        data.editor = data.plugin.editor();
+        // Editor construction needs `&mut P`; the lock waits out
+        // at most one in-flight audio block.
+        data.editor = data.plugin.lock().editor();
         data.gui_created = data.editor.is_some();
         data.gui_created
     }
@@ -2426,13 +2454,9 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
             return false;
         }
 
-        let params = data.plugin.params_arc();
-        // SAFETY: `data.plugin` is the `Box::into_raw` plugin instance owned
-        // by the host's plugin slot - outlives the editor. Params fields are
-        // atomic; cross-thread reads from the GUI thread are sound. The host
-        // pointers are valid for the plugin's lifetime; closures capturing
-        // them run on the main thread only.
-        let plugin_ptr = SendPtr::new(&raw const data.plugin);
+        let params = Arc::clone(&data.params_arc);
+        let meter_store = Arc::clone(&data.meter_store);
+        let plugin_lock = Arc::clone(&data.plugin);
         let gui_changes = data.gui_changes.clone();
         let gui_changes2 = data.gui_changes.clone();
         let gui_changes3 = data.gui_changes.clone();
@@ -2514,13 +2538,15 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                         .format_value(id, plain)
                         .unwrap_or_else(|| format!("{plain:.1}"))
                 }),
-                get_meter: Box::new(move |id| {
-                    let plugin = plugin_ptr.get();
-                    plugin.get_meter(id)
-                }),
+                get_meter: Box::new(move |id| meter_store.read(id)),
                 get_state: Box::new(move || {
-                    let plugin = plugin_ptr.get();
-                    plugin.save_state()
+                    // Editor preset capture: never block the GUI on
+                    // the audio thread. Losing the race to an
+                    // in-flight block returns empty; the editor
+                    // retries on a later frame.
+                    plugin_lock
+                        .try_lock()
+                        .map_or_else(Vec::new, |plugin| plugin.save_state())
                 }),
                 set_state: Box::new(move |bytes| {
                     // The editor sends RAW custom-state bytes - exactly
@@ -2987,6 +3013,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
     let plugin_id_hash = state::hash_plugin_id(info.clap_id);
     let param_infos = instance.params().param_infos();
     let params_arc = instance.params_arc();
+    let meter_store = instance.meter_store();
     let latency_cache = AtomicU32::new(instance.latency());
     let tail_cache = AtomicU32::new(instance.tail());
 
@@ -3008,8 +3035,9 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         .unwrap_or(0);
 
     let data = Box::new(ClapPluginData::<P> {
-        plugin: instance,
+        plugin: shared_plugin(instance),
         params_arc,
+        meter_store,
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),

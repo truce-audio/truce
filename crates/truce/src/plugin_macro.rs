@@ -396,6 +396,10 @@ macro_rules! __plugin_hot_reload {
             fn params_arc(&self) -> std::sync::Arc<$params> {
                 std::sync::Arc::clone(&self.inner.params)
             }
+
+            fn meter_store(&self) -> std::sync::Arc<$crate::core::meters::MeterStore> {
+                self.inner.meter_store()
+            }
         }
     };
 }

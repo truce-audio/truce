@@ -37,6 +37,17 @@ pub trait PluginExport: PluginRuntime + Sized {
     /// params themselves.
     fn params_arc(&self) -> Arc<Self::Params>;
 
+    /// Shared meter storage handle, mirroring [`Self::params_arc`]:
+    /// the audio thread publishes meter values into this store from
+    /// inside `process()` (via the shells' meter callback), and GUI
+    /// `get_meter` closures read it - never the plugin instance,
+    /// whose `&mut` the audio thread holds for the whole block.
+    ///
+    /// The `truce::plugin!` shells own the store and return their
+    /// handle here; a hand-written `PluginExport` impl keeps one
+    /// alongside its params `Arc`.
+    fn meter_store(&self) -> Arc<crate::meters::MeterStore>;
+
     /// Static parameter metadata for registration-time access.
     ///
     /// Format wrappers' `register_*` paths (`truce-vst2`, `truce-vst3`,

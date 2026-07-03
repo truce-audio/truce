@@ -169,11 +169,21 @@ macro_rules! plugin_logic_leaf_trait {
 
             /// Serialize plugin-specific state (DSP state, not params -
             /// those are saved automatically). Default: no extra state.
+            ///
+            /// Runs on a host or GUI thread while the audio thread is
+            /// paused at a block boundary (the wrapper's plugin lock),
+            /// so reading any field is safe - but an audio block that
+            /// arrives mid-save waits for this to return. Keep it
+            /// cheap: copy bytes out, don't compute or compress here.
             fn save_state(&self) -> Vec<u8> {
                 Vec::new()
             }
 
             /// Restore plugin-specific state.
+            ///
+            /// Runs on the audio thread between blocks, with the same
+            /// exclusive access `process()` has - writing any field
+            /// is safe.
             ///
             /// # Errors
             ///

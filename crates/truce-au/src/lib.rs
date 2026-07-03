@@ -43,8 +43,8 @@ use truce_core::ump::{
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
-    default_io_channels, log_midi_ports_clamped, log_missing_bus_layout, run_audio_block,
-    run_extern_callback_with, run_register,
+    SharedPlugin, default_io_channels, log_midi_ports_clamped, log_missing_bus_layout,
+    run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
@@ -65,12 +65,22 @@ use ffi::{
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct AuInstance<P: PluginExport> {
-    plugin: P,
+    /// The plugin behind the wrapper-standard mediation lock: the
+    /// audio thread locks per block, `cb_state_save` (host thread)
+    /// locks for the serialization, the editor's `get_state` closure
+    /// `try_lock`s. See `truce_core::wrapper::SharedPlugin`.
+    plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
-    /// Host-thread callbacks (`cb_param_*`, `cb_state_save`) read params
-    /// through this handle so they never form a `&inst.plugin`
-    /// reference. Params are atomic-backed and `Sync`.
+    /// Host-thread callbacks (`cb_param_*`) read params through this
+    /// handle so a param query never contends on the plugin lock.
+    /// Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
+    /// Shared meter storage, set once at instance creation. The
+    /// editor's `get_meter` closure reads these atomic slots instead
+    /// of the plugin instance. Editor wiring is macOS/iOS-only (the
+    /// AU GUI section), so the field follows it.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    meter_store: Arc<truce_core::meters::MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
@@ -181,8 +191,10 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(AuInstance::<P> {
-        plugin,
         params_arc,
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        meter_store: plugin.meter_store(),
+        plugin: shared_plugin(plugin),
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
@@ -245,12 +257,15 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
-        inst.plugin.reset(sample_rate, max_frames);
-        inst.plugin.params().set_sample_rate(sample_rate);
-        inst.plugin.params().snap_smoothers();
-        inst.latency_cache
-            .store(inst.plugin.latency(), Ordering::Relaxed);
-        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+        {
+            let mut plugin = inst.plugin.lock();
+            plugin.reset(sample_rate, max_frames);
+            plugin.params().set_sample_rate(sample_rate);
+            plugin.params().snap_smoothers();
+            inst.latency_cache
+                .store(plugin.latency(), Ordering::Relaxed);
+            inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
+        }
         inst.prepared = true;
     }
 }
@@ -290,12 +305,20 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             return;
         }
 
+        // Lock the plugin for the whole block. Uncontended this is
+        // one CAS; contended only when a host/GUI state callback is
+        // mid-serialization, which then delays this block by the
+        // remainder of that `save_state` call. Lock through a local
+        // Arc clone so the guard doesn't pin a borrow of `inst`.
+        let plugin_arc = Arc::clone(&inst.plugin);
+        let mut plugin = plugin_arc.lock();
+
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
         // entire block. See `pending_state` field comment for the
         // queue-overflow policy.
         if let Some(state) = inst.pending_state.pop() {
-            state::apply_state(&mut inst.plugin, &state);
+            state::apply_state(&mut *plugin, &state);
         }
 
         // Convert MIDI events. AU v2 `SysEx` input arrives through
@@ -452,7 +475,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             min_subblock_samples: inst.min_subblock_samples,
         };
         process_chunked(
-            &mut inst.plugin,
+            &mut *plugin,
             inst.params_arc.as_ref() as &dyn Params,
             &mut audio_buffer,
             chunk_args,
@@ -480,10 +503,10 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         }
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to call into `inst.plugin`.
+        // queries don't have to take the plugin lock.
         inst.latency_cache
-            .store(inst.plugin.latency(), Ordering::Relaxed);
-        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+            .store(plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
     });
     if !ok {
         unsafe {
@@ -577,7 +600,9 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // Allocator pin: this wrapper allocates with libc `malloc` and
         // the AU shim frees with libc `free`. The Rust global allocator
         // must not appear on either side; mixing allocators is UB.
-        let extra = inst.plugin.save_state();
+        // Lock the plugin for the serialization; a block in flight
+        // holds the lock, so this waits for the block boundary.
+        let extra = inst.plugin.lock().save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let len = blob.len();
@@ -1105,7 +1130,9 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         }
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
-            inst.editor = inst.plugin.editor();
+            // Editor construction needs `&mut P`; the lock waits out
+            // at most one in-flight audio block.
+            inst.editor = inst.plugin.lock().editor();
         }
         i32::from(inst.editor.is_some())
     }
@@ -1166,7 +1193,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         // reports.
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
-            inst.editor = inst.plugin.editor();
+            // Editor construction needs `&mut P`; the lock waits out
+            // at most one in-flight audio block.
+            inst.editor = inst.plugin.lock().editor();
         }
         if let Some(ref editor) = inst.editor {
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
@@ -1200,8 +1229,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     unsafe {
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if let Some(ref mut editor) = inst.editor {
-            let params = inst.plugin.params_arc();
-            let plugin_ptr = SendPtr::new(&raw const inst.plugin);
+            let params = Arc::clone(&inst.params_arc);
+            let meter_store = Arc::clone(&inst.meter_store);
+            let plugin_lock = Arc::clone(&inst.plugin);
             let ctx_raw = SendPtr::new(ctx);
             let params_for_set = params.clone();
             let params_for_get = params.clone();
@@ -1295,13 +1325,15 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             .format_value(id, plain)
                             .unwrap_or_else(|| format!("{plain:.1}"))
                     }),
-                    get_meter: Box::new(move |id| {
-                        let plugin = plugin_ptr.get();
-                        plugin.get_meter(id)
-                    }),
+                    get_meter: Box::new(move |id| meter_store.read(id)),
                     get_state: Box::new(move || {
-                        let plugin = plugin_ptr.get();
-                        plugin.save_state()
+                        // Editor preset capture: never block the GUI
+                        // on the audio thread. Losing the race to an
+                        // in-flight block returns empty; the editor
+                        // retries on a later frame.
+                        plugin_lock
+                            .try_lock()
+                            .map_or_else(Vec::new, |plugin| plugin.save_state())
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes -

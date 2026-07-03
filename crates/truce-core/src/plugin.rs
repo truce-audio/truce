@@ -110,6 +110,12 @@ pub trait PluginRuntime: Send + 'static {
     /// `truce_plugin::PluginLogic::save_state` shape so the wrapper
     /// bridge is a passthrough rather than an `Option<Vec<u8>>` to
     /// `Vec<u8>` translation.
+    ///
+    /// **Concurrency contract.** Called on a host or GUI thread under
+    /// the wrapper's plugin lock, so it never runs concurrently with
+    /// `process()` - any field is safe to read. The flip side: an
+    /// audio block that arrives mid-save waits for this to return, so
+    /// keep it cheap (copy bytes out; don't compute or compress here).
     fn save_state(&self) -> Vec<u8> {
         Vec::new()
     }
@@ -117,6 +123,11 @@ pub trait PluginRuntime: Send + 'static {
     /// Restore extra state. Matches the user-facing
     /// `truce_plugin::PluginLogic::load_state` `Result` shape so the
     /// wrapper bridge is a passthrough.
+    ///
+    /// **Concurrency contract.** Called on the audio thread between
+    /// blocks (the wrappers queue host loads and apply them at the
+    /// top of `process()`), under the same exclusive access
+    /// `process()` has - any field is safe to write.
     ///
     /// # Errors
     ///
@@ -167,8 +178,15 @@ pub trait PluginRuntime: Send + 'static {
         0
     }
 
-    /// Read a meter value by ID (0.0–1.0). Called by the GUI at ~60fps.
-    /// Override to expose level meters, gain reduction, etc.
+    /// Read a meter value by ID (0.0–1.0).
+    ///
+    /// **Concurrency contract.** Shell-internal: format wrappers'
+    /// editor closures read meters through the shared
+    /// [`crate::meters::MeterStore`] handle
+    /// ([`crate::export::PluginExport::meter_store`]), never through
+    /// this method, so it has no cross-thread caller. It remains on
+    /// the trait for single-threaded consumers (the test driver, the
+    /// standalone's locked instance).
     fn get_meter(&self, _meter_id: u32) -> f32 {
         0.0
     }

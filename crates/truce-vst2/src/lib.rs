@@ -19,8 +19,8 @@ use truce_core::export::PluginExport;
 use truce_core::midi::decode_short_message;
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, first_bus_layout, log_midi_ports_clamped, log_missing_bus_layout,
-    run_audio_block, run_extern_callback_with, run_register,
+    SharedPlugin, default_io_channels, first_bus_layout, log_midi_ports_clamped,
+    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::{ParamFlags, ParamInfo, Params};
@@ -41,12 +41,20 @@ use std::sync::atomic::{AtomicU32, Ordering};
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct Vst2Instance<P: PluginExport> {
-    plugin: P,
+    /// The plugin behind the wrapper-standard mediation lock: the
+    /// audio thread locks per block, `cb_state_save` (host thread)
+    /// locks for the serialization, the editor's `get_state` closure
+    /// `try_lock`s. See `truce_core::wrapper::SharedPlugin`.
+    plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
-    /// Host-thread callbacks (`cb_param_*`, `cb_state_save`) read params
-    /// through this handle so they never form a `&inst.plugin`
-    /// reference. Params are atomic-backed and `Sync`.
+    /// Host-thread callbacks (`cb_param_*`) read params through this
+    /// handle so a param query never contends on the plugin lock.
+    /// Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
+    /// Shared meter storage, set once at instance creation. The
+    /// editor's `get_meter` closure reads these atomic slots instead
+    /// of the plugin instance.
+    meter_store: Arc<truce_core::meters::MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
@@ -214,11 +222,13 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let info = P::info();
     let param_infos = plugin.params().param_infos();
     let params_arc = plugin.params_arc();
+    let meter_store = plugin.meter_store();
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(Vst2Instance::<P> {
-        plugin,
+        plugin: shared_plugin(plugin),
         params_arc,
+        meter_store,
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
@@ -270,12 +280,15 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
-        inst.plugin.reset(sample_rate, max_frames);
-        inst.plugin.params().set_sample_rate(sample_rate);
-        inst.plugin.params().snap_smoothers();
-        inst.latency_cache
-            .store(inst.plugin.latency(), Ordering::Relaxed);
-        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+        {
+            let mut plugin = inst.plugin.lock();
+            plugin.reset(sample_rate, max_frames);
+            plugin.params().set_sample_rate(sample_rate);
+            plugin.params().snap_smoothers();
+            inst.latency_cache
+                .store(plugin.latency(), Ordering::Relaxed);
+            inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
+        }
         inst.prepared = true;
 
         // Mark the instance as "fully initialized" so any subsequent
@@ -383,12 +396,20 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             return;
         }
 
+        // Lock the plugin for the whole block. Uncontended this is
+        // one CAS; contended only when a host/GUI state callback is
+        // mid-serialization, which then delays this block by the
+        // remainder of that `save_state` call. Lock through a local
+        // Arc clone so the guard doesn't pin a borrow of `inst`.
+        let plugin_arc = Arc::clone(&inst.plugin);
+        let mut plugin = plugin_arc.lock();
+
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
         // entire block. See `pending_state` field comment for the
         // queue-overflow policy.
         if let Some(state) = inst.pending_state.pop() {
-            state::apply_state(&mut inst.plugin, &state);
+            state::apply_state(&mut *plugin, &state);
         }
 
         // Convert MIDI events. SysEx input arrives through
@@ -458,7 +479,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             min_subblock_samples: inst.min_subblock_samples,
         };
         process_chunked(
-            &mut inst.plugin,
+            &mut *plugin,
             inst.params_arc.as_ref() as &dyn Params,
             &mut audio_buffer,
             chunk_args,
@@ -471,10 +492,10 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         notify_process_param_changes(inst);
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to call into `inst.plugin`.
+        // queries don't have to take the plugin lock.
         inst.latency_cache
-            .store(inst.plugin.latency(), Ordering::Relaxed);
-        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+            .store(plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
     });
     if !ok {
         unsafe {
@@ -728,7 +749,9 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // also reading it from `save_state` races here. The contract
         // is "save_state must be safe to call concurrently with
         // process"; impls that copy from atomic params are fine.
-        let extra = inst.plugin.save_state();
+        // Lock the plugin for the serialization; a block in flight
+        // holds the lock, so this waits for the block boundary.
+        let extra = inst.plugin.lock().save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let len = blob.len();
@@ -878,7 +901,9 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         }
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if inst.editor.is_none() {
-            inst.editor = inst.plugin.editor();
+            // Editor construction needs `&mut P`; the lock waits out
+            // at most one in-flight audio block.
+            inst.editor = inst.plugin.lock().editor();
         }
         i32::from(inst.editor.is_some())
     }
@@ -921,8 +946,9 @@ unsafe fn open_editor_inner<P: PluginExport>(
 ) {
     unsafe {
         if let Some(ref mut editor) = inst.editor {
-            let params = inst.plugin.params_arc();
-            let plugin_ptr = SendPtr::new(&raw const inst.plugin);
+            let params = Arc::clone(&inst.params_arc);
+            let meter_store = Arc::clone(&inst.meter_store);
+            let plugin_lock = Arc::clone(&inst.plugin);
             let effect_ptr = SendPtr::new(inst.aeffect_ptr);
             let params_for_set = params.clone();
             let params_for_get = params.clone();
@@ -962,13 +988,15 @@ unsafe fn open_editor_inner<P: PluginExport>(
                             .format_value(id, plain)
                             .unwrap_or_else(|| format!("{plain:.1}"))
                     }),
-                    get_meter: Box::new(move |id| {
-                        let plugin = plugin_ptr.get();
-                        plugin.get_meter(id)
-                    }),
+                    get_meter: Box::new(move |id| meter_store.read(id)),
                     get_state: Box::new(move || {
-                        let plugin = plugin_ptr.get();
-                        plugin.save_state()
+                        // Editor preset capture: never block the GUI
+                        // on the audio thread. Losing the race to an
+                        // in-flight block returns empty; the editor
+                        // retries on a later frame.
+                        plugin_lock
+                            .try_lock()
+                            .map_or_else(Vec::new, |plugin| plugin.save_state())
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes - exactly
