@@ -654,6 +654,10 @@ public:
 
     tresult setupProcessing(ProcessSetup* setup) {
         if (!setup) return kInvalidArgument;
+        // Only the f32 wire is implemented; a host that sets up kSample64
+        // despite canProcessSampleSize refusing it would hand double**
+        // buffers that the Rust side reinterprets as float*.
+        if (setup->symbolicSampleSize != kSample32) return kResultFalse;
         sampleRate = setup->sampleRate;
         maxFrames = setup->maxSamplesPerBlock;
         return kResultOk;
@@ -663,6 +667,8 @@ public:
 
     tresult process(ProcessData* data) {
         if (!data || !g_cb || !ctx) return kResultOk;
+        // Never reinterpret 64-bit sample buffers as f32 (see setupProcessing).
+        if (data->symbolicSampleSize != kSample32) return kResultFalse;
 
         // Collect ALL param change points (sample-accurate automation)
         Vst3ParamChange paramChanges[512];

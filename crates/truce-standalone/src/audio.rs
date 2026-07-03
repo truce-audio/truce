@@ -1008,6 +1008,12 @@ fn open_output_stream<P: PluginExport>(
     };
     let mut scratch: RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample> =
         RawBufferScratch::default();
+    // Pre-grow the widening / alias-copy scratch to the stream's frame
+    // bound (the same number `reset` hands the plugin) so an f64
+    // plugin's first callback doesn't allocate its per-channel scratch
+    // inside cpal's real-time callback. Every format wrapper does this
+    // at its setup hook; the standalone was the one caller that didn't.
+    scratch.ensure_capacity(channels, channels, config.buffer_size_max_frames());
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device

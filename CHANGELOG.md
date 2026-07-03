@@ -42,6 +42,8 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 
 ### Fixes
 
+- **The standalone pre-grows the f64 widening scratch before the stream starts.** An `f64` plugin's first cpal callback allocated its per-channel widen/narrow buffers on the real-time thread; the scratch is now sized to the stream's frame bound up front, matching every format wrapper.
+- **VST3 rejects a 64-bit processing setup instead of reinterpreting the buffers.** The wire is f32-only (`canProcessSampleSize` already said so); a host that set up `kSample64` anyway would have its `double**` channel pointers read as `float*`. `setupProcessing` and `process` now refuse the mismatch.
 - **`cargo truce validate` scrubs cargo-injected `DYLD_*` vars before spawning pluginval.** Under `cargo run -- validate`, the inherited `DYLD_FALLBACK_LIBRARY_PATH` broke the bundle load inside pluginval and the scan reported zero types.
 - **CLAP: `CLAP_EVENT_NOTE_CHOKE` is delivered as a `NoteOff` instead of being dropped.** Hosts choke voices instead of releasing them (drum choke groups, edit re-triggers); the choked note hung forever. `EventBody` has no choke variant, so a velocity-0 `NoteOff` stands in - a release tail beats a stuck voice. (#174)
 - **CLAP: the output event queue is sorted by sample offset before reaching the host.** A plugin pushing block-level events (an LFO sweep, a mode-change recentre) after per-event ones handed the host an unsorted queue, which CLAP forbids; the wrapper now fixes the order (stable, allocation-free) on the way out.
