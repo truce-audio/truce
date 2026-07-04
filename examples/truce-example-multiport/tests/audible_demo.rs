@@ -66,7 +66,7 @@ fn render_port(port: u8, notes: &[Note], total: usize) -> Vec<f32> {
                 events.push(note(port, 0x80, n.key, (off - pos) as u32));
             }
         }
-        events.sort();
+        events.ensure_sorted_by_offset();
 
         let no_inputs: Vec<&[f32]> = Vec::new();
         let mut l = vec![0.0f32; this];

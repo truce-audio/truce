@@ -400,10 +400,15 @@ impl EventList {
     /// ahead of the note-off it precedes). Hosts require output queues
     /// ordered by time; wrappers call this before draining so a plugin
     /// that pushed block-level events after per-event ones can't hand
-    /// the host an unsorted queue. Audio-thread safe: the common
-    /// already-sorted case is one linear scan, and the fix-up is an
-    /// in-place insertion sort - no allocation (`sort_by_key` would
-    /// allocate; `sort_unstable` would reorder equal offsets).
+    /// the host an unsorted queue; wrappers also sort the merged
+    /// *input* stream before processing. Audio-thread safe: the
+    /// common already-sorted case is one linear scan, and the fix-up
+    /// is an in-place insertion sort - no allocation (`sort_by_key`
+    /// is a std stable sort that allocates past ~20 elements;
+    /// `sort_unstable` would reorder equal offsets, and stability is
+    /// load-bearing: "note-on then CC on the same sample" must stay
+    /// in push order). Reorders [`Event`] entries only; `SysEx` pool
+    /// offsets stay valid because the pool's bytes aren't moved.
     pub fn ensure_sorted_by_offset(&mut self) {
         if self.events.is_sorted_by_key(|event| event.sample_offset) {
             return;
@@ -491,19 +496,6 @@ impl EventList {
         // `Vec::clear` preserves capacity; the pool stays
         // pre-allocated for the next block.
         self.sysex_pool.clear();
-    }
-
-    /// Stable sort by `sample_offset`. **Stability matters:** events
-    /// with identical sample offsets stay in the order they were
-    /// pushed, which is what plugins assume when they iterate (e.g.
-    /// "MIDI on this sample then a CC on the same sample" stays in
-    /// that order). Don't replace with `sort_unstable_by_key` - the
-    /// stability guarantee is load-bearing.
-    ///
-    /// Sorting reorders [`Event`] entries only; `SysEx` pool
-    /// offsets stay valid because the pool's bytes aren't moved.
-    pub fn sort(&mut self) {
-        self.events.sort_by_key(|e| e.sample_offset);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Event> {
@@ -619,7 +611,7 @@ mod tests {
         let late = b"\x20\x21\x22";
         list.push_sysex(100, late).unwrap();
         list.push_sysex(0, early).unwrap();
-        list.sort();
+        list.ensure_sorted_by_offset();
 
         let collected: Vec<_> = list.iter().collect();
         // Sorted: sample_offset=0 comes first, then 100.

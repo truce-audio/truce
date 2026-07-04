@@ -922,18 +922,16 @@ unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
     }
 }
 
-/// `sort` controls whether the resulting `event_list` gets a stable
-/// sort by sample offset. `process` needs sorted events (the plugin
-/// iterates them in time order); `params_flush` discards the events
-/// after extracting param/GUI updates and doesn't care about order, so
-/// it passes `false` to skip the sort.
-#[allow(clippy::too_many_lines)]
-/// Deliver a `NOTE_OFF` / `NOTE_CHOKE` as concrete `NoteOff`s. A concrete
-/// address is one event (clearing its sounding bit); a wildcard axis
-/// (`-1`, spec-legal from `note_id`-addressing hosts) expands to the
-/// sounding notes it matches - dropping it would leave those voices
-/// ringing forever. Out-of-domain junk on either axis drops the event,
-/// matching the concrete path's hostile-host guard.
+/// Deliver a `NOTE_OFF` / `NOTE_CHOKE` as concrete `NoteOff`s. A
+/// concrete address is one event per matched port (clearing its
+/// sounding bit); a wildcard axis (`-1`, spec-legal from
+/// `note_id`-addressing hosts) expands to the sounding notes it
+/// matches - dropping it would leave those voices ringing forever.
+/// The port is an axis too: `port_index == -1` matches every input
+/// port, so the expansion walks each port's sounding set instead of
+/// collapsing onto the routed port. Out-of-domain junk on the channel
+/// or key axis drops the event, matching the concrete path's
+/// hostile-host guard.
 fn push_note_offs<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     note_event: &clap_event_note,
@@ -946,40 +944,53 @@ fn push_note_offs<P: PluginExport>(
     if channel == NoteAxis::Invalid || key == NoteAxis::Invalid {
         return;
     }
-    if let (NoteAxis::One(channel), NoteAxis::One(note)) = (channel, key) {
-        data.sounding_notes.clear(port, channel, note);
-        data.event_list.push(Event::on_port(
-            sample_offset,
-            port,
-            EventBody::NoteOff {
-                group: 0,
-                channel,
-                note,
-                velocity,
-            },
-        ));
-        return;
-    }
+    let (first_port, last_port) = if note_event.port_index == -1 {
+        (0, data.info.midi_input_ports.max(1) - 1)
+    } else {
+        (port, port)
+    };
     // Destructure so the tracker and the event list borrow disjointly.
     let ClapPluginData {
         sounding_notes,
         event_list,
         ..
     } = data;
-    sounding_notes.drain_matching(port, channel.filter(), key.filter(), |channel, note| {
-        event_list.push(Event::on_port(
-            sample_offset,
-            port,
-            EventBody::NoteOff {
-                group: 0,
-                channel,
-                note,
-                velocity,
-            },
-        ));
-    });
+    for p in first_port..=last_port {
+        if let (NoteAxis::One(channel), NoteAxis::One(note)) = (channel, key) {
+            sounding_notes.clear(p, channel, note);
+            event_list.push(Event::on_port(
+                sample_offset,
+                p,
+                EventBody::NoteOff {
+                    group: 0,
+                    channel,
+                    note,
+                    velocity,
+                },
+            ));
+        } else {
+            sounding_notes.drain_matching(p, channel.filter(), key.filter(), |channel, note| {
+                event_list.push(Event::on_port(
+                    sample_offset,
+                    p,
+                    EventBody::NoteOff {
+                        group: 0,
+                        channel,
+                        note,
+                        velocity,
+                    },
+                ));
+            });
+        }
+    }
 }
 
+/// `sort` controls whether the resulting `event_list` gets a stable
+/// sort by sample offset. `process` needs sorted events (the plugin
+/// iterates them in time order); `params_flush` discards the events
+/// after extracting param/GUI updates and doesn't care about order, so
+/// it passes `false` to skip the sort.
+#[allow(clippy::too_many_lines)]
 unsafe fn convert_input_events<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     in_events: *const clap_input_events,
@@ -1188,7 +1199,7 @@ unsafe fn convert_input_events<P: PluginExport>(
         }
 
         if sort {
-            data.event_list.sort();
+            data.event_list.ensure_sorted_by_offset();
         }
     }
 }

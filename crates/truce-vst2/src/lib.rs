@@ -440,7 +440,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 }
             }
         }
-        inst.event_list.sort();
+        inst.event_list.ensure_sorted_by_offset();
 
         // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
         debug_assert!(

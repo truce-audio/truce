@@ -596,7 +596,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // Single stable sort across the merged MIDI + param-change
         // streams. Stable sort preserves the within-group order each
         // section already pushed in.
-        inst.event_list.sort();
+        inst.event_list.ensure_sorted_by_offset();
 
         let transport = if transport_ptr.is_null() {
             TransportInfo::default()

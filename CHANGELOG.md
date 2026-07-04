@@ -9,6 +9,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 ### Breaking
 
 - **`Event` gained a `port` field** - the MIDI port an event arrived on / should go out on (`0` for single-port plugins). **Migration:** build events with `Event::new(offset, body)` (port `0`, the common case) or `Event::on_port(offset, port, body)`; a struct literal must now spell `port` out. Reading events (`event.port`) is unaffected.
+- **`EventList::sort` is removed.** It was a std stable sort, which allocates - unusable on the audio thread where wrappers sort merged input streams. **Migration:** call `ensure_sorted_by_offset()`, the allocation-free equivalent with the same stable-by-offset semantics.
 - **Every plugin identity derives from `bundle_id`.** `clap_id` / `vst3_id` / the state-envelope hash no longer follow the display name, so renaming a plugin no longer changes its identity. **Migration:** hosts key sessions and presets to these ids, so a plugin already shipped under a 1.x name-derived id ("Truce Envelope" -> `com.truce.truceenvelope`) will appear as a new plugin after this change - to keep the old id, set `bundle_id` to the old name-derived slug.
 
 ### MIDI 2.0 / UMP

@@ -846,7 +846,7 @@ impl<P: PluginExport> PluginDriver<P> {
             // after the regular events breaks the per-block ordering the
             // chunker walks. Restore it (only when SysEx was added).
             if had_sysex {
-                event_list.sort();
+                event_list.ensure_sorted_by_offset();
             }
 
             if is_effect {

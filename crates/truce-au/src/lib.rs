@@ -431,7 +431,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             }
         }
 
-        inst.event_list.sort();
+        inst.event_list.ensure_sorted_by_offset();
 
         // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
         debug_assert!(

@@ -547,7 +547,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         // cursor breaks at the first offset past a sub-block boundary
         // and would silently skip a later port's earlier events -
         // every wrapper sorts the merged stream before processing.
-        inst.event_list.sort();
+        inst.event_list.ensure_sorted_by_offset();
 
         // Build AudioBuffer from port pointers via the shared
         // `RawBufferScratch::build` helper. The helper owns the
