@@ -1,4 +1,7 @@
 /target
+# Local checkout of https://github.com/truce-audio/truce-fuzz-tests
+# (CI checks it out here too; its ../crates path deps need this spot).
+/fuzz/
 crates/*/target
 crates/*/.cargo
 .DS_STORE

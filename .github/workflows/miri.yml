@@ -31,6 +31,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The fuzz harnesses + corpus live in their own repo; mounted
+      # at fuzz/ so their `../crates/*` path deps resolve against
+      # this checkout (the corpus replay step below runs there).
+      - name: Checkout fuzz harnesses
+        uses: actions/checkout@v4
+        with:
+          repository: truce-audio/truce-fuzz-tests
+          path: fuzz
+
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri

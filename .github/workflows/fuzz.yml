@@ -26,6 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The harnesses live in their own repo; mounted at fuzz/ so
+      # their `../crates/*` path deps resolve against this checkout.
+      - name: Checkout fuzz harnesses
+        uses: actions/checkout@v4
+        with:
+          repository: truce-audio/truce-fuzz-tests
+          path: fuzz
+
       - uses: dtolnay/rust-toolchain@nightly
 
       - uses: Swatinem/rust-cache@v2
