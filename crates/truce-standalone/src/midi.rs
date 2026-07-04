@@ -34,8 +34,9 @@ const HOTPLUG_POLL: Duration = Duration::from_secs(1);
 /// picker for, shared by the macOS and Windows menu bars so the two
 /// platforms cap identically. Ports past the cap still route via the
 /// repeatable `--midi-input` CLI flag, which has no cap. Linux has no
-/// menu bar, so no consumer exists there.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// menu bar, so no consumer exists there - nor does a headless
+/// (no-`gui`) build anywhere.
+#[cfg(all(any(target_os = "macos", target_os = "windows"), feature = "gui"))]
 pub(crate) const MIDI_MENU_MAX_PORTS: usize = 16;
 
 /// `channel_filter` sentinel meaning "accept every channel".
