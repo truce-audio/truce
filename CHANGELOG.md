@@ -52,28 +52,26 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 
 ### Internals
 
-- **Instance mediation**: the audio thread owns the plugin lock per block; everything routine stays off it (meters ride the lock-free `MeterStore`, state loads hand off through a queue and apply on the audio thread). Only a host state save or an editor preset capture (rare, bounded reads) take the lock, and on macOS a waiting audio thread donates its priority to the holder. (#175)
-- **Miri + fuzzing**: `cargo miri test` runs green on the pure-Rust core, and a `fuzz/` crate covers the state envelope, presets, MIDI/UMP decode, and SysEx reassembly with round-trip oracles. New `Miri` (PR gate) and `Fuzz` (weekly) workflows.
-- **The built-in font stack moved from fontdue to skrifa** - one glyph rasterizer in `truce-font`. Metrics unchanged; glyph edge anti-aliasing differs slightly.
-- **The hot-reload ABI canary is epoch-versioned** (`ABI_EPOCH` field + versioned `truce_abi_canary_v2` export), so layout changes invisible to size checks are caught and stale pre-2.0 logic dylibs are refused cleanly.
-- `EventBody` and `TransportInfo` derive `PartialEq`; `truce_core::midi` gained `upconvert_to_midi2` and the public spec up-scalers behind it.
+- **Audio-thread isolation**: meters, state loads, and editor param edits reach the audio thread through lock-free handoffs; only a host state save or an editor preset capture briefly waits on a block boundary, with priority donation on macOS. (#175)
+- The core is continuously checked with Miri (PR gate) and fuzzing (weekly) covering state envelopes, presets, MIDI/UMP decode, and SysEx reassembly.
+- The built-in editor's font rasterizer changed (fontdue -> skrifa). Metrics are unchanged; glyph edges anti-alias subtly differently, so regenerate screenshot baselines.
+- Hot reload refuses a logic dylib built against an incompatible truce version instead of crashing - rebuild both halves after upgrading.
+- `EventBody` and `TransportInfo` derive `PartialEq` (assert on them directly in tests), and `truce_core::midi` exposes `upconvert_to_midi2` plus the MIDI 2.0 up-scaling helpers.
 
 ### Fixes
 
-- AU v2 answers `kAudioUnitProperty_ParameterStringFromValue`, so generic views and control surfaces show formatted values instead of raw numbers.
-- LV2 no longer declares `units:pc` on percent parameters (the raw `0..=1` value rendered as "1%" in Ardour).
-- AU shim callback ABI is append-only again, with a self-validating handshake: the fixed-offset version word carries a magic tag (a pre-2.0 binary's leading function pointer can't masquerade as a version), the registration symbol is versioned (`truce_au_register_v2`) so a mismatched staticlib/shim link fails at build time, and the AU v3 appex checks the version word at instantiation and refuses a pre-2.0 framework instead of reading shifted callback slots.
-- `cargo truce run` builds the standalone `--no-default-features`, keeping playback; a new `--features` flag re-adds extras.
-- The standalone pre-grows the f64 widening scratch before the stream starts, bounded by the device's reported maximum buffer size (8192-frame fallback when unreported).
-- A standalone device switch onto a larger buffer bound re-issues `reset`, so the plugin never receives blocks past the max it sized its DSP for.
-- VST3 rejects a processing setup or block whose sample size was never negotiated.
-- `cargo truce validate` scrubs cargo-injected dynamic-linker vars (`DYLD_*`, `LD_LIBRARY_PATH`, `LD_PRELOAD`) before spawning any bundle-loading validator - pluginval, clap-validator, auval, and the AAX runner.
-- CLAP: `CLAP_EVENT_NOTE_CHOKE` delivers a velocity-0 `NoteOff` instead of being dropped. (#174)
-- VST2: a SysEx output skipped for scratch exhaustion no longer leaves the host iterating an uninitialized event pointer.
-- Preset enumeration (CLAP discovery, AU factory lists, the standalone menu) lists only presets whose payload the plugin can load - foreign or corrupt files are skipped instead of listed-then-refused, and a skipped file no longer fails a CLAP crawl. `from_location` routes foreign envelopes through `migrate_state`, same as a session load.
-- CLAP: an out-of-range key/channel on a note event drops it instead of delivering note 255 / channel 255. Wildcard (`-1`) axes drop a `NOTE_ON` (the spec requires concrete addresses there) but fan a `NOTE_OFF` / `NOTE_CHOKE` / note expression out to the sounding notes they match - the port is an axis too - so note_id-addressing hosts can't leave voices ringing or lose expression.
-- CLAP: the output event queue is sorted by sample offset before reaching the host.
-- CLAP: note-port queries answer clap-validator's swapped-direction sweep.
+- AU: generic views and control surfaces show formatted parameter values instead of raw numbers.
+- AU: a plugin binary paired with a shim or appex from a different truce version fails loudly at build or instantiation instead of crashing the host through mismatched callbacks.
+- LV2: percent parameters no longer display as `1%` in Ardour.
+- VST3: processing with a never-negotiated sample size is rejected instead of misreading buffers.
+- VST2: an output SysEx that overflows its scratch can no longer hand the host a garbage event pointer.
+- CLAP: choked notes deliver a note-off instead of being dropped. (#174)
+- CLAP: malformed note addresses are dropped instead of reaching the plugin as note/channel 255, and wildcard note-offs, chokes, and note expressions apply to every matching sounding note - hosts that address notes by id can't leave voices hanging or lose expression.
+- CLAP: output events reach the host sorted by time, and note-port queries answer clap-validator's swapped-direction sweep.
+- Preset menus and browsers list only presets the plugin can actually load; files from other plugins or older identities are hidden, and loading an older-identity preset goes through `migrate_state` like a session load.
+- Standalone: f64 plugins no longer allocate in the first audio callback (scratch is sized up front from the device's real maximum), and switching to a device with a larger buffer re-issues `reset` so the plugin never sees blocks bigger than it prepared for.
+- `cargo truce run` builds only the standalone (no format wrappers); a new `--features` flag re-adds extras.
+- `cargo truce validate` no longer leaks cargo's dynamic-linker env vars into the validators (false failures on some setups).
 
 ## 1.0.5
 
