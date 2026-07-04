@@ -421,6 +421,8 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             break;
         case kAudioUnitProperty_ParameterInfo:
             size = sizeof(AudioUnitParameterInfo); break;
+        case kAudioUnitProperty_ParameterStringFromValue:
+            size = sizeof(AudioUnitParameterStringFromValue); writable = true; break;
         case kAudioUnitProperty_SetRenderCallback:
             if (scope == kAudioUnitScope_Input) { size = sizeof(AURenderCallbackStruct); writable = true; }
             else return kAudioUnitErr_InvalidScope;
@@ -583,15 +585,45 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
                     info->minValue = (AudioUnitParameterValue)pd->min;
                     info->maxValue = (AudioUnitParameterValue)pd->max;
                     info->defaultValue = (AudioUnitParameterValue)pd->default_value;
+                    /* ValuesHaveStrings routes generic views and
+                     * control-surface displays through
+                     * kAudioUnitProperty_ParameterStringFromValue, so
+                     * hosts show "50%" / "-12.0 dB" instead of the raw
+                     * plain value. */
                     info->flags = kAudioUnitParameterFlag_IsReadable |
                                   kAudioUnitParameterFlag_IsWritable |
                                   kAudioUnitParameterFlag_HasCFNameString |
-                                  kAudioUnitParameterFlag_CFNameRelease;
+                                  kAudioUnitParameterFlag_CFNameRelease |
+                                  kAudioUnitParameterFlag_ValuesHaveStrings;
                     *ioSize = sizeof(AudioUnitParameterInfo);
                     return noErr;
                 }
             }
             return kAudioUnitErr_InvalidParameter;
+        }
+
+        case kAudioUnitProperty_ParameterStringFromValue: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (*ioSize < sizeof(AudioUnitParameterStringFromValue))
+                return kAudioUnitErr_InvalidPropertyValue;
+            if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
+            AudioUnitParameterStringFromValue *sfv =
+                (AudioUnitParameterStringFromValue *)outData;
+            /* A NULL inValue means "format the parameter's current
+             * value" per AudioUnitProperties.h. */
+            double value = sfv->inValue
+                ? (double)*sfv->inValue
+                : g_callbacks->param_get_value(inst->rustCtx, sfv->inParamID);
+            char buf[128];
+            uint32_t len = g_callbacks->param_format_value(
+                inst->rustCtx, sfv->inParamID, value, buf, sizeof(buf));
+            if (len == 0) return kAudioUnitErr_InvalidParameter;
+            /* Ownership transfers to the caller per the property's
+             * Copy rule. */
+            sfv->outString = CFStringCreateWithCString(NULL, buf,
+                                                       kCFStringEncodingUTF8);
+            *ioSize = sizeof(AudioUnitParameterStringFromValue);
+            return noErr;
         }
 
         case kAudioUnitProperty_ShouldAllocateBuffer: {

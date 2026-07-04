@@ -617,9 +617,12 @@ fn lv2_unit(u: Lv2Unit) -> Option<&'static str> {
         Lv2Unit::Hz => "hz",
         Lv2Unit::Milliseconds => "ms",
         Lv2Unit::Seconds => "s",
-        Lv2Unit::Percent => "pc",
         Lv2Unit::Semitones => "semitone12TET",
-        Lv2Unit::Pan | Lv2Unit::None => return None,
+        // Percent gets no LV2 unit: truce stores the plain value as a
+        // 0..=1 fraction, while `units:pc` tells hosts the raw value
+        // already *is* percent - Ardour would render full mix as "1%".
+        // Pan has no LV2 unit at all.
+        Lv2Unit::Percent | Lv2Unit::Pan | Lv2Unit::None => return None,
     })
 }
 
