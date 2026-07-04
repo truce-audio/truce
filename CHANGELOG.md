@@ -4,7 +4,8 @@ Notable changes per release.
 
 ## 2.0.1
 
-- The mediation lock inherits priority on Linux (`PTHREAD_PRIO_INHERIT` pthread mutex; std's futex lock doesn't inherit). macOS already donated via `os_unfair_lock`; Windows has no user-space PI primitive and relies on the short hold.
+- Smoother real-time behavior on Linux: a host save or editor preset capture can no longer stall the audio thread behind a preempted GUI thread - the plugin lock now boosts the holder with the waiting audio thread's priority, matching what macOS already did.
+- Fuzzing now verifies SysEx reassembly is the exact inverse of the encoder (not just crash-free), and one crashing fuzz target no longer eats the other targets' time.
 
 ## 2.0.0
 
