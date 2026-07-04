@@ -192,10 +192,15 @@ impl<S: Sample> NativeLoader<S> {
             let _ = std::fs::remove_file(temp);
         };
 
-        let canary_fn: Symbol<fn() -> AbiCanary> = match unsafe { lib.get(b"truce_abi_canary") } {
+        // The versioned symbol makes canary-layout evolution safe: the
+        // struct returns by value, so a shell must never call a canary
+        // of a different shape. A dylib exporting only an older
+        // `truce_abi_canary*` fails the lookup and is refused here.
+        let canary_fn: Symbol<fn() -> AbiCanary> = match unsafe { lib.get(b"truce_abi_canary_v2") }
+        {
             Ok(f) => f,
             Err(e) => {
-                log::warn!("missing truce_abi_canary export: {e}");
+                log::warn!("missing truce_abi_canary_v2 export (stale pre-2.0 logic dylib?): {e}");
                 cleanup_temp(lib, &temp);
                 return None;
             }

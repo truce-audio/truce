@@ -39,7 +39,7 @@
 //! }
 //!
 //! #[unsafe(no_mangle)]
-//! pub fn truce_abi_canary() -> AbiCanary { AbiCanary::current::<Sample>() }
+//! pub fn truce_abi_canary_v2() -> AbiCanary { AbiCanary::current::<Sample>() }
 //! ```
 
 #[doc(hidden)]
@@ -115,8 +115,14 @@ macro_rules! export_plugin {
             Box::new(<$logic>::new(params))
         }
 
+        // `_v2` because `AbiCanary` crosses this boundary *by value*
+        // (sret): if the two sides disagreed about its size, the call
+        // itself would corrupt the caller's stack before any field
+        // compare. A canary-layout change therefore renames the
+        // symbol, so a mismatched pair fails at `dlsym` - cleanly -
+        // instead. (v2: added `abi_epoch`.)
         #[unsafe(no_mangle)]
-        pub fn truce_abi_canary() -> $crate::AbiCanary {
+        pub fn truce_abi_canary_v2() -> $crate::AbiCanary {
             // `Sample` from the prelude - the dylib stamps its
             // chosen precision into the canary so the shell can
             // reject a mismatched load before vtable-binding.

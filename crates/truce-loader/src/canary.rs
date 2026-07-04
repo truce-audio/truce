@@ -18,12 +18,30 @@ use truce_gui_types::theme::{Color, Theme};
 use truce_params::sample::Sample;
 use truce_plugin::PluginLogicCore;
 
+/// Hand-bumped ABI epoch. Sizes and alignments can't see every
+/// layout change: `Event::port` landed in former padding, so
+/// `event_size` stayed the same while a stale shell would read
+/// uninitialized padding as the port. Bump this when any
+/// boundary-crossing type changes layout invisibly to the size /
+/// align fields below. When `AbiCanary` itself gains or loses a
+/// field, bump the *export symbol* version instead
+/// (`truce_abi_canary_vN`) - the canary crosses the boundary by
+/// value, so two different canary layouts must never call each
+/// other.
+///
+/// Epoch 2: `Event` grew `port: u8` in former padding (multi-port
+/// MIDI).
+pub const ABI_EPOCH: u32 = 2;
+
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
 /// This is the ONE `#[repr(C)]` type in the system - it's the
 /// bootstrap verification struct that makes everything else safe.
 #[repr(C)]
 pub struct AbiCanary {
+    /// [`ABI_EPOCH`] the side was built with; see its rules for when
+    /// to bump what.
+    pub abi_epoch: u32,
     pub trait_object_size: usize,
     pub audio_buffer_size: usize,
     pub process_context_size: usize,
@@ -57,7 +75,7 @@ pub struct AbiCanary {
 impl AbiCanary {
     /// Build the canary for a specific sample precision `S`. The
     /// shell calls this with its own `S`; the dylib's
-    /// `truce_abi_canary` export does the same with its own (from the
+    /// `truce_abi_canary_v2` export does the same with its own (from the
     /// prelude alias). The two are compared at load time.
     #[must_use]
     pub fn current<S: truce_params::sample::Sample>() -> Self {
@@ -66,6 +84,7 @@ impl AbiCanary {
         #[allow(clippy::cast_possible_truncation)]
         let sample_precision = (size_of::<S>() * 8) as u8;
         Self {
+            abi_epoch: ABI_EPOCH,
             trait_object_size: size_of::<*const dyn PluginLogicCore<S>>() * 2,
             audio_buffer_size: size_of::<AudioBuffer<S>>(),
             process_context_size: size_of::<ProcessContext>(),
@@ -121,6 +140,7 @@ impl AbiCanary {
         // Single source of truth - adding a field to AbiCanary means
         // adding one line below; `matches` and `diff_report` both
         // reuse this list.
+        check!(abi_epoch);
         check!(trait_object_size);
         check!(audio_buffer_size);
         check!(process_context_size);
@@ -352,3 +372,33 @@ impl std::fmt::Display for ProbeError {
 
 #[cfg(feature = "shell")]
 impl std::error::Error for ProbeError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{ABI_EPOCH, AbiCanary};
+
+    #[test]
+    fn same_build_matches_itself() {
+        let a = AbiCanary::current::<f32>();
+        let b = AbiCanary::current::<f32>();
+        assert!(a.matches(&b));
+    }
+
+    #[test]
+    fn epoch_mismatch_fails_and_names_the_field() {
+        // A layout change that lands in former padding leaves every
+        // size field identical - the epoch is the only tripwire.
+        let a = AbiCanary::current::<f32>();
+        let mut b = AbiCanary::current::<f32>();
+        b.abi_epoch = ABI_EPOCH - 1;
+        assert!(!a.matches(&b));
+        assert!(a.diff_report(&b).contains("abi_epoch"));
+    }
+
+    #[test]
+    fn precision_mismatch_fails() {
+        let a = AbiCanary::current::<f32>();
+        let b = AbiCanary::current::<f64>();
+        assert!(!a.matches(&b));
+    }
+}

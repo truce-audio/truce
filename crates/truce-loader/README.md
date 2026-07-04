@@ -44,7 +44,7 @@ the right `export_*!` call based on the `shell` Cargo feature.
 - **`export_static!`** -- emits the `__HotShellWrapper` for static
   mode.
 - **`export_plugin!`** -- emits the `#[no_mangle]` C ABI symbols
-  for shell mode (`truce_create`, `truce_abi_canary`,
+  for shell mode (`truce_create`, `truce_abi_canary_v2`,
   `truce_vtable_probe`). Each one carries the plugin's chosen
   precision (via the prelude's `Sample` alias).
 
