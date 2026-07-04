@@ -25,10 +25,12 @@
 // pre-2.0 binary has the `create` function pointer at offset 0, and a
 // bare small-integer scheme would read its low bits as a "version"
 // that passes ordering gates. Readers must check the magic before
-// trusting the version byte. (Belt and braces: the registration
-// symbol is also versioned - `truce_au_register_v2` - so a pre-2.0
-// binary already fails at link/load, the same scheme
-// `truce_abi_canary_v2` uses in the hot-reload loader.)
+// trusting the version byte. (The versioned registration symbol -
+// `truce_au_register_v2` - only fails mismatched staticlib/shim
+// links within one binary; the AU v3 appex binds the framework
+// through `g_callbacks` / `g_descriptor` / `truce_au_init`, whose
+// names predate 2.0, so cross-binary skew is caught only by this
+// word at runtime.)
 //
 // Bump the low byte whenever a field is appended - or an unreleased
 // tail callback changes signature - and mirror it in

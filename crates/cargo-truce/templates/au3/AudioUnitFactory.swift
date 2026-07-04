@@ -34,9 +34,11 @@ let kAURenderEventMIDIEventListRaw: UInt16 = 10
 /// version word lacks its 'TAu\0' magic tag. A pre-2.0 binary has the
 /// `create` function pointer at offset 0; without the magic check its
 /// low bits would masquerade as a version and every gated tail read
-/// would land one slot off. (Pre-2.0 pairings already fail at link
-/// time via the renamed `truce_au_register_v2`; this keeps the runtime
-/// gates independently trustworthy.)
+/// would land one slot off. The renamed `truce_au_register_v2` only
+/// protects the staticlib/shim link inside the framework; this appex
+/// binds the framework through `g_callbacks` / `g_descriptor` /
+/// `truce_au_init`, whose names predate 2.0, so version skew across
+/// that boundary is caught only by this runtime check.
 func truceAbiTailVersion(_ cb: UnsafePointer<AuCallbacks>) -> UInt32 {
     let word = cb.pointee.abi_version
     guard word & TRUCE_AU_ABI_MAGIC_MASK == TRUCE_AU_ABI_MAGIC else { return 0 }
@@ -156,6 +158,16 @@ class TruceAUAudioUnit: AUAudioUnit {
         try super.init(componentDescription: componentDescription, options: options)
 
         guard let callbacks = g_callbacks, let descriptor = g_descriptor else { return }
+
+        // A pre-2.0 framework loads cleanly (the globals above kept
+        // their names) but lays out `AuCallbacks` differently -
+        // calling `create` there would jump through the wrong slot.
+        // Refuse instantiation instead of crashing the extension.
+        guard truceAbiTailVersion(callbacks) >= 1 else {
+            logger.error("AU init: plugin binary predates the AU ABI version word; rebuild the framework with a matching truce version")
+            throw NSError(domain: NSOSStatusErrorDomain,
+                          code: Int(kAudioUnitErr_FailedInitialization))
+        }
 
         rustCtx = callbacks.pointee.create()
         logger.info("AU init: in=\(descriptor.pointee.num_inputs) out=\(descriptor.pointee.num_outputs)")
