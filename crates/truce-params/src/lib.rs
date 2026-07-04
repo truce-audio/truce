@@ -77,7 +77,7 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
                 format!("{:.0} ms", value * 1000.0)
             }
         }
-        ParamUnit::Percent => format!("{:.0}%", value * 100.0),
+        ParamUnit::Percent => format!("{:.1}%", value),
         ParamUnit::Semitones => {
             if is_int {
                 format!("{int_value} st")
