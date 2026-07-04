@@ -70,9 +70,21 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
 
     if !no_build {
         eprintln!("Building {} standalone...", plugin.name);
+        // `--no-default-features`: the standalone is self-contained
+        // and needs no format wrapper. Linking clap / vst3 / au / aax
+        // / lv2 into the preview binary only bloats it and runs their
+        // load-time registration constructors (e.g. the AU shim's,
+        // which logs a MIDI-port clamp warning) in a host that never
+        // uses them.
         cargo_build(
             &[],
-            &["-p", &plugin.crate_name, "--features", "standalone"],
+            &[
+                "-p",
+                &plugin.crate_name,
+                "--no-default-features",
+                "--features",
+                "standalone",
+            ],
             dt,
         )?;
 
