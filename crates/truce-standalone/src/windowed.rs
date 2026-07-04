@@ -658,6 +658,10 @@ where
                     to_phys(max_h),
                     to_phys(inc_w),
                     to_phys(inc_h),
+                    // Ratio is scale-independent - hand the raw editor
+                    // pair to the WM so it constrains the drag itself
+                    // instead of letting egui / iced / Slint letterbox.
+                    self.editor.aspect_ratio(),
                 );
                 self.size_hints_scale = scale;
             }
