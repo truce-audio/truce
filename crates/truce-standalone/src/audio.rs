@@ -558,7 +558,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let plugin = Arc::new(Mutex::new({
         let mut p = P::create();
         p.init();
-        p.reset(sample_rate, config.buffer_size_max_frames());
+        p.reset(sample_rate, config.buffer_size_max_frames(&default_config));
         p.params().set_sample_rate(sample_rate);
         // Apply `--state <path>` BEFORE snapping smoothers so the
         // first audio block sees the restored values, not defaults
@@ -1016,7 +1016,16 @@ fn open_output_stream<P: PluginExport>(
     // plugin's first callback doesn't allocate its per-channel scratch
     // inside cpal's real-time callback. Every format wrapper does this
     // at its setup hook; the standalone was the one caller that didn't.
-    scratch.ensure_capacity(channels, channels, config.buffer_size_max_frames());
+    // The bound comes from *this* device's reported range - hot-plug
+    // re-opens may land on a device with a different maximum.
+    let supported = device
+        .default_output_config()
+        .map_err(|e| format!("could not query the output config for the scratch bound: {e}"))?;
+    scratch.ensure_capacity(
+        channels,
+        channels,
+        config.buffer_size_max_frames(&supported),
+    );
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -1290,13 +1299,22 @@ fn resolve_config(
 }
 
 trait BufferSizeMax {
-    fn buffer_size_max_frames(&self) -> usize;
+    fn buffer_size_max_frames(&self, supported: &cpal::SupportedStreamConfig) -> usize;
 }
 impl BufferSizeMax for cpal::StreamConfig {
-    fn buffer_size_max_frames(&self) -> usize {
+    fn buffer_size_max_frames(&self, supported: &cpal::SupportedStreamConfig) -> usize {
         match self.buffer_size {
             cpal::BufferSize::Fixed(n) => n as usize,
-            cpal::BufferSize::Default => 2048, // reasonable upper bound for `reset`
+            // `Default` leaves the callback size to the device: bound
+            // by the size range the device itself reports, so `reset`
+            // and the scratch pre-grow cover whatever it delivers. A
+            // device that reports no range gets the same generous
+            // fallback the VST3 wrapper uses for hosts that skip
+            // `setupProcessing`.
+            cpal::BufferSize::Default => match supported.buffer_size() {
+                cpal::SupportedBufferSize::Range { max, .. } => *max as usize,
+                cpal::SupportedBufferSize::Unknown => 8192,
+            },
         }
     }
 }

@@ -32,6 +32,32 @@ pub fn plugin_id(vendor_id: &str, bundle_id: &str) -> String {
     format!("{}.{}", vendor_id, bundle_id.to_lowercase())
 }
 
+/// Validate a `bundle_id`'s shape. It is the stable identity key -
+/// [`plugin_id`] splices it into `clap_id` / `vst3_id` (reverse-DNS
+/// strings) and `cargo-truce` derives bundle filenames, framework
+/// names, and install paths from it - so a space yields malformed
+/// host-facing ids and an empty string breaks name derivation.
+/// Allowed: non-empty, lowercase ASCII alphanumerics plus `-` / `_` /
+/// `.`, starting with an alphanumeric.
+///
+/// # Errors
+///
+/// Empty, or a character outside the allowed set.
+pub fn validate_bundle_id(bundle_id: &str) -> Result<(), String> {
+    let mut chars = bundle_id.chars();
+    let Some(first) = chars.next() else {
+        return Err("`bundle_id` must not be empty".into());
+    };
+    let ok_tail = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || "-_.".contains(c);
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) || !chars.all(ok_tail) {
+        return Err(format!(
+            "`bundle_id` \"{bundle_id}\" must be lowercase ASCII alphanumerics plus `-`/`_`/`.` \
+             (it becomes the plugin's stable id and bundle name)"
+        ));
+    }
+    Ok(())
+}
+
 /// Resolved MIDI wiring: the capability pair every wrapper gates its
 /// MIDI declarations on, plus the port counts multi-port formats
 /// advertise. Produced by [`midi_wiring`]; `accepts_midi_in ==
@@ -608,6 +634,17 @@ mod tests {
             wiring(midi_wiring("instrument", None, None, Some(0), None).unwrap()),
             (false, false, 0, 0)
         );
+    }
+
+    #[test]
+    fn bundle_id_shape_is_validated() {
+        assert!(validate_bundle_id("synth").is_ok());
+        assert!(validate_bundle_id("fundsp-reverb-worker").is_ok());
+        assert!(validate_bundle_id("eq2.beta").is_ok());
+        assert!(validate_bundle_id("").is_err()); // fw_name would panic
+        assert!(validate_bundle_id("my synth").is_err()); // malformed clap_id
+        assert!(validate_bundle_id("Synth").is_err()); // one canonical case
+        assert!(validate_bundle_id("-lead").is_err()); // separator can't lead
     }
 
     #[test]

@@ -342,11 +342,12 @@ impl PluginDef {
     }
     #[cfg(target_os = "macos")]
     pub(crate) fn fw_name(&self) -> String {
-        let cap = format!(
-            "{}{}",
-            self.bundle_id[..1].to_uppercase(),
-            &self.bundle_id[1..]
-        );
+        // `load_config` validated the shape (non-empty ASCII), but
+        // stay panic-free for hand-built defs in tests.
+        let mut chars = self.bundle_id.chars();
+        let cap = chars.next().map_or_else(String::new, |first| {
+            format!("{}{}", first.to_uppercase(), chars.as_str())
+        });
         format!("Truce{cap}AU")
     }
     /// Dylib filename stem derived from the crate name (hyphens → underscores).
@@ -609,6 +610,9 @@ pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
     // validate path fails with the plugin named, mirroring the
     // compile error truce-derive raises for the same config.
     for p in &config.plugin {
+        if let Err(msg) = truce_build::validate_bundle_id(&p.bundle_id) {
+            return Err(format!("[[plugin]] `{}`: {msg}", p.crate_name).into());
+        }
         let check = truce_build::midi_wiring(
             &p.category,
             p.midi_input,

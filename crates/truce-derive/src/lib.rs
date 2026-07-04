@@ -127,6 +127,13 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
 
     let name = &plugin.name;
     let bundle_id = &plugin.bundle_id;
+    // The identity key feeds `plugin_id` (host-facing ids) and every
+    // bundle/install path; a malformed one is a compile error.
+    if let Err(msg) = truce_build::validate_bundle_id(bundle_id) {
+        return syn::Error::new(proc_macro2::Span::call_site(), msg)
+            .to_compile_error()
+            .into();
+    }
     let vendor = &config.vendor.name;
     let url = &config.vendor.url;
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
