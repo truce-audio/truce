@@ -1526,6 +1526,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {
+        abi_version: ffi::TRUCE_AU_ABI_VERSION,
         create: cb_create::<P>,
         destroy: cb_destroy::<P>,
         reset: cb_reset::<P>,
@@ -1716,6 +1717,27 @@ mod tests {
             SYSEX_POOL_PREALLOC / 1024,
             needle,
             needle_paren,
+        );
+    }
+
+    #[test]
+    fn abi_version_matches_header() {
+        // The Rust `TRUCE_AU_ABI_VERSION` (stamped into
+        // `AuCallbacks::abi_version` at registration) and the header
+        // `#define` (compiled into the C shims + the Swift appex) must
+        // agree, or the version handshake reports a value the appex
+        // reads against a different scale.
+        let parsed = AU_SHIM_TYPES_H
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("#define TRUCE_AU_ABI_VERSION "))
+            .and_then(|v| v.trim().trim_end_matches('u').parse::<u32>().ok())
+            .expect("au_shim_types.h must #define TRUCE_AU_ABI_VERSION as an integer");
+        assert_eq!(
+            parsed,
+            crate::ffi::TRUCE_AU_ABI_VERSION,
+            "au_shim_types.h::TRUCE_AU_ABI_VERSION ({parsed}) differs from Rust \
+             crate::ffi::TRUCE_AU_ABI_VERSION ({}); bump both together when appending a callback",
+            crate::ffi::TRUCE_AU_ABI_VERSION,
         );
     }
 }

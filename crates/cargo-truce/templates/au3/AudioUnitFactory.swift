@@ -458,8 +458,11 @@ class TruceAUAudioUnit: AUAudioUnit {
         // MT 0x3 (SysEx-7) packet chains - all encoded on the Rust side
         // and drained via `output_ump_*`. Otherwise the legacy MIDI 1.0
         // byte path.
+        // `output_ump_*` are tail callbacks (AU ABI version 1); this
+        // appex may be newer than the plugin binary, so gate on the
+        // reported version before draining through them.
         var drainedViaUMP = false
-        if use2, #available(macOS 12.0, iOS 15.0, *),
+        if use2, cb.pointee.abi_version >= 1, #available(macOS 12.0, iOS 15.0, *),
            let listBlock = midiOutputListBlock as? AUMIDIEventListBlock {
             drainedViaUMP = true
             let umpCount = cb.pointee.output_ump_count(ctx)
@@ -625,8 +628,12 @@ class TruceAUAudioUnit: AUAudioUnit {
             // its own dictionary key. Probe the keys declared in
             // truce.toml's [plugin.legacy_state] (first present +
             // accepted wins) so the plugin's migrate_state hook can
-            // translate the old session.
-            guard let dict = newValue,
+            // translate the old session. These callbacks live at the
+            // struct tail (AU ABI version 1); this appex may be newer
+            // than the plugin binary, so gate on the reported version
+            // before reading them.
+            guard cb.pointee.abi_version >= 1,
+                  let dict = newValue,
                   let keyCount = cb.pointee.legacy_state_key_count,
                   let keyAt = cb.pointee.legacy_state_key_at,
                   let loadForeign = cb.pointee.state_load_foreign else { return }
