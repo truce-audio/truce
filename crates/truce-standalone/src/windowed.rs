@@ -77,7 +77,11 @@ where
     // - it loads BEFORE `snap_smoothers` so the editor + first audio
     // block see the restored values, not defaults ramping toward them.
 
-    let (midi_thread, midi_ctrl) = MidiInputThread::start(opts, Arc::clone(&audio_handles.pending));
+    let (midi_thread, midi_ctrl) = MidiInputThread::start(
+        opts,
+        usize::from(P::info().midi_input_ports),
+        Arc::clone(&audio_handles.pending),
+    );
 
     let editor: Option<Box<dyn Editor>> = {
         // Recover from a poisoned plugin mutex (audio thread panicked
@@ -855,7 +859,9 @@ where
             // `force_push` drops the oldest event on overflow - see
             // audio.rs for the rationale (audio thread is the only
             // consumer; dropping ancient events beats mutex contention).
-            let _ = self.pending.force_push(MidiEvent { body });
+            // The computer keyboard always plays the plugin's first
+            // MIDI port; device input targets its mapped port.
+            let _ = self.pending.force_push(MidiEvent { body, port: 0 });
             return EventStatus::Captured;
         }
         EventStatus::Ignored

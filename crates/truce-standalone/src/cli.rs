@@ -41,7 +41,13 @@ pub struct Options {
     pub output_enabled: Option<bool>,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
-    pub midi_input: Option<String>,
+    /// MIDI input device substrings, one per `--midi-input`. The i-th
+    /// entry is routed to the plugin's MIDI input port i, so a
+    /// multi-port instrument can take a distinct controller per port
+    /// (`--midi-input Keystep --midi-input Launchkey`). Empty when
+    /// none given; entries past the plugin's port count warn and are
+    /// ignored.
+    pub midi_inputs: Vec<String>,
     /// MIDI channel filter spec (`omni`/`all`, or `1`-`16`). Parsed
     /// into a `MidiChannel` when the MIDI thread starts; on Linux (no
     /// native menu) this is the only way to pick a channel.
@@ -106,7 +112,9 @@ OPTIONS:
                             Toggle live from the Plugin menu (Cmd+O / Ctrl+O).
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
-  --midi-input <name>       MIDI input device (substring match)
+  --midi-input <name>       MIDI input device (substring match).
+                            Repeatable: the i-th --midi-input routes to
+                            the plugin's MIDI input port i (multi-port).
   --midi-channel <spec>     MIDI channel filter: `omni` (all, default)
                             or a channel `1`-`16`.
   --bpm <n>                 Transport BPM (default 120)
@@ -217,8 +225,9 @@ pub fn parse() -> Result<Options, String> {
     let buffer_size = args
         .opt_value_from_str::<_, u32>("--buffer")
         .map_err(|e| format!("--buffer: {e}"))?;
-    let midi_input = args
-        .opt_value_from_str::<_, String>("--midi-input")
+    // Repeatable: the i-th `--midi-input` maps to plugin MIDI port i.
+    let midi_inputs = args
+        .values_from_str::<_, String>("--midi-input")
         .map_err(|e| format!("--midi-input: {e}"))?;
     let midi_channel = args
         .opt_value_from_str::<_, String>("--midi-channel")
@@ -273,7 +282,13 @@ pub fn parse() -> Result<Options, String> {
         }),
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
-        midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
+        // Env fallback is single-device (one port); flags win when
+        // present (any number of ports).
+        midi_inputs: if midi_inputs.is_empty() {
+            env("MIDI_INPUT").into_iter().collect()
+        } else {
+            midi_inputs
+        },
         midi_channel: midi_channel.or_else(|| env("MIDI_CHANNEL")),
         bpm: bpm.or_else(|| env("BPM").and_then(|s| s.parse().ok())),
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),

@@ -54,6 +54,10 @@ unsafe impl Send for CallbackPtrScratch {}
 /// A queued MIDI event the UI thread hands off to the audio callback.
 pub struct MidiEvent {
     pub body: EventBody,
+    /// Plugin MIDI input port this event targets. Device input stamps
+    /// the port its `--midi-input` slot maps to; the QWERTY keyboard
+    /// uses `0`.
+    pub port: u8,
 }
 
 /// Shared audio-thread resources handed back from `start_audio`.
@@ -1332,7 +1336,7 @@ fn audio_callback<P: PluginExport>(
     while let Some(ev) = pending.pop() {
         event_list.push(Event {
             sample_offset: 0,
-            port: 0,
+            port: ev.port,
             body: ev.body,
         });
     }

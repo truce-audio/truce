@@ -114,9 +114,10 @@ impl MidiChannel {
 // ---------------------------------------------------------------------------
 
 enum MidiCmd {
-    /// Switch the input device by substring. `None` disconnects (the
-    /// runner's QWERTY keyboard still feeds notes in windowed mode).
-    SetDevice(Option<String>),
+    /// Point a plugin MIDI port at a device (by name substring), or
+    /// `None` to disconnect it. The runner's QWERTY keyboard still
+    /// feeds port 0 in windowed mode.
+    SetDevice { port: u8, name: Option<String> },
 }
 
 /// `Send + Sync` handle for steering the MIDI input thread from the UI
@@ -133,13 +134,22 @@ pub struct MidiController {
 }
 
 impl MidiController {
-    /// Switch the input device by name substring (`None` to
-    /// disconnect). Applied immediately by the worker.
+    /// Switch the device feeding the plugin's first MIDI port (`None`
+    /// to disconnect). The interactive menus are single-device, so
+    /// this is the port they steer; CLI `--midi-input` feeds the
+    /// higher ports. Applied immediately by the worker.
     pub fn set_device(&self, name: Option<String>) {
-        let _ = self.cmd_tx.send(MidiCmd::SetDevice(name));
+        self.set_device_on(0, name);
     }
 
-    /// Name of the currently-connected device, or `None`.
+    /// Point a specific plugin MIDI port at a device (`None` to
+    /// disconnect it).
+    pub fn set_device_on(&self, port: u8, name: Option<String>) {
+        let _ = self.cmd_tx.send(MidiCmd::SetDevice { port, name });
+    }
+
+    /// Name of the device feeding the plugin's first MIDI port, or
+    /// `None`.
     #[must_use]
     pub fn current_name(&self) -> Option<String> {
         self.current_name.lock().ok().and_then(|g| g.clone())
@@ -173,8 +183,18 @@ impl MidiInputThread {
     /// Start the MIDI input thread and return it alongside the
     /// [`MidiController`] that steers it. The thread always runs (so a
     /// device picked later from the menu connects), starting on
-    /// `opts.midi_input` / `opts.midi_channel` if set.
-    pub fn start(opts: &Options, pending: Arc<ArrayQueue<MidiEvent>>) -> (Self, MidiController) {
+    /// `opts.midi_inputs` / `opts.midi_channel` if set.
+    ///
+    /// `num_ports` is the plugin's declared MIDI input port count
+    /// (`PluginInfo::midi_input_ports`); the i-th `--midi-input`
+    /// device is routed to port i. At least one slot always exists so
+    /// the single-device case and the QWERTY keyboard keep feeding
+    /// port 0.
+    pub fn start(
+        opts: &Options,
+        num_ports: usize,
+        pending: Arc<ArrayQueue<MidiEvent>>,
+    ) -> (Self, MidiController) {
         let stop = Arc::new(AtomicBool::new(false));
         let current_name = Arc::new(Mutex::new(None));
         let initial_channel = opts
@@ -185,7 +205,16 @@ impl MidiInputThread {
         let channel = Arc::new(AtomicU8::new(initial_channel.encode()));
         let (cmd_tx, cmd_rx) = mpsc::channel::<MidiCmd>();
 
-        let initial_device = opts.midi_input.clone();
+        let slots = num_ports.max(1);
+        if opts.midi_inputs.len() > slots {
+            eprintln!(
+                "(--midi-input: {} devices given but the plugin has {slots} MIDI input port(s); \
+                 ignoring the extra device(s))",
+                opts.midi_inputs.len(),
+            );
+        }
+        let initial_devices = opts.midi_inputs.clone();
+
         let stop_thread = Arc::clone(&stop);
         let current_thread = Arc::clone(&current_name);
         let channel_thread = Arc::clone(&channel);
@@ -193,7 +222,8 @@ impl MidiInputThread {
             .name("truce-standalone-midi".into())
             .spawn(move || {
                 midi_thread(
-                    initial_device,
+                    initial_devices,
+                    slots,
                     cmd_rx,
                     pending,
                     stop_thread,
@@ -218,80 +248,111 @@ impl Drop for MidiInputThread {
     }
 }
 
+/// One plugin MIDI input port's device binding, owned by the worker.
+struct Slot {
+    /// The plugin MIDI input port this slot feeds.
+    port: u8,
+    /// Device name substring to connect to, or `None` (disconnected).
+    desired: Option<String>,
+    connection: Option<MidiInputConnection<()>>,
+    connected_name: String,
+}
+
 // Spawned-thread body - owns its state across the worker's lifetime.
 #[allow(clippy::needless_pass_by_value)]
 fn midi_thread(
-    initial_device: Option<String>,
+    initial_devices: Vec<String>,
+    num_slots: usize,
     cmd_rx: mpsc::Receiver<MidiCmd>,
     pending: Arc<ArrayQueue<MidiEvent>>,
     stop: Arc<AtomicBool>,
     current_name: Arc<Mutex<Option<String>>>,
     channel: Arc<AtomicU8>,
 ) {
-    let mut desired = initial_device;
-    let mut connection: Option<MidiInputConnection<()>> = None;
-    let mut connected_name = String::new();
+    // One slot per plugin MIDI input port; the i-th initial
+    // `--midi-input` seeds port i. `port` is `u8` because it maps to
+    // `Event::port`; the slot count never exceeds the plugin's port
+    // count, which is itself `u8`.
+    #[allow(clippy::cast_possible_truncation)]
+    let mut slots: Vec<Slot> = (0..num_slots)
+        .map(|i| Slot {
+            port: i as u8,
+            desired: initial_devices.get(i).cloned(),
+            connection: None,
+            connected_name: String::new(),
+        })
+        .collect();
 
     while !stop.load(Ordering::Relaxed) {
-        reconcile(
-            desired.as_deref(),
-            &mut connection,
-            &mut connected_name,
-            &pending,
-            &channel,
-            &current_name,
-        );
+        for slot in &mut slots {
+            reconcile(slot, &pending, &channel, &current_name);
+        }
 
-        // Block until the menu changes the device or the hot-plug poll
+        // Block until the menu changes a device or the hot-plug poll
         // fires. `recv_timeout` keeps device switches immediate while
         // still re-checking presence every `HOTPLUG_POLL`.
         match cmd_rx.recv_timeout(HOTPLUG_POLL) {
-            Ok(MidiCmd::SetDevice(name)) => desired = name,
+            Ok(MidiCmd::SetDevice { port, name }) => {
+                if let Some(slot) = slots.iter_mut().find(|s| s.port == port) {
+                    slot.desired = name;
+                }
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 
-    drop(connection);
+    // Connections drop with `slots`.
 }
 
-/// Bring `connection` in line with `desired`: drop it if the desired
-/// device changed / vanished, then (re)connect when a matching port is
-/// present.
+/// Bring one slot's connection in line with its `desired` device:
+/// drop it if the desired device changed / vanished, then (re)connect
+/// when a matching port is present. Only port 0 mirrors its device
+/// name into `current_name` (the interactive menus' single-device
+/// view); higher ports are CLI-driven and log their connection.
 fn reconcile(
-    desired: Option<&str>,
-    connection: &mut Option<MidiInputConnection<()>>,
-    connected_name: &mut String,
+    slot: &mut Slot,
     pending: &Arc<ArrayQueue<MidiEvent>>,
     channel: &Arc<AtomicU8>,
     current_name: &Arc<Mutex<Option<String>>>,
 ) {
-    if connection.is_some() {
-        let keep = match desired {
+    if slot.connection.is_some() {
+        let keep = match slot.desired.as_deref() {
             None => false,
             Some(want) => {
-                port_present(connected_name)
-                    && connected_name.to_lowercase().contains(&want.to_lowercase())
+                port_present(&slot.connected_name)
+                    && slot
+                        .connected_name
+                        .to_lowercase()
+                        .contains(&want.to_lowercase())
             }
         };
         if !keep {
-            if !connected_name.is_empty() {
-                vlog!("MIDI input: disconnected from {connected_name}");
+            if !slot.connected_name.is_empty() {
+                vlog!(
+                    "MIDI input (port {}): disconnected from {}",
+                    slot.port,
+                    slot.connected_name
+                );
             }
-            *connection = None;
-            connected_name.clear();
-            set_current(current_name, None);
+            slot.connection = None;
+            slot.connected_name.clear();
+            if slot.port == 0 {
+                set_current(current_name, None);
+            }
         }
     }
 
-    if connection.is_none()
-        && let Some(want) = desired
-        && let Some((conn, name)) = try_connect(want, pending, channel)
+    if slot.connection.is_none()
+        && let Some(want) = slot.desired.clone()
+        && let Some((conn, name)) = try_connect(&want, pending, channel, slot.port)
     {
-        vlog!("MIDI input: {name}");
-        *connection = Some(conn);
-        connected_name.clone_from(&name);
-        set_current(current_name, Some(name));
+        vlog!("MIDI input (port {}): {name}", slot.port);
+        slot.connection = Some(conn);
+        slot.connected_name.clone_from(&name);
+        if slot.port == 0 {
+            set_current(current_name, Some(name));
+        }
     }
 }
 
@@ -305,29 +366,31 @@ fn port_present(name: &str) -> bool {
     })
 }
 
-/// Open the first port whose name contains `requested`. The callback
-/// applies the live channel filter before decoding.
+/// Open the first device whose name contains `requested` and route
+/// its events to plugin MIDI input `port`. The callback applies the
+/// live channel filter before decoding and stamps the port.
 fn try_connect(
     requested: &str,
     pending: &Arc<ArrayQueue<MidiEvent>>,
     channel: &Arc<AtomicU8>,
+    port: u8,
 ) -> Option<(MidiInputConnection<()>, String)> {
     let midi_in = MidiInput::new("truce-standalone").ok()?;
     let ports = midi_in.ports();
-    let port = ports.iter().find(|p| {
+    let midi_port = ports.iter().find(|p| {
         midi_in
             .port_name(p)
             .is_ok_and(|n| n.to_lowercase().contains(&requested.to_lowercase()))
     })?;
     let name = midi_in
-        .port_name(port)
+        .port_name(midi_port)
         .unwrap_or_else(|_| "<unnamed>".into());
 
     let pending = Arc::clone(pending);
     let channel = Arc::clone(channel);
     let conn = midi_in
         .connect(
-            port,
+            midi_port,
             "truce-standalone-in",
             move |_t, bytes, ()| {
                 // Channel-voice messages (0x80-0xEF) carry a channel in
@@ -348,7 +411,7 @@ fn try_connect(
                     // queue means the callback is starved, where
                     // dropping ancient note events beats mutex
                     // contention.
-                    let _ = pending.force_push(MidiEvent { body });
+                    let _ = pending.force_push(MidiEvent { body, port });
                 }
             },
             (),

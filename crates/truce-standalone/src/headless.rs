@@ -27,12 +27,15 @@ pub fn run<P: PluginExport>(opts: &Options) {
     // MIDI device input (if requested and available). On success
     // this spawns a background thread that pushes events into
     // `handles.pending`.
-    let (_midi_guard, _midi_ctrl) =
-        midi::MidiInputThread::start(opts, Arc::clone(&handles.pending));
+    let (_midi_guard, _midi_ctrl) = midi::MidiInputThread::start(
+        opts,
+        usize::from(P::info().midi_input_ports),
+        Arc::clone(&handles.pending),
+    );
 
     let is_instrument = P::info().category != PluginCategory::Effect;
     vlog!("Plugin: {}", P::info().name);
-    if is_instrument && opts.midi_input.is_none() {
+    if is_instrument && opts.midi_inputs.is_empty() {
         // Soft warning - actionable, so always print.
         eprintln!(
             "(instrument; no --midi-input specified - plugin will \
