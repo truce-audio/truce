@@ -4,14 +4,18 @@
 //! - [`pin_size`] locks min == max to the current geometry for
 //!   editors that don't support resize, so the WM hides resize grips
 //!   and rejects resize requests entirely.
-//! - [`set_resize_hints`] sets a min/max *range* plus a resize
-//!   *increment* for resizable editors so the WM clamps interactive
-//!   edge-drags to the editor's bounds and snaps them to whole cells
-//!   (the same `PResizeInc` mechanism terminal emulators use to snap
-//!   to character cells). Letting the WM enforce both is the only
+//! - [`set_resize_hints`] sets a min/max *range*, a resize
+//!   *increment*, and an *aspect ratio* for resizable editors so the
+//!   WM clamps interactive edge-drags to the editor's bounds, snaps
+//!   them to whole cells (the same `PResizeInc` mechanism terminal
+//!   emulators use to snap to character cells), and holds them on
+//!   ratio (`PAspect`). Letting the WM enforce all three is the only
 //!   re-entrancy-safe way to do it: pushing `configure_window` back
 //!   from inside the window's own `ConfigureNotify` handler fights
-//!   the WM's resize grab and the window runs away.
+//!   the WM's resize grab and the window runs away. Without the
+//!   aspect hint the letterboxing backends (egui / iced / Slint)
+//!   accept any drag size and paint bars around the ratio-locked
+//!   content instead.
 //!
 //! Frame appearance / functions:
 //! - [`set_background_black`] gives the outer window an opaque-black
@@ -347,10 +351,10 @@ pub fn disable_maximize(display_handle: RawDisplayHandle, window_handle: &XlibWi
     }
 }
 
-/// Set the outer window's WM min/max size range and resize
-/// increment, all in **physical pixels**, so the window manager
-/// clamps interactive edge-drags to the editor's bounds and snaps
-/// them to whole cells.
+/// Set the outer window's WM min/max size range, resize increment,
+/// and aspect ratio, all in **physical pixels**, so the window
+/// manager clamps interactive edge-drags to the editor's bounds,
+/// snaps them to whole cells, and holds them on ratio.
 ///
 /// - A `max_*` of `0` means "unbounded on that axis" and omits the
 ///   per-axis cap (a large sentinel) while keeping `PMaxSize` set.
@@ -358,13 +362,31 @@ pub fn disable_maximize(display_handle: RawDisplayHandle, window_handle: &XlibWi
 ///   non-zero the snap counts from `min_*` (already cell-aligned)
 ///   via `PBaseSize` + `PResizeInc`, so every allowed size lands on
 ///   a cell boundary.
+/// - `aspect` is `(numerator, denominator)` = width:height from the
+///   editor; `None` leaves the ratio free. Setting `PAspect` with
+///   `min_aspect == max_aspect` pins the drag to that ratio, the
+///   same way Windows reshapes `WM_SIZING` and macOS sets
+///   `contentAspectRatio`. Backends whose `set_size` accepts any
+///   size verbatim (egui / iced / Slint) letterbox instead of
+///   constraining, so without this the WM lets the drag reach any
+///   size and the editor paints bars around the ratio-locked
+///   content. The ratio is scale-independent, so the raw editor
+///   pair goes to the WM unscaled even though the sizes are
+///   physical.
+///
+/// Aspect and resize increments don't combine cleanly under ICCCM
+/// (the ratio is checked against `width - base` when `PBaseSize` is
+/// set), but no backend advertises both: the letterboxing backends
+/// that need an aspect lock don't set a `size_increment`, and the
+/// cell-snapping built-in grid clamps its own size rather than
+/// locking a ratio.
 ///
 /// No-op if the display handle is not Xlib or libX11 fails to load.
 /// Must be called on the thread that owns the baseview event loop;
 /// Xlib calls are not thread-safe on a display the loop also uses.
-// Eight args is a flat list of WM size-hint fields (min/max/inc per
-// axis); bundling them into a struct just to satisfy the lint would
-// add ceremony without clarity.
+// Nine args is a flat list of WM size-hint fields (min/max/inc per
+// axis plus the aspect pair); bundling them into a struct just to
+// satisfy the lint would add ceremony without clarity.
 #[allow(clippy::too_many_arguments)]
 pub fn set_resize_hints(
     display_handle: RawDisplayHandle,
@@ -375,6 +397,7 @@ pub fn set_resize_hints(
     max_h: u32,
     inc_w: u32,
     inc_h: u32,
+    aspect: Option<(u32, u32)>,
 ) {
     let RawDisplayHandle::Xlib(display) = display_handle else {
         return;
@@ -418,6 +441,22 @@ pub fn set_resize_hints(
             (*hints).height_inc = clamp(inc_h);
             (*hints).base_width = min_width;
             (*hints).base_height = min_height;
+        }
+        // Pin the drag to the editor's ratio: `min_aspect == max_aspect`
+        // leaves the WM exactly one on-ratio width for every height.
+        // The ratio pair is scale-independent, so it goes in raw - no
+        // `to_phys` pass. X11 orders each `AspectRatio` numerator (x)
+        // then denominator (y), matching the editor's
+        // `(width, height)` pair.
+        if let Some((aw, ah)) = aspect
+            && aw > 0
+            && ah > 0
+        {
+            flags |= xlib::PAspect;
+            (*hints).min_aspect.x = clamp(aw);
+            (*hints).min_aspect.y = clamp(ah);
+            (*hints).max_aspect.x = clamp(aw);
+            (*hints).max_aspect.y = clamp(ah);
         }
         (*hints).flags = flags;
         (lib.XSetWMNormalHints)(display_ptr, window_id, hints);
