@@ -12,6 +12,15 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 - **Every plugin identity derives from `bundle_id`.** `clap_id` / `vst3_id` / the state-envelope hash no longer follow the display name, so renaming a plugin no longer changes its identity. **Migration:** hosts key sessions and presets to these ids, so a plugin already shipped under a 1.x name-derived id ("Truce Envelope" -> `com.truce.truceenvelope`) will appear as a new plugin after this change - to keep the old id, set `bundle_id` to the old name-derived slug. `bundle_id`'s shape is validated at compile time (lowercase `a-z0-9` plus `-`/`_`/`.` separators, alphanumeric at both ends, no separator runs).
 - **`EventList::sort` is removed.** It was a std stable sort, which allocates - unusable on the audio thread where wrappers sort merged input streams. **Migration:** call `ensure_sorted_by_offset()`, the allocation-free equivalent with the same stable-by-offset semantics.
 
+### Migrating from 1.x
+
+1. **Pin your identity first.** 2.0 derives `clap_id` / `vst3_id` / the state hash from `bundle_id`, not the display name. If a 1.x build ever shipped, set `bundle_id` to the old name-derived slug (the display name lowercased with spaces stripped: "Truce Envelope" -> `truceenvelope`); otherwise hosts treat the plugin as new and old sessions won't find it. Unshipped plugins pick any valid id.
+2. **Fix `Event` construction.** Struct literals need the new `port` field; prefer `Event::new(offset, body)` or `Event::on_port(offset, port, body)`. Reads are unaffected.
+3. **Replace `EventList::sort()`** with `ensure_sorted_by_offset()`.
+4. **Rebuild everything together.** The hot-reload canary and the AU v3 framework/appex handshake are version-checked: a 2.x shell refuses a 1.x logic dylib and the appex refuses a 1.x framework, so rebuild and reinstall all artifacts in one pass instead of mixing.
+5. **Loads fail honestly now.** State the plugin doesn't recognize no longer resets to defaults - implement `migrate_state` (plus `[plugin.legacy_state]` keys for keyed formats) if you need to accept pre-truce or re-identified blobs; otherwise nothing to do.
+6. **MIDI stays opt-in.** Single-port MIDI 1.0 plugins behave exactly as on 1.x; add `midi2` / `midi_input_ports` / `midi_output_ports` only when you want the new capabilities.
+
 ### MIDI 2.0 / UMP
 
 - Opt in per direction in `truce.toml`: `midi2 = true` sets both; `midi2_input` / `midi2_output` override one. Without the opt-in, 2.0 input down-converts to 1.0 before delivery. Opting a port-less direction (or a port-less plugin) into 2.0 is a compile error, and port-less directions normalize to a 1.0 dialect.
