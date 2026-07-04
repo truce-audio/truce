@@ -25,6 +25,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The fuzz workspace lives in its own repo but carries real
+      # third-party deps (libfuzzer-sys); mount it at fuzz/ so the
+      # sweep keeps auditing its committed Cargo.lock.
+      - name: Checkout fuzz harnesses
+        uses: actions/checkout@v4
+        with:
+          repository: truce-audio/truce-fuzz-tests
+          path: fuzz
+
       # cargo-deny shells out to `cargo metadata`, so a toolchain must be
       # on PATH. No workspace compilation happens - both tools only parse
       # the committed Cargo.lock files - so no system deps or build cache.
