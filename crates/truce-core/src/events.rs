@@ -149,7 +149,9 @@ pub enum EventBody {
         registered: bool,
     },
     /// MIDI 2.0 per-note pitch bend (`value: u32`). `0x8000_0000`
-    /// is center.
+    /// is center; full-scale is ±48 semitones
+    /// ([`crate::midi::PER_NOTE_TUNING_SEMITONES`]) wherever a
+    /// wrapper maps it onto a semitone-denominated host domain.
     PerNotePitchBend {
         group: u8,
         channel: u8,

@@ -96,7 +96,8 @@ use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, Trans
 use truce_core::export::PluginExport;
 use truce_core::info::{MidiDialect, PluginCategory, PluginInfo};
 use truce_core::midi::{
-    decode_short_message, denorm_7bit, downconvert_to_midi1, event_to_midi1, pitch_bend_to_bytes,
+    PER_NOTE_VOLUME_MAX_GAIN, decode_short_message, denorm_7bit, downconvert_to_midi1,
+    event_to_midi1, per_note_bend_from_semitones, per_note_bend_semitones, pitch_bend_to_bytes,
 };
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
@@ -589,22 +590,6 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 // Event conversion: CLAP input events -> EventList
 // ---------------------------------------------------------------------------
 
-/// Build a `TransportInfo` from a CLAP transport event/struct.
-///
-/// Same flag-driven decoding is needed in two places - the
-/// `CLAP_EVENT_TRANSPORT` arm of `convert_input_events` (which sees a
-/// `clap_event_transport` arriving as an input event mid-block) and
-/// the per-process `clap_process::transport` field. Hosts deliver
-/// transport state through whichever channel they prefer; the bit
-/// layout is identical, so the decode is too.
-//
-/// `0x8000_0000` as `f64` - the centre of a 32-bit per-note pitch bend.
-const HALF_U32: f64 = 2_147_483_648.0;
-/// Per-note pitch-bend range for CLAP `TUNING` (MPE convention), in
-/// semitones each way. Shared by the encode and decode paths so the
-/// round trip is lossless.
-const PER_NOTE_TUNING_SEMITONES: f64 = 48.0;
-
 /// 32-bit wire value -> CLAP `0..1` note-expression value.
 fn unit_from_u32(v: u32) -> f64 {
     f64::from(v) / f64::from(u32::MAX)
@@ -614,19 +599,6 @@ fn unit_from_u32(v: u32) -> f64 {
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn u32_from_unit(v: f64) -> u32 {
     (v.clamp(0.0, 1.0) * f64::from(u32::MAX)).round() as u32
-}
-
-/// 32-bit per-note pitch bend (centre `0x8000_0000`) -> CLAP semitones.
-fn tuning_semitones(v: u32) -> f64 {
-    ((f64::from(v) - HALF_U32) / HALF_U32) * PER_NOTE_TUNING_SEMITONES
-}
-
-/// CLAP `TUNING` semitones -> 32-bit per-note pitch bend (centre
-/// `0x8000_0000`).
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn tuning_to_u32(semis: f64) -> u32 {
-    (HALF_U32 + (semis / PER_NOTE_TUNING_SEMITONES) * HALF_U32).clamp(0.0, f64::from(u32::MAX))
-        as u32
 }
 
 /// Map a truce per-note 2.0 event to a CLAP note expression
@@ -649,7 +621,14 @@ fn clap_note_expression_of(body: &EventBody) -> Option<(i32, u8, u8, f64)> {
                 74 => CLAP_NOTE_EXPRESSION_BRIGHTNESS,
                 _ => return None,
             };
-            Some((id, channel, note, unit_from_u32(value)))
+            // CLAP `VOLUME` is plain linear gain `0..=4` (the wire's
+            // quarter point is unity); the other ids are `0..=1`.
+            let value = if id == CLAP_NOTE_EXPRESSION_VOLUME {
+                PER_NOTE_VOLUME_MAX_GAIN * unit_from_u32(value)
+            } else {
+                unit_from_u32(value)
+            };
+            Some((id, channel, note, value))
         }
         EventBody::PerNotePitchBend {
             channel,
@@ -660,7 +639,7 @@ fn clap_note_expression_of(body: &EventBody) -> Option<(i32, u8, u8, f64)> {
             CLAP_NOTE_EXPRESSION_TUNING,
             channel,
             note,
-            tuning_semitones(value),
+            per_note_bend_semitones(value),
         )),
         EventBody::PolyPressure2 {
             channel,
@@ -701,7 +680,7 @@ fn note_expression_to_body(ne: &clap_event_note_expression) -> Option<EventBody>
                 group: 0,
                 channel,
                 note,
-                value: tuning_to_u32(ne.value),
+                value: per_note_bend_from_semitones(ne.value),
             });
         }
         CLAP_NOTE_EXPRESSION_VOLUME => 7,
@@ -719,16 +698,31 @@ fn note_expression_to_body(ne: &clap_event_note_expression) -> Option<EventBody>
         }
         _ => return None,
     };
+    // CLAP `VOLUME` arrives as plain linear gain `0..=4`; normalize
+    // into the wire domain so unity gain lands on the quarter point.
+    let value = if ne.expression_id == CLAP_NOTE_EXPRESSION_VOLUME {
+        u32_from_unit(ne.value / PER_NOTE_VOLUME_MAX_GAIN)
+    } else {
+        u32_from_unit(ne.value)
+    };
     Some(EventBody::PerNoteCC {
         group: 0,
         channel,
         note,
         cc,
-        value: u32_from_unit(ne.value),
+        value,
         registered: true,
     })
 }
 
+/// Build a `TransportInfo` from a CLAP transport event/struct.
+///
+/// Same flag-driven decoding is needed in two places - the
+/// `CLAP_EVENT_TRANSPORT` arm of `convert_input_events` (which sees a
+/// `clap_event_transport` arriving as an input event mid-block) and
+/// the per-process `clap_process::transport` field. Hosts deliver
+/// transport state through whichever channel they prefer; the bit
+/// layout is identical, so the decode is too.
 // CLAP transport positions arrive as `i64` fixed-point counts that
 // must be divided into `f64` seconds/beats; the `i64 as f64`
 // narrowing is bounded in practice by song-length (well below 2^52).
@@ -3237,6 +3231,72 @@ mod transport_tests {
         // SAFETY: see above - zeroed POD, no seconds-timeline flag.
         let t: clap_event_transport = unsafe { std::mem::zeroed() };
         assert_eq!(build_transport_info(&t, 48_000.0).position_samples, 0);
+    }
+}
+
+#[cfg(test)]
+mod note_expression_tests {
+    use super::{
+        CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VOLUME, clap_event_note_expression,
+        clap_note_expression_of, note_expression_to_body,
+    };
+    use truce_core::events::EventBody;
+
+    fn expression(id: i32, value: f64) -> clap_event_note_expression {
+        // SAFETY: clap_event_note_expression is a repr(C) POD; all-zero
+        // is valid (channel 0, key 0).
+        let mut ne: clap_event_note_expression = unsafe { std::mem::zeroed() };
+        ne.expression_id = id;
+        ne.value = value;
+        ne
+    }
+
+    #[test]
+    fn volume_crosses_in_the_gain_domain() {
+        // CLAP `VOLUME` is plain linear gain `0..=4`; wire full-scale
+        // must land on gain 4 (+12 dB), unity on the quarter point.
+        let (id, _, _, value) = clap_note_expression_of(&EventBody::PerNoteCC {
+            group: 0,
+            channel: 0,
+            note: 60,
+            cc: 7,
+            value: u32::MAX,
+            registered: true,
+        })
+        .expect("volume maps");
+        assert_eq!(id, CLAP_NOTE_EXPRESSION_VOLUME);
+        assert!((value - 4.0).abs() < 1e-9);
+
+        // Host unity gain decodes to the wire's quarter point.
+        let body = note_expression_to_body(&expression(CLAP_NOTE_EXPRESSION_VOLUME, 1.0))
+            .expect("volume decodes");
+        let EventBody::PerNoteCC { cc: 7, value, .. } = body else {
+            panic!("expected volume PerNoteCC, got {body:?}");
+        };
+        assert!((f64::from(value) / f64::from(u32::MAX) - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn tuning_full_scale_is_48_semitones() {
+        let (_, _, _, semis) = clap_note_expression_of(&EventBody::PerNotePitchBend {
+            group: 0,
+            channel: 0,
+            note: 60,
+            value: u32::MAX,
+        })
+        .expect("tuning maps");
+        assert!((semis - 48.0).abs() < 1e-6);
+
+        // A host bend beyond the wire's range saturates.
+        let body = note_expression_to_body(&expression(CLAP_NOTE_EXPRESSION_TUNING, 120.0))
+            .expect("tuning decodes");
+        assert!(matches!(
+            body,
+            EventBody::PerNotePitchBend {
+                value: u32::MAX,
+                ..
+            }
+        ));
     }
 }
 

@@ -311,6 +311,41 @@ pub fn downconvert_to_midi1(body: &EventBody) -> Option<EventBody> {
     })
 }
 
+/// Centre of a 32-bit per-note pitch bend (`0x8000_0000`), as `f64`.
+const PER_NOTE_BEND_CENTER: f64 = 2_147_483_648.0;
+
+/// Per-note pitch-bend full-scale, in semitones each way (the MPE
+/// convention). Every wrapper that maps [`EventBody::PerNotePitchBend`]
+/// onto a semitone-denominated host domain (CLAP's `TUNING`
+/// expression, VST3's tuning type) scales through this constant, so
+/// the same event bends identically across formats.
+pub const PER_NOTE_TUNING_SEMITONES: f64 = 48.0;
+
+/// Per-note volume full-scale, in linear gain. CLAP's `VOLUME`
+/// expression (plain gain `0..=4`) and VST3's volume type (normalized
+/// `0..=1` with `plain = 20 * log(4 * norm)`) define the same physical
+/// domain; the wire's quarter point is unity gain (0 dB).
+pub const PER_NOTE_VOLUME_MAX_GAIN: f64 = 4.0;
+
+/// 32-bit per-note pitch bend (centre `0x8000_0000`) -> semitones,
+/// full-scale [`PER_NOTE_TUNING_SEMITONES`] each way.
+#[must_use]
+pub fn per_note_bend_semitones(v: u32) -> f64 {
+    ((f64::from(v) - PER_NOTE_BEND_CENTER) / PER_NOTE_BEND_CENTER) * PER_NOTE_TUNING_SEMITONES
+}
+
+/// Semitones -> 32-bit per-note pitch bend (centre `0x8000_0000`),
+/// saturating at full-scale - the wire can't express a wider bend.
+#[must_use]
+pub fn per_note_bend_from_semitones(semis: f64) -> u32 {
+    // Clamped to `0..=u32::MAX` before the cast, so no truncation or
+    // sign loss is possible (NaN saturates to 0 under `as`).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let v = (PER_NOTE_BEND_CENTER + (semis / PER_NOTE_TUNING_SEMITONES) * PER_NOTE_BEND_CENTER)
+        .clamp(0.0, f64::from(u32::MAX)) as u32;
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -519,5 +554,25 @@ mod tests {
         } else {
             panic!("expected ControlChange, got {event:?}");
         }
+    }
+
+    #[test]
+    fn per_note_bend_semitone_round_trip() {
+        // Centre is exactly no detune.
+        assert!(per_note_bend_semitones(0x8000_0000).abs() < 1e-9);
+        assert_eq!(per_note_bend_from_semitones(0.0), 0x8000_0000);
+        // Full-scale each way.
+        assert_eq!(per_note_bend_from_semitones(-PER_NOTE_TUNING_SEMITONES), 0);
+        assert_eq!(
+            per_note_bend_from_semitones(PER_NOTE_TUNING_SEMITONES),
+            u32::MAX
+        );
+        assert!((per_note_bend_semitones(u32::MAX) - PER_NOTE_TUNING_SEMITONES).abs() < 1e-6);
+        // Beyond full-scale saturates - the wire can't express it.
+        assert_eq!(per_note_bend_from_semitones(-120.0), 0);
+        assert_eq!(per_note_bend_from_semitones(120.0), u32::MAX);
+        // Mid-range values survive the round trip.
+        let wire = per_note_bend_from_semitones(12.0);
+        assert!((per_note_bend_semitones(wire) - 12.0).abs() < 1e-6);
     }
 }

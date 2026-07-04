@@ -19,7 +19,9 @@ use truce_core::editor::{
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::midi::decode_short_message;
+use truce_core::midi::{
+    decode_short_message, per_note_bend_from_semitones, per_note_bend_semitones,
+};
 use truce_core::state;
 use truce_core::wrapper::{
     SharedPlugin, default_io_channels, log_missing_bus_layout, run_audio_block,
@@ -452,7 +454,14 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                     // released, or a host bug) is unattributable;
                     // drop the event rather than guess a pitch.
                     let type_id = ev.data1;
-                    let value = unit_to_u32(ev.ne_value);
+                    // Tuning is semitone-denominated: VST3's ±120 st
+                    // domain re-scales onto the wire's ±48 st
+                    // full-scale. The other types are plain `0..=1`.
+                    let value = if type_id == 2 {
+                        vst3_tuning_to_wire(ev.ne_value)
+                    } else {
+                        unit_to_u32(ev.ne_value)
+                    };
                     inst.note_id_map
                         .lookup(ev.note_id)
                         .and_then(|(channel, note)| {
@@ -892,11 +901,14 @@ unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) ->
 fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
     use truce_core::midi::{downconvert_to_midi1, pitch_bend_to_bytes};
     // MIDI 2.0 channel-voice output has no UMP transport on VST3, so
-    // down-convert to 1.0 (per-note variants are excluded - those ride
-    // note expression via `note_expression_of`, so converting them here
-    // too would double-emit).
+    // down-convert to 1.0. Bodies that map to a predefined expression
+    // type ride note expression via `note_expression_of` - converting
+    // them here too would double-emit. Everything else (including
+    // per-note CCs with no predefined type) falls through to the 1.0
+    // down-convert, so an unmapped per-note CC degrades to a channel
+    // CC exactly as it does on CLAP.
     let body = match event.body {
-        EventBody::PerNoteCC { .. } | EventBody::PerNotePitchBend { .. } => return None,
+        body if note_expression_of(&body).is_some() => return None,
         other => downconvert_to_midi1(&other).unwrap_or(other),
     };
     let (status, data1, data2) = match &body {
@@ -1230,7 +1242,7 @@ fn note_expression_of(body: &EventBody) -> Option<(u32, i32, f64)> {
             note,
             value,
             ..
-        } => (2, channel, note, u32_to_unit(value)),
+        } => (2, channel, note, wire_to_vst3_tuning(value)),
         _ => return None,
     };
     Some((type_id, vst3_note_id(channel, note), value))
@@ -1248,6 +1260,23 @@ fn vst3_note_id(channel: u8, note: u8) -> i32 {
 /// `NoteExpressionValue` domain.
 fn u32_to_unit(v: u32) -> f64 {
     f64::from(v) / f64::from(u32::MAX)
+}
+
+/// VST3's tuning note-expression span: normalized `0..=1` covers
+/// `-120..=+120` semitones (`plain = 240 * (norm - 0.5)` per the SDK).
+const VST3_TUNING_SPAN_SEMITONES: f64 = 240.0;
+
+/// VST3 tuning norm (`0..=1`, ±120 st) -> wire per-note bend. The wire
+/// full-scale is ±48 st, so a wider host bend saturates.
+fn vst3_tuning_to_wire(norm: f64) -> u32 {
+    per_note_bend_from_semitones((norm - 0.5) * VST3_TUNING_SPAN_SEMITONES)
+}
+
+/// Wire per-note bend (±48 st full-scale) -> VST3 tuning norm
+/// (`0..=1`, ±120 st), so the same event bends identically on every
+/// semitone-denominated host domain.
+fn wire_to_vst3_tuning(v: u32) -> f64 {
+    0.5 + per_note_bend_semitones(v) / VST3_TUNING_SPAN_SEMITONES
 }
 
 /// Inverse of [`u32_to_unit`]: widen a VST3 `NoteExpressionValue` into
@@ -2130,6 +2159,17 @@ mod tests {
         assert_eq!(type_id, 2);
         assert!((value - 0.5).abs() < 1e-3);
 
+        // Full-scale wire bend is ±48 st; VST3's tuning norm spans
+        // ±120 st, so it must land at 0.5 + 48/240 = 0.7, not 1.0.
+        let (_, _, value) = note_expression_of(&EventBody::PerNotePitchBend {
+            group: 0,
+            channel: 0,
+            note: 64,
+            value: u32::MAX,
+        })
+        .expect("bend maps");
+        assert!((value - 0.7).abs() < 1e-6);
+
         // A CC with no predefined VST3 note-expression type is skipped.
         assert!(
             note_expression_of(&EventBody::PerNoteCC {
@@ -2192,6 +2232,65 @@ mod tests {
             map.insert(6000 + i as i32, 2, i as u8);
         }
         assert_eq!(map.lookup(1000), None);
+    }
+
+    #[test]
+    fn tuning_norm_round_trips_and_saturates() {
+        // Center and mid-range survive the domain re-scale both ways.
+        assert_eq!(vst3_tuning_to_wire(0.5), 0x8000_0000);
+        assert!((wire_to_vst3_tuning(0x8000_0000) - 0.5).abs() < 1e-9);
+        let wire = vst3_tuning_to_wire(0.55); // +12 st
+        assert!((wire_to_vst3_tuning(wire) - 0.55).abs() < 1e-6);
+        // A host bend past the wire's ±48 st saturates.
+        assert_eq!(vst3_tuning_to_wire(1.0), u32::MAX);
+        assert_eq!(vst3_tuning_to_wire(0.0), 0);
+    }
+
+    #[test]
+    fn unmapped_per_note_cc_degrades_to_channel_cc() {
+        // No predefined VST3 expression type for cc 20 - it must fall
+        // through to the 1.0 downconvert as a channel CC (matching
+        // CLAP), not vanish.
+        let event = Event::new(
+            0,
+            EventBody::PerNoteCC {
+                group: 0,
+                channel: 3,
+                note: 60,
+                cc: 20,
+                value: u32::MAX,
+                registered: true,
+            },
+        );
+        let packet = try_encode_vst3_midi(&event).expect("degrades to channel CC");
+        assert_eq!(packet.status, 0xB3);
+        assert_eq!(packet.data1, 20);
+        assert_eq!(packet.data2, 127);
+
+        // Mapped per-note events ride note expression instead - the
+        // MIDI encoder must skip them or they'd double-emit.
+        let mapped = Event::new(
+            0,
+            EventBody::PerNoteCC {
+                group: 0,
+                channel: 0,
+                note: 60,
+                cc: 7,
+                value: 0,
+                registered: true,
+            },
+        );
+        assert!(try_encode_vst3_midi(&mapped).is_none());
+        let bend = Event::new(
+            0,
+            EventBody::PerNotePitchBend {
+                group: 0,
+                channel: 0,
+                note: 60,
+                value: 0,
+            },
+        );
+        assert!(try_encode_vst3_midi(&bend).is_none());
     }
 
     #[test]

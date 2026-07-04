@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 #include <atomic>
 #include <new>
 
@@ -1944,7 +1945,9 @@ static IUnitInfoVtbl g_unitinfo_vtbl = {
 // The predefined VST3 note-expression types truce bridges to per-note
 // MIDI 2.0 events (PerNoteCC 7/10/1/11/74 and PerNotePitchBend for
 // tuning). Order is the enumeration order hosts see. Flags value 1 is
-// the SDK's kIsBipolar.
+// the SDK's kIsBipolar. Volume's domain is `plain = 20 * log(4 *
+// norm)` per the SDK, so its no-change default is unity gain at 0.25,
+// not 1.0 (which is +12 dB).
 static const struct {
     uint32 typeId;
     const char* title;
@@ -1952,12 +1955,12 @@ static const struct {
     double defaultValue;
     int32 flags;
 } g_note_expression_types[] = {
-    {0, "Volume",     "Vol",  1.0, 0},
-    {1, "Pan",        "Pan",  0.5, 1},
-    {2, "Tuning",     "Tun",  0.5, 1},
-    {3, "Vibrato",    "Vibr", 0.0, 0},
-    {4, "Expression", "Expr", 1.0, 0},
-    {5, "Brightness", "Bri",  0.5, 0},
+    {0, "Volume",     "Vol",  0.25, 0},
+    {1, "Pan",        "Pan",  0.5,  1},
+    {2, "Tuning",     "Tun",  0.5,  1},
+    {3, "Vibrato",    "Vibr", 0.0,  0},
+    {4, "Expression", "Expr", 1.0,  0},
+    {5, "Brightness", "Bri",  0.5,  0},
 };
 static const int32 kNumNoteExpressionTypes =
     (int32)(sizeof(g_note_expression_types) / sizeof(g_note_expression_types[0]));
@@ -1987,13 +1990,16 @@ static tresult nexp_getInfo(void* s, int32 busIndex, int16_t channel, int32 inde
     info->flags = t.flags;
     return kResultOk;
 }
-// Tuning's normalized 0..1 spans -120..+120 semitones per the SDK
-// (0.5 = no detune); the other types read naturally as percent.
+// SDK physical domains: tuning's normalized 0..1 spans -120..+120
+// semitones (0.5 = no detune), volume is `plain = 20 * log(4 * norm)`
+// dB; the other types read naturally as percent.
 static tresult nexp_getStringByValue(void*, int32 /*busIndex*/, int16_t /*channel*/,
                                      uint32 typeId, double value, char16* string) {
     if (!string) return kInvalidArgument;
     char buf[64];
     if (typeId == 2) snprintf(buf, sizeof(buf), "%.2f st", (value - 0.5) * 240.0);
+    else if (typeId == 0 && value <= 0.0) snprintf(buf, sizeof(buf), "-inf dB");
+    else if (typeId == 0) snprintf(buf, sizeof(buf), "%.1f dB", 20.0 * log10(4.0 * value));
     else snprintf(buf, sizeof(buf), "%.1f %%", value * 100.0);
     str_to_char16(string, buf, 128);
     return kResultOk;
@@ -2008,7 +2014,10 @@ static tresult nexp_getValueByString(void*, int32 /*busIndex*/, int16_t /*channe
     char* end = nullptr;
     double parsed = strtod(buf, &end);
     if (end == buf) return kResultFalse;
-    double v = (typeId == 2) ? parsed / 240.0 + 0.5 : parsed / 100.0;
+    double v;
+    if (typeId == 2) v = parsed / 240.0 + 0.5;
+    else if (typeId == 0) v = pow(10.0, parsed / 20.0) / 4.0;
+    else v = parsed / 100.0;
     if (v < 0.0) v = 0.0;
     if (v > 1.0) v = 1.0;
     *value = v;
