@@ -55,7 +55,7 @@ pub enum Algo {
     Passthrough,
     #[name = "Channel Fan"]
     ChannelFan,
-    #[name = "Per-Note Vibrato"]
+    #[name = "Per-Note Vibrato (2.0 only)"]
     PerNoteVibrato,
     #[name = "MPE Vibrato"]
     MpeVibrato,
