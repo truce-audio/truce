@@ -518,6 +518,13 @@ AAX_Result TruceAAX_Parameters::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* 
 AAX_Result TruceAAX_Parameters::SetChunk(AAX_CTypeID chunkID, const AAX_SPlugInChunk* iChunk) {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
     if (is_legacy_chunk(chunkID)) {
+        // Zero-size legacy chunks are Pro Tools echoing our own save
+        // answer back: the ids are advertised (so old sessions offer
+        // their chunks for migration), GetChunkSize answers 0 in the
+        // save direction, and Pro Tools stores that empty chunk in
+        // every new session. Nothing to migrate - succeed, don't
+        // error on data the host wrote from our own answer.
+        if (!iChunk || iChunk->fSize == 0) return AAX_SUCCESS;
         // An old session's chunk from a pre-truce build: offer the
         // bytes to the plugin's migrate_state hook.
         if (g_bridge.load_state_foreign
