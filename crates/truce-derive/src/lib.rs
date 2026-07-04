@@ -118,12 +118,27 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         "tool" => quote! { ::truce::core::PluginCategory::Tool },
         _ => quote! { ::truce::core::PluginCategory::Effect },
     };
-    // MIDI capability flags. Default from category; the optional
-    // `midi_input` / `midi_output` truce.toml keys override. Baked onto
-    // `PluginInfo` so every format wrapper gates its MIDI input / output
-    // declaration on one value instead of re-deriving from the category.
-    let (accepts_midi_in, emits_midi) =
-        truce_build::midi_capabilities(&plugin.category, plugin.midi_input, plugin.midi_output);
+    // MIDI wiring: capability flags and port counts resolved together
+    // (capability is `count > 0`) so every format wrapper reads one
+    // coherent declaration instead of re-deriving from the category. A
+    // contradictory truce.toml (`midi_input = false` with
+    // `midi_input_ports = 2`) is a compile error.
+    let wiring = match truce_build::midi_wiring(
+        &plugin.category,
+        plugin.midi_input,
+        plugin.midi_output,
+        plugin.midi_input_ports,
+        plugin.midi_output_ports,
+    ) {
+        Ok(w) => w,
+        Err(msg) => {
+            return syn::Error::new(proc_macro2::Span::call_site(), msg)
+                .to_compile_error()
+                .into();
+        }
+    };
+    let (accepts_midi_in, emits_midi) = (wiring.accepts_midi_in, wiring.emits_midi);
+    let (midi_input_ports, midi_output_ports) = (wiring.input_ports, wiring.output_ports);
     // MIDI 2.0 opt-in. `midi2` sets both ports' dialect; the optional
     // `midi2_input` / `midi2_output` keys override one direction (a
     // 1.0 -> 2.0 promoter wants 1.0 in, 2.0 out).
@@ -136,14 +151,6 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     };
     let midi_input_dialect = dialect_tokens(plugin.midi2_input.unwrap_or(plugin.midi2));
     let midi_output_dialect = dialect_tokens(plugin.midi2_output.unwrap_or(plugin.midi2));
-    // MIDI port counts: one per enabled direction by default, raised by
-    // the `midi_input_ports` / `midi_output_ports` truce.toml keys.
-    let (midi_input_ports, midi_output_ports) = truce_build::midi_port_counts(
-        accepts_midi_in,
-        emits_midi,
-        plugin.midi_input_ports,
-        plugin.midi_output_ports,
-    );
     // NoteEffect plugins map to `aumi` (Apple's MIDI Processor type).
     // Pairs with empty `bus_layouts` at the plugin level: aumi
     // plugins must not expose audio I/O. Logic routes `aumi` to the

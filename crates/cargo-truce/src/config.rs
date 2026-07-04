@@ -277,11 +277,17 @@ impl PluginDef {
             "instrument" => "aumu",
             "midi" | "note_effect" => "aumi",
             _ => {
-                let (accepts_midi_in, _) = truce_build::midi_capabilities(
+                // `load_config` rejected contradictory MIDI keys, so
+                // the resolver can't fail here; the `aufx` fallback
+                // only guards hand-built test configs.
+                let accepts_midi_in = truce_build::midi_wiring(
                     &self.category,
                     self.midi_input,
                     self.midi_output,
-                );
+                    self.midi_input_ports,
+                    self.midi_output_ports,
+                )
+                .is_ok_and(|w| w.accepts_midi_in);
                 if accepts_midi_in { "aumf" } else { "aufx" }
             }
         }
@@ -598,6 +604,20 @@ pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
     let config: Config = toml::from_str(&content)?;
     if config.plugin.is_empty() {
         return Err("No [[plugin]] entries in truce.toml".into());
+    }
+    // Reject contradictory MIDI keys here so every install/package/
+    // validate path fails with the plugin named, mirroring the
+    // compile error truce-derive raises for the same config.
+    for p in &config.plugin {
+        if let Err(msg) = truce_build::midi_wiring(
+            &p.category,
+            p.midi_input,
+            p.midi_output,
+            p.midi_input_ports,
+            p.midi_output_ports,
+        ) {
+            return Err(format!("[[plugin]] `{}`: {msg}", p.crate_name).into());
+        }
     }
     Ok(config)
 }

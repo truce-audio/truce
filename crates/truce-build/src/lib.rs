@@ -32,44 +32,80 @@ pub fn plugin_id(vendor_id: &str, bundle_id: &str) -> String {
     format!("{}.{}", vendor_id, bundle_id.to_lowercase())
 }
 
-/// Resolve a plugin's `(accepts_midi_in, emits_midi)` capability pair
-/// from its category and the optional `midi_input` / `midi_output`
-/// truce.toml overrides. Shared by `truce-derive` (bakes the result
-/// onto `PluginInfo`, which every Rust wrapper reads) and the LV2 TTL
-/// emitter, so the host-facing port declarations all agree.
+/// Resolved MIDI wiring: the capability pair every wrapper gates its
+/// MIDI declarations on, plus the port counts multi-port formats
+/// advertise. Produced by [`midi_wiring`]; `accepts_midi_in ==
+/// (input_ports > 0)` and `emits_midi == (output_ports > 0)` hold by
+/// construction, so the two views can't diverge per format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MidiWiring {
+    pub accepts_midi_in: bool,
+    pub emits_midi: bool,
+    pub input_ports: u8,
+    pub output_ports: u8,
+}
+
+/// Resolve a plugin's MIDI wiring from its category and the optional
+/// `midi_input` / `midi_output` / `midi_input_ports` /
+/// `midi_output_ports` truce.toml keys. Shared by `truce-derive`
+/// (bakes the result onto `PluginInfo`, which every Rust wrapper
+/// reads), the LV2 TTL emitter, and `cargo-truce` (AU component
+/// type), so every format-facing declaration agrees.
 ///
-/// Defaults: instruments and note effects accept MIDI input; only note
-/// effects emit MIDI. `Some(_)` overrides the derived value.
-#[must_use]
-pub fn midi_capabilities(
+/// Defaults: instruments and note effects accept MIDI input; only
+/// note effects emit MIDI; one port per enabled direction. A port
+/// count is authoritative - capability is `count > 0` - so
+/// `midi_input_ports = 2` alone enables MIDI input. Contradictory
+/// keys (`midi_input = false` with a non-zero port count, or
+/// `midi_input = true` with zero) are rejected rather than resolved
+/// silently: whichever key won, the author meant the other one.
+///
+/// # Errors
+///
+/// A capability key that contradicts its port-count key.
+pub fn midi_wiring(
     category: &str,
     midi_input: Option<bool>,
     midi_output: Option<bool>,
-) -> (bool, bool) {
+    input_ports: Option<u8>,
+    output_ports: Option<u8>,
+) -> Result<MidiWiring, String> {
     let is_note_effect = matches!(category, "midi" | "note_effect");
     let is_instrument = category == "instrument";
-    let accepts_midi_in = midi_input.unwrap_or(is_instrument || is_note_effect);
-    let emits_midi = midi_output.unwrap_or(is_note_effect);
-    (accepts_midi_in, emits_midi)
+    let input = resolve_midi_direction(
+        "midi_input",
+        is_instrument || is_note_effect,
+        midi_input,
+        input_ports,
+    )?;
+    let output = resolve_midi_direction("midi_output", is_note_effect, midi_output, output_ports)?;
+    Ok(MidiWiring {
+        accepts_midi_in: input > 0,
+        emits_midi: output > 0,
+        input_ports: input,
+        output_ports: output,
+    })
 }
 
-/// Resolve the MIDI port counts `(input, output)` baked onto
-/// `PluginInfo`. Each defaults to one port when the matching capability
-/// is present (from [`midi_capabilities`]) and zero otherwise; the
-/// `midi_input_ports` / `midi_output_ports` overrides raise (or, at 0,
-/// drop) the count. A non-zero override implies the capability, so a
-/// port count is authoritative: capability is `count > 0`. Wrappers on
-/// single-port formats clamp the count to one.
-#[must_use]
-pub fn midi_port_counts(
-    accepts_midi_in: bool,
-    emits_midi: bool,
-    input_override: Option<u8>,
-    output_override: Option<u8>,
-) -> (u8, u8) {
-    let input = input_override.unwrap_or(u8::from(accepts_midi_in));
-    let output = output_override.unwrap_or(u8::from(emits_midi));
-    (input, output)
+/// One direction of [`midi_wiring`]: resolve the port count, from
+/// which the capability follows as `count > 0`.
+fn resolve_midi_direction(
+    key: &str,
+    category_default: bool,
+    capability: Option<bool>,
+    ports: Option<u8>,
+) -> Result<u8, String> {
+    match (capability, ports) {
+        (Some(true), Some(0)) => Err(format!(
+            "`{key} = true` contradicts `{key}_ports = 0` in truce.toml; drop one of the keys"
+        )),
+        (Some(false), Some(n)) if n > 0 => Err(format!(
+            "`{key} = false` contradicts `{key}_ports = {n}` in truce.toml; drop one of the keys"
+        )),
+        (capability, ports) => {
+            Ok(ports.unwrap_or(u8::from(capability.unwrap_or(category_default))))
+        }
+    }
 }
 
 /// Derive-time view of `truce.toml`.
@@ -458,44 +494,73 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_json_string, midi_capabilities, midi_port_counts};
+    use super::{MidiWiring, extract_json_string, midi_wiring};
 
-    #[test]
-    fn midi_caps_category_defaults() {
-        // (accepts_midi_in, emits_midi)
-        assert_eq!(midi_capabilities("note_effect", None, None), (true, true));
-        assert_eq!(midi_capabilities("midi", None, None), (true, true));
-        assert_eq!(midi_capabilities("instrument", None, None), (true, false));
-        assert_eq!(midi_capabilities("effect", None, None), (false, false));
-        assert_eq!(midi_capabilities("analyzer", None, None), (false, false));
+    fn wiring(w: MidiWiring) -> (bool, bool, u8, u8) {
+        (
+            w.accepts_midi_in,
+            w.emits_midi,
+            w.input_ports,
+            w.output_ports,
+        )
     }
 
     #[test]
-    fn midi_caps_overrides() {
+    fn midi_wiring_category_defaults() {
+        // (accepts_midi_in, emits_midi, input_ports, output_ports)
+        let resolve = |cat| wiring(midi_wiring(cat, None, None, None, None).unwrap());
+        assert_eq!(resolve("note_effect"), (true, true, 1, 1));
+        assert_eq!(resolve("midi"), (true, true, 1, 1));
+        assert_eq!(resolve("instrument"), (true, false, 1, 0));
+        assert_eq!(resolve("effect"), (false, false, 0, 0));
+        assert_eq!(resolve("analyzer"), (false, false, 0, 0));
+    }
+
+    #[test]
+    fn midi_wiring_capability_overrides() {
         // Effect opting into MIDI output (the issue-123 instrument/effect case).
-        assert_eq!(midi_capabilities("effect", None, Some(true)), (false, true));
-        // Instrument opting into MIDI input override off.
         assert_eq!(
-            midi_capabilities("instrument", Some(false), None),
-            (false, false)
+            wiring(midi_wiring("effect", None, Some(true), None, None).unwrap()),
+            (false, true, 0, 1)
+        );
+        // Instrument opting its MIDI input off.
+        assert_eq!(
+            wiring(midi_wiring("instrument", Some(false), None, None, None).unwrap()),
+            (false, false, 0, 0)
         );
         // Both forced on an effect.
         assert_eq!(
-            midi_capabilities("effect", Some(true), Some(true)),
-            (true, true)
+            wiring(midi_wiring("effect", Some(true), Some(true), None, None).unwrap()),
+            (true, true, 1, 1)
         );
     }
 
     #[test]
-    fn midi_port_counts_default_and_override() {
-        // Default: one port per enabled direction, zero otherwise.
-        assert_eq!(midi_port_counts(true, false, None, None), (1, 0));
-        assert_eq!(midi_port_counts(true, true, None, None), (1, 1));
-        assert_eq!(midi_port_counts(false, false, None, None), (0, 0));
-        // Override raises the count (and implies the capability).
-        assert_eq!(midi_port_counts(true, true, Some(3), Some(2)), (3, 2));
-        // Override on a MIDI-less direction is authoritative.
-        assert_eq!(midi_port_counts(false, false, Some(2), None), (2, 0));
+    fn midi_wiring_port_count_implies_capability() {
+        // Raised counts keep the capability.
+        assert_eq!(
+            wiring(midi_wiring("note_effect", None, None, Some(3), Some(2)).unwrap()),
+            (true, true, 3, 2)
+        );
+        // A count alone is authoritative: capability is `count > 0`,
+        // identically on every format.
+        assert_eq!(
+            wiring(midi_wiring("effect", None, None, Some(2), None).unwrap()),
+            (true, false, 2, 0)
+        );
+        // Zeroing the count drops the category-default capability.
+        assert_eq!(
+            wiring(midi_wiring("instrument", None, None, Some(0), None).unwrap()),
+            (false, false, 0, 0)
+        );
+    }
+
+    #[test]
+    fn midi_wiring_rejects_contradictions() {
+        assert!(midi_wiring("effect", Some(false), None, Some(2), None).is_err());
+        assert!(midi_wiring("instrument", Some(true), None, Some(0), None).is_err());
+        assert!(midi_wiring("effect", None, Some(false), None, Some(1)).is_err());
+        assert!(midi_wiring("note_effect", None, Some(true), None, Some(0)).is_err());
     }
 
     #[test]
