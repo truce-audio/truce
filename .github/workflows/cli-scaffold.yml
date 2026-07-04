@@ -46,6 +46,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -177,6 +179,19 @@ jobs:
         env:
           SCAFFOLD_DIR: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
         run: python3 scripts/ci/rewrite-scaffold-deps.py
+
+      # The generated code must hold to the same bar as the workspace:
+      # rustfmt-clean and pedantic-clippy-clean out of the box, so a
+      # plugin author's first `cargo fmt` / `cargo clippy` run is quiet.
+      - name: cargo fmt --check (scaffold)
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: cargo fmt --check
+
+      - name: cargo clippy pedantic (scaffold)
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic
 
       - name: cargo truce install --user
         shell: bash

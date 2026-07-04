@@ -26,9 +26,7 @@ impl PluginLogic for {struct_name} \{
     fn editor(&self) -> Box<dyn Editor> \{
         truce_gui::default_editor(
             self.params.clone(),
-            GridLayout::build(vec![widgets(vec![
-                {layout_knob | unescaped},
-            ])]),
+            GridLayout::build(vec![widgets(vec![{layout_knob | unescaped}])]),
         )
     }
 }

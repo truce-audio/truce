@@ -131,8 +131,12 @@ impl PluginKind {
 
 const DEFAULT_PARAMS_STRUCT: &str = r#"#[derive(Params)]
 pub struct {struct_name}Params {
-    #[param(name = "Gain", range = "linear(-60, 6)",
-            unit = "dB", smooth = "exp(5)")]
+    #[param(
+        name = "Gain",
+        range = "linear(-60, 6)",
+        unit = "dB",
+        smooth = "exp(5)"
+    )]
     pub gain: FloatParam,
 }"#;
 
@@ -142,8 +146,12 @@ pub struct {struct_name}Params {
     pub semitones: IntParam,
 }"#;
 
-const EFFECT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
-               _context: &mut ProcessContext) -> ProcessStatus {
+const EFFECT_PROCESS_BODY: &str = r"    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        _events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
             let gain = db_to_linear(self.params.gain.read());
             for ch in 0..buffer.channels() {
@@ -154,8 +162,12 @@ const EFFECT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut Audio
         ProcessStatus::Normal
     }";
 
-const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
-               _context: &mut ProcessContext) -> ProcessStatus {
+const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {
         // Trigger / release your voices here. Note events arrive at
         // sample-accurate offsets via `event.frame_offset`; in-block
         // dispatch is up to you.
@@ -182,27 +194,48 @@ const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut A
         ProcessStatus::Normal
     }";
 
-const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList,
-               context: &mut ProcessContext) -> ProcessStatus {
+const MIDI_PROCESS_BODY: &str = r"    fn process(
+        &mut self,
+        _buffer: &mut AudioBuffer,
+        events: &EventList,
+        context: &mut ProcessContext,
+    ) -> ProcessStatus {
+        let semitones = self.params.semitones.value_i32();
+        // Clamped to the MIDI note domain, so the narrowing cast is
+        // lossless.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let shift = |note: u8| (i32::from(note) + semitones).clamp(0, 127) as u8;
         for event in events.iter() {
             match &event.body {
-                EventBody::NoteOn { group, channel, note, velocity } => {
-                    let shifted = (i32::from(*note) + self.params.semitones.value_i32())
-                        .clamp(0, 127) as u8;
+                EventBody::NoteOn {
+                    group,
+                    channel,
+                    note,
+                    velocity,
+                } => {
                     context.output_events.push(Event::new(
                         event.sample_offset,
                         EventBody::NoteOn {
-                            group: *group, channel: *channel, note: shifted, velocity: *velocity,
+                            group: *group,
+                            channel: *channel,
+                            note: shift(*note),
+                            velocity: *velocity,
                         },
                     ));
                 }
-                EventBody::NoteOff { group, channel, note, velocity } => {
-                    let shifted = (i32::from(*note) + self.params.semitones.value_i32())
-                        .clamp(0, 127) as u8;
+                EventBody::NoteOff {
+                    group,
+                    channel,
+                    note,
+                    velocity,
+                } => {
                     context.output_events.push(Event::new(
                         event.sample_offset,
                         EventBody::NoteOff {
-                            group: *group, channel: *channel, note: shifted, velocity: *velocity,
+                            group: *group,
+                            channel: *channel,
+                            note: shift(*note),
+                            velocity: *velocity,
                         },
                     ));
                 }
