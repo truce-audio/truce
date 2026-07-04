@@ -18,12 +18,14 @@
 use std::any::type_name;
 use std::ffi::CString;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
+use std::sync::Arc;
 
 use truce_params::ParamInfo;
 
 use crate::bus::BusLayout;
 use crate::export::PluginExport;
+
+pub use plugin_mutex::{PluginGuard, PluginMutex};
 
 /// The mediation lock every format wrapper puts around its plugin
 /// instance. The audio thread holds the lock for the duration of a
@@ -33,13 +35,22 @@ use crate::export::PluginExport;
 /// audio thread is finishing. Meters ride the lock-free `MeterStore`
 /// instead, so per-frame GUI paints never touch this lock.
 ///
-/// `std::sync::Mutex`, not `parking_lot`: on macOS std sits on
-/// `os_unfair_lock`, which donates the waiter's priority to the
-/// owner - so a GUI thread preempted mid-`save_state` gets boosted
-/// to the waiting audio thread's priority instead of leaving the
-/// render at the scheduler's mercy. `parking_lot` has no priority
-/// inheritance anywhere. Uncontended cost is a CAS either way.
-/// Poisoning is deliberately forgiven (see [`lock_plugin`]).
+/// The lock is only as strong as the scheduler behind it, so
+/// [`PluginMutex`] picks per platform:
+/// - **macOS**: `std::sync::Mutex` sits on `os_unfair_lock`, which
+///   donates the waiter's priority to the owner - a GUI thread
+///   preempted mid-`save_state` gets boosted to the waiting audio
+///   thread's priority.
+/// - **Linux**: a `PTHREAD_PRIO_INHERIT` pthread mutex; std's
+///   futex-based lock has no priority inheritance there.
+/// - **Windows**: `std::sync::Mutex` (SRWLOCK). User space has no
+///   priority-inheriting primitive, so the defense is the short
+///   hold - non-audio holders only span `save_state` / `editor()`.
+///
+/// (`parking_lot` inherits priority nowhere, which is why it isn't
+/// used. Uncontended cost is a CAS on every platform.)
+/// A panic while holding the guard unlocks on unwind; std's poison
+/// is forgiven (see [`lock_plugin`]).
 ///
 /// A `Mutex` rather than an `RwLock`: the only non-audio accessors
 /// are a host state save and an editor preset capture - both rare -
@@ -50,30 +61,199 @@ use crate::export::PluginExport;
 /// The `Arc` is what makes GUI closures sound: they clone the handle
 /// instead of stashing a raw pointer into the instance struct (whose
 /// `&mut` the audio thread holds during callbacks).
-pub type SharedPlugin<P> = Arc<Mutex<P>>;
+pub type SharedPlugin<P> = Arc<PluginMutex<P>>;
 
 /// Wrap a freshly created plugin in the wrapper-standard mediation
 /// lock. See [`SharedPlugin`].
 pub fn shared_plugin<P>(plugin: P) -> SharedPlugin<P> {
-    Arc::new(Mutex::new(plugin))
+    Arc::new(PluginMutex::new(plugin))
 }
 
 /// Lock the mediation lock, forgiving poison. A poisoned lock means a
 /// panic already escaped somewhere and was reported by the wrapper's
 /// panic guard; refusing every later block would turn one bad block
 /// into permanent silence, and the plugin's state is no more suspect
-/// than after any other caught panic.
-pub fn lock_plugin<P>(plugin: &Mutex<P>) -> MutexGuard<'_, P> {
-    plugin.lock().unwrap_or_else(PoisonError::into_inner)
+/// than after any other caught panic. (The Linux pthread lock has no
+/// poison to forgive; unwind simply unlocks.)
+pub fn lock_plugin<P>(plugin: &PluginMutex<P>) -> PluginGuard<'_, P> {
+    plugin.lock()
 }
 
 /// [`lock_plugin`]'s non-blocking twin: `None` only when the lock is
 /// genuinely held (poison is forgiven, same rationale).
-pub fn try_lock_plugin<P>(plugin: &Mutex<P>) -> Option<MutexGuard<'_, P>> {
-    match plugin.try_lock() {
-        Ok(guard) => Some(guard),
-        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-        Err(TryLockError::WouldBlock) => None,
+pub fn try_lock_plugin<P>(plugin: &PluginMutex<P>) -> Option<PluginGuard<'_, P>> {
+    plugin.try_lock()
+}
+
+/// std-backed [`PluginMutex`]: macOS (`os_unfair_lock` donates the
+/// waiter's priority) and Windows (SRWLOCK; no user-space priority
+/// inheritance exists). Miri also lands here - it has no shim for
+/// `pthread_mutexattr_setprotocol`, and the std lock gives it full
+/// visibility.
+#[cfg(any(not(target_os = "linux"), miri))]
+mod plugin_mutex {
+    use std::ops::{Deref, DerefMut};
+    use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
+
+    /// See [`super::SharedPlugin`] for the per-platform lock choice.
+    pub struct PluginMutex<T>(Mutex<T>);
+
+    /// Guard handing out the exclusive `&mut T`; unlocks on drop.
+    pub struct PluginGuard<'a, T>(MutexGuard<'a, T>);
+
+    impl<T> PluginMutex<T> {
+        pub fn new(value: T) -> Self {
+            Self(Mutex::new(value))
+        }
+
+        /// Block until the lock is held. Poison is forgiven (see
+        /// [`super::lock_plugin`]).
+        pub fn lock(&self) -> PluginGuard<'_, T> {
+            PluginGuard(self.0.lock().unwrap_or_else(PoisonError::into_inner))
+        }
+
+        /// `None` only when the lock is genuinely held.
+        pub fn try_lock(&self) -> Option<PluginGuard<'_, T>> {
+            match self.0.try_lock() {
+                Ok(guard) => Some(PluginGuard(guard)),
+                Err(TryLockError::Poisoned(poisoned)) => Some(PluginGuard(poisoned.into_inner())),
+                Err(TryLockError::WouldBlock) => None,
+            }
+        }
+    }
+
+    impl<T> Deref for PluginGuard<'_, T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            &self.0
+        }
+    }
+
+    impl<T> DerefMut for PluginGuard<'_, T> {
+        fn deref_mut(&mut self) -> &mut T {
+            &mut self.0
+        }
+    }
+}
+
+/// Linux [`PluginMutex`]: a `PTHREAD_PRIO_INHERIT` pthread mutex.
+/// std's futex-based lock has no priority inheritance, so a
+/// low-priority GUI thread preempted mid-`save_state` would stall
+/// the audio thread at the scheduler's mercy; with PI the holder
+/// inherits the waiting audio thread's priority for the remainder
+/// of the hold.
+#[cfg(all(target_os = "linux", not(miri)))]
+mod plugin_mutex {
+    use std::cell::UnsafeCell;
+    use std::marker::PhantomData;
+    use std::ops::{Deref, DerefMut};
+
+    /// See [`super::SharedPlugin`] for the per-platform lock choice.
+    pub struct PluginMutex<T> {
+        /// Boxed: a pthread mutex must not move once initialized,
+        /// and `Arc::new(PluginMutex::new(..))` moves the struct.
+        raw: Box<UnsafeCell<libc::pthread_mutex_t>>,
+        data: UnsafeCell<T>,
+    }
+
+    // SAFETY: the pthread mutex serializes all access to `data`, so
+    // sharing the container across threads hands `T` to one thread
+    // at a time - the same bound (`T: Send`) std's `Mutex` requires.
+    unsafe impl<T: Send> Send for PluginMutex<T> {}
+    // SAFETY: as above - `&PluginMutex` only reaches `T` through the
+    // lock, so `Sync` needs only `T: Send`.
+    unsafe impl<T: Send> Sync for PluginMutex<T> {}
+
+    impl<T> PluginMutex<T> {
+        pub fn new(value: T) -> Self {
+            let raw = Box::new(UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER));
+            // SAFETY: `raw` is freshly allocated and unshared; the
+            // attr is initialized before use and destroyed after.
+            unsafe {
+                let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+                if libc::pthread_mutexattr_init(&raw mut attr) == 0 {
+                    // Best effort: a libc refusing PI still leaves a
+                    // valid default-protocol attr, and init below
+                    // yields an ordinary mutex.
+                    let _ = libc::pthread_mutexattr_setprotocol(
+                        &raw mut attr,
+                        libc::PTHREAD_PRIO_INHERIT,
+                    );
+                    let _ = libc::pthread_mutex_init(raw.get(), &raw const attr);
+                    let _ = libc::pthread_mutexattr_destroy(&raw mut attr);
+                }
+            }
+            Self {
+                raw,
+                data: UnsafeCell::new(value),
+            }
+        }
+
+        /// Block until the lock is held. A panicking previous holder
+        /// unlocked on unwind (guard drop); there is no poison state.
+        pub fn lock(&self) -> PluginGuard<'_, T> {
+            // SAFETY: the mutex was initialized in `new` and outlives
+            // the returned guard's borrow.
+            unsafe {
+                libc::pthread_mutex_lock(self.raw.get());
+            }
+            PluginGuard {
+                lock: self,
+                _not_send: PhantomData,
+            }
+        }
+
+        /// `None` when the lock is held elsewhere.
+        pub fn try_lock(&self) -> Option<PluginGuard<'_, T>> {
+            // SAFETY: as in `lock`.
+            (unsafe { libc::pthread_mutex_trylock(self.raw.get()) } == 0).then_some(PluginGuard {
+                lock: self,
+                _not_send: PhantomData,
+            })
+        }
+    }
+
+    impl<T> Drop for PluginMutex<T> {
+        fn drop(&mut self) {
+            // SAFETY: `&mut self` proves no guard is alive, so the
+            // mutex is unlocked and safe to destroy.
+            unsafe {
+                libc::pthread_mutex_destroy(self.raw.get());
+            }
+        }
+    }
+
+    /// Guard handing out the exclusive `&mut T`; unlocks on drop.
+    pub struct PluginGuard<'a, T> {
+        lock: &'a PluginMutex<T>,
+        /// PI mutexes must be unlocked by the locking thread; the
+        /// raw-pointer marker strips `Send` so the guard can't cross.
+        _not_send: PhantomData<*const ()>,
+    }
+
+    impl<T> Deref for PluginGuard<'_, T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            // SAFETY: this guard holds the lock.
+            unsafe { &*self.lock.data.get() }
+        }
+    }
+
+    impl<T> DerefMut for PluginGuard<'_, T> {
+        fn deref_mut(&mut self) -> &mut T {
+            // SAFETY: this guard holds the lock exclusively.
+            unsafe { &mut *self.lock.data.get() }
+        }
+    }
+
+    impl<T> Drop for PluginGuard<'_, T> {
+        fn drop(&mut self) {
+            // SAFETY: this guard holds the lock; unlock happens on
+            // the locking thread (the guard is `!Send`).
+            unsafe {
+                libc::pthread_mutex_unlock(self.lock.raw.get());
+            }
+        }
     }
 }
 
@@ -287,5 +467,65 @@ fn extract_panic_msg(payload: &Box<dyn std::any::Any + Send>) -> &str {
         s.as_str()
     } else {
         "<non-string panic payload>"
+    }
+}
+
+#[cfg(test)]
+mod plugin_mutex_tests {
+    use std::sync::Arc;
+
+    use super::{lock_plugin, shared_plugin, try_lock_plugin};
+
+    #[test]
+    fn lock_round_trips_data() {
+        let plugin = shared_plugin(41);
+        *lock_plugin(&plugin) += 1;
+        assert_eq!(*lock_plugin(&plugin), 42);
+    }
+
+    #[test]
+    fn try_lock_reports_contention() {
+        let plugin = shared_plugin(0u32);
+        let held = lock_plugin(&plugin);
+        assert!(try_lock_plugin(&plugin).is_none());
+        drop(held);
+        assert!(try_lock_plugin(&plugin).is_some());
+    }
+
+    #[test]
+    fn excludes_across_threads() {
+        // Unsynchronized increments would lose updates; the final
+        // count proves the guard serializes every access.
+        let plugin = shared_plugin(0u64);
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let plugin = Arc::clone(&plugin);
+                std::thread::spawn(move || {
+                    for _ in 0..10_000 {
+                        *lock_plugin(&plugin) += 1;
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(*lock_plugin(&plugin), 40_000);
+    }
+
+    #[test]
+    fn panicking_holder_does_not_wedge_the_lock() {
+        // One bad block must not turn into permanent silence: a
+        // panicking holder unlocks on unwind (std poison forgiven,
+        // pthread unlocked by the guard drop).
+        let plugin = shared_plugin(7);
+        let for_panic = Arc::clone(&plugin);
+        let _ = std::thread::spawn(move || {
+            let _guard = lock_plugin(&for_panic);
+            panic!("wedge attempt");
+        })
+        .join();
+        assert_eq!(*lock_plugin(&plugin), 7);
+        assert!(try_lock_plugin(&plugin).is_some());
     }
 }

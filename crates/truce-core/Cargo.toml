@@ -17,9 +17,12 @@ truce-params = { workspace = true }
 # with existing `truce_core::cast::*` and `truce_core::slugify` callers.
 truce-utils = { workspace = true }
 png = "0.18"
-# The lock every format wrapper puts around its plugin instance so
-# host/GUI state callbacks never alias the audio thread's `&mut P`.
-# Uncontended write on the audio thread is one CAS.
+
+# The mediation lock (`wrapper::PluginMutex`) is a
+# PTHREAD_PRIO_INHERIT pthread mutex on Linux - std's futex lock has
+# no priority inheritance there (macOS/Windows stay on std).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 [lints]
 workspace = true

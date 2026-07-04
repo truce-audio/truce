@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 2.0.1
+
+- The mediation lock inherits priority on Linux (`PTHREAD_PRIO_INHERIT` pthread mutex; std's futex lock doesn't inherit). macOS already donated via `os_unfair_lock`; Windows has no user-space PI primitive and relies on the short hold.
+
 ## 2.0.0
 
 A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Existing MIDI-1.0, single-port plugins are unchanged at runtime; the `Event` change below is a breaking API change.
