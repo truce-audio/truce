@@ -30,6 +30,7 @@ use clap_sys::version::CLAP_VERSION;
 
 use truce_core::export::PluginExport;
 use truce_core::presets::{PresetRef, PresetScope, read_preset_ref, user_preset_root};
+use truce_core::state::shared_plugin_state_hash;
 
 /// The dylib's own path, captured from `clap_plugin_entry.init`
 /// (which the CLAP spec guarantees runs before any `get_factory`
@@ -321,7 +322,10 @@ unsafe extern "C" fn provider_get_metadata<P: PluginExport>(
         } else {
             PresetScope::User
         };
-        for preset in truce_core::presets::enumerate_scope(path, scope, info.vendor, info.name) {
+        let hash = shared_plugin_state_hash(&info);
+        for preset in
+            truce_core::presets::enumerate_scope(path, scope, info.vendor, info.name, hash)
+        {
             if !report_preset::<P>(receiver, metadata_receiver, &preset) {
                 return false;
             }
@@ -329,14 +333,20 @@ unsafe extern "C" fn provider_get_metadata<P: PluginExport>(
         return true;
     }
 
+    // A file we skip - foreign payload (another plugin's export, a
+    // pre-identity-change save), corrupt, or not a preset at all - is
+    // "successfully crawled, nothing to declare": return true without
+    // reporting. `false` means the crawl itself errored, and hosts
+    // (and clap-validator) fail the whole location on it.
     let Some(preset) = read_preset_ref(
         path.parent(),
         path,
         PresetScope::User,
         info.vendor,
         info.name,
+        shared_plugin_state_hash(&info),
     ) else {
-        return false;
+        return true;
     };
     report_preset::<P>(receiver, metadata_receiver, &preset)
 }

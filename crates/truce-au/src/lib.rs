@@ -759,7 +759,13 @@ fn factory_presets<P: PluginExport>() -> &'static [FactoryPresetEntry] {
             return Vec::new();
         };
         let info = P::info();
-        let mut refs = enumerate_scope(&root, PresetScope::Factory, info.vendor, info.name);
+        let mut refs = enumerate_scope(
+            &root,
+            PresetScope::Factory,
+            info.vendor,
+            info.name,
+            state::shared_plugin_state_hash(&info),
+        );
         // The library's `default = true` preset leads the list: hosts
         // treat factory preset 0 as the de-facto initial sound. The
         // stable sort keeps the walk's alphabetical order behind it.

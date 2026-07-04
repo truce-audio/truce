@@ -104,9 +104,10 @@ use truce_core::midi::{
     route_midi_port,
 };
 use truce_core::plugin::PluginRuntime;
-use truce_core::presets::load_preset_file;
+use truce_core::presets::parse_preset_file;
 use truce_core::process::ProcessStatus;
 use truce_core::state;
+use truce_core::state::PluginFormat;
 use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
     SharedPlugin, run_audio_block_with, run_extern_callback_with, shared_plugin,
@@ -2163,7 +2164,20 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
         };
         let data = data_from_plugin::<P>(plugin);
 
-        let Some(deserialized) = load_preset_file(Path::new(path), data.plugin_id_hash) else {
+        // Same classification as a session load: an envelope under a
+        // different plugin id (a pre-identity-change save) is offered
+        // to the plugin's `migrate_state` hook instead of refused
+        // outright. Discovery only lists same-id presets, but a host
+        // can hand any path here (drag-drop, saved location).
+        let Some(bytes) = std::fs::read(Path::new(path)).ok() else {
+            return false;
+        };
+        let Some((_, blob)) = parse_preset_file(&bytes) else {
+            return false;
+        };
+        let Some(deserialized) =
+            state::parse_or_migrate::<P>(&blob, data.plugin_id_hash, PluginFormat::Clap, None)
+        else {
             return false;
         };
 

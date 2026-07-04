@@ -17,11 +17,13 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::preset::{PresetMeta, parse_preset_file, parse_preset_meta, write_preset_file};
+use crate::preset::{PresetMeta, write_preset_file};
 use crate::safe_filename;
-use crate::state::{DeserializedState, deserialize_state, serialize_state};
+use crate::state::{
+    DeserializedState, StateParse, deserialize_state, parse_state, serialize_state,
+};
 
-pub use crate::preset::PRESET_FILE_EXT;
+pub use crate::preset::{PRESET_FILE_EXT, parse_preset_file};
 
 /// Where a preset lives. `Factory` presets sit inside the plugin
 /// bundle, written at install time; `User` presets live in the
@@ -246,10 +248,25 @@ pub fn enumerate_scope(
     scope: PresetScope,
     vendor: &str,
     plugin_name: &str,
+    plugin_id_hash: u64,
 ) -> Vec<PresetRef> {
+    let ctx = WalkScope {
+        scope,
+        vendor,
+        plugin_name,
+        plugin_id_hash,
+    };
     let mut out = Vec::new();
-    walk(root, root, scope, vendor, plugin_name, &mut out, 0);
+    walk(root, root, &ctx, &mut out, 0);
     out
+}
+
+/// The per-walk constants every visited file is classified against.
+struct WalkScope<'a> {
+    scope: PresetScope,
+    vendor: &'a str,
+    plugin_name: &'a str,
+    plugin_id_hash: u64,
 }
 
 /// Directory-recursion ceiling for the preset walk. Preset libraries
@@ -258,15 +275,7 @@ pub fn enumerate_scope(
 /// hanging the host's scan.
 const MAX_WALK_DEPTH: usize = 6;
 
-fn walk(
-    root: &Path,
-    dir: &Path,
-    scope: PresetScope,
-    vendor: &str,
-    plugin_name: &str,
-    out: &mut Vec<PresetRef>,
-    depth: usize,
-) {
+fn walk(root: &Path, dir: &Path, ctx: &WalkScope<'_>, out: &mut Vec<PresetRef>, depth: usize) {
     if depth > MAX_WALK_DEPTH {
         return;
     }
@@ -279,9 +288,16 @@ fn walk(
     for entry in entries {
         let path = entry.path();
         if path.is_dir() {
-            walk(root, &path, scope, vendor, plugin_name, out, depth + 1);
+            walk(root, &path, ctx, out, depth + 1);
         } else if path.extension().and_then(|e| e.to_str()) == Some(PRESET_FILE_EXT)
-            && let Some(preset) = read_preset_ref(Some(root), &path, scope, vendor, plugin_name)
+            && let Some(preset) = read_preset_ref(
+                Some(root),
+                &path,
+                ctx.scope,
+                ctx.vendor,
+                ctx.plugin_name,
+                ctx.plugin_id_hash,
+            )
         {
             out.push(preset);
         }
@@ -292,6 +308,14 @@ fn walk(
 /// the scope root the directory-derived category is computed against;
 /// pass `None` (or the file's own parent) for a standalone file query
 /// to suppress the fallback.
+///
+/// Only presets this plugin can actually load are returned: the
+/// payload envelope must carry `plugin_id_hash`. The preset folders
+/// are keyed by display name, so they can hold files a load would
+/// refuse - another plugin's exports copied in, or a pre-identity-
+/// change build's saves - and listing those (in host preset browsers,
+/// factory menus, CLAP discovery) only to fail the load is worse than
+/// leaving them invisible.
 #[must_use]
 pub fn read_preset_ref(
     root: Option<&Path>,
@@ -299,9 +323,13 @@ pub fn read_preset_ref(
     scope: PresetScope,
     vendor: &str,
     plugin_name: &str,
+    plugin_id_hash: u64,
 ) -> Option<PresetRef> {
     let bytes = std::fs::read(path).ok()?;
-    let meta = parse_preset_meta(&bytes)?;
+    let (meta, blob) = parse_preset_file(&bytes)?;
+    if !matches!(parse_state(&blob, plugin_id_hash), StateParse::Ok(_)) {
+        return None;
+    }
 
     // Explicit metadata category wins; otherwise the parent directory
     // name within the scope root (a file at the root itself has no
@@ -462,9 +490,13 @@ impl PresetStore {
         let mut packs: Vec<PresetRef> = Vec::new();
         if let Some(root) = &self.user_root {
             let packs_root = root.join("packs");
-            for mut preset in
-                enumerate_scope(root, PresetScope::User, &self.vendor, &self.plugin_name)
-            {
+            for mut preset in enumerate_scope(
+                root,
+                PresetScope::User,
+                &self.vendor,
+                &self.plugin_name,
+                self.plugin_id_hash,
+            ) {
                 if preset.uuid.is_empty() {
                     self.stamp_uuid(&mut preset);
                 }
@@ -477,7 +509,13 @@ impl PresetStore {
             }
         }
         let factory = self.factory_root.as_ref().map_or_else(Vec::new, |root| {
-            enumerate_scope(root, PresetScope::Factory, &self.vendor, &self.plugin_name)
+            enumerate_scope(
+                root,
+                PresetScope::Factory,
+                &self.vendor,
+                &self.plugin_name,
+                self.plugin_id_hash,
+            )
         });
 
         // Precedence order for the dedup pass; presentation order is
@@ -623,6 +661,7 @@ impl PresetStore {
             PresetScope::User,
             &self.vendor,
             &self.plugin_name,
+            self.plugin_id_hash,
         )
         .ok_or(PresetError::InvalidState)
     }
@@ -720,10 +759,14 @@ fn scope_rank(scope: PresetScope) -> u8 {
 mod tests {
     use super::*;
 
-    fn write_sample(dir: &Path, rel: &str, meta: &PresetMeta, blob: &[u8]) {
+    /// Hash every test fixture's payload is written under.
+    const TEST_HASH: u64 = 42;
+
+    fn write_sample(dir: &Path, rel: &str, meta: &PresetMeta, hash: u64) {
         let path = dir.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, write_preset_file(meta, blob)).unwrap();
+        let blob = serialize_state(hash, &[0], &[0.5], b"");
+        std::fs::write(path, write_preset_file(meta, &blob)).unwrap();
     }
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -755,13 +798,26 @@ mod tests {
     #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn enumerates_with_directory_category_fallback() {
         let tmp = temp_dir("enum");
-        write_sample(&tmp, "pad/a.trucepreset", &meta("u1", "A", "Lead"), &[]);
-        write_sample(&tmp, "pad/b.trucepreset", &meta("u2", "B", ""), &[]);
-        write_sample(&tmp, "c.trucepreset", &meta("u3", "C", ""), &[]);
+        write_sample(
+            &tmp,
+            "pad/a.trucepreset",
+            &meta("u1", "A", "Lead"),
+            TEST_HASH,
+        );
+        write_sample(&tmp, "pad/b.trucepreset", &meta("u2", "B", ""), TEST_HASH);
+        write_sample(&tmp, "c.trucepreset", &meta("u3", "C", ""), TEST_HASH);
         // Non-preset files are ignored.
         std::fs::write(tmp.join("pad/readme.txt"), "x").unwrap();
+        // A foreign plugin's preset (wrong payload hash) is invisible:
+        // listing it would only set up a load failure.
+        write_sample(
+            &tmp,
+            "pad/foreign.trucepreset",
+            &meta("u4", "F", ""),
+            TEST_HASH ^ 1,
+        );
 
-        let refs = enumerate_scope(&tmp, PresetScope::Factory, "Acme", "Synth");
+        let refs = enumerate_scope(&tmp, PresetScope::Factory, "Acme", "Synth", TEST_HASH);
         assert_eq!(refs.len(), 3);
         let by_uuid = |u: &str| refs.iter().find(|r| r.uuid == u).unwrap();
         assert_eq!(by_uuid("u1").category.as_deref(), Some("Lead"));
@@ -781,6 +837,7 @@ mod tests {
             PresetScope::User,
             "V",
             "P",
+            TEST_HASH,
         );
         assert!(refs.is_empty());
     }
@@ -868,21 +925,30 @@ mod tests {
     #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn user_overrides_factory_and_packs_classify() {
         let (store, user, factory) = store("dedup");
-        let blob = serialize_state(42, &[0], &[1.0], &[]);
-        write_sample(&factory, "lead/a.trucepreset", &meta("u1", "A", ""), &blob);
-        write_sample(&factory, "lead/b.trucepreset", &meta("u2", "B", ""), &blob);
+        write_sample(
+            &factory,
+            "lead/a.trucepreset",
+            &meta("u1", "A", ""),
+            TEST_HASH,
+        );
+        write_sample(
+            &factory,
+            "lead/b.trucepreset",
+            &meta("u2", "B", ""),
+            TEST_HASH,
+        );
         // User override of u1 + a pack drop-in.
         write_sample(
             &user,
             "my/a2.trucepreset",
             &meta("u1", "A edited", ""),
-            &blob,
+            TEST_HASH,
         );
         write_sample(
             &user,
             "packs/edm/lead/p.trucepreset",
             &meta("u4", "P", ""),
-            &blob,
+            TEST_HASH,
         );
 
         let refs = store.enumerate();
@@ -903,8 +969,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn stamps_missing_uuid_on_user_files() {
         let (store, user, factory) = store("stamp");
-        let blob = serialize_state(42, &[], &[], &[]);
-        write_sample(&user, "x.trucepreset", &meta("", "Handmade", ""), &blob);
+        write_sample(&user, "x.trucepreset", &meta("", "Handmade", ""), TEST_HASH);
 
         let refs = store.enumerate();
         let stamped = &refs[0];
@@ -970,8 +1035,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn factory_presets_are_read_only() {
         let (store, user, factory) = store("readonly");
-        let blob = serialize_state(42, &[], &[], &[]);
-        write_sample(&factory, "a.trucepreset", &meta("u1", "A", ""), &blob);
+        write_sample(&factory, "a.trucepreset", &meta("u1", "A", ""), TEST_HASH);
 
         assert!(matches!(
             store.rename("u1", "B"),
