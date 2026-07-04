@@ -575,7 +575,7 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MidiWiring, extract_json_string, midi_wiring, midi2_dialects};
+    use super::{MidiWiring, extract_json_string, midi_wiring, midi2_dialects, validate_bundle_id};
 
     fn wiring(w: MidiWiring) -> (bool, bool, u8, u8) {
         (
