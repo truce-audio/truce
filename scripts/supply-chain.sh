@@ -22,12 +22,18 @@ root_dir="$(cd "$script_dir/.." && pwd)"
 source "$script_dir/truce-workspaces.sh"
 
 # The audit sweep also covers the fuzz workspace (committed
-# Cargo.lock, real third-party deps like libfuzzer-sys). Kept out of
-# `truce_workspaces` because the build/release scripts that share
-# that list have no business in fuzz/.
+# Cargo.lock, real third-party deps like libfuzzer-sys). It lives in
+# truce-audio/truce-fuzz-tests, mounted at fuzz/ - CI checks it out
+# there, locally it's an optional clone - so audit it when present.
+# Kept out of `truce_workspaces` because the build/release scripts
+# that share that list have no business in fuzz/.
 audit_workspaces() {
     truce_workspaces "$1"
-    printf '%s\n' "$1/fuzz"
+    if [[ -f "$1/fuzz/Cargo.toml" ]]; then
+        printf '%s\n' "$1/fuzz"
+    else
+        printf 'note: fuzz/ not checked out; skipping the fuzz workspace\n' >&2
+    fi
 }
 
 for tool in cargo-audit cargo-deny; do
