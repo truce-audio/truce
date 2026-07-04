@@ -1,0 +1,81 @@
+name: Fuzz
+
+# Budgeted background sweep over the byte parsers (state envelope,
+# preset container, MIDI/UMP decode, SysEx reassembly). Not a PR
+# gate - the deterministic corpus replay in miri.yml is the PR-side
+# check; this job grows the corpus and hunts new crashes weekly.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: fuzz (nightly, 5 min/target)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fuzz
+          cache-bin: false
+          workspaces: fuzz
+
+      - name: Cache cargo-fuzz
+        id: cache-cargo-fuzz
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-0.13
+
+      - name: Install cargo-fuzz
+        if: steps.cache-cargo-fuzz.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-fuzz
+
+      # The corpus accretes across runs: restore the latest, save
+      # under a fresh key each run (`restore-keys` prefix-matches).
+      # The committed seed corpus is the floor when the cache is cold.
+      - name: Restore corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+
+      # `+nightly`: same stable-default footgun as miri.yml - the
+      # sanitizer flags cargo-fuzz passes need the nightly cargo.
+      - name: Fuzz all targets
+        run: |
+          set -e
+          for target in state_envelope preset_container midi_short ump_decode sysex_assembler; do
+            cargo +nightly fuzz run "$target" -- -max_total_time=300
+          done
+
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 30

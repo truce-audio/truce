@@ -1,0 +1,67 @@
+name: Miri
+
+# UB detection on the pure-Rust core: the buffer transmutes, the
+# mediation lock, the state/UMP parsers. FFI surfaces (shims, GUI,
+# cpal) can't run under Miri; pluginval/auval remain their harness.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # The toolchain's borrow-model evolves independently of the code;
+  # a weekly run surfaces new Miri findings against an idle repo.
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  miri:
+    name: miri (nightly)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: miri
+          cache-bin: false
+
+      # Default borrow model (Stacked Borrows) - the suite is green
+      # under it; a switch to tree borrows should be a deliberate,
+      # recorded decision, not drift. `+nightly` on every invocation:
+      # the runner image ships stable as the rustup default, and the
+      # toolchain action installs nightly without changing that, so a
+      # bare `cargo miri` resolves to stable and finds no miri.
+      - name: miri test (core crates)
+        run: cargo +nightly miri test -p truce-utils -p truce-params -p truce-core
+
+      # The mediation two-thread repro across several schedules: one
+      # thread write-locking the plugin per block, one doing the
+      # mediated MeterStore / try_lock reads. This is the regression
+      # guard against reintroducing a raw-pointer shortcut - Miri's
+      # data-race detector flags the pre-mediation pattern.
+      - name: miri test (mediation schedules)
+        run: cargo +nightly miri test -p truce-core --test mediation_repro
+        env:
+          MIRIFLAGS: -Zmiri-many-seeds=0..8
+
+      # Replay the committed fuzz corpus under Miri: native fuzzing
+      # finds the inputs, this promotes them to UB-checked. Isolation
+      # off only for the corpus-file reads; the harnesses do no I/O.
+      - name: miri corpus replay
+        working-directory: fuzz
+        run: cargo +nightly miri run --bin replay
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation

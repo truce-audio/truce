@@ -752,6 +752,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn enumerates_with_directory_category_fallback() {
         let tmp = temp_dir("enum");
         write_sample(&tmp, "pad/a.trucepreset", &meta("u1", "A", "Lead"), &[]);
@@ -773,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn missing_root_is_empty() {
         let refs = enumerate_scope(
             Path::new("/nonexistent/truce-presets"),
@@ -784,6 +786,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn load_validates_plugin_hash() {
         let tmp = temp_dir("load");
         let hash = crate::state::hash_plugin_id("com.acme.synth");
@@ -824,6 +827,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "resolves the real home dir; absent in Miri's isolated env"
+    )]
     fn user_root_honours_override() {
         let default = user_preset_root("Acme", "My Synth", None).unwrap();
         let overridden = user_preset_root("Acme", "My Synth", Some("AcmeAudio/Synth")).unwrap();
@@ -848,6 +855,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "reads the realtime clock; Miri isolation rejects it")]
     fn mint_uuid_is_v4_shaped_and_distinct() {
         let a = mint_uuid();
         let b = mint_uuid();
@@ -857,6 +865,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn user_overrides_factory_and_packs_classify() {
         let (store, user, factory) = store("dedup");
         let blob = serialize_state(42, &[0], &[1.0], &[]);
@@ -891,6 +900,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn stamps_missing_uuid_on_user_files() {
         let (store, user, factory) = store("stamp");
         let blob = serialize_state(42, &[], &[], &[]);
@@ -908,6 +918,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn save_load_rename_recategorise_delete() {
         let (store, user, factory) = store("crud");
 
@@ -956,6 +967,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "real file I/O; Miri isolation rejects it")]
     fn factory_presets_are_read_only() {
         let (store, user, factory) = store("readonly");
         let blob = serialize_state(42, &[], &[], &[]);

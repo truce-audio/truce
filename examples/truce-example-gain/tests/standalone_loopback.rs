@@ -93,16 +93,37 @@ fn minus_six_db_halves_amplitude() {
 fn locate_standalone_bin() -> PathBuf {
     let target_root = workspace_target_dir();
     let exe = format!("truce-example-gain-standalone{}", env::consts::EXE_SUFFIX);
-    for profile in ["release", "debug"] {
+    // Same-profile first: `cargo truce build/install` drops a
+    // standalone into target/release built WITHOUT the playback
+    // feature (`--input-file` and friends absent), so a bare
+    // existence check keeps finding a stale, wrong-featured binary.
+    // Probe each candidate's --help for the flag this test needs and
+    // skip pretenders.
+    let profiles = if cfg!(debug_assertions) {
+        ["debug", "release"]
+    } else {
+        ["release", "debug"]
+    };
+    let mut skipped = Vec::new();
+    for profile in profiles {
         let candidate = target_root.join(profile).join(&exe);
-        if candidate.is_file() {
+        if !candidate.is_file() {
+            continue;
+        }
+        let help = Command::new(&candidate).arg("--help").output();
+        let advertises_playback =
+            help.is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("--input-file"));
+        if advertises_playback {
             return candidate;
         }
+        skipped.push(candidate);
     }
     panic!(
-        "{exe} not found under {}. The `standalone-playback` feature \
-         on truce-example-gain is enabled by default - did \
-         `cargo build` run for this workspace?",
+        "no {exe} with the `standalone-playback` feature under {} \
+         (skipped without --input-file support: {skipped:?}). The \
+         feature is on by default - did `cargo build` run for this \
+         workspace, or did a `cargo truce` build leave a \
+         playback-less binary behind?",
         target_root.display(),
     );
 }

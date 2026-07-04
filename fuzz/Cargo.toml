@@ -1,0 +1,55 @@
+# Fuzz harnesses for every parser that eats bytes truce didn't write.
+# Own workspace (like the GUI sub-workspaces) so `cargo fuzz` and the
+# parent build don't share profiles or feature unification.
+[package]
+name = "truce-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "LicenseRef-TruceLicense-1.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+truce-utils = { path = "../crates/truce-utils" }
+truce-core = { path = "../crates/truce-core" }
+truce-params = { path = "../crates/truce-params" }
+
+[[bin]]
+name = "state_envelope"
+path = "fuzz_targets/state_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "preset_container"
+path = "fuzz_targets/preset_container.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "midi_short"
+path = "fuzz_targets/midi_short.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ump_decode"
+path = "fuzz_targets/ump_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sysex_assembler"
+path = "fuzz_targets/sysex_assembler.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

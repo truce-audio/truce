@@ -55,7 +55,10 @@ impl DenormalGuard {
     /// intrinsics emit, just spelled differently in source.
     #[inline]
     pub fn new() -> Self {
-        #[cfg(target_arch = "x86_64")]
+        // Miri can't interpret inline asm, and the FPU control word
+        // has no observable effect in an interpreter anyway - the
+        // guard degrades to the zero-sized stub there.
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             let mut saved: u32 = 0;
             // SAFETY: SSE2 (which defines MXCSR) is part of x86_64's
@@ -78,7 +81,7 @@ impl DenormalGuard {
                 saved: u64::from(saved),
             };
         }
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         {
             let saved: u64;
             // SAFETY: FPCR is accessible from EL0 on AArch64;
@@ -112,7 +115,7 @@ impl Default for DenormalGuard {
 impl Drop for DenormalGuard {
     #[inline]
     fn drop(&mut self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             // SAFETY: see `new()`.
             #[allow(clippy::cast_possible_truncation)]
@@ -125,7 +128,7 @@ impl Drop for DenormalGuard {
                 );
             }
         }
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         {
             // SAFETY: see `new()`.
             unsafe {

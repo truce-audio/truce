@@ -21,6 +21,15 @@ root_dir="$(cd "$script_dir/.." && pwd)"
 # shellcheck source=truce-workspaces.sh
 source "$script_dir/truce-workspaces.sh"
 
+# The audit sweep also covers the fuzz workspace (committed
+# Cargo.lock, real third-party deps like libfuzzer-sys). Kept out of
+# `truce_workspaces` because the build/release scripts that share
+# that list have no business in fuzz/.
+audit_workspaces() {
+    truce_workspaces "$1"
+    printf '%s\n' "$1/fuzz"
+}
+
 for tool in cargo-audit cargo-deny; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'error: %s not found on PATH (install with `cargo install %s`)\n' \
@@ -72,7 +81,7 @@ while IFS= read -r ws; do
     printf '\n=== cargo audit [%s] ===\n' "$label"
     ( cd "$ws" && cargo audit )
     report "$label" "$?"
-done < <(truce_workspaces "$root_dir")
+done < <(audit_workspaces "$root_dir")
 
 printf '\n########## cargo deny check ##########\n'
 while IFS= read -r ws; do
@@ -81,6 +90,6 @@ while IFS= read -r ws; do
     printf '\n=== cargo deny check [%s] (%s) ===\n' "$label" "${cfg#"$root_dir"/}"
     ( cd "$ws" && cargo deny check --config "$cfg" )
     report "$label" "$?"
-done < <(truce_workspaces "$root_dir")
+done < <(audit_workspaces "$root_dir")
 
 exit "$status"
