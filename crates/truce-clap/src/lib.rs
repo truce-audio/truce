@@ -69,6 +69,10 @@ use clap_sys::ext::preset_load::{
     CLAP_EXT_PRESET_LOAD, CLAP_EXT_PRESET_LOAD_COMPAT, clap_host_preset_load,
     clap_plugin_preset_load,
 };
+use clap_sys::ext::remote_controls::{
+    CLAP_EXT_REMOTE_CONTROLS, CLAP_EXT_REMOTE_CONTROLS_COMPAT, CLAP_REMOTE_CONTROLS_COUNT,
+    clap_plugin_remote_controls, clap_remote_controls_page,
+};
 use clap_sys::ext::render::{
     CLAP_EXT_RENDER, CLAP_RENDER_OFFLINE, clap_plugin_render, clap_plugin_render_mode,
 };
@@ -2550,6 +2554,103 @@ fn make_params_extension<P: PluginExport>() -> clap_plugin_params {
 }
 
 // ---------------------------------------------------------------------------
+// Extension: remote_controls
+// ---------------------------------------------------------------------------
+
+/// Chunks a plugin's params into pages of at most
+/// `CLAP_REMOTE_CONTROLS_COUNT` (8), one run of pages per distinct
+/// non-empty `ParamInfo::group`. Ungrouped params (`group == ""`)
+/// get no page - the host's generic param list already covers them,
+/// and an unnamed page would collide with itself across the plugin.
+fn remote_control_pages(infos: &[ParamInfo]) -> Vec<(&str, Vec<u32>)> {
+    let mut pages: Vec<(&str, Vec<u32>)> = Vec::new();
+    for info in infos {
+        if info.group.is_empty() {
+            continue;
+        }
+        let existing = pages
+            .iter()
+            .rposition(|page| page.0 == info.group && page.1.len() < CLAP_REMOTE_CONTROLS_COUNT);
+        match existing {
+            Some(idx) => pages[idx].1.push(info.id),
+            None => pages.push((info.group, vec![info.id])),
+        }
+    }
+    pages
+}
+
+/// Deterministic page id from the group name and its chunk index
+/// among same-named pages, so a page's id survives an unrelated
+/// reorder of `Params::param_infos()`. Hand-rolled FNV-1a rather than
+/// `std`'s `DefaultHasher` - that one's keyed by `RandomState` and
+/// isn't guaranteed stable across processes, which a host may use
+/// `page_id` to remember a user's page choice across.
+fn remote_controls_page_id(group: &str, chunk_index: usize) -> clap_id {
+    let mut hash: u32 = 0x811c_9dc5;
+    for &b in group.as_bytes() {
+        hash ^= u32::from(b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    for &b in &chunk_index.to_le_bytes() {
+        hash ^= u32::from(b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
+unsafe extern "C" fn remote_controls_count<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
+    unsafe {
+        let data = data_from_plugin::<P>(plugin);
+        len_u32(remote_control_pages(&data.param_infos).len())
+    }
+}
+
+unsafe extern "C" fn remote_controls_get<P: PluginExport>(
+    plugin: *const clap_plugin,
+    page_index: u32,
+    out: *mut clap_remote_controls_page,
+) -> bool {
+    unsafe {
+        let data = data_from_plugin::<P>(plugin);
+        let pages = remote_control_pages(&data.param_infos);
+        let page_index = page_index as usize;
+        if page_index >= pages.len() {
+            return false;
+        }
+        let group: &str = pages[page_index].0;
+        let ids: &[u32] = &pages[page_index].1;
+
+        // Chunk index among pages sharing this group name, so two
+        // pages from the same >8-param group get distinct, stable ids.
+        let chunk_index = pages[..page_index]
+            .iter()
+            .filter(|page| page.0 == group)
+            .count();
+
+        let out = &mut *out;
+        out.section_name = [0; CLAP_NAME_SIZE];
+        copy_str_to_buf(&mut out.section_name, group);
+        out.page_id = remote_controls_page_id(group, chunk_index);
+        out.page_name = [0; CLAP_NAME_SIZE];
+        copy_str_to_buf(&mut out.page_name, group);
+        out.param_ids = [CLAP_INVALID_ID; CLAP_REMOTE_CONTROLS_COUNT];
+        for (slot, &id) in out.param_ids.iter_mut().zip(ids.iter()) {
+            *slot = id;
+        }
+        out.is_for_preset = false;
+
+        true
+    }
+}
+
+fn make_remote_controls_extension<P: PluginExport>() -> clap_plugin_remote_controls {
+    clap_plugin_remote_controls {
+        count: Some(remote_controls_count::<P>),
+        get: Some(remote_controls_get::<P>),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Extension: state
 // ---------------------------------------------------------------------------
 
@@ -3780,6 +3881,7 @@ fn make_gui_extension<P: PluginExport>() -> clap_plugin_gui {
 /// because we only have one plugin type per shared library.
 struct Extensions<P: PluginExport> {
     params: clap_plugin_params,
+    remote_controls: clap_plugin_remote_controls,
     state: clap_plugin_state,
     preset_load: clap_plugin_preset_load,
     audio_ports: clap_plugin_audio_ports,
@@ -3837,6 +3939,7 @@ impl<P: PluginExport> Extensions<P> {
     fn new() -> Self {
         Self {
             params: make_params_extension::<P>(),
+            remote_controls: make_remote_controls_extension::<P>(),
             state: make_state_extension::<P>(),
             preset_load: make_preset_load_extension::<P>(),
             audio_ports: make_audio_ports_extension::<P>(),
@@ -3897,6 +4000,9 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
 
         if ext_id == CLAP_EXT_PARAMS {
             return (&raw const extensions.params).cast::<c_void>();
+        }
+        if ext_id == CLAP_EXT_REMOTE_CONTROLS || ext_id == CLAP_EXT_REMOTE_CONTROLS_COMPAT {
+            return (&raw const extensions.remote_controls).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_STATE {
             return (&raw const extensions.state).cast::<c_void>();
@@ -4421,5 +4527,71 @@ mod note_address_tests {
         assert_eq!(clap_note_address(&note(0, -1)), None);
         assert_eq!(clap_note_address(&note(16, 60)), None);
         assert_eq!(clap_note_address(&note(0, 128)), None);
+    }
+}
+
+#[cfg(test)]
+mod remote_controls_tests {
+    use super::{ParamFlags, ParamInfo, ParamRange, remote_control_pages, remote_controls_page_id};
+    use truce_params::{ParamUnit, ParamValueKind};
+
+    fn info(id: u32, group: &'static str) -> ParamInfo {
+        ParamInfo {
+            id,
+            name: "p",
+            short_name: "p",
+            group,
+            range: ParamRange::Linear { min: 0.0, max: 1.0 },
+            default_plain: 0.0,
+            flags: ParamFlags::empty(),
+            unit: ParamUnit::None,
+            kind: ParamValueKind::Float,
+            midi_map: None,
+            midi_channel: None,
+        }
+    }
+
+    #[test]
+    fn ungrouped_params_produce_no_page() {
+        let infos = vec![info(0, ""), info(1, "")];
+        assert!(remote_control_pages(&infos).is_empty());
+    }
+
+    #[test]
+    fn group_over_eight_params_splits_into_two_pages() {
+        let infos: Vec<ParamInfo> = (0..10).map(|id| info(id, "EQ")).collect();
+        let pages = remote_control_pages(&infos);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].1.len(), 8);
+        assert_eq!(pages[1].1.len(), 2);
+        assert_eq!(pages[1].1, vec![8, 9]);
+    }
+
+    #[test]
+    fn distinct_groups_get_distinct_pages() {
+        let mut infos: Vec<ParamInfo> = (0..3).map(|id| info(id, "EQ")).collect();
+        infos.extend((3..5).map(|id| info(id, "DYN")));
+        let pages = remote_control_pages(&infos);
+        assert_eq!(pages, vec![("EQ", vec![0, 1, 2]), ("DYN", vec![3, 4])]);
+    }
+
+    #[test]
+    fn page_id_is_stable_and_distinguishes_chunks() {
+        // Same inputs -> same id (host may persist `page_id` across
+        // sessions to remember a user's chosen page).
+        assert_eq!(
+            remote_controls_page_id("EQ", 0),
+            remote_controls_page_id("EQ", 0)
+        );
+        // Different chunk of the same group, or a different group
+        // entirely, must not collide.
+        assert_ne!(
+            remote_controls_page_id("EQ", 0),
+            remote_controls_page_id("EQ", 1)
+        );
+        assert_ne!(
+            remote_controls_page_id("EQ", 0),
+            remote_controls_page_id("DYN", 0)
+        );
     }
 }
