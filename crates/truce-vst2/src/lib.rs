@@ -24,8 +24,9 @@ use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to
 use truce_core::plugin::PluginRuntime;
 use truce_core::state;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, first_bus_layout, log_midi_ports_clamped,
-    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
+    ParamCStrings, SharedPlugin, default_io_channels, first_bus_layout, lock_plugin,
+    log_midi_ports_clamped, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
+    run_register, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::{ParamFlags, ParamInfo, Params};
@@ -287,7 +288,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
-            let mut plugin = inst.plugin.lock();
+            let mut plugin = lock_plugin(&inst.plugin);
             plugin.reset(sample_rate, max_frames);
             plugin.params().set_sample_rate(sample_rate);
             plugin.params().snap_smoothers();
@@ -408,7 +409,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // remainder of that `save_state` call. Lock through a local
         // Arc clone so the guard doesn't pin a borrow of `inst`.
         let plugin_arc = Arc::clone(&inst.plugin);
-        let mut plugin = plugin_arc.lock();
+        let mut plugin = lock_plugin(&plugin_arc);
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
@@ -756,7 +757,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // process"; impls that copy from atomic params are fine.
         // Lock the plugin for the serialization; a block in flight
         // holds the lock, so this waits for the block boundary.
-        let extra = inst.plugin.lock().save_state();
+        let extra = lock_plugin(&inst.plugin).save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let len = blob.len();
@@ -908,7 +909,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if inst.editor.is_none() {
             // Editor construction needs `&mut P`; the lock waits out
             // at most one in-flight audio block.
-            inst.editor = inst.plugin.lock().editor();
+            inst.editor = lock_plugin(&inst.plugin).editor();
         }
         i32::from(inst.editor.is_some())
     }
@@ -1003,7 +1004,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         // empty fallback was ambiguous with "no custom
                         // state", so a lost race silently kept stale
                         // editor state.
-                        plugin_lock.lock().save_state()
+                        lock_plugin(&plugin_lock).save_state()
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes - exactly

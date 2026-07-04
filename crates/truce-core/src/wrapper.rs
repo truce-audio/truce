@@ -18,7 +18,7 @@
 use std::any::type_name;
 use std::ffi::CString;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 
 use truce_params::ParamInfo;
 
@@ -32,8 +32,14 @@ use crate::export::PluginExport;
 /// the read - safe in that direction, and bounded by the block the
 /// audio thread is finishing. Meters ride the lock-free `MeterStore`
 /// instead, so per-frame GUI paints never touch this lock.
-/// `parking_lot`'s uncontended path is a single CAS - noise next to
-/// the atomics a block already pays.
+///
+/// `std::sync::Mutex`, not `parking_lot`: on macOS std sits on
+/// `os_unfair_lock`, which donates the waiter's priority to the
+/// owner - so a GUI thread preempted mid-`save_state` gets boosted
+/// to the waiting audio thread's priority instead of leaving the
+/// render at the scheduler's mercy. `parking_lot` has no priority
+/// inheritance anywhere. Uncontended cost is a CAS either way.
+/// Poisoning is deliberately forgiven (see [`lock_plugin`]).
 ///
 /// A `Mutex` rather than an `RwLock`: the only non-audio accessors
 /// are a host state save and an editor preset capture - both rare -
@@ -44,12 +50,31 @@ use crate::export::PluginExport;
 /// The `Arc` is what makes GUI closures sound: they clone the handle
 /// instead of stashing a raw pointer into the instance struct (whose
 /// `&mut` the audio thread holds during callbacks).
-pub type SharedPlugin<P> = Arc<parking_lot::Mutex<P>>;
+pub type SharedPlugin<P> = Arc<Mutex<P>>;
 
 /// Wrap a freshly created plugin in the wrapper-standard mediation
 /// lock. See [`SharedPlugin`].
 pub fn shared_plugin<P>(plugin: P) -> SharedPlugin<P> {
-    Arc::new(parking_lot::Mutex::new(plugin))
+    Arc::new(Mutex::new(plugin))
+}
+
+/// Lock the mediation lock, forgiving poison. A poisoned lock means a
+/// panic already escaped somewhere and was reported by the wrapper's
+/// panic guard; refusing every later block would turn one bad block
+/// into permanent silence, and the plugin's state is no more suspect
+/// than after any other caught panic.
+pub fn lock_plugin<P>(plugin: &Mutex<P>) -> MutexGuard<'_, P> {
+    plugin.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// [`lock_plugin`]'s non-blocking twin: `None` only when the lock is
+/// genuinely held (poison is forgiven, same rationale).
+pub fn try_lock_plugin<P>(plugin: &Mutex<P>) -> Option<MutexGuard<'_, P>> {
+    match plugin.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+        Err(TryLockError::WouldBlock) => None,
+    }
 }
 
 /// `CStrings` derived from a single `ParamInfo`. All four conversions

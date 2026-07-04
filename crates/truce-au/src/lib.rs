@@ -54,7 +54,7 @@ use truce_core::ump::{
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, log_midi_ports_clamped,
+    ParamCStrings, SharedPlugin, default_io_channels, lock_plugin, log_midi_ports_clamped,
     log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
@@ -270,7 +270,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
-            let mut plugin = inst.plugin.lock();
+            let mut plugin = lock_plugin(&inst.plugin);
             plugin.reset(sample_rate, max_frames);
             plugin.params().set_sample_rate(sample_rate);
             plugin.params().snap_smoothers();
@@ -323,7 +323,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // remainder of that `save_state` call. Lock through a local
         // Arc clone so the guard doesn't pin a borrow of `inst`.
         let plugin_arc = Arc::clone(&inst.plugin);
-        let mut plugin = plugin_arc.lock();
+        let mut plugin = lock_plugin(&plugin_arc);
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
@@ -621,7 +621,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // must not appear on either side; mixing allocators is UB.
         // Lock the plugin for the serialization; a block in flight
         // holds the lock, so this waits for the block boundary.
-        let extra = inst.plugin.lock().save_state();
+        let extra = lock_plugin(&inst.plugin).save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let len = blob.len();
@@ -1200,7 +1200,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if inst.editor.is_none() {
             // Editor construction needs `&mut P`; the lock waits out
             // at most one in-flight audio block.
-            inst.editor = inst.plugin.lock().editor();
+            inst.editor = lock_plugin(&inst.plugin).editor();
         }
         i32::from(inst.editor.is_some())
     }
@@ -1263,7 +1263,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         if inst.editor.is_none() {
             // Editor construction needs `&mut P`; the lock waits out
             // at most one in-flight audio block.
-            inst.editor = inst.plugin.lock().editor();
+            inst.editor = lock_plugin(&inst.plugin).editor();
         }
         if let Some(ref editor) = inst.editor {
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
@@ -1403,7 +1403,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // empty fallback was ambiguous with "no custom
                         // state", so a lost race silently kept stale
                         // editor state.
-                        plugin_lock.lock().save_state()
+                        lock_plugin(&plugin_lock).save_state()
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes -

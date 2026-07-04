@@ -19,7 +19,7 @@ use truce_core::info::{AutomationConfig, MidiDialect, PluginCategory, PluginInfo
 use truce_core::meters::MeterStore;
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_core::wrapper::shared_plugin;
+use truce_core::wrapper::{lock_plugin, shared_plugin, try_lock_plugin};
 use truce_params::METER_ID_BASE;
 
 const BLOCK: usize = 8;
@@ -117,7 +117,7 @@ fn locked_process_races_mediated_readers_cleanly() {
             let mut last_meter = 0.0f32;
             while !stop.load(Ordering::Relaxed) {
                 last_meter = meters.read(METER_ID_BASE);
-                if let Some(guard) = plugin.try_lock() {
+                if let Some(guard) = try_lock_plugin(&plugin) {
                     let blob = guard.save_state();
                     // A torn read would show a length the writer
                     // never produces.
@@ -133,7 +133,7 @@ fn locked_process_races_mediated_readers_cleanly() {
     let input = [[0.5f32; BLOCK]];
     let mut output = [[0.0f32; BLOCK]];
     for block in 0..BLOCKS {
-        let mut guard = plugin.lock();
+        let mut guard = lock_plugin(&plugin);
         let inputs: [&[f32]; 1] = [&input[0]];
         let mut out0: &mut [f32] = &mut output[0];
         let outputs = std::slice::from_mut(&mut out0);
@@ -159,7 +159,11 @@ fn locked_process_races_mediated_readers_cleanly() {
     stop.store(true, Ordering::Relaxed);
     let _last_meter = reader.join().expect("reader panicked");
 
-    let final_frames =
-        u64::from_le_bytes(plugin.lock().save_state().try_into().expect("8-byte blob"));
+    let final_frames = u64::from_le_bytes(
+        lock_plugin(&plugin)
+            .save_state()
+            .try_into()
+            .expect("8-byte blob"),
+    );
     assert_eq!(final_frames, (BLOCKS * BLOCK) as u64);
 }

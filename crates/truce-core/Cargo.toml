@@ -20,7 +20,6 @@ png = "0.18"
 # The lock every format wrapper puts around its plugin instance so
 # host/GUI state callbacks never alias the audio thread's `&mut P`.
 # Uncontended write on the audio thread is one CAS.
-parking_lot = "0.12"
 
 [lints]
 workspace = true

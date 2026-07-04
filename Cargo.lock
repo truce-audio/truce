@@ -3706,7 +3706,6 @@ dependencies = [
 name = "truce-core"
 version = "1.0.5"
 dependencies = [
- "parking_lot",
  "png 0.18.1",
  "truce-params",
  "truce-utils",

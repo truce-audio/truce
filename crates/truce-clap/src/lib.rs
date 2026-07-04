@@ -110,7 +110,7 @@ use truce_core::state;
 use truce_core::state::PluginFormat;
 use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
-    SharedPlugin, run_audio_block_with, run_extern_callback_with, shared_plugin,
+    SharedPlugin, lock_plugin, run_audio_block_with, run_extern_callback_with, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::Params;
@@ -466,7 +466,7 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         {
-            let mut instance = data.plugin.lock();
+            let mut instance = lock_plugin(&data.plugin);
             instance.init();
             data.param_infos = instance.params().param_infos();
         }
@@ -517,7 +517,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         let max_block = max_frames_count as usize;
         data.max_block_size = max_block;
         {
-            let mut instance = data.plugin.lock();
+            let mut instance = lock_plugin(&data.plugin);
             instance.reset(sample_rate, max_block);
             instance.params().set_sample_rate(sample_rate);
             instance.params().snap_smoothers();
@@ -577,7 +577,7 @@ unsafe extern "C" fn clap_plugin_stop_processing<P: PluginExport>(_plugin: *cons
 unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let mut instance = data.plugin.lock();
+        let mut instance = lock_plugin(&data.plugin);
         instance.reset(data.sample_rate, data.max_block_size);
         instance.params().snap_smoothers();
     }
@@ -1301,7 +1301,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // Arc clone so the guard doesn't pin a borrow of `data`
         // (later per-block work needs `&mut data`).
         let plugin_arc = Arc::clone(&data.plugin);
-        let mut instance = plugin_arc.lock();
+        let mut instance = lock_plugin(&plugin_arc);
 
         // Apply any state-load that the host or editor handed us
         // since the last block. Runs before per-block work so the
@@ -2042,14 +2042,11 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     run_extern_callback_with::<P, bool>("CLAP", "save_state", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let (ids, values) = data.params_arc.collect_values();
-        // `plugin.save_state()` reads through the plugin reference: a
-        // user impl that mutates non-atomic state from `process` while
-        // also reading it from `save_state` races here. The contract
-        // is "save_state must be safe to call concurrently with
-        // process"; impls that copy from atomic params are fine.
-        // Lock the plugin for the serialization; a block in flight
-        // holds the lock, so this waits for the block boundary.
-        let extra = data.plugin.lock().save_state();
+        // Lock the plugin for the serialization: a block in flight
+        // holds the lock, so this waits for the block boundary and
+        // `save_state` never runs concurrently with `process` - plain
+        // (non-atomic) plugin fields are safe to read here.
+        let extra = lock_plugin(&data.plugin).save_state();
         let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, &extra);
 
         // Write to the CLAP output stream
@@ -2483,7 +2480,7 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
         }
         // Editor construction needs `&mut P`; the lock waits out
         // at most one in-flight audio block.
-        data.editor = data.plugin.lock().editor();
+        data.editor = lock_plugin(&data.plugin).editor();
         data.gui_created = data.editor.is_some();
         data.gui_created
     }
@@ -2713,7 +2710,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     // digit ms worst case. A try_lock's empty fallback
                     // was ambiguous with "no custom state", so a lost
                     // race silently kept stale editor state.
-                    plugin_lock.lock().save_state()
+                    lock_plugin(&plugin_lock).save_state()
                 }),
                 set_state: Box::new(move |bytes| {
                     // The editor sends RAW custom-state bytes - exactly

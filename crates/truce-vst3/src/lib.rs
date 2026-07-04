@@ -29,8 +29,8 @@ use truce_core::midi::{
 use truce_core::plugin::PluginRuntime;
 use truce_core::state;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, log_missing_bus_layout, run_audio_block,
-    run_extern_callback_with, run_register, shared_plugin,
+    ParamCStrings, SharedPlugin, default_io_channels, lock_plugin, log_missing_bus_layout,
+    run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_params::MidiSource;
 use truce_params::sample::{Float, Sample};
@@ -308,7 +308,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
-            let mut plugin = inst.plugin.lock();
+            let mut plugin = lock_plugin(&inst.plugin);
             plugin.reset(sample_rate, max_frames);
             plugin.params().set_sample_rate(sample_rate);
             plugin.params().snap_smoothers();
@@ -430,7 +430,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // this is one CAS; contended only when a host/GUI state
         // callback is mid-serialization, which then delays this
         // block by the remainder of that `save_state` call.
-        let mut plugin = inst.plugin.lock();
+        let mut plugin = lock_plugin(&inst.plugin);
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
@@ -800,7 +800,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // allocator must not appear on either side. (VST2 uses the
         // Rust global allocator for both save + free; do not cross
         // wires when refactoring `_save_state` paths together.)
-        let extra = inst.plugin.lock().save_state();
+        let extra = lock_plugin(&inst.plugin).save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
         let len = blob.len();
         let ptr = libc_malloc(len).cast::<u8>();
@@ -1409,7 +1409,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if inst.editor.is_none() {
             // Editor construction needs `&mut P`; the write lock
             // waits out at most one in-flight audio block.
-            inst.editor = inst.plugin.lock().editor();
+            inst.editor = lock_plugin(&inst.plugin).editor();
             // Replay a content scale the host reported before the editor
             // existed (a valid VST3 ordering - `setContentScaleFactor`
             // can precede the editor object). macOS drives Retina through
@@ -1717,7 +1717,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // empty fallback was ambiguous with "no custom
                         // state", so a lost race silently kept stale
                         // editor state.
-                        plugin_lock.lock().save_state()
+                        lock_plugin(&plugin_lock).save_state()
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes -

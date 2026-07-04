@@ -13,7 +13,7 @@ use truce_core::events::{EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessContext;
-use truce_core::wrapper::shared_plugin;
+use truce_core::wrapper::{lock_plugin, shared_plugin};
 use truce_example_gain::Plugin;
 
 const BLOCKS: usize = 2_000;
@@ -38,7 +38,7 @@ fn concurrent_save_never_wedges_the_audio_thread() {
         let saves = Arc::clone(&saves);
         std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
-                let blob = plugin.lock().save_state();
+                let blob = lock_plugin(&plugin).save_state();
                 let _ = blob;
                 saves.fetch_add(1, Ordering::Relaxed);
             }
@@ -51,7 +51,7 @@ fn concurrent_save_never_wedges_the_audio_thread() {
     for _ in 0..BLOCKS {
         let started = Instant::now();
         {
-            let mut guard = plugin.lock();
+            let mut guard = lock_plugin(&plugin);
             let inputs: Vec<&[f32]> = input.iter().map(Vec::as_slice).collect();
             let mut outputs: Vec<&mut [f32]> = output.iter_mut().map(Vec::as_mut_slice).collect();
             let mut buffer = truce_core::buffer::AudioBuffer::from_slices_checked(
