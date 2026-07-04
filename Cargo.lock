@@ -273,7 +273,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cargo-truce"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64",
  "hound",
@@ -3641,7 +3641,7 @@ dependencies = [
 
 [[package]]
 name = "truce"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "truce-clap",
  "truce-core",
@@ -3657,7 +3657,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "crossbeam-queue",
  "truce-aax-bridge",
@@ -3667,11 +3667,11 @@ dependencies = [
 
 [[package]]
 name = "truce-aax-bridge"
-version = "2.0.0"
+version = "2.0.1"
 
 [[package]]
 name = "truce-au"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -3682,7 +3682,7 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64",
  "serde",
@@ -3692,7 +3692,7 @@ dependencies = [
 
 [[package]]
 name = "truce-clap"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -3704,7 +3704,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "libc",
  "png 0.18.1",
@@ -3714,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "tiny-skia 0.12.0",
  "truce-core",
@@ -3724,7 +3724,7 @@ dependencies = [
 
 [[package]]
 name = "truce-derive"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3737,7 +3737,7 @@ dependencies = [
 
 [[package]]
 name = "truce-driver"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "hound",
  "truce-core",
@@ -3746,7 +3746,7 @@ dependencies = [
 
 [[package]]
 name = "truce-egui"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "baseview-truce",
  "egui",
@@ -3766,7 +3766,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-arpeggio"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3787,7 +3787,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-drywet"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3809,7 +3809,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-gain"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3831,7 +3831,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-gate"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3853,7 +3853,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-saturate"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3875,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-surround-meter"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3897,7 +3897,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-widen"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3919,7 +3919,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-cc-filter"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3940,7 +3940,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-chord"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -3961,7 +3961,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-dasp-bitcrusher"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "dasp_sample",
@@ -3983,7 +3983,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-envelope"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4003,7 +4003,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-eq"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "biquad",
  "clap-sys",
@@ -4028,7 +4028,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-fundsp-reverb-simple"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "fundsp",
@@ -4050,7 +4050,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-fundsp-reverb-worker"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -4073,7 +4073,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "hound",
@@ -4096,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-egui"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4118,7 +4118,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-egui-aspect"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4140,7 +4140,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-iced"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4161,7 +4161,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4182,7 +4182,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-egui"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4205,7 +4205,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-iced"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "png 0.17.16",
@@ -4227,7 +4227,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-midi-inspector"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -4249,7 +4249,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-mpe-spreader"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4269,7 +4269,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-mpe-synth"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4290,7 +4290,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-multiport"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "hound",
@@ -4312,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-state"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4334,7 +4334,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-stereo-utility"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4355,7 +4355,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-synth"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4378,7 +4378,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-sysex-echo"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4398,7 +4398,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-transpose"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4419,7 +4419,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-tremolo"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4441,7 +4441,7 @@ dependencies = [
 
 [[package]]
 name = "truce-font"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "skrifa 0.43.2",
  "tiny-skia 0.12.0",
@@ -4449,7 +4449,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gpu"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "baseview-truce",
  "bytemuck",
@@ -4466,7 +4466,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "baseview-truce",
  "log",
@@ -4489,7 +4489,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-types"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "objc2",
  "truce-core",
@@ -4497,7 +4497,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-utils"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
@@ -4506,7 +4506,7 @@ dependencies = [
 
 [[package]]
 name = "truce-iced"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "baseview-truce",
  "iced_core",
@@ -4530,7 +4530,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "crc32fast",
  "libloading 0.9.0",
@@ -4544,7 +4544,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader-tests"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "truce",
  "truce-core",
@@ -4556,7 +4556,7 @@ dependencies = [
 
 [[package]]
 name = "truce-lv2"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64",
  "objc",
@@ -4568,14 +4568,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bitflags 2.13.0",
 ]
 
 [[package]]
 name = "truce-plugin"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -4584,11 +4584,11 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "2.0.0"
+version = "2.0.1"
 
 [[package]]
 name = "truce-simd"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "criterion",
  "truce-core",
@@ -4598,7 +4598,7 @@ dependencies = [
 
 [[package]]
 name = "truce-standalone"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "baseview-truce",
  "cpal",
@@ -4623,7 +4623,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "png 0.18.1",
  "toml",
@@ -4635,11 +4635,11 @@ dependencies = [
 
 [[package]]
 name = "truce-utils"
-version = "2.0.0"
+version = "2.0.1"
 
 [[package]]
 name = "truce-vst2"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -4649,7 +4649,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
