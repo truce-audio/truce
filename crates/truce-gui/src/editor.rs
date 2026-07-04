@@ -767,6 +767,8 @@ fn create_wgpu_backend(
         client: pump.client(),
         parts: None,
         pump,
+        pending_resize: None,
+        pending_surface: None,
     })
 }
 
@@ -799,6 +801,23 @@ struct BlitBackend {
     client: truce_gpu::pump::PumpClient,
     parts: Option<BlitParts>,
     pump: truce_gpu::pump::SurfacePump<BlitParts>,
+    /// Full resize (surface + blit texture) requested while GPU init
+    /// was still running on the pump (`parts` not yet adopted; only
+    /// possible on Windows, where init is threaded). Latest-wins;
+    /// applied by [`Self::parts_mut`] the moment init lands. Dropping
+    /// the request instead loses the race against a host that resizes
+    /// the editor right after open (Ableton / Bitwig restoring a saved
+    /// size): the swapchain stays at the open-time size and the
+    /// compositor stretches it over the real window until the next
+    /// resize event.
+    pending_resize: Option<(u32, u32)>,
+    /// Surface-only counterpart, for [`Self::configure_surface`] calls
+    /// racing init. Kept separate from `pending_resize` because the
+    /// two track different authorities: the surface follows the
+    /// window's actual extent, the blit texture follows the CPU
+    /// pixmap. Applied after `pending_resize` so the actual extent
+    /// wins for the surface.
+    pending_surface: Option<(u32, u32)>,
 }
 
 #[cfg(feature = "cpu")]
@@ -810,6 +829,16 @@ impl BlitBackend {
             && let Some(parts) = self.pump.take_init()
         {
             self.parts = Some(parts);
+            // Replay resize requests that raced init (the re-entrant
+            // `parts_mut` inside these calls sees `Some` now). Surface
+            // last: the window's actual extent is authoritative over
+            // the computed pixmap size.
+            if let Some((w, h)) = self.pending_resize.take() {
+                self.resize(w, h);
+            }
+            if let Some((w, h)) = self.pending_surface.take() {
+                self.configure_surface(w, h);
+            }
         }
         self.parts.as_mut()
     }
@@ -821,6 +850,7 @@ impl BlitBackend {
     fn resize(&mut self, phys_w: u32, phys_h: u32) {
         let client = self.client.clone();
         let Some(parts) = self.parts_mut() else {
+            self.pending_resize = Some((phys_w, phys_h));
             return;
         };
         let phys_w = phys_w.clamp(1, parts.max_texture_dim);
@@ -848,6 +878,7 @@ impl BlitBackend {
     fn configure_surface(&mut self, phys_w: u32, phys_h: u32) {
         let client = self.client.clone();
         let Some(parts) = self.parts_mut() else {
+            self.pending_surface = Some((phys_w, phys_h));
             return;
         };
         let phys_w = phys_w.clamp(1, parts.max_texture_dim);
@@ -905,6 +936,18 @@ struct BuiltinWindowHandler<P: Params> {
     /// format's negotiation hooks (Linux hosts resizing the embed
     /// window directly).
     resize_corrector: ResizeCorrector,
+    /// Whether the swapchain has been reconciled with the window's
+    /// real client rect after the pump's threaded GPU init landed.
+    /// The surface is initially configured to a size *computed* at
+    /// `open()` (logical size × parent-HWND DPI), which can disagree
+    /// with the client extent baseview / the host actually settled
+    /// on. If no `Resized` ever fires (baseview skips it when the
+    /// child resolves to scale 1.0), nothing else corrects it, and
+    /// the compositor stretches the flip-model swapchain over the
+    /// window until the user drags a resize. Checked once, on the
+    /// first frame that finds the pump ready.
+    #[cfg(target_os = "windows")]
+    surface_synced: bool,
 }
 
 // SAFETY: The raw pointer is only accessed from the GUI thread.
@@ -1052,6 +1095,21 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 // frame paints instead of waiting for the next edit.
                 editor.request_repaint();
                 return;
+            }
+            // First frame with the pump ready: size the swapchain from
+            // the window's real client rect (see `surface_synced`). A
+            // no-op when the open-time computed size already matches;
+            // otherwise the reconfigure makes the frame taken below
+            // stale, and the size check discards it and repaints.
+            #[cfg(target_os = "windows")]
+            if !self.surface_synced {
+                use raw_window_handle::HasRawWindowHandle;
+                self.surface_synced = true;
+                if let Some((cw, ch)) =
+                    crate::platform::win32_client_size(window.raw_window_handle())
+                {
+                    backend.configure_surface(cw, ch);
+                }
             }
             backend.client.clone()
         };
@@ -1512,6 +1570,8 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     last_applied_scale: scale_f32,
                     pacer: crate::platform::PaintPacer::default(),
                     resize_corrector: ResizeCorrector::default(),
+                    #[cfg(target_os = "windows")]
+                    surface_synced: false,
                 }
             },
         );
@@ -1564,6 +1624,8 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 client,
                 parts,
                 pump,
+                pending_resize: _,
+                pending_surface: _,
             } = backend;
             if let Some(BlitParts {
                 blit,

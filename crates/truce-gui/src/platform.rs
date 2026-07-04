@@ -462,6 +462,53 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
     }
 }
 
+/// Physical client-area size of a Win32 window, straight from
+/// `GetClientRect`. The authoritative answer to "how many pixels does
+/// the swapchain have to cover" - unlike `to_physical_px(logical,
+/// scale)`, which is a prediction that can diverge from what the host
+/// actually sized the child window to. `None` for non-Win32 handles,
+/// a null/dead HWND, or an empty rect.
+#[cfg(target_os = "windows")]
+#[must_use]
+pub fn win32_client_size(handle: RwhRawWindowHandle) -> Option<(u32, u32)> {
+    #[repr(C)]
+    struct Rect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+    unsafe extern "system" {
+        fn GetClientRect(hwnd: *mut std::ffi::c_void, rect: *mut Rect) -> i32;
+    }
+
+    let RwhRawWindowHandle::Win32(h) = handle else {
+        return None;
+    };
+    if h.hwnd.is_null() {
+        return None;
+    }
+    let mut rect = Rect {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: pure state query on a window handle baseview owns for
+    // the editor's lifetime, called from the GUI thread that owns the
+    // HWND.
+    if unsafe { GetClientRect(h.hwnd, &raw mut rect) } == 0 {
+        return None;
+    }
+    // Client coordinates put left/top at 0; right/bottom are the size.
+    let w = u32::try_from(rect.right).ok()?;
+    let hgt = u32::try_from(rect.bottom).ok()?;
+    if w == 0 || hgt == 0 {
+        return None;
+    }
+    Some((w, hgt))
+}
+
 #[cfg(target_os = "windows")]
 fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
     unsafe extern "system" {
