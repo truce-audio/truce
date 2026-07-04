@@ -3706,6 +3706,7 @@ dependencies = [
 name = "truce-core"
 version = "2.0.0"
 dependencies = [
+ "libc",
  "png 0.18.1",
  "truce-params",
  "truce-utils",
