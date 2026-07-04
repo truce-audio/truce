@@ -2557,6 +2557,21 @@ fn make_params_extension<P: PluginExport>() -> clap_plugin_params {
 // Extension: remote_controls
 // ---------------------------------------------------------------------------
 
+/// Splits a `ParamInfo::group` into a CLAP remote-controls
+/// `(section_name, page_name)` pair on its first `/`, mirroring the
+/// convention CLAP's own `clap_param_info::module` path already uses
+/// ("/" as a tree separator). `"EQ/Lo Shelf"` becomes section `"EQ"`,
+/// page `"Lo Shelf"` - a host can offer one "EQ" button that cycles
+/// through each band's page (see `clap.remote-controls`'s own
+/// `[section:osc]` / `[name:osc1]` example). A group with no `/` is
+/// its own single-page section, e.g. `"Compressor"` stays as-is.
+fn split_group(group: &str) -> (&str, &str) {
+    match group.split_once('/') {
+        Some((section, page)) => (section, page),
+        None => (group, group),
+    }
+}
+
 /// Chunks a plugin's params into pages of at most
 /// `CLAP_REMOTE_CONTROLS_COUNT` (8), one run of pages per distinct
 /// non-empty `ParamInfo::group`. Ungrouped params (`group == ""`)
@@ -2627,12 +2642,14 @@ unsafe extern "C" fn remote_controls_get<P: PluginExport>(
             .filter(|page| page.0 == group)
             .count();
 
+        let (section_name, page_name) = split_group(group);
+
         let out = &mut *out;
         out.section_name = [0; CLAP_NAME_SIZE];
-        copy_str_to_buf(&mut out.section_name, group);
+        copy_str_to_buf(&mut out.section_name, section_name);
         out.page_id = remote_controls_page_id(group, chunk_index);
         out.page_name = [0; CLAP_NAME_SIZE];
-        copy_str_to_buf(&mut out.page_name, group);
+        copy_str_to_buf(&mut out.page_name, page_name);
         out.param_ids = [CLAP_INVALID_ID; CLAP_REMOTE_CONTROLS_COUNT];
         for (slot, &id) in out.param_ids.iter_mut().zip(ids.iter()) {
             *slot = id;
@@ -4532,7 +4549,10 @@ mod note_address_tests {
 
 #[cfg(test)]
 mod remote_controls_tests {
-    use super::{ParamFlags, ParamInfo, ParamRange, remote_control_pages, remote_controls_page_id};
+    use super::{
+        ParamFlags, ParamInfo, ParamRange, remote_control_pages, remote_controls_page_id,
+        split_group,
+    };
     use truce_params::{ParamUnit, ParamValueKind};
 
     fn info(id: u32, group: &'static str) -> ParamInfo {
@@ -4573,6 +4593,19 @@ mod remote_controls_tests {
         infos.extend((3..5).map(|id| info(id, "DYN")));
         let pages = remote_control_pages(&infos);
         assert_eq!(pages, vec![("EQ", vec![0, 1, 2]), ("DYN", vec![3, 4])]);
+    }
+
+    #[test]
+    fn split_group_separates_section_from_page() {
+        assert_eq!(split_group("EQ/Lo Shelf"), ("EQ", "Lo Shelf"));
+        // Only the first '/' is a separator; a page name may itself
+        // contain one without gaining a third level.
+        assert_eq!(split_group("EQ/Lo Shelf/Extra"), ("EQ", "Lo Shelf/Extra"));
+    }
+
+    #[test]
+    fn split_group_without_slash_is_its_own_section() {
+        assert_eq!(split_group("Compressor"), ("Compressor", "Compressor"));
     }
 
     #[test]
