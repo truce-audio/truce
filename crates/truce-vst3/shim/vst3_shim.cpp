@@ -996,6 +996,8 @@ public:
                         struct { uint32_t typeId; int32 noteId; double value; } noteExpression;
                     };
                 };
+                static_assert(sizeof(Vst3OutEvent) == 48,
+                              "must match the SDK Event size addEvent copies");
 
                 for (uint32_t i = 0; i < outCount; i++) {
                     Vst3MidiEvent mev = {};
@@ -1091,7 +1093,15 @@ public:
                     uint16_t type;
                     char pad[4];
                     struct { uint32_t typeId; int32 noteId; double value; } noteExpression;
+                    /* The SDK's Event is sized by its largest union
+                     * member (48 bytes total); the host's addEvent
+                     * copies sizeof(Event), so a shorter local struct
+                     * would have it read past our stack object. Pad to
+                     * the full size ({} init zeroes it). */
+                    char sdkTailPad[8];
                 };
+                static_assert(sizeof(Vst3OutNoteExprEvent) == 48,
+                              "must match the SDK Event size addEvent copies");
                 uint32_t neCount = g_cb->get_output_note_expression_count(ctx);
                 for (uint32_t i = 0; i < neCount; i++) {
                     uint32_t typeId = 0;
@@ -1147,7 +1157,12 @@ public:
                         char pad[4];
                         // SDK union member that matches `DataEvent`.
                         struct { uint32_t size; uint32_t dataType; const uint8_t* bytes; } data;
+                        /* Pad to the SDK Event size addEvent copies;
+                         * see Vst3OutNoteExprEvent. {} init zeroes it. */
+                        char sdkTailPad[8];
                     };
+                    static_assert(sizeof(Vst3OutDataEvent) == 48,
+                                  "must match the SDK Event size addEvent copies");
                     Vst3OutDataEvent ev = {};
                     ev.sampleOffset = sampleOffset;
                     ev.busIndex = (port < g_desc->midi_output_ports) ? port : 0;
