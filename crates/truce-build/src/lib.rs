@@ -38,20 +38,34 @@ pub fn plugin_id(vendor_id: &str, bundle_id: &str) -> String {
 /// names, and install paths from it - so a space yields malformed
 /// host-facing ids and an empty string breaks name derivation.
 /// Allowed: non-empty, lowercase ASCII alphanumerics plus `-` / `_` /
-/// `.`, starting with an alphanumeric.
+/// `.` separators - alphanumeric at both ends, no consecutive
+/// separators (a trailing or doubled `.` would splice a malformed
+/// reverse-DNS `clap_id` / `vst3_id`).
 ///
 /// # Errors
 ///
-/// Empty, or a character outside the allowed set.
+/// Empty, a character outside the allowed set, a separator at either
+/// end, or a separator run.
 pub fn validate_bundle_id(bundle_id: &str) -> Result<(), String> {
-    let mut chars = bundle_id.chars();
-    let Some(first) = chars.next() else {
+    if bundle_id.is_empty() {
         return Err("`bundle_id` must not be empty".into());
-    };
-    let ok_tail = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || "-_.".contains(c);
-    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) || !chars.all(ok_tail) {
+    }
+    let alnum = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let ok = |c: char| alnum(c) || "-_.".contains(c);
+    let sep = |b: u8| b"-_.".contains(&b);
+    // Charset first, so the byte-window separator scan below only
+    // ever sees ASCII.
+    if !bundle_id.chars().all(ok)
+        || !bundle_id.starts_with(alnum)
+        || !bundle_id.ends_with(alnum)
+        || bundle_id
+            .as_bytes()
+            .windows(2)
+            .any(|w| sep(w[0]) && sep(w[1]))
+    {
         return Err(format!(
             "`bundle_id` \"{bundle_id}\" must be lowercase ASCII alphanumerics plus `-`/`_`/`.` \
+             separators, alphanumeric at both ends, without consecutive separators \
              (it becomes the plugin's stable id and bundle name)"
         ));
     }
@@ -645,6 +659,9 @@ mod tests {
         assert!(validate_bundle_id("my synth").is_err()); // malformed clap_id
         assert!(validate_bundle_id("Synth").is_err()); // one canonical case
         assert!(validate_bundle_id("-lead").is_err()); // separator can't lead
+        assert!(validate_bundle_id("gain.").is_err()); // clap_id would end in `.`
+        assert!(validate_bundle_id("a..b").is_err()); // separator run
+        assert!(validate_bundle_id("a-.b").is_err()); // mixed run is still a run
     }
 
     #[test]
