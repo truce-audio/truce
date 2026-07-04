@@ -173,6 +173,9 @@ struct ClapPluginData<P: PluginExport> {
     tail_cache: AtomicU32,
     /// Re-usable event list for converting CLAP events each process call.
     event_list: EventList,
+    /// Sounding-note tracker backing wildcard `NOTE_OFF` / `NOTE_CHOKE`
+    /// expansion (see [`SoundingNotes`]). Audio-thread only.
+    sounding_notes: SoundingNotes,
     /// Re-usable output event list for the process context.
     output_events: EventList,
     /// Per-sub-block scratch the chunker writes rebased events into
@@ -661,11 +664,115 @@ fn clap_note_expression_of(body: &EventBody) -> Option<(i32, u8, u8, f64)> {
 /// `EventBody` speaks concrete MIDI addresses (`channel 0..=15`,
 /// `note 0..=127`) and plugins index tables by them, so anything
 /// outside the domain - wildcards included - is dropped rather than
-/// delivered mislabeled.
+/// delivered mislabeled. (Wildcard `NOTE_OFF` / `NOTE_CHOKE` don't take
+/// this path; see [`SoundingNotes`].)
 fn clap_note_address(ne: &clap_event_note) -> Option<(u8, u8)> {
     let channel = u8::try_from(ne.channel).ok().filter(|c| *c <= 15)?;
     let note = u8::try_from(ne.key).ok().filter(|k| *k <= 127)?;
     Some((channel, note))
+}
+
+/// One wildcardable axis of a CLAP note address: `-1` matches all,
+/// a concrete in-domain value matches itself, out-of-domain junk
+/// matches nothing (the event drops, same as the concrete path).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoteAxis {
+    All,
+    One(u8),
+    Invalid,
+}
+
+impl NoteAxis {
+    fn parse(raw: i16, domain: u8) -> Self {
+        if raw == -1 {
+            return Self::All;
+        }
+        match u8::try_from(raw) {
+            Ok(v) if v < domain => Self::One(v),
+            _ => Self::Invalid,
+        }
+    }
+
+    /// Concrete filter for [`SoundingNotes::drain_matching`]; `All`
+    /// filters nothing.
+    fn filter(self) -> Option<u8> {
+        match self {
+            Self::One(v) => Some(v),
+            Self::All | Self::Invalid => None,
+        }
+    }
+}
+
+/// Bitset of currently-sounding `(channel, key)` pairs, one 16x128
+/// set per MIDI input port, maintained from the decoded CLAP note
+/// events. Wildcard (`-1`) `NOTE_OFF` / `NOTE_CHOKE` addresses are
+/// spec-legal (`note_id`-addressing hosts release notes that way) but
+/// truce's `EventBody` speaks concrete addresses only - the set
+/// expands a wildcard to `NoteOff`s for exactly the sounding notes it
+/// matches, so a voice can't ring forever and the expansion stays
+/// bounded by real polyphony instead of the 2048-slot address space.
+/// Notes started through raw-MIDI or UMP events aren't tracked; hosts
+/// that address notes with wildcards start them with note events.
+struct SoundingNotes {
+    /// 2048 bits (16 channels x 128 keys) per input port.
+    ports: Vec<[u64; 32]>,
+}
+
+impl SoundingNotes {
+    fn new(midi_input_ports: u8) -> Self {
+        Self {
+            ports: vec![[0u64; 32]; usize::from(midi_input_ports.max(1))],
+        }
+    }
+
+    fn index(channel: u8, key: u8) -> (usize, u64) {
+        let bit = usize::from(channel & 0x0F) * 128 + usize::from(key & 0x7F);
+        (bit / 64, 1u64 << (bit % 64))
+    }
+
+    fn set(&mut self, port: u8, channel: u8, key: u8) {
+        if let Some(bits) = self.ports.get_mut(usize::from(port)) {
+            let (word, mask) = Self::index(channel, key);
+            bits[word] |= mask;
+        }
+    }
+
+    fn clear(&mut self, port: u8, channel: u8, key: u8) {
+        if let Some(bits) = self.ports.get_mut(usize::from(port)) {
+            let (word, mask) = Self::index(channel, key);
+            bits[word] &= !mask;
+        }
+    }
+
+    /// Visit and clear every sounding `(channel, key)` on `port` that
+    /// matches the (possibly wildcard) axis filters.
+    fn drain_matching(
+        &mut self,
+        port: u8,
+        channel: Option<u8>,
+        key: Option<u8>,
+        mut f: impl FnMut(u8, u8),
+    ) {
+        let Some(bits) = self.ports.get_mut(usize::from(port)) else {
+            return;
+        };
+        for (word_index, word) in bits.iter_mut().enumerate() {
+            let mut live = *word;
+            while live != 0 {
+                let bit = live.trailing_zeros() as usize;
+                live &= live - 1;
+                let flat = word_index * 64 + bit;
+                // Flat index is 0..2048, so both halves fit u8.
+                #[allow(clippy::cast_possible_truncation)]
+                let (ch, k) = ((flat / 128) as u8, (flat % 128) as u8);
+                if channel.is_some_and(|c| c != ch) || key.is_some_and(|n| n != k) {
+                    continue;
+                }
+                *word &= !(1u64 << bit);
+                f(ch, k);
+            }
+        }
+    }
 }
 
 /// Decode a CLAP note expression into its truce per-note 2.0 event.
@@ -809,6 +916,58 @@ unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
 /// after extracting param/GUI updates and doesn't care about order, so
 /// it passes `false` to skip the sort.
 #[allow(clippy::too_many_lines)]
+/// Deliver a `NOTE_OFF` / `NOTE_CHOKE` as concrete `NoteOff`s. A concrete
+/// address is one event (clearing its sounding bit); a wildcard axis
+/// (`-1`, spec-legal from `note_id`-addressing hosts) expands to the
+/// sounding notes it matches - dropping it would leave those voices
+/// ringing forever. Out-of-domain junk on either axis drops the event,
+/// matching the concrete path's hostile-host guard.
+fn push_note_offs<P: PluginExport>(
+    data: &mut ClapPluginData<P>,
+    note_event: &clap_event_note,
+    sample_offset: u32,
+    port: u8,
+    velocity: u8,
+) {
+    let channel = NoteAxis::parse(note_event.channel, 16);
+    let key = NoteAxis::parse(note_event.key, 128);
+    if channel == NoteAxis::Invalid || key == NoteAxis::Invalid {
+        return;
+    }
+    if let (NoteAxis::One(channel), NoteAxis::One(note)) = (channel, key) {
+        data.sounding_notes.clear(port, channel, note);
+        data.event_list.push(Event::on_port(
+            sample_offset,
+            port,
+            EventBody::NoteOff {
+                group: 0,
+                channel,
+                note,
+                velocity,
+            },
+        ));
+        return;
+    }
+    // Destructure so the tracker and the event list borrow disjointly.
+    let ClapPluginData {
+        sounding_notes,
+        event_list,
+        ..
+    } = data;
+    sounding_notes.drain_matching(port, channel.filter(), key.filter(), |channel, note| {
+        event_list.push(Event::on_port(
+            sample_offset,
+            port,
+            EventBody::NoteOff {
+                group: 0,
+                channel,
+                note,
+                velocity,
+            },
+        ));
+    });
+}
+
 unsafe fn convert_input_events<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     in_events: *const clap_input_events,
@@ -855,6 +1014,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     let Some((channel, note)) = clap_note_address(note_event) else {
                         continue;
                     };
+                    data.sounding_notes.set(port, channel, note);
                     // CLAP's f64 velocity is a normalized [0, 1]; truce
                     // exposes it as a wire-native 7-bit value to match
                     // every other format. Plugins that want CLAP's full
@@ -873,42 +1033,16 @@ unsafe fn convert_input_events<P: PluginExport>(
                 }
                 CLAP_EVENT_NOTE_OFF => {
                     let note_event = &*header.cast::<clap_event_note>();
-                    let Some((channel, note)) = clap_note_address(note_event) else {
-                        continue;
-                    };
-                    data.event_list.push(Event::on_port(
-                        sample_offset,
-                        port,
-                        EventBody::NoteOff {
-                            group: 0,
-                            channel,
-                            note,
-                            velocity: denorm_7bit(f32::from_f64(note_event.velocity)),
-                        },
-                    ));
+                    let velocity = denorm_7bit(f32::from_f64(note_event.velocity));
+                    push_note_offs(data, note_event, sample_offset, port, velocity);
                 }
                 CLAP_EVENT_NOTE_CHOKE => {
                     // A choke is an immediate voice cut (drum choke
                     // groups, edit re-triggers). `EventBody` has no
                     // choke variant, so deliver a `NoteOff`: a release
-                    // tail beats a voice hanging forever. A wildcard
-                    // "choke all" (`-1` channel/key) can't target one
-                    // concrete `NoteOff` and is skipped by
-                    // `clap_note_address`.
+                    // tail beats a voice hanging forever.
                     let note_event = &*header.cast::<clap_event_note>();
-                    let Some((channel, note)) = clap_note_address(note_event) else {
-                        continue;
-                    };
-                    data.event_list.push(Event::on_port(
-                        sample_offset,
-                        port,
-                        EventBody::NoteOff {
-                            group: 0,
-                            channel,
-                            note,
-                            velocity: 0,
-                        },
-                    ));
+                    push_note_offs(data, note_event, sample_offset, port, 0);
                 }
                 CLAP_EVENT_PARAM_VALUE => {
                     // When a state load was applied at the head of
@@ -3035,6 +3169,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sounding_notes: SoundingNotes::new(info.midi_input_ports),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
@@ -3297,6 +3432,65 @@ mod note_expression_tests {
                 ..
             }
         ));
+    }
+}
+
+#[cfg(test)]
+mod sounding_notes_tests {
+    use super::{NoteAxis, SoundingNotes};
+
+    #[test]
+    fn wildcard_axis_parses_all_concrete_and_junk() {
+        assert_eq!(NoteAxis::parse(-1, 16), NoteAxis::All); // wildcard
+        assert_eq!(NoteAxis::parse(3, 16), NoteAxis::One(3)); // concrete
+        assert_eq!(NoteAxis::parse(16, 16), NoteAxis::Invalid); // out of domain
+        assert_eq!(NoteAxis::parse(-2, 128), NoteAxis::Invalid); // hostile
+    }
+
+    #[test]
+    fn drain_matches_only_the_requested_axes() {
+        let mut s = SoundingNotes::new(2);
+        s.set(0, 0, 60);
+        s.set(0, 3, 60);
+        s.set(0, 3, 64);
+        s.set(1, 3, 60); // other port: never touched below
+
+        // Key wildcard, concrete channel: both channel-3 notes drain.
+        let mut hits = Vec::new();
+        s.drain_matching(0, Some(3), None, |ch, k| hits.push((ch, k)));
+        assert_eq!(hits, [(3, 60), (3, 64)]);
+
+        // Drained notes are cleared - a second wildcard finds nothing.
+        hits.clear();
+        s.drain_matching(0, Some(3), None, |ch, k| hits.push((ch, k)));
+        assert!(hits.is_empty());
+
+        // Channel wildcard, concrete key.
+        s.set(0, 5, 60);
+        hits.clear();
+        s.drain_matching(0, None, Some(60), |ch, k| hits.push((ch, k)));
+        assert_eq!(hits, [(0, 60), (5, 60)]);
+
+        // Both wildcard: everything left on the port.
+        s.set(0, 9, 1);
+        hits.clear();
+        s.drain_matching(0, None, None, |ch, k| hits.push((ch, k)));
+        assert_eq!(hits, [(9, 1)]);
+
+        // The other port's note survived it all.
+        hits.clear();
+        s.drain_matching(1, None, None, |ch, k| hits.push((ch, k)));
+        assert_eq!(hits, [(3, 60)]);
+    }
+
+    #[test]
+    fn concrete_off_clears_the_bit() {
+        let mut s = SoundingNotes::new(1);
+        s.set(0, 0, 60);
+        s.clear(0, 0, 60);
+        let mut hits = Vec::new();
+        s.drain_matching(0, None, None, |ch, k| hits.push((ch, k)));
+        assert!(hits.is_empty());
     }
 }
 

@@ -92,7 +92,15 @@ impl Synth {
     }
 
     fn note_on(&mut self, channel: u8, note: u8, amp: f32) {
-        let slot = self.voices.iter().position(|v| !v.active).unwrap_or(0); // steal voice 0 if the pool is full
+        // Prefer a free slot; if the pool is full, steal a voice
+        // that's already fading (in release) before cutting a still-
+        // held one; only then fall back to slot 0.
+        let slot = self
+            .voices
+            .iter()
+            .position(|v| !v.active)
+            .or_else(|| self.voices.iter().position(|v| v.releasing))
+            .unwrap_or(0);
         let (pan_l, pan_r) = pan_gains(channel);
         self.voices[slot] = Voice {
             active: true,
@@ -111,10 +119,14 @@ impl Synth {
         };
     }
 
+    // Skip releasing voices: after a release + retrigger the pool
+    // holds two voices for one (channel, note), and matching the
+    // fading one would leave the fresh note's off unmatched - held
+    // forever.
     fn find(&mut self, channel: u8, note: u8) -> Option<&mut Voice> {
         self.voices
             .iter_mut()
-            .find(|v| v.active && v.channel == channel && v.note == note)
+            .find(|v| v.active && !v.releasing && v.channel == channel && v.note == note)
     }
 
     fn handle(&mut self, body: EventBody) {
@@ -430,6 +442,42 @@ mod tests {
                 attribute: 0,
             },
         )
+    }
+
+    fn note_off_ch(channel: u8, note: u8) -> Event {
+        Event::new(
+            0,
+            EventBody::NoteOff2 {
+                group: 0,
+                channel,
+                note,
+                velocity: 0,
+                attribute_type: 0,
+                attribute: 0,
+            },
+        )
+    }
+
+    #[test]
+    fn retriggered_note_is_not_stuck() {
+        // Hold, release, then retrigger the same note before its
+        // release tail dies, and release again - ordinary repeated
+        // playing that leaves a decaying voice and a fresh voice for
+        // one (channel, note). The second note-off must land on the
+        // fresh voice; if it matched the already-releasing one, the
+        // fresh note would hang forever.
+        let (p, _) = render(&[
+            note_on_ch(0, 69),
+            note_off_ch(0, 69),
+            note_on_ch(0, 69),
+            note_off_ch(0, 69),
+        ]);
+        let held = p
+            .voices
+            .iter()
+            .filter(|v| v.active && !v.releasing && v.note == 69)
+            .count();
+        assert_eq!(held, 0, "retriggered note left a voice held forever");
     }
 
     #[cfg(target_os = "macos")]
