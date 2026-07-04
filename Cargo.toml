@@ -65,7 +65,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.5"
+version = "2.0.0"
 edition = "2024"
 # The Truce License: the dual Apache-2.0 / MIT permissive grant (texts
 # in LICENSE-APACHE, LICENSE-MIT) plus a permission-gated rider for
@@ -105,40 +105,40 @@ pedantic = { level = "warn", priority = -1 }
 # transitively. The macOS / Windows / Linux examples each
 # explicitly enable `truce/<format>` in their own `[features]` block
 # (`clap = ["…", "truce/clap"]`).
-truce = { version = "1.0.5", path = "crates/truce", default-features = false }
-truce-core = { version = "1.0.5", path = "crates/truce-core" }
-truce-params = { version = "1.0.5", path = "crates/truce-params" }
-truce-clap = { version = "1.0.5", path = "crates/truce-clap" }
-truce-vst3 = { version = "1.0.5", path = "crates/truce-vst3" }
-truce-au = { version = "1.0.5", path = "crates/truce-au" }
-truce-standalone = { version = "1.0.5", path = "crates/truce-standalone" }
-truce-driver = { version = "1.0.5", path = "crates/truce-driver" }
+truce = { version = "2.0.0", path = "crates/truce", default-features = false }
+truce-core = { version = "2.0.0", path = "crates/truce-core" }
+truce-params = { version = "2.0.0", path = "crates/truce-params" }
+truce-clap = { version = "2.0.0", path = "crates/truce-clap" }
+truce-vst3 = { version = "2.0.0", path = "crates/truce-vst3" }
+truce-au = { version = "2.0.0", path = "crates/truce-au" }
+truce-standalone = { version = "2.0.0", path = "crates/truce-standalone" }
+truce-driver = { version = "2.0.0", path = "crates/truce-driver" }
 # `default-features = false` at the workspace so members pick a
 # renderer feature (`cpu` / `gpu`) explicitly - lets one example
 # (truce-example-eq) opt into `gpu` while the rest use `cpu`, and
 # lets the renderer crates (truce-egui / -iced / -slint) build
 # truce-gui featureless for its types-only surface. External users
 # adding `truce-gui = "x"` still get the `cpu` default.
-truce-gui = { version = "1.0.5", path = "crates/truce-gui", default-features = false }
-truce-gui-types = { version = "1.0.5", path = "crates/truce-gui-types" }
-truce-gui-utils = { version = "1.0.5", path = "crates/truce-gui-utils" }
-truce-plugin = { version = "1.0.5", path = "crates/truce-plugin" }
-truce-vst2 = { version = "1.0.5", path = "crates/truce-vst2" }
-truce-lv2 = { version = "1.0.5", path = "crates/truce-lv2" }
-truce-aax = { version = "1.0.5", path = "crates/truce-aax" }
-truce-aax-bridge = { version = "1.0.5", path = "crates/truce-aax-bridge" }
-truce-test = { version = "1.0.5", path = "crates/truce-test" }
-truce-loader = { version = "1.0.5", path = "crates/truce-loader" }
-truce-derive = { version = "1.0.5", path = "crates/truce-derive" }
-truce-cpu = { version = "1.0.5", path = "crates/truce-cpu" }
-truce-gpu = { version = "1.0.5", path = "crates/truce-gpu" }
-truce-egui = { version = "1.0.5", path = "crates/truce-egui" }
-truce-iced = { version = "1.0.5", path = "crates/truce-iced" }
-truce-simd = { version = "1.0.5", path = "crates/truce-simd" }
-truce-font = { version = "1.0.5", path = "crates/truce-font" }
-truce-build = { version = "1.0.5", path = "crates/truce-build" }
-truce-shim-types = { version = "1.0.5", path = "crates/truce-shim-types" }
-truce-utils = { version = "1.0.5", path = "crates/truce-utils" }
+truce-gui = { version = "2.0.0", path = "crates/truce-gui", default-features = false }
+truce-gui-types = { version = "2.0.0", path = "crates/truce-gui-types" }
+truce-gui-utils = { version = "2.0.0", path = "crates/truce-gui-utils" }
+truce-plugin = { version = "2.0.0", path = "crates/truce-plugin" }
+truce-vst2 = { version = "2.0.0", path = "crates/truce-vst2" }
+truce-lv2 = { version = "2.0.0", path = "crates/truce-lv2" }
+truce-aax = { version = "2.0.0", path = "crates/truce-aax" }
+truce-aax-bridge = { version = "2.0.0", path = "crates/truce-aax-bridge" }
+truce-test = { version = "2.0.0", path = "crates/truce-test" }
+truce-loader = { version = "2.0.0", path = "crates/truce-loader" }
+truce-derive = { version = "2.0.0", path = "crates/truce-derive" }
+truce-cpu = { version = "2.0.0", path = "crates/truce-cpu" }
+truce-gpu = { version = "2.0.0", path = "crates/truce-gpu" }
+truce-egui = { version = "2.0.0", path = "crates/truce-egui" }
+truce-iced = { version = "2.0.0", path = "crates/truce-iced" }
+truce-simd = { version = "2.0.0", path = "crates/truce-simd" }
+truce-font = { version = "2.0.0", path = "crates/truce-font" }
+truce-build = { version = "2.0.0", path = "crates/truce-build" }
+truce-shim-types = { version = "2.0.0", path = "crates/truce-shim-types" }
+truce-utils = { version = "2.0.0", path = "crates/truce-utils" }
 
 # Common third-party deps consumed by multiple workspace crates.
 # Hoisted here so version bumps are a one-line change. wgpu and the

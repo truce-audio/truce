@@ -46,7 +46,7 @@ baseview = { git = "https://github.com/truce-audio/baseview.git", branch = "base
 
 [package]
 name = "truce-vizia"
-version = "1.0.5"
+version = "2.0.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
@@ -58,12 +58,12 @@ homepage = "https://github.com/truce-audio/truce"
 crate-type = ["rlib"]
 
 [dependencies]
-truce-core = { version = "1.0.5", path = "../truce-core" }
-truce-params = { version = "1.0.5", path = "../truce-params" }
-truce-font = { version = "1.0.5", path = "../truce-font" }
+truce-core = { version = "2.0.0", path = "../truce-core" }
+truce-params = { version = "2.0.0", path = "../truce-params" }
+truce-font = { version = "2.0.0", path = "../truce-font" }
 # Pulled in only for `reanchor_all_children_to_top` (macOS NSView
 # anchoring helper). Doesn't drag in any renderer.
-truce-gui-utils = { version = "1.0.5", path = "../truce-gui-utils" }
+truce-gui-utils = { version = "2.0.0", path = "../truce-gui-utils" }
 
 # vizia 0.4.0 on crates.io ships the winit backend only; the
 # `baseview` feature (and the vizia_baseview crate) live in vizia's
