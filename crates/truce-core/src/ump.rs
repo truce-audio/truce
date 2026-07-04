@@ -606,12 +606,15 @@ impl SysExAssembler {
         let status = ((w0 >> 20) & 0xF) as u8;
         let n = ((w0 >> 16) & 0xF) as u8;
         let stream_id = ((w0 >> 8) & 0xFF) as u8;
-        // `SysEx`-8 reserves 1 byte for `stream_id`, leaving 13
-        // bytes for payload; `n` is the count of those payload
-        // bytes used in this packet.
-        if n > 13 {
+        // Per M2-104 §7.8, `numBytes` *includes* the Stream ID byte
+        // (unlike SysEx-7, whose count is data-only): valid range is
+        // 1 (stream id, no data) to 14 (stream id + 13 data bytes).
+        // Reading it as data-only would take one trailing garbage
+        // byte per packet and reject conformant full packets.
+        if n == 0 || n > 14 {
             return SysExFeed::Invalid;
         }
+        let data_len = usize::from(n - 1);
         // word 0: stream_id at bits 15..8, byte 0 at bits 7..0
         // words 1..3: bytes 1..12, MSB-first
         let raw = [
@@ -629,7 +632,7 @@ impl SysExAssembler {
             ((words[3] >> 8) & 0xFF) as u8,
             (words[3] & 0xFF) as u8,
         ];
-        self.feed_payload(group, stream_id, status, &raw[..n as usize])
+        self.feed_payload(group, stream_id, status, &raw[..data_len])
     }
 
     fn feed_payload(
@@ -1078,10 +1081,11 @@ mod tests {
     #[test]
     fn assembler_sysex8_complete_packet() {
         let mut a = SysExAssembler::with_capacity(64);
-        // SysEx-8: mt=0x5, status=0 (complete), n=4, stream_id=0,
-        // payload [0xAA, 0xBB, 0xCC, 0xDD] in bytes 0..3.
+        // SysEx-8: mt=0x5, status=0 (complete), stream_id=0, payload
+        // [0xAA, 0xBB, 0xCC, 0xDD] in bytes 0..3. numBytes counts the
+        // Stream ID too (M2-104 §7.8), so 4 data bytes -> n=5.
         // status=0 means we don't need to shift anything into bits 23..20.
-        let w0 = (0x5u32 << 28) | (4u32 << 16) | 0xAA;
+        let w0 = (0x5u32 << 28) | (5u32 << 16) | 0xAA;
         let w1 = (0xBBu32 << 24) | (0xCCu32 << 16) | (0xDDu32 << 8);
         match a.push_sysex8_packet([w0, w1, 0, 0]) {
             SysExFeed::Complete(p) => {
@@ -1091,6 +1095,52 @@ mod tests {
             }
             _ => panic!("expected Complete"),
         }
+    }
+
+    #[test]
+    fn assembler_sysex8_full_packet_and_bounds() {
+        // A conformant full packet: numBytes = 14 (stream id + 13
+        // data bytes). The old data-only reading rejected exactly
+        // this, so every maximal packet from a spec-conformant
+        // sender was dropped.
+        let mut a = SysExAssembler::with_capacity(64);
+        let data: [u8; 13] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+        let w0 = (0x5u32 << 28)
+            | (14u32 << 16)
+            | (7u32 << 8) // stream id
+            | u32::from(data[0]);
+        let word = |i: usize| {
+            (u32::from(data[i]) << 24)
+                | (u32::from(data[i + 1]) << 16)
+                | (u32::from(data[i + 2]) << 8)
+                | u32::from(data[i + 3])
+        };
+        match a.push_sysex8_packet([w0, word(1), word(5), word(9)]) {
+            SysExFeed::Complete(p) => {
+                assert_eq!(p.bytes, &data);
+                assert_eq!(p.stream_id, 7);
+            }
+            _ => panic!("expected Complete for a full conformant packet"),
+        }
+
+        // numBytes = 1 is legal (stream id only, zero data)...
+        let empty = (0x5u32 << 28) | (1u32 << 16);
+        assert!(matches!(
+            a.push_sysex8_packet([empty, 0, 0, 0]),
+            SysExFeed::Complete(_)
+        ));
+        // ...but 0 (no stream id - malformed) and 15 (past the
+        // 128-bit packet) are not.
+        let zero = 0x5u32 << 28;
+        assert!(matches!(
+            a.push_sysex8_packet([zero, 0, 0, 0]),
+            SysExFeed::Invalid
+        ));
+        let fifteen = (0x5u32 << 28) | (15u32 << 16);
+        assert!(matches!(
+            a.push_sysex8_packet([fifteen, 0, 0, 0]),
+            SysExFeed::Invalid
+        ));
     }
 
     // Helper: build a SysEx-7 packet with explicit group.
@@ -1162,12 +1212,13 @@ mod tests {
         let mut a = SysExAssembler::with_capacity(64);
 
         // Helper to build a SysEx-8 packet with explicit
-        // status / n / stream_id / first 4 payload bytes (the
-        // assembler only reads the first `n` payload bytes).
-        let mk = |status: u8, n: u32, stream_id: u8, bytes: [u8; 4]| -> [u32; 4] {
+        // status / data-byte count / stream_id / first 4 payload
+        // bytes. The wire `numBytes` includes the Stream ID
+        // (M2-104 §7.8), so it's `data_bytes + 1`.
+        let mk = |status: u8, data_bytes: u32, stream_id: u8, bytes: [u8; 4]| -> [u32; 4] {
             let w0 = (0x5u32 << 28)
                 | (u32::from(status) << 20)
-                | (n << 16)
+                | ((data_bytes + 1) << 16)
                 | (u32::from(stream_id) << 8)
                 | u32::from(bytes[0]);
             let w1 = (u32::from(bytes[1]) << 24)
