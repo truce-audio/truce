@@ -19,6 +19,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     let mut no_build = false;
     let mut debug = false;
     let mut target_cpu_arg: Option<String> = None;
+    let mut extra_features: Vec<String> = Vec::new();
     let mut extra_args: Vec<String> = Vec::new();
     let mut past_separator = false;
     let mut i = 0;
@@ -35,6 +36,19 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
                 "--target-cpu" => {
                     target_cpu_arg =
                         Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
+                }
+                // Extra cargo features to enable alongside `standalone`
+                // (comma- or space-separated). The standalone build is
+                // `--no-default-features`, so this is how you re-add a
+                // format or turn on a plugin-specific feature for the
+                // preview - e.g. `--features shell`.
+                "--features" => {
+                    let spec = crate::util::arg_value(args, &mut i, "--features")?;
+                    extra_features.extend(
+                        spec.split([',', ' '])
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string),
+                    );
                 }
                 "--help" | "-h" => {
                     print_help();
@@ -75,7 +89,11 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         // / lv2 into the preview binary only bloats it and runs their
         // load-time registration constructors (e.g. the AU shim's,
         // which logs a MIDI-port clamp warning) in a host that never
-        // uses them.
+        // uses them. `--features standalone` plus anything the user
+        // asked for.
+        let mut features = vec!["standalone".to_string()];
+        features.extend(extra_features);
+        let features = features.join(",");
         cargo_build(
             &[],
             &[
@@ -83,7 +101,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
                 &plugin.crate_name,
                 "--no-default-features",
                 "--features",
-                "standalone",
+                &features,
             ],
             dt,
         )?;
@@ -280,10 +298,15 @@ fn print_help() {
     eprintln!(
         "\
 Usage: cargo truce run [-p <crate>] [--no-build] [--debug]
-                       [--target-cpu <value>] [-- <args>]
+                       [--features <list>] [--target-cpu <value>] [-- <args>]
 
 Build and run a plugin standalone. Pass `--debug` for a faster-compile
 dev-profile build (fine when iterating outside a DAW); release otherwise.
+
+The standalone is built `--no-default-features` (no format wrapper is
+needed to preview a plugin). Use `--features` to add cargo features -
+comma- or space-separated, enabled alongside `standalone` - e.g. to
+re-enable a format or turn on a plugin-specific feature.
 
 Anything after `--` is forwarded verbatim to the standalone binary
 (e.g. `cargo truce run -- --headless --bpm 140`).
@@ -295,6 +318,9 @@ full value list).
 Options:
   -p <crate>       Build and run only the plugin with this cargo crate name.
   --no-build       Skip rebuild; run the existing staged binary.
+  --features <list>
+                   Extra cargo features (comma/space separated) to enable
+                   alongside `standalone`.
   --debug          Cargo dev profile (faster compile).
   --target-cpu <value>
                    Override the x86_64 default. baseline|v2|v3|v4|native
