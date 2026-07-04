@@ -1775,6 +1775,12 @@ pub fn register_vst3<P: PluginExport>() {
     });
 }
 
+/// VST3 `ParameterInfo::kIsHidden` (SDK 3.7+): the parameter is not
+/// shown in generic editors or automation pickers. Hosts still write
+/// to hidden ids through `IParameterChanges`, which is how the MIDI
+/// proxy bank receives its `IMidiMapping`-resolved controllers.
+const VST3_PARAM_IS_HIDDEN: i32 = 1 << 4;
+
 fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let info = P::info();
     // Static metadata path: derive emits a `LazyLock`-cached
@@ -1823,10 +1829,14 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // appended *after* the real params so the shim's index-based
     // structures (unit table, ParameterInfo enumeration) keep their
     // positions. One bank per declared MIDI input port so multi-port
-    // plugins keep controllers attributed per bus. Non-automatable
-    // (flags 0), identity 0..=1 range, grouped under a "MIDI" unit.
-    // The CStrings intentionally leak - registration runs once per
-    // process, matching the real params' `into_raw` pattern.
+    // plugins keep controllers attributed per bus. `kIsHidden` (with
+    // `kCanAutomate` clear) keeps the bank out of generic editors and
+    // automation pickers - flags 0 alone left thousands of "MIDI Ch N
+    // CC M" rows listed; hosts still deliver `IMidiMapping`-resolved
+    // changes to hidden ids. Identity 0..=1 range, grouped under a
+    // "MIDI" unit. The CStrings intentionally leak - registration
+    // runs once per process, matching the real params' `into_raw`
+    // pattern.
     if info.accepts_midi_in {
         let empty_units = || CString::default().into_raw();
         for port in 0..info.midi_input_ports {
@@ -1862,7 +1872,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
                         max: 1.0,
                         default_normalized: midi_proxy_default(controller),
                         step_count: 0,
-                        flags: 0,
+                        flags: VST3_PARAM_IS_HIDDEN,
                         group: CString::new("MIDI").unwrap_or_default().into_raw(),
                     });
                 }
