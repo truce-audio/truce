@@ -494,10 +494,12 @@ static void processAnyReplacing(AEffect* e, void** inputs, void** outputs,
             char vstEvents_storage[offsetof(VstEvents, events)
                                    + 512 * sizeof(VstEvent*)];
             VstEvents* vstEvents = (VstEvents*)vstEvents_storage;
-            vstEvents->numEvents = (int32_t)total;
             vstEvents->reserved = 0;
             VstEvent** events_array = (VstEvent**)((char*)vstEvents
                                                    + offsetof(VstEvents, events));
+            /* Slots fill compactly; a skipped SysEx must not leave a
+             * counted-but-uninitialized pointer for the host to walk. */
+            uint32_t emitted = 0;
             for (uint32_t i = 0; i < midi_count; i++) {
                 Vst2MidiEventCompact pkt = {0};
                 g_vst2_callbacks->output_event_at(inst->rust_ctx, i, &pkt);
@@ -510,7 +512,7 @@ static void processAnyReplacing(AEffect* e, void** inputs, void** outputs,
                 m->midiData[1] = (char)pkt.data1;
                 m->midiData[2] = (char)pkt.data2;
                 m->midiData[3] = 0;
-                events_array[i] = (VstEvent*)m;
+                events_array[emitted++] = (VstEvent*)m;
             }
             inst->sysex_out_used = 0;
             for (uint32_t i = 0; i < sx_count; i++) {
@@ -546,9 +548,11 @@ static void processAnyReplacing(AEffect* e, void** inputs, void** outputs,
                  * could edit in place, but our scratch is logically
                  * read-only from the host's perspective. */
                 sx->sysexDump = (char*)(uintptr_t)dst;
-                events_array[midi_count + i] = (VstEvent*)sx;
+                events_array[emitted++] = (VstEvent*)sx;
             }
-            inst->master(e, audioMasterProcessEvents, 0, 0, vstEvents, 0.0f);
+            vstEvents->numEvents = (int32_t)emitted;
+            if (emitted > 0)
+                inst->master(e, audioMasterProcessEvents, 0, 0, vstEvents, 0.0f);
         }
     }
 }
