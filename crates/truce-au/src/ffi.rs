@@ -81,11 +81,15 @@ pub struct AuParamDescriptor {
 /// `au_shim_types.h`. Stamped into [`AuCallbacks::abi_version`] at
 /// registration so a v3 appex built by a newer `cargo-truce` can tell
 /// how far the append-only callback tail extends on an older plugin
-/// binary before calling into it. Bump this and the header `#define`
-/// together when appending a callback (or changing an unreleased tail
-/// callback's signature); a test asserts they match. v2:
-/// `output_ump_count` / `output_ump_at` gained the `protocol` argument.
-pub const TRUCE_AU_ABI_VERSION: u32 = 2;
+/// binary before calling into it. The high three bytes are the
+/// `'TAu\0'` magic tag, the low byte the version - readers check the
+/// magic so a non-versioned binary's leading function pointer can't
+/// masquerade as a version. Bump the low byte and the header
+/// `#define` together when appending a callback (or changing an
+/// unreleased tail callback's signature); a test asserts they match.
+/// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
+/// argument.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7502;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -362,7 +366,7 @@ pub struct AuTransportSnapshot {
 unsafe extern "C" {
     /// Register the plugin with the AU system. Called once at load time.
     /// The descriptor and callbacks must remain valid for the lifetime of the process.
-    pub fn truce_au_register(
+    pub fn truce_au_register_v2(
         descriptor: *const AuPluginDescriptor,
         callbacks: *const AuCallbacks,
         param_descriptors: *const AuParamDescriptor,

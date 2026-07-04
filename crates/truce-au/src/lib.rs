@@ -1625,7 +1625,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let param_descs = param_descs.leak();
 
     unsafe {
-        ffi::truce_au_register(
+        ffi::truce_au_register_v2(
             std::ptr::from_ref::<AuPluginDescriptor>(descriptor),
             std::ptr::from_ref::<AuCallbacks>(callbacks),
             param_descs.as_ptr(),
@@ -1853,7 +1853,13 @@ mod tests {
         let parsed = AU_SHIM_TYPES_H
             .lines()
             .find_map(|l| l.trim().strip_prefix("#define TRUCE_AU_ABI_VERSION "))
-            .and_then(|v| v.trim().trim_end_matches('u').parse::<u32>().ok())
+            .map(|v| v.trim().trim_end_matches('u'))
+            .and_then(|v| {
+                v.strip_prefix("0x").map_or_else(
+                    || v.parse::<u32>().ok(),
+                    |h| u32::from_str_radix(h, 16).ok(),
+                )
+            })
             .expect("au_shim_types.h must #define TRUCE_AU_ABI_VERSION as an integer");
         assert_eq!(
             parsed,

@@ -30,6 +30,19 @@ import AppKit
 /// compile. The enum value is stable per Apple's header.
 let kAURenderEventMIDIEventListRaw: UInt16 = 10
 
+/// The ABI tail version the plugin binary declares, or 0 when the
+/// version word lacks its 'TAu\0' magic tag. A pre-2.0 binary has the
+/// `create` function pointer at offset 0; without the magic check its
+/// low bits would masquerade as a version and every gated tail read
+/// would land one slot off. (Pre-2.0 pairings already fail at link
+/// time via the renamed `truce_au_register_v2`; this keeps the runtime
+/// gates independently trustworthy.)
+func truceAbiTailVersion(_ cb: UnsafePointer<AuCallbacks>) -> UInt32 {
+    let word = cb.pointee.abi_version
+    guard word & TRUCE_AU_ABI_MAGIC_MASK == TRUCE_AU_ABI_MAGIC else { return 0 }
+    return word & 0xFF
+}
+
 /// UMP packet length in 32-bit words by message type. Spec: MIDI
 /// 2.0 M2-104-UM, §2.1.4 (Message Type field).
 @inline(__always) func umpPacketLength(messageType mt: UInt8) -> Int {
@@ -463,9 +476,10 @@ class TruceAUAudioUnit: AUAudioUnit {
         // stream.
         // The protocol-taking `output_ump_*` shape is AU ABI version
         // 2; this appex may be newer than the plugin binary, so gate
-        // on the reported version before draining through them.
+        // on the (magic-validated) reported version before draining
+        // through them.
         var drainedViaUMP = false
-        if cb.pointee.abi_version >= 2, #available(macOS 12.0, iOS 15.0, *),
+        if truceAbiTailVersion(cb) >= 2, #available(macOS 12.0, iOS 15.0, *),
            let listBlock = midiOutputListBlock as? AUMIDIEventListBlock {
             drainedViaUMP = true
             let proto: UInt32 = hostWantsMidi1 ? 1 : 2
@@ -648,7 +662,7 @@ class TruceAUAudioUnit: AUAudioUnit {
             // struct tail (AU ABI version 1); this appex may be newer
             // than the plugin binary, so gate on the reported version
             // before reading them.
-            guard cb.pointee.abi_version >= 1,
+            guard truceAbiTailVersion(cb) >= 1,
                   let dict = newValue,
                   let keyCount = cb.pointee.legacy_state_key_count,
                   let keyAt = cb.pointee.legacy_state_key_at,

@@ -48,7 +48,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 
 - AU v2 answers `kAudioUnitProperty_ParameterStringFromValue`, so generic views and control surfaces show formatted values instead of raw numbers.
 - LV2 no longer declares `units:pc` on percent parameters (the raw `0..=1` value rendered as "1%" in Ardour).
-- AU shim callback ABI is append-only again, with a fixed-offset `abi_version` handshake.
+- AU shim callback ABI is append-only again, with a self-validating handshake: the fixed-offset version word carries a magic tag (a pre-2.0 binary's leading function pointer can't masquerade as a version) and the registration symbol is versioned (`truce_au_register_v2`), so mismatched pairings fail at link time instead of reading shifted callback slots.
 - `cargo truce run` builds the standalone `--no-default-features`, keeping playback; a new `--features` flag re-adds extras.
 - The standalone pre-grows the f64 widening scratch before the stream starts (no first-callback allocation).
 - VST3 rejects a processing setup or block whose sample size was never negotiated.

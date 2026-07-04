@@ -20,7 +20,10 @@ __attribute__((visibility("default"))) uint32_t g_num_params = 0;
 
 static int g_registered = 0;
 
-void truce_au_register(
+/* `_v2` so a pre-2.0 Rust staticlib (which calls `truce_au_register`)
+ * fails to link against a 2.x framework build instead of registering
+ * an old-layout AuCallbacks that every consumer would misread. */
+void truce_au_register_v2(
     const AuPluginDescriptor *descriptor,
     const AuCallbacks *callbacks,
     const AuParamDescriptor *param_descriptors,
