@@ -9,7 +9,10 @@
 //! the floor, not the goal.
 
 use truce_core::midi::{decode_short_message, event_to_midi1, parse_midi1};
-use truce_core::ump::{SysExAssembler, decode_ump_channel_voice_2, encode_ump_channel_voice_2};
+use truce_core::ump::{
+    SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_sysex7_packet,
+    encode_ump_channel_voice_2, sysex7_packet_count,
+};
 use truce_utils::preset::{parse_preset_file, parse_preset_meta, write_preset_file};
 use truce_utils::state::{StateParse, deserialize_state, parse_state, serialize_state};
 
@@ -81,8 +84,7 @@ pub fn midi_short(data: &[u8]) {
         // velocity-0 NoteOn -> NoteOff), so everything it accepts must
         // re-encode, and one more decode must reproduce the body
         // exactly.
-        let (len, bytes) =
-            event_to_midi1(&body).expect("decoded 1.0 channel voice must re-encode");
+        let (len, bytes) = event_to_midi1(&body).expect("decoded 1.0 channel voice must re-encode");
         let again = decode_short_message(bytes[0], bytes[1], if len > 2 { bytes[2] } else { 0 });
         assert_eq!(again, Some(body), "decode-encode-decode is not a fixpoint");
     }
@@ -110,31 +112,75 @@ pub fn ump_decode(data: &[u8]) {
     }
 }
 
+/// Per-slot capacity for the fuzz assembler; the invariant asserts
+/// below pin completed payloads to it.
+const SYSEX_FUZZ_CAPACITY: usize = 512;
+
 /// Stateful SysEx reassembly from packet sequences a host can
-/// interleave, truncate, or repeat. A selector byte picks SysEx-7 vs
-/// SysEx-8, then the packet's own words follow: 8 bytes (two words)
-/// for a 64-bit SysEx-7 packet, 16 (four) for a 128-bit SysEx-8 one -
-/// mirroring two words into four would halve the 8-bit target's
-/// explorable space.
+/// interleave, truncate, or repeat.
+///
+/// Two oracles. First, the input doubles as a payload for the
+/// round-trip oracle: [`encode_sysex7_packet`] and the assembler are
+/// documented inverses, so feeding the encoded chain must yield the
+/// (7-bit-masked) payload back byte-identically, `Complete` exactly
+/// at the chain's End packet. Then the same bytes replay as an adversarial packet
+/// stream - a selector byte picks SysEx-7 vs SysEx-8, then the
+/// packet's own words follow: 8 bytes (two words) for a 64-bit
+/// SysEx-7 packet, 16 (four) for a 128-bit SysEx-8 one (mirroring
+/// two words into four would halve the 8-bit target's explorable
+/// space) - where any `Complete` must respect the slot capacity.
 pub fn sysex_assembler(data: &[u8]) {
-    let mut asm = SysExAssembler::with_capacity(512);
+    let mut asm = SysExAssembler::with_capacity(SYSEX_FUZZ_CAPACITY);
+
+    if let Some((&group_seed, payload)) = data.split_first() {
+        let payload = &payload[..payload.len().min(SYSEX_FUZZ_CAPACITY)];
+        // SysEx-7 data is 7-bit by definition; the encoder masks, so
+        // the round-trip lands on the masked payload.
+        let masked: Vec<u8> = payload.iter().map(|b| b & 0x7F).collect();
+        let group = group_seed & 0x0F;
+        let total = sysex7_packet_count(payload.len());
+        for index in 0..total {
+            let words =
+                encode_sysex7_packet(group, payload, index).expect("index below packet count");
+            match asm.push_sysex7_packet(words) {
+                SysExFeed::Buffered => {
+                    assert!(index + 1 < total, "chain ended without Complete");
+                }
+                SysExFeed::Complete(pkt) => {
+                    assert_eq!(index + 1, total, "Complete before the End packet");
+                    assert_eq!(pkt.group, group, "group did not survive reassembly");
+                    assert_eq!(pkt.bytes, masked, "reassembly is not the encoder's inverse");
+                }
+                SysExFeed::Invalid | SysExFeed::Overflow => {
+                    panic!("assembler rejected an encoder-produced packet");
+                }
+            }
+        }
+    }
+
     let mut rest = data;
     while let Some((&selector, tail)) = rest.split_first() {
         let word = |i: usize| {
             u32::from_le_bytes(tail[4 * i..4 * i + 4].try_into().expect("length checked"))
         };
-        if selector & 1 == 0 {
+        let fed = if selector & 1 == 0 {
             if tail.len() < 8 {
                 return;
             }
-            let _ = asm.push_sysex7_packet([word(0), word(1)]);
             rest = &tail[8..];
+            asm.push_sysex7_packet([word(0), word(1)])
         } else {
             if tail.len() < 16 {
                 return;
             }
-            let _ = asm.push_sysex8_packet([word(0), word(1), word(2), word(3)]);
             rest = &tail[16..];
+            asm.push_sysex8_packet([word(0), word(1), word(2), word(3)])
+        };
+        if let SysExFeed::Complete(pkt) = fed {
+            assert!(
+                pkt.bytes.len() <= SYSEX_FUZZ_CAPACITY,
+                "completed payload exceeds the slot capacity"
+            );
         }
     }
 }

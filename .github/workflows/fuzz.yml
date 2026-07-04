@@ -60,12 +60,15 @@ jobs:
 
       # `+nightly`: same stable-default footgun as miri.yml - the
       # sanitizer flags cargo-fuzz passes need the nightly cargo.
+      # A crashing target must not starve the others of their weekly
+      # time: run all five regardless, then fail if any did.
       - name: Fuzz all targets
         run: |
-          set -e
+          failed=0
           for target in state_envelope preset_container midi_short ump_decode sysex_assembler; do
-            cargo +nightly fuzz run "$target" -- -max_total_time=300
+            cargo +nightly fuzz run "$target" -- -max_total_time=300 || failed=1
           done
+          exit "$failed"
 
       - name: Save corpus
         if: always()
