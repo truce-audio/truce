@@ -58,7 +58,7 @@ impl Event {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EventBody {
     // -- MIDI 1.0 channel voice (wire-native 7-bit / 14-bit) --
     /// Note on. MIDI 1.0 quirk: a `NoteOn` with `velocity == 0` is
@@ -263,7 +263,7 @@ pub enum EventBody {
 /// expressions, so this stays "exhaustive" (no `#[non_exhaustive]`,
 /// which would block cross-crate construction). Adding a new field
 /// is a coordinated workspace-wide change.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TransportInfo {
     pub playing: bool,
     pub recording: bool,

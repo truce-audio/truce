@@ -308,7 +308,11 @@ class TruceAUAudioUnit: AUAudioUnit {
         // Type-erased `AUMIDIEventListBlock?` (the UMP output block).
         // Passed as `Any?` so this signature doesn't reference the
         // macOS-12 / iOS-15-only type; cast back under `#available`.
-        midiOutputListBlock: Any?
+        midiOutputListBlock: Any?,
+        // `true` when the host set `hostMIDIProtocol` to MIDI 1.0 -
+        // the UMP drain then declares a 1.0 list and asks the Rust
+        // side for an MT 0x2 stream.
+        hostWantsMidi1: Bool
     ) -> AUAudioUnitStatus {
         if numIn > 0, let pull = pull {
             var f = AudioUnitRenderActionFlags()
@@ -441,37 +445,38 @@ class TruceAUAudioUnit: AUAudioUnit {
                            paramBuf, numParam,
                            transportBuf)
 
-        // Drain plug-in → host MIDI output. AU v3 hosts expose a
-        // `midiOutputEventBlock` that accepts a raw MIDI 1.0 byte
-        // stream; we call it once per event. `eventSampleTime` is
-        // the host's absolute sample time, so the plug-in's
-        // within-block `delta` is added to the buffer's starting
-        // sample. The block is nil when the host doesn't accept
-        // MIDI output; skipping the drain is correct in that case.
+        // Drain plug-in → host MIDI output. `eventSampleTime` is the
+        // host's absolute sample time, so the plug-in's within-block
+        // `delta` is added to the buffer's starting sample. Both
+        // blocks nil means the host doesn't accept MIDI output;
+        // skipping the drain is correct then.
         // `bufStart` is already bound above (input timing); reuse it.
-        let use2 = (g_descriptor?.pointee.midi2_output ?? 0) != 0
 
-        // In MIDI 2.0 protocol mode (`midi2 = true`, so
-        // `audioUnitMIDIProtocol` = 2.0) the byte block is unavailable,
-        // so every event rides UMP through `midiOutputEventListBlock`:
-        // MIDI 1.0 events as MT 0x2, MIDI 2.0 as MT 0x4, and SysEx as
-        // MT 0x3 (SysEx-7) packet chains - all encoded on the Rust side
-        // and drained via `output_ump_*`. Otherwise the legacy MIDI 1.0
-        // byte path.
-        // `output_ump_*` are tail callbacks (AU ABI version 1); this
-        // appex may be newer than the plugin binary, so gate on the
-        // reported version before draining through them.
+        // Preferred path: the UMP `MIDIEventList` block (macOS 12+ /
+        // iOS 15+), used for every output dialect so a host that only
+        // supplies the list block hears MIDI 1.0 plugins too. The list
+        // is declared in the host's `hostMIDIProtocol` (default 2.0)
+        // and the Rust side encodes a *pure* stream in it - all MT 0x2
+        // channel voice for 1.0, all MT 0x4 for 2.0, SysEx as MT 0x3
+        // SysEx-7 chains (legal in both) - because the UMP spec
+        // forbids mixing the two channel-voice types in one protocol
+        // stream.
+        // The protocol-taking `output_ump_*` shape is AU ABI version
+        // 2; this appex may be newer than the plugin binary, so gate
+        // on the reported version before draining through them.
         var drainedViaUMP = false
-        if use2, cb.pointee.abi_version >= 1, #available(macOS 12.0, iOS 15.0, *),
+        if cb.pointee.abi_version >= 2, #available(macOS 12.0, iOS 15.0, *),
            let listBlock = midiOutputListBlock as? AUMIDIEventListBlock {
             drainedViaUMP = true
-            let umpCount = cb.pointee.output_ump_count(ctx)
+            let proto: UInt32 = hostWantsMidi1 ? 1 : 2
+            let listProto: MIDIProtocolID = hostWantsMidi1 ? ._1_0 : ._2_0
+            let umpCount = cb.pointee.output_ump_count(ctx, proto)
             for i in 0..<umpCount {
                 var ue = AuUmpEvent()
-                cb.pointee.output_ump_at(ctx, i, &ue)
+                cb.pointee.output_ump_at(ctx, proto, i, &ue)
                 let evTime = AUEventSampleTime(bufStart + Int64(ue.sample_offset))
                 var list = MIDIEventList()
-                let pkt = MIDIEventListInit(&list, ._2_0)
+                let pkt = MIDIEventListInit(&list, listProto)
                 let words: [UInt32] = [ue.words.0, ue.words.1, ue.words.2, ue.words.3]
                 _ = words.withUnsafeBufferPointer { wp in
                     MIDIEventListAdd(&list, MemoryLayout<MIDIEventList>.size, pkt, 0,
@@ -580,6 +585,16 @@ class TruceAUAudioUnit: AUAudioUnit {
         } else {
             midiOutputListBlock = nil
         }
+        // Snapshot the host's declared output protocol with the
+        // blocks - hosts set `hostMIDIProtocol` before requesting the
+        // render block. Unset (raw 0) defaults to 2.0, the protocol
+        // CoreMIDI translates natively.
+        let hostWantsMidi1: Bool
+        if #available(macOS 12.0, iOS 15.0, *) {
+            hostWantsMidi1 = self.hostMIDIProtocol == ._1_0
+        } else {
+            hostWantsMidi1 = false
+        }
 
         return { _, timestamp, frameCount, _, outputData, events, pull in
             return TruceAUAudioUnit.render(
@@ -595,7 +610,8 @@ class TruceAUAudioUnit: AUAudioUnit {
                 musicalContext: musicalContext,
                 transportState: transportState,
                 midiOutputBlock: midiOutputBlock,
-                midiOutputListBlock: midiOutputListBlock)
+                midiOutputListBlock: midiOutputListBlock,
+                hostWantsMidi1: hostWantsMidi1)
         }
     }
 

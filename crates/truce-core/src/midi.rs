@@ -311,6 +311,142 @@ pub fn downconvert_to_midi1(body: &EventBody) -> Option<EventBody> {
     })
 }
 
+/// MIDI 2.0 min-center-max up-scaling (M2-104 §2.2): shift into the
+/// wider domain, then bit-repeat the low source bits above the source
+/// center. Center and max map exactly (a plain shift would leave max
+/// short of full-scale), and [`downconvert_to_midi1`]'s high-bit take
+/// recovers the original value.
+fn upscale(src: u32, src_bits: u32, dst_bits: u32) -> u32 {
+    let scale_bits = dst_bits - src_bits;
+    let shifted = src << scale_bits;
+    let center = 1u32 << (src_bits - 1);
+    if src <= center {
+        return shifted;
+    }
+    let repeat_bits = src_bits - 1;
+    let mut repeat = src & ((1 << repeat_bits) - 1);
+    if scale_bits > repeat_bits {
+        repeat <<= scale_bits - repeat_bits;
+    } else {
+        repeat >>= repeat_bits - scale_bits;
+    }
+    let mut out = shifted;
+    while repeat != 0 {
+        out |= repeat;
+        repeat >>= repeat_bits;
+    }
+    out
+}
+
+/// Up-convert a MIDI 1.0 channel-voice [`EventBody`] to its MIDI 2.0
+/// equivalent. Used when a wrapper emits into a MIDI 2.0 protocol
+/// stream (AU v3's `MIDIEventList`): the UMP spec forbids mixing 1.0
+/// channel-voice packets into a 2.0-protocol stream, so 1.0 bodies
+/// widen first. A `NoteOn` with velocity 0 becomes a `NoteOff2` at
+/// center velocity, mirroring the spec's 1.0 -> 2.0 translation rule.
+/// Returns `None` for bodies that are already 2.0 or aren't channel
+/// voice.
+#[must_use]
+pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
+    // Bounded by the target widths, so the narrowing casts can't lose bits.
+    #[allow(clippy::cast_possible_truncation)]
+    let up7_16 = |v: u8| upscale(u32::from(v), 7, 16) as u16;
+    let up7_32 = |v: u8| upscale(u32::from(v), 7, 32);
+    let up14_32 = |v: u16| upscale(u32::from(v), 14, 32);
+    Some(match *body {
+        EventBody::NoteOn {
+            group,
+            channel,
+            note,
+            velocity: 0,
+        } => EventBody::NoteOff2 {
+            group,
+            channel,
+            note,
+            velocity: 0x8000,
+            attribute_type: 0,
+            attribute: 0,
+        },
+        EventBody::NoteOn {
+            group,
+            channel,
+            note,
+            velocity,
+        } => EventBody::NoteOn2 {
+            group,
+            channel,
+            note,
+            velocity: up7_16(velocity),
+            attribute_type: 0,
+            attribute: 0,
+        },
+        EventBody::NoteOff {
+            group,
+            channel,
+            note,
+            velocity,
+        } => EventBody::NoteOff2 {
+            group,
+            channel,
+            note,
+            velocity: up7_16(velocity),
+            attribute_type: 0,
+            attribute: 0,
+        },
+        EventBody::Aftertouch {
+            group,
+            channel,
+            note,
+            pressure,
+        } => EventBody::PolyPressure2 {
+            group,
+            channel,
+            note,
+            pressure: up7_32(pressure),
+        },
+        EventBody::ControlChange {
+            group,
+            channel,
+            cc,
+            value,
+        } => EventBody::ControlChange2 {
+            group,
+            channel,
+            cc,
+            value: up7_32(value),
+        },
+        EventBody::ChannelPressure {
+            group,
+            channel,
+            pressure,
+        } => EventBody::ChannelPressure2 {
+            group,
+            channel,
+            pressure: up7_32(pressure),
+        },
+        EventBody::PitchBend {
+            group,
+            channel,
+            value,
+        } => EventBody::PitchBend2 {
+            group,
+            channel,
+            value: up14_32(value),
+        },
+        EventBody::ProgramChange {
+            group,
+            channel,
+            program,
+        } => EventBody::ProgramChange2 {
+            group,
+            channel,
+            program,
+            bank: None,
+        },
+        _ => return None,
+    })
+}
+
 /// Centre of a 32-bit per-note pitch bend (`0x8000_0000`), as `f64`.
 const PER_NOTE_BEND_CENTER: f64 = 2_147_483_648.0;
 
@@ -554,6 +690,115 @@ mod tests {
         } else {
             panic!("expected ControlChange, got {event:?}");
         }
+    }
+
+    #[test]
+    fn upconvert_upscales_center_and_max_exactly() {
+        // Spec min-center-max scaling: 7-bit max fills the wide domain,
+        // 7-bit center lands on the wide center (a plain shift does
+        // neither).
+        let up = |velocity| match upconvert_to_midi2(&EventBody::NoteOn {
+            group: 0,
+            channel: 0,
+            note: 60,
+            velocity,
+        }) {
+            Some(EventBody::NoteOn2 { velocity, .. }) => velocity,
+            other => panic!("expected NoteOn2, got {other:?}"),
+        };
+        assert_eq!(up(127), u16::MAX);
+        assert_eq!(up(64), 0x8000);
+        assert_eq!(up(1), 1 << 9);
+
+        // 14-bit pitch bend: max and center map exactly too.
+        match upconvert_to_midi2(&EventBody::PitchBend {
+            group: 0,
+            channel: 0,
+            value: 0x3FFF,
+        }) {
+            Some(EventBody::PitchBend2 { value, .. }) => assert_eq!(value, u32::MAX),
+            other => panic!("expected PitchBend2, got {other:?}"),
+        }
+        match upconvert_to_midi2(&EventBody::PitchBend {
+            group: 0,
+            channel: 0,
+            value: 0x2000,
+        }) {
+            Some(EventBody::PitchBend2 { value, .. }) => assert_eq!(value, 0x8000_0000),
+            other => panic!("expected PitchBend2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn upconvert_round_trips_through_downconvert() {
+        let bodies = [
+            EventBody::NoteOn {
+                group: 0,
+                channel: 3,
+                note: 60,
+                velocity: 100,
+            },
+            EventBody::NoteOff {
+                group: 0,
+                channel: 3,
+                note: 60,
+                velocity: 40,
+            },
+            EventBody::ControlChange {
+                group: 0,
+                channel: 1,
+                cc: 74,
+                value: 99,
+            },
+            EventBody::PitchBend {
+                group: 0,
+                channel: 0,
+                value: 12345,
+            },
+            EventBody::ChannelPressure {
+                group: 0,
+                channel: 9,
+                pressure: 77,
+            },
+            EventBody::Aftertouch {
+                group: 0,
+                channel: 2,
+                note: 61,
+                pressure: 5,
+            },
+        ];
+        for body in bodies {
+            let wide = upconvert_to_midi2(&body).expect("channel voice widens");
+            assert_eq!(downconvert_to_midi1(&wide), Some(body));
+        }
+    }
+
+    #[test]
+    fn upconvert_maps_velocity_zero_note_on_to_note_off() {
+        // The 1.0 -> 2.0 translation rule: a running-status-style
+        // velocity-0 NoteOn is a release and must not survive as a
+        // 2.0 NoteOn (whose velocity 0 is a real, audible note-on).
+        match upconvert_to_midi2(&EventBody::NoteOn {
+            group: 0,
+            channel: 0,
+            note: 60,
+            velocity: 0,
+        }) {
+            Some(EventBody::NoteOff2 { velocity, .. }) => assert_eq!(velocity, 0x8000),
+            other => panic!("expected NoteOff2, got {other:?}"),
+        }
+        // Already-2.0 and non-channel-voice bodies pass through as None.
+        assert!(
+            upconvert_to_midi2(&EventBody::NoteOn2 {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 1,
+                attribute_type: 0,
+                attribute: 0,
+            })
+            .is_none()
+        );
     }
 
     #[test]

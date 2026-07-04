@@ -82,8 +82,10 @@ pub struct AuParamDescriptor {
 /// registration so a v3 appex built by a newer `cargo-truce` can tell
 /// how far the append-only callback tail extends on an older plugin
 /// binary before calling into it. Bump this and the header `#define`
-/// together when appending a callback; a test asserts they match.
-pub const TRUCE_AU_ABI_VERSION: u32 = 1;
+/// together when appending a callback (or changing an unreleased tail
+/// callback's signature); a test asserts they match. v2:
+/// `output_ump_count` / `output_ump_at` gained the `protocol` argument.
+pub const TRUCE_AU_ABI_VERSION: u32 = 2;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -218,15 +220,20 @@ pub struct AuCallbacks {
     /// block-relative frame (0 for AU v2's untimed `MusicDeviceSysEx`).
     pub push_sysex_input:
         unsafe extern "C" fn(ctx: *mut c_void, sample_offset: u32, bytes: *const u8, len: u32),
-    /// UMP channel-voice output for AU v3 in MIDI 2.0 protocol mode. The
-    /// appex uses these instead of `output_event_*` (the byte / MIDI 1.0
-    /// path) when it declared `audioUnitMIDIProtocol` = 2.0. Appended
-    /// here (not beside the other `output_*` callbacks) so the field is
-    /// added at the struct tail per the append-only rule - a mid-struct
-    /// insert would shift every later offset and skew a newer appex
-    /// against an older plugin binary.
-    pub output_ump_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
-    pub output_ump_at: unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut AuUmpEvent),
+    /// UMP channel-voice output for AU v3's `MIDIEventList` block. The
+    /// appex passes `protocol` (1 = MIDI 1.0, 2 = MIDI 2.0, from the
+    /// host's `hostMIDIProtocol`) and the Rust side encodes a *pure*
+    /// stream in it - all MT 0x2 for 1.0, all MT 0x4 for 2.0, events
+    /// converting across dialects as needed (the UMP spec forbids
+    /// mixing the two channel-voice types in one protocol stream).
+    /// The count depends on the protocol, so both calls take it.
+    /// Appended here (not beside the other `output_*` callbacks) so
+    /// the field is added at the struct tail per the append-only rule -
+    /// a mid-struct insert would shift every later offset and skew a
+    /// newer appex against an older plugin binary.
+    pub output_ump_count: unsafe extern "C" fn(ctx: *mut c_void, protocol: u32) -> u32,
+    pub output_ump_at:
+        unsafe extern "C" fn(ctx: *mut c_void, protocol: u32, index: u32, out: *mut AuUmpEvent),
     /// Number of legacy `ClassInfo` dictionary keys to probe when
     /// truce's own `truce_state` entry is absent (`au_keys` in
     /// `truce.toml`'s `[plugin.legacy_state]`).

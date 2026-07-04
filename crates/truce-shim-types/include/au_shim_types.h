@@ -19,9 +19,12 @@
 // provides the tail callbacks it wants to call (UMP output, legacy
 // state) before invoking them. The `AuCallbacks` / `AuPluginDescriptor`
 // tails are append-only; this version says how far the tail extends.
-// Bump it whenever a field is appended, and mirror the bump in
+// Bump it whenever a field is appended - or an unreleased tail
+// callback changes signature - and mirror the bump in
 // `truce_shim_types::TRUCE_AU_ABI_VERSION` (a lockstep test guards it).
-#define TRUCE_AU_ABI_VERSION 1u
+// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
+// argument; an appex must not drain a v1 binary through them.
+#define TRUCE_AU_ABI_VERSION 2u
 
 typedef struct {
     uint8_t component_type[4];
@@ -110,11 +113,13 @@ typedef struct {
     uint32_t words[4];
 } AuMidi2Event;
 
-/* Plugin -> host UMP output event (AU v3, MIDI 2.0 protocol mode). The
- * v3 appex drains these via `output_ump_count` / `output_ump_at` and
- * builds a `MIDIEventList` for `midiOutputEventListBlock`. `word_count`
- * is 1 (MT 0x2 = MIDI 1.0 CV) or 2 (MT 0x4 = MIDI 2.0 CV); only that many
- * `words` are valid. `cable` is the MIDI output port. */
+/* Plugin -> host UMP output event (AU v3). The v3 appex drains these
+ * via `output_ump_count` / `output_ump_at` (passing the host's
+ * protocol) and builds a `MIDIEventList` for
+ * `midiOutputEventListBlock`. `word_count` is 1 (MT 0x2 = MIDI 1.0 CV,
+ * 1.0-protocol streams) or 2 (MT 0x4 = MIDI 2.0 CV in 2.0 streams, and
+ * MT 0x3 SysEx-7 in either); only that many `words` are valid. `cable`
+ * is the MIDI output port. */
 typedef struct {
     uint32_t sample_offset;
     uint8_t cable;
@@ -248,14 +253,19 @@ typedef struct {
      * slice of `process` and does not use this callback. */
     void (*push_sysex_input)(void *ctx, uint32_t sample_offset,
                              const uint8_t *bytes, uint32_t len);
-    /* UMP channel-voice output for AU v3 in MIDI 2.0 protocol mode. The
-     * appex uses these (instead of the byte-based `output_event_*`) when
-     * it declared `audioUnitMIDIProtocol` = 2.0: MIDI 1.0 variants become
-     * MT 0x2 UMP, MIDI 2.0 variants MT 0x4. Appended here (not next to
-     * the other output_* callbacks) to honor the append-only rule
-     * above - inserting mid-struct would shift every later offset. */
-    uint32_t (*output_ump_count)(void *ctx);
-    void (*output_ump_at)(void *ctx, uint32_t index, AuUmpEvent *out);
+    /* UMP channel-voice output for AU v3's `MIDIEventList` block. The
+     * appex passes `protocol` (1 = MIDI 1.0, 2 = MIDI 2.0, from the
+     * host's `hostMIDIProtocol`) and the Rust side encodes a *pure*
+     * stream in it - all MT 0x2 packets for 1.0, all MT 0x4 for 2.0
+     * (events convert across dialects as needed; SysEx-7 MT 0x3 is
+     * legal in both). The UMP spec forbids mixing 1.0 and 2.0
+     * channel-voice packets in one protocol stream. The count depends
+     * on the protocol (a 2.0-only event may have no 1.0 form), so both
+     * calls take it. Appended here (not next to the other output_*
+     * callbacks) to honor the append-only rule above - inserting
+     * mid-struct would shift every later offset. */
+    uint32_t (*output_ump_count)(void *ctx, uint32_t protocol);
+    void (*output_ump_at)(void *ctx, uint32_t protocol, uint32_t index, AuUmpEvent *out);
     /* Legacy foreign-state probing (state migration). When a host's
      * ClassInfo dictionary carries no `truce_state` entry, the shim
      * asks for the container keys a pre-truce build stored its state
