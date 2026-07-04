@@ -153,8 +153,9 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "truce-core"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
+ "libc",
  "png",
  "truce-params",
  "truce-utils",
@@ -172,14 +173,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "bitflags",
 ]
 
 [[package]]
 name = "truce-utils"
-version = "1.0.5"
+version = "2.0.0"
 
 [[package]]
 name = "wasip2"
