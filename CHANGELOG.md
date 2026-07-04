@@ -58,7 +58,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 - CLAP: `CLAP_EVENT_NOTE_CHOKE` delivers a velocity-0 `NoteOff` instead of being dropped. (#174)
 - VST2: a SysEx output skipped for scratch exhaustion no longer leaves the host iterating an uninitialized event pointer.
 - Preset enumeration (CLAP discovery, AU factory lists, the standalone menu) lists only presets whose payload the plugin can load - foreign or corrupt files are skipped instead of listed-then-refused, and a skipped file no longer fails a CLAP crawl. `from_location` routes foreign envelopes through `migrate_state`, same as a session load.
-- CLAP: an out-of-range key/channel on a note event drops it instead of delivering note 255 / channel 255. Wildcard (`-1`) axes drop a `NOTE_ON` (the spec requires concrete addresses there) but expand a `NOTE_OFF` / `NOTE_CHOKE` to the sounding notes they match, so note_id-addressing hosts can't leave voices ringing.
+- CLAP: an out-of-range key/channel on a note event drops it instead of delivering note 255 / channel 255. Wildcard (`-1`) axes drop a `NOTE_ON` (the spec requires concrete addresses there) but fan a `NOTE_OFF` / `NOTE_CHOKE` / note expression out to the sounding notes they match - the port is an axis too - so note_id-addressing hosts can't leave voices ringing or lose expression.
 - CLAP: the output event queue is sorted by sample offset before reaching the host.
 - CLAP: note-port queries answer clap-validator's swapped-direction sweep.
 

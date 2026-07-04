@@ -780,6 +780,30 @@ impl SoundingNotes {
         port: u8,
         channel: Option<u8>,
         key: Option<u8>,
+        f: impl FnMut(u8, u8),
+    ) {
+        self.visit_matching(port, channel, key, true, f);
+    }
+
+    /// Like [`Self::drain_matching`] but leaves the visited notes
+    /// sounding - expression fan-out addresses voices without
+    /// releasing them.
+    fn for_each_matching(
+        &mut self,
+        port: u8,
+        channel: Option<u8>,
+        key: Option<u8>,
+        f: impl FnMut(u8, u8),
+    ) {
+        self.visit_matching(port, channel, key, false, f);
+    }
+
+    fn visit_matching(
+        &mut self,
+        port: u8,
+        channel: Option<u8>,
+        key: Option<u8>,
+        clear: bool,
         mut f: impl FnMut(u8, u8),
     ) {
         let Some(bits) = self.ports.get_mut(usize::from(port)) else {
@@ -797,19 +821,24 @@ impl SoundingNotes {
                 if channel.is_some_and(|c| c != ch) || key.is_some_and(|n| n != k) {
                     continue;
                 }
-                *word &= !(1u64 << bit);
+                if clear {
+                    *word &= !(1u64 << bit);
+                }
                 f(ch, k);
             }
         }
     }
 }
 
-/// Decode a CLAP note expression into its truce per-note 2.0 event.
-/// Wildcard / out-of-domain addresses return `None` (see
-/// [`clap_note_address`]).
-fn note_expression_to_body(ne: &clap_event_note_expression) -> Option<EventBody> {
-    let channel = u8::try_from(ne.channel).ok().filter(|c| *c <= 15)?;
-    let note = u8::try_from(ne.key).ok().filter(|k| *k <= 127)?;
+/// Decode a CLAP note expression into its truce per-note 2.0 event,
+/// addressed to one concrete `(channel, note)` voice. The event's own
+/// (possibly wildcard) axes are resolved by the caller - see
+/// [`push_note_expressions`].
+fn note_expression_body(
+    ne: &clap_event_note_expression,
+    channel: u8,
+    note: u8,
+) -> Option<EventBody> {
     let cc = match ne.expression_id {
         CLAP_NOTE_EXPRESSION_TUNING => {
             return Some(EventBody::PerNotePitchBend {
@@ -916,9 +945,12 @@ fn build_transport_info(t: &clap_event_transport, sample_rate: f64) -> Transport
 }
 
 /// MIDI port an inbound CLAP event arrived on, read from the event's
-/// `port_index`. Non-MIDI events (params, transport) report `0`. Note
-/// events use a wildcard `-1` for "all ports"; that and any negative or
-/// out-of-`u8`-range index collapse to port `0`.
+/// `port_index`. Non-MIDI events (params, transport) report `0`. The
+/// wildcard-capable events (notes, note expressions) resolve a `-1`
+/// port in their own fan-out paths ([`push_note_offs`],
+/// [`push_note_expressions`]) - the collapse to `0` here only feeds
+/// concrete-address routing, and the raw MIDI / `SysEx` events carry
+/// an unsigned `port_index` with no wildcard to lose.
 unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
     unsafe {
         let idx: i32 = match type_ {
@@ -1002,6 +1034,60 @@ fn push_note_offs<P: PluginExport>(
     }
 }
 
+/// Deliver a note expression to the voices it addresses. A concrete
+/// address is one event on the routed port; a wildcard axis (`-1`,
+/// spec-legal from `note_id`-addressing hosts) fans out to the
+/// sounding notes it matches, and the port is an axis too - dropping
+/// a wildcard would silence expression for exactly the hosts that
+/// rely on it. Out-of-domain junk on the channel or key axis drops
+/// the event, matching [`push_note_offs`].
+fn push_note_expressions<P: PluginExport>(
+    data: &mut ClapPluginData<P>,
+    ne: &clap_event_note_expression,
+    sample_offset: u32,
+    port: u8,
+) {
+    let channel = NoteAxis::parse(ne.channel, 16);
+    let key = NoteAxis::parse(ne.key, 128);
+    if channel == NoteAxis::Invalid || key == NoteAxis::Invalid {
+        return;
+    }
+    let (first_port, last_port) = if ne.port_index == -1 {
+        (0, data.info.midi_input_ports.max(1) - 1)
+    } else {
+        (port, port)
+    };
+    let midi2 = data.info.midi_input_dialect == MidiDialect::Midi2;
+    // Destructure so the tracker and the event list borrow disjointly.
+    let ClapPluginData {
+        sounding_notes,
+        event_list,
+        ..
+    } = data;
+    let mut push = |p: u8, channel: u8, note: u8| {
+        let Some(decoded) = note_expression_body(ne, channel, note) else {
+            return;
+        };
+        let body = if midi2 {
+            Some(decoded)
+        } else {
+            downconvert_to_midi1(&decoded)
+        };
+        if let Some(body) = body {
+            event_list.push(Event::on_port(sample_offset, p, body));
+        }
+    };
+    for p in first_port..=last_port {
+        if let (NoteAxis::One(channel), NoteAxis::One(note)) = (channel, key) {
+            push(p, channel, note);
+        } else {
+            sounding_notes.for_each_matching(p, channel.filter(), key.filter(), |channel, note| {
+                push(p, channel, note);
+            });
+        }
+    }
+}
+
 /// `sort` controls whether the resulting `event_list` gets a stable
 /// sort by sample offset. `process` needs sorted events (the plugin
 /// iterates them in time order); `params_flush` discards the events
@@ -1053,6 +1139,13 @@ unsafe fn convert_input_events<P: PluginExport>(
             match (*header).type_ {
                 CLAP_EVENT_NOTE_ON => {
                     let note_event = &*header.cast::<clap_event_note>();
+                    // The spec requires concrete addresses on NOTE_ON;
+                    // a wildcard port drops like the wildcard channel /
+                    // key axes (`clap_note_address`) instead of
+                    // masquerading as port 0.
+                    if note_event.port_index < 0 {
+                        continue;
+                    }
                     let Some((channel, note)) = clap_note_address(note_event) else {
                         continue;
                     };
@@ -1192,21 +1285,11 @@ unsafe fn convert_input_events<P: PluginExport>(
                 }
                 CLAP_EVENT_NOTE_EXPRESSION => {
                     // Per-note expression (hosts send these for MPE-style
-                    // input). Decode to the 2.0 per-note event; a plugin
-                    // that didn't opt into 2.0 gets the down-converted
-                    // channel form instead.
+                    // input). Decode to the 2.0 per-note event - fanned
+                    // out across wildcard axes - with the down-converted
+                    // channel form for plugins that didn't opt into 2.0.
                     let ne = &*header.cast::<clap_event_note_expression>();
-                    if let Some(decoded) = note_expression_to_body(ne) {
-                        let body = if data.info.midi_input_dialect == MidiDialect::Midi2 {
-                            Some(decoded)
-                        } else {
-                            downconvert_to_midi1(&decoded)
-                        };
-                        if let Some(body) = body {
-                            data.event_list
-                                .push(Event::on_port(sample_offset, port, body));
-                        }
-                    }
+                    push_note_expressions(data, ne, sample_offset, port);
                 }
                 _ => {
                     // Unsupported event type (system real-time, utility)
@@ -3427,7 +3510,7 @@ mod transport_tests {
 mod note_expression_tests {
     use super::{
         CLAP_NOTE_EXPRESSION_TUNING, CLAP_NOTE_EXPRESSION_VOLUME, clap_event_note_expression,
-        clap_note_expression_of, note_expression_to_body,
+        clap_note_expression_of, note_expression_body,
     };
     use truce_core::events::EventBody;
 
@@ -3457,7 +3540,7 @@ mod note_expression_tests {
         assert!((value - 4.0).abs() < 1e-9);
 
         // Host unity gain decodes to the wire's quarter point.
-        let body = note_expression_to_body(&expression(CLAP_NOTE_EXPRESSION_VOLUME, 1.0))
+        let body = note_expression_body(&expression(CLAP_NOTE_EXPRESSION_VOLUME, 1.0), 0, 60)
             .expect("volume decodes");
         let EventBody::PerNoteCC { cc: 7, value, .. } = body else {
             panic!("expected volume PerNoteCC, got {body:?}");
@@ -3494,7 +3577,7 @@ mod note_expression_tests {
         assert!((semis - 48.0).abs() < 1e-6);
 
         // A host bend beyond the wire's range saturates.
-        let body = note_expression_to_body(&expression(CLAP_NOTE_EXPRESSION_TUNING, 120.0))
+        let body = note_expression_body(&expression(CLAP_NOTE_EXPRESSION_TUNING, 120.0), 0, 60)
             .expect("tuning decodes");
         assert!(matches!(
             body,
@@ -3562,6 +3645,20 @@ mod sounding_notes_tests {
         let mut hits = Vec::new();
         s.drain_matching(0, None, None, |ch, k| hits.push((ch, k)));
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn for_each_leaves_notes_sounding() {
+        // Expression fan-out addresses voices without releasing them:
+        // the same wildcard visit must keep finding the note.
+        let mut s = SoundingNotes::new(1);
+        s.set(0, 2, 60);
+        s.set(0, 2, 64);
+        for _ in 0..2 {
+            let mut hits = Vec::new();
+            s.for_each_matching(0, Some(2), None, |ch, k| hits.push((ch, k)));
+            assert_eq!(hits, [(2, 60), (2, 64)]);
+        }
     }
 }
 
