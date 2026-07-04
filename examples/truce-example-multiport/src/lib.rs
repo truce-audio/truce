@@ -264,17 +264,20 @@ impl PluginLogic for Multiport {
         let atk_step = (1.0 / (0.005 * self.sample_rate)) as f32; // ~5 ms attack
         let p0 = &self.params.port0;
         let p1 = &self.params.port1;
+        // `read_after(n)` advances the smoother by the block and hands
+        // back the settled value - `raw_smoothed_current()` alone never
+        // advances, freezing the knob at its reset-time snapshot.
         let lanes = [
             Lane {
                 wave: p0.wave.value(),
-                cutoff: p0.cutoff.raw_smoothed_current().clamp(0.002, 1.0),
-                volume: db_to_linear(p0.volume.raw_smoothed_current()),
+                cutoff: p0.cutoff.read_after(n).clamp(0.002, 1.0),
+                volume: db_to_linear(p0.volume.read_after(n)),
                 rel_step: (1.0 / (p0.release.raw_target().max(0.01) * self.sample_rate)) as f32,
             },
             Lane {
                 wave: p1.wave.value(),
-                cutoff: p1.cutoff.raw_smoothed_current().clamp(0.002, 1.0),
-                volume: db_to_linear(p1.volume.raw_smoothed_current()),
+                cutoff: p1.cutoff.read_after(n).clamp(0.002, 1.0),
+                volume: db_to_linear(p1.volume.read_after(n)),
                 rel_step: (1.0 / (p1.release.raw_target().max(0.01) * self.sample_rate)) as f32,
             },
         ];
@@ -358,6 +361,57 @@ mod tests {
 
     fn render(input: &[Event]) -> (Multiport, Vec<f32>) {
         render_with(|_| {}, input)
+    }
+
+    #[test]
+    fn knob_turned_mid_session_changes_the_sound() {
+        // Regression: cutoff/volume were read with
+        // `raw_smoothed_current()`, which never advances the smoother -
+        // a knob turned after `reset()` (i.e. any turn ever made in a
+        // running host) moved the target but the audible value stayed
+        // frozen at its reset-time snapshot. Only `render_with`'s
+        // pre-reset tweaks (snapped by `reset`) worked, which is why
+        // no other test caught it.
+        let params = Arc::new(MultiportParams::new());
+        let mut plugin = Multiport::new(Arc::clone(&params));
+        plugin.reset(44100.0, 64);
+
+        let mut block = |events: &EventList| -> f32 {
+            let in_refs: Vec<&[f32]> = Vec::new();
+            let mut l = vec![0.0f32; 64];
+            let mut r = vec![0.0f32; 64];
+            let (a, b) = (&mut l[..], &mut r[..]);
+            let mut out_refs: Vec<&mut [f32]> = vec![a, b];
+            let mut buffer = unsafe { AudioBuffer::from_slices(&in_refs, &mut out_refs, 64) };
+            let transport = TransportInfo::default();
+            let mut out_ev = EventList::default();
+            let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut out_ev);
+            plugin.process(&mut buffer, events, &mut ctx);
+            l.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+        };
+
+        // Hold a note and let the attack settle.
+        let mut on = EventList::default();
+        on.push(note_on_port(0, 60));
+        let silent = EventList::default();
+        block(&on);
+        for _ in 0..10 {
+            block(&silent);
+        }
+        let loud = block(&silent);
+        assert!(loud > 0.01, "held note should be audible");
+
+        // Turn the volume down mid-session and let the smoother settle
+        // (~30 ms of blocks against a 5 ms time constant).
+        params.port0.volume.set_value(-60.0);
+        for _ in 0..30 {
+            block(&silent);
+        }
+        let quiet = block(&silent);
+        assert!(
+            quiet < loud * 0.1,
+            "volume knob had no effect mid-session: {loud} -> {quiet}"
+        );
     }
 
     // Render one block with the given param tweaks applied before

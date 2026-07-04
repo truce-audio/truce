@@ -286,8 +286,10 @@ impl PluginLogic for Synth {
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         let n = buffer.num_samples();
-        let master = self.params.master_cutoff.raw_smoothed_current();
-        let volume = db_to_linear(self.params.volume.raw_smoothed_current());
+        // Advance the smoothers by the block (`raw_smoothed_current()`
+        // alone never advances - the knobs would freeze at reset).
+        let master = self.params.master_cutoff.read_after(n);
+        let volume = db_to_linear(self.params.volume.read_after(n));
         let rel_s = self.params.release.raw_target().max(0.01);
         let atk_step = (1.0 / (0.005 * self.sample_rate)) as f32; // ~5 ms attack
         let rel_step = (1.0 / (rel_s * self.sample_rate)) as f32;
