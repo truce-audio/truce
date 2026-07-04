@@ -69,7 +69,7 @@ mod loader;
 pub mod shell;
 pub mod static_shell;
 
-pub use canary::AbiCanary;
+pub use canary::{ABI_EPOCH, AbiCanary};
 // `ProbePlugin`, `verify_probe`, and `ProbeError` are loader-internal.
 // `ProbePlugin` lives under `__macro_deps` so the `export_plugin!`
 // macro's `truce_vtable_probe` body can name it without leaking the

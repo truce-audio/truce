@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use truce_core::Float;
+use truce_core::cast::discrete_norm;
 use truce_core::editor::{PluginContext, PluginContextReadF32};
 use truce_gui_types::RenderBackend;
 use truce_gui_types::interaction::InteractionState;
@@ -111,7 +112,7 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
         let count = info.range.step_count_usize() + 1;
         (0..count)
             .map(|i| {
-                let norm = truce_core::cast::discrete_norm(i, count);
+                let norm = discrete_norm(i, count);
                 let plain = info.range.denormalize(norm);
                 p_opts
                     .format_value(id, plain)

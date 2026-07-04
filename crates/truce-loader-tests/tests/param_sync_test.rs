@@ -85,14 +85,13 @@ fn plain_param_not_double_denormalized() {
 
     // ParamChange with PLAIN value -27.0 dB (this is what VST3/CLAP wrappers send).
     let mut events = EventList::default();
-    events.push(Event {
-        sample_offset: 0,
-        port: 0,
-        body: EventBody::ParamChange {
+    events.push(Event::new(
+        0,
+        EventBody::ParamChange {
             id: 0,
             value: -27.0,
         },
-    });
+    ));
 
     let transport = TransportInfo::default();
     let mut output_events = EventList::default();

@@ -26,6 +26,7 @@ pub mod presets;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
 use std::mem::transmute;
+use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -85,6 +86,7 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use clap_sys::string_sizes::{CLAP_NAME_SIZE, CLAP_PATH_SIZE};
 use clap_sys::version::CLAP_VERSION;
 
+use truce_core::TransportSlot;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
 use truce_core::cast::{len_u32, size_of_u32};
@@ -94,15 +96,18 @@ use truce_core::editor::{
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::{MidiDialect, PluginCategory, PluginInfo};
+use truce_core::info::{MidiDialect, PluginCategory, PluginInfo, resolve_name_override};
+use truce_core::meters::MeterStore;
 use truce_core::midi::{
     PER_NOTE_VOLUME_MAX_GAIN, decode_short_message, denorm_7bit, downconvert_to_midi1,
     event_to_midi1, per_note_bend_from_semitones, per_note_bend_semitones, pitch_bend_to_bytes,
     route_midi_port,
 };
 use truce_core::plugin::PluginRuntime;
+use truce_core::presets::load_preset_file;
 use truce_core::process::ProcessStatus;
 use truce_core::state;
+use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
     SharedPlugin, run_audio_block_with, run_extern_callback_with, shared_plugin,
 };
@@ -165,7 +170,7 @@ struct ClapPluginData<P: PluginExport> {
     /// Shared meter storage, set once at instance creation. The
     /// editor's `get_meter` closure reads these atomic slots instead
     /// of the plugin instance.
-    meter_store: Arc<truce_core::meters::MeterStore>,
+    meter_store: Arc<MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `init`/`reset`) so
     /// `latency_get` / `tail_get` read the value without touching
@@ -218,7 +223,7 @@ struct ClapPluginData<P: PluginExport> {
     /// Flag: GUI changed params, need rescan on main thread.
     needs_rescan: Arc<AtomicBool>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<TransportSlot>,
     /// Host-reported GUI scale (via `clap_plugin_gui::set_scale`).
     /// Sources of truth, by platform:
     /// - **macOS**: ignored at `gui_get_size` (`AppKit` handles backing
@@ -354,7 +359,7 @@ unsafe impl Sync for DescriptorHolder {}
 /// `clap_name` (baked into `PluginInfo` by `truce::plugin_info!`),
 /// falling back to `PluginInfo::name`.
 fn resolved_name(info: &PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(info.clap_name, info.name)
+    resolve_name_override(info.clap_name, info.name)
 }
 
 impl DescriptorHolder {
@@ -1144,7 +1149,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                 // 2.0 packet can still arrive at a 1.0 plugin.
                 CLAP_EVENT_MIDI2 => {
                     let midi2 = &*header.cast::<clap_event_midi2>();
-                    if let Some(decoded) = truce_core::ump::decode_ump_channel_voice_2(midi2.data) {
+                    if let Some(decoded) = decode_ump_channel_voice_2(midi2.data) {
                         let body = if data.info.midi_input_dialect == MidiDialect::Midi2 {
                             Some(decoded)
                         } else {
@@ -2158,9 +2163,7 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
         };
         let data = data_from_plugin::<P>(plugin);
 
-        let Some(deserialized) =
-            truce_core::presets::load_preset_file(std::path::Path::new(path), data.plugin_id_hash)
-        else {
+        let Some(deserialized) = load_preset_file(Path::new(path), data.plugin_id_hash) else {
             return false;
         };
 
@@ -2470,7 +2473,7 @@ unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
             // drop, NSView teardown, baseview window close) would
             // otherwise become an unhandled Obj-C exception in
             // the host.
-            let editor_ptr: *mut dyn truce_core::editor::Editor = editor.as_mut();
+            let editor_ptr: *mut dyn Editor = editor.as_mut();
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 (*editor_ptr).close();
             }));
@@ -3195,7 +3198,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         pending_state: Arc::new(StateLoadQueue::new(1)),
         needs_rescan: Arc::new(AtomicBool::new(false)),
-        transport_slot: truce_core::TransportSlot::new(),
+        transport_slot: TransportSlot::new(),
         host_scale: 1.0,
         host_scale_set_by_host: false,
         input_slices: Vec::with_capacity(max_in),
@@ -3241,6 +3244,7 @@ macro_rules! export_clap {
         mod _clap_entry {
             use super::*;
             use std::ffi::{CStr, c_char, c_void};
+            use std::path::Path;
             use std::ptr;
             use std::sync::OnceLock;
 

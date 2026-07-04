@@ -73,6 +73,19 @@ pub use truce_gui_types::ios;
 pub use truce_gui_types::{ImageId, ParamSnapshot, RenderBackend, Theme};
 pub use truce_gui_types::{layout, render, snapshot, theme, widgets};
 
+// The editor constructors below are feature/target gated; their
+// imports carry the same gate so a types-only build (neither
+// renderer feature) stays warning-free.
+#[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
+use std::sync::Arc;
+#[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
+use truce_core::editor::Editor;
+use truce_core::screenshot::override_scale;
+#[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
+use truce_gui_types::layout::GridLayout;
+#[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
+use truce_params::Params;
+
 // Re-export plugin-logic traits from `truce-plugin` for the same
 // backward-compat reason.
 pub use truce_plugin::{PluginLogic, PluginLogic64, PluginLogicCore, default_hit_test};
@@ -114,10 +127,7 @@ pub use platform::{EditorScale, PaintPacer, to_physical_px};
 /// it with neither feature and simply not call this function.
 #[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
 #[must_use]
-pub fn default_editor<P: truce_params::Params + 'static>(
-    params: std::sync::Arc<P>,
-    layout: truce_gui_types::layout::GridLayout,
-) -> Box<dyn truce_core::editor::Editor> {
+pub fn default_editor<P: Params + 'static>(params: Arc<P>, layout: GridLayout) -> Box<dyn Editor> {
     let builtin = BuiltinEditor::new_grid(params, layout);
     #[cfg(target_os = "ios")]
     {
@@ -162,18 +172,12 @@ pub trait IntoLayoutEditor {
     /// Wrap this layout in truce's default editor, picking the
     /// renderer from the active `truce-gui` feature. See
     /// [`default_editor`].
-    fn into_editor<P: truce_params::Params + 'static>(
-        self,
-        params: &std::sync::Arc<P>,
-    ) -> Box<dyn truce_core::editor::Editor>;
+    fn into_editor<P: Params + 'static>(self, params: &Arc<P>) -> Box<dyn Editor>;
 }
 
 #[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
-impl IntoLayoutEditor for truce_gui_types::layout::GridLayout {
-    fn into_editor<P: truce_params::Params + 'static>(
-        self,
-        params: &std::sync::Arc<P>,
-    ) -> Box<dyn truce_core::editor::Editor> {
+impl IntoLayoutEditor for GridLayout {
+    fn into_editor<P: Params + 'static>(self, params: &Arc<P>) -> Box<dyn Editor> {
         default_editor(params.clone(), self)
     }
 }
@@ -188,7 +192,7 @@ impl IntoLayoutEditor for truce_gui_types::layout::GridLayout {
 /// query (Retina = 2.0, normal = 1.0).
 #[must_use]
 pub fn backing_scale() -> f64 {
-    if let Some(s) = truce_core::screenshot::override_scale() {
+    if let Some(s) = override_scale() {
         return s;
     }
     platform::main_screen_scale()

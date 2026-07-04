@@ -80,11 +80,7 @@ fn smoother_ramps_gradually() {
 
     // Set gain to 0.0 initially.
     let mut events = EventList::default();
-    events.push(Event {
-        sample_offset: 0,
-        port: 0,
-        body: EventBody::ParamChange { id: 0, value: 0.0 },
-    });
+    events.push(Event::new(0, EventBody::ParamChange { id: 0, value: 0.0 }));
 
     let input = vec![1.0f32; 64];
     let mut output = vec![0.0f32; 64];
@@ -105,11 +101,7 @@ fn smoother_ramps_gradually() {
 
     // Now jump to gain=1.0.
     events.clear();
-    events.push(Event {
-        sample_offset: 0,
-        port: 0,
-        body: EventBody::ParamChange { id: 0, value: 1.0 },
-    });
+    events.push(Event::new(0, EventBody::ParamChange { id: 0, value: 1.0 }));
 
     shell.logic_ref_mut().samples.clear();
 

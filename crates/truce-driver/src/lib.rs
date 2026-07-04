@@ -828,11 +828,7 @@ impl<P: PluginExport> PluginDriver<P> {
             event_list.clear();
             for (off, body) in &script_events {
                 if *off >= cursor && *off < cursor + block_len {
-                    event_list.push(Event {
-                        sample_offset: len_u32(*off - cursor),
-                        port: 0,
-                        body: *body,
-                    });
+                    event_list.push(Event::new(len_u32(*off - cursor), *body));
                 }
             }
             // SysEx is carried separately so its payload lands in the

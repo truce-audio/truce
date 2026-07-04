@@ -43,7 +43,10 @@ jobs:
 
       - name: Install cargo-fuzz
         if: steps.cache-cargo-fuzz.outputs.cache-hit != 'true'
-        run: cargo install --locked cargo-fuzz
+        # Version constrained to match the cache key above - an
+        # unpinned install behind a versioned key would cache a
+        # different major than the key claims.
+        run: cargo install --locked cargo-fuzz --version '^0.13'
 
       # The corpus accretes across runs: restore the latest, save
       # under a fresh key each run (`restore-keys` prefix-matches).

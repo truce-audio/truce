@@ -32,22 +32,30 @@ use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr};
 // Used by `cb_gui_set_size`, which the platform-agnostic `AuCallbacks` FFI
 // struct references on every target, so this import can't be apple-gated.
+use truce_core::TransportSlot;
+use truce_core::buffer::RawBufferScratch;
 use truce_core::editor::fit_logical_size;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::MidiDialect;
+use truce_core::info::{MidiDialect, PluginInfo, resolve_name_override};
+// The AU editor (and its meter reads) exist on macOS / iOS only,
+// matching the `meter_store` field's gate.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use truce_core::meters::MeterStore;
 use truce_core::midi::{
     decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes, route_midi_port,
     upconvert_to_midi2,
 };
+use truce_core::plugin::PluginRuntime;
+use truce_core::presets::{PresetScope, enumerate_scope, load_preset_file};
 use truce_core::state;
 use truce_core::ump::{
     SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_sysex7_packet,
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
-    SharedPlugin, default_io_channels, log_midi_ports_clamped, log_missing_bus_layout,
-    run_audio_block, run_extern_callback_with, run_register, shared_plugin,
+    ParamCStrings, SharedPlugin, default_io_channels, log_midi_ports_clamped,
+    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
@@ -84,7 +92,7 @@ struct AuInstance<P: PluginExport> {
     /// of the plugin instance. Editor wiring is macOS/iOS-only (the
     /// AU GUI section), so the field follows it.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    meter_store: Arc<truce_core::meters::MeterStore>,
+    meter_store: Arc<MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
@@ -134,10 +142,10 @@ struct AuInstance<P: PluginExport> {
     ///
     /// Parameterised by `P::Sample`; widens/narrows host-`f32`
     /// buffers around `plugin.process()` for plugins on `prelude64`.
-    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
+    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<TransportSlot>,
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
@@ -212,9 +220,9 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         sample_rate: 44100.0,
         max_block_size: 8192,
         prepared: false,
-        scratch: truce_core::buffer::RawBufferScratch::default(),
+        scratch: RawBufferScratch::default(),
         editor: None,
-        transport_slot: truce_core::TransportSlot::new(),
+        transport_slot: TransportSlot::new(),
         pending_state: Arc::new(StateLoadQueue::new(1)),
         legacy_key_cstrings: info
             .legacy_au_keys
@@ -751,12 +759,7 @@ fn factory_presets<P: PluginExport>() -> &'static [FactoryPresetEntry] {
             return Vec::new();
         };
         let info = P::info();
-        let mut refs = truce_core::presets::enumerate_scope(
-            &root,
-            truce_core::presets::PresetScope::Factory,
-            info.vendor,
-            info.name,
-        );
+        let mut refs = enumerate_scope(&root, PresetScope::Factory, info.vendor, info.name);
         // The library's `default = true` preset leads the list: hosts
         // treat factory preset 0 as the de-facto initial sound. The
         // stable sort keeps the walk's alphabetical order behind it.
@@ -866,9 +869,7 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
         let Some(entry) = factory_presets::<P>().get(index as usize) else {
             return 0;
         };
-        let Some(deserialized) =
-            truce_core::presets::load_preset_file(&entry.path, inst.plugin_id_hash)
-        else {
+        let Some(deserialized) = load_preset_file(&entry.path, inst.plugin_id_hash) else {
             return 0;
         };
         // Same apply path as cb_state_load: params synchronously on
@@ -1429,7 +1430,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
             // window close, NSView removal) would otherwise cross
             // the FFI line and become an unhandled ObjC exception
             // in the host.
-            let editor_ptr: *mut dyn truce_core::editor::Editor = editor.as_mut();
+            let editor_ptr: *mut dyn Editor = editor.as_mut();
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 (*editor_ptr).close();
             }));
@@ -1480,8 +1481,8 @@ unsafe extern "C" {
 /// function - `g_descriptor->name` only feeds the v2 bridge's
 /// internal scanning responses, so the same value works for both
 /// build flavours.
-fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(info.au_name, info.name)
+fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
+    resolve_name_override(info.au_name, info.name)
 }
 
 pub fn register_au<P: PluginExport>() {
@@ -1523,7 +1524,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let mut param_descs: Vec<AuParamDescriptor> = Vec::with_capacity(param_infos.len());
 
     for pi in &param_infos {
-        let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
+        let cs = ParamCStrings::from_info(pi);
         param_descs.push(AuParamDescriptor {
             id: pi.id,
             name: cs.name.into_raw(),

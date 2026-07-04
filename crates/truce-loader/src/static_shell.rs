@@ -10,8 +10,10 @@ use truce_core::bus::BusLayout;
 use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
+use truce_core::meters::MeterStore;
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_core::state::{ForeignState, MigratedState, StateLoadError};
 use truce_params::Params;
 use truce_params::sample::Sample;
 use truce_plugin::PluginLogicCore;
@@ -28,7 +30,7 @@ use truce_plugin::PluginLogicCore;
 pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
     pub params: Arc<P>,
     logic: L,
-    meters: Arc<truce_core::meters::MeterStore>,
+    meters: Arc<MeterStore>,
     sample_rate: f64,
     _sample: std::marker::PhantomData<fn() -> S>,
 }
@@ -53,7 +55,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
         Self {
             params,
             logic,
-            meters: truce_core::meters::MeterStore::new(),
+            meters: MeterStore::new(),
             sample_rate: 44100.0,
             _sample: std::marker::PhantomData,
         }
@@ -61,7 +63,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
 
     /// Shared meter storage handle - the GUI-thread-safe channel
     /// for meter reads (see `PluginExport::meter_store`).
-    pub fn meter_store(&self) -> Arc<truce_core::meters::MeterStore> {
+    pub fn meter_store(&self) -> Arc<MeterStore> {
         Arc::clone(&self.meters)
     }
 
@@ -141,7 +143,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         self.logic.save_state()
     }
 
-    fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
+    fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
         let result = self.logic.load_state(data);
         // Plugin-side cache invalidation runs in the same `&mut`
         // borrow window so the next `process()` block sees the
@@ -151,9 +153,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         result
     }
 
-    fn migrate_state(
-        foreign: &truce_core::state::ForeignState,
-    ) -> Option<truce_core::state::MigratedState>
+    fn migrate_state(foreign: &ForeignState) -> Option<MigratedState>
     where
         Self: Sized,
     {

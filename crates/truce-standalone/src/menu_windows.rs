@@ -855,9 +855,6 @@ unsafe fn append_channel_item(
 /// row per port. The active device (or "None") is checked. Device rows
 /// fire IDs in `[MENU_CMD_MIDI_INPUT_BASE, ..)`; their names are
 /// recovered with `GetMenuStringW`, like the audio device menus.
-// Why: `i as u16` for the command ID - the loop breaks at `i >= 254`
-// so the cast is bounded well below `u16::MAX`.
-#[allow(clippy::cast_possible_truncation)]
 unsafe fn repopulate_midi_input_menu(
     popup: HMENU,
     port: u8,

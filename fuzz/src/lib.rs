@@ -97,22 +97,30 @@ pub fn ump_decode(data: &[u8]) {
 }
 
 /// Stateful SysEx reassembly from packet sequences a host can
-/// interleave, truncate, or repeat. Each 9-byte chunk of input picks
-/// SysEx-7 vs SysEx-8 and supplies the packet words.
+/// interleave, truncate, or repeat. A selector byte picks SysEx-7 vs
+/// SysEx-8, then the packet's own words follow: 8 bytes (two words)
+/// for a 64-bit SysEx-7 packet, 16 (four) for a 128-bit SysEx-8 one -
+/// mirroring two words into four would halve the 8-bit target's
+/// explorable space.
 pub fn sysex_assembler(data: &[u8]) {
     let mut asm = SysExAssembler::with_capacity(512);
-    for chunk in data.chunks_exact(9) {
+    let mut rest = data;
+    while let Some((&selector, tail)) = rest.split_first() {
         let word = |i: usize| {
-            u32::from_le_bytes(
-                chunk[1 + 4 * i..5 + 4 * i]
-                    .try_into()
-                    .expect("chunks_exact(9)"),
-            )
+            u32::from_le_bytes(tail[4 * i..4 * i + 4].try_into().expect("length checked"))
         };
-        if chunk[0] & 1 == 0 {
+        if selector & 1 == 0 {
+            if tail.len() < 8 {
+                return;
+            }
             let _ = asm.push_sysex7_packet([word(0), word(1)]);
+            rest = &tail[8..];
         } else {
-            let _ = asm.push_sysex8_packet([word(0), word(1), word(1), word(0)]);
+            if tail.len() < 16 {
+                return;
+            }
+            let _ = asm.push_sysex8_packet([word(0), word(1), word(2), word(3)]);
+            rest = &tail[16..];
         }
     }
 }

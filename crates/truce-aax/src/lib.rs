@@ -18,17 +18,21 @@ use std::slice;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use truce_core::TransportSlot;
+use truce_core::buffer::RawBufferScratch;
 use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::PluginCategory;
+use truce_core::info::{PluginCategory, PluginInfo, resolve_name_override};
+use truce_core::meters::MeterStore;
 use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
+use truce_core::plugin::PluginRuntime;
 use truce_core::state;
 use truce_core::wrapper::{
-    SharedPlugin, default_io_channels, first_bus_layout, log_midi_ports_clamped,
+    ParamCStrings, SharedPlugin, default_io_channels, first_bus_layout, log_midi_ports_clamped,
     log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
@@ -211,7 +215,7 @@ struct AaxInstance<P: PluginExport> {
     /// Shared meter storage, set once at instance creation. The
     /// editor's `get_meter` closure reads these atomic slots instead
     /// of the plugin instance.
-    meter_store: Arc<truce_core::meters::MeterStore>,
+    meter_store: Arc<MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `_reset`).
     latency_cache: AtomicU32,
@@ -247,10 +251,10 @@ struct AaxInstance<P: PluginExport> {
     ///
     /// Parameterised by `P::Sample`; widens/narrows host-`f32`
     /// buffers around `plugin.process()` for plugins on `prelude64`.
-    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
+    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<TransportSlot>,
     /// Cached serialized state plus the `state_revision` value it was
     /// captured at. Pro Tools calls `GetChunkSize` + `GetChunk` as a
     /// pair, and for undo-checkpointing may call the pair repeatedly
@@ -306,8 +310,8 @@ static INFO: OnceLock<StaticInfo> = OnceLock::new();
 /// Plugin display-name shown in Pro Tools' plug-in menus. Reads
 /// `truce.toml`'s `aax_name` (baked into `PluginInfo` by
 /// `truce::plugin_info!`), falling back to `PluginInfo::name`.
-fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(info.aax_name, info.name)
+fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
+    resolve_name_override(info.aax_name, info.name)
 }
 
 /// Idempotent registration trigger called from the C ABI entry
@@ -471,7 +475,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             .map_or(u32::MAX, |pi| pi.id);
         let mut params = Vec::with_capacity(param_infos.len());
         for pi in &param_infos {
-            let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
+            let cs = ParamCStrings::from_info(pi);
             // Enum maps to the same shape as Discrete in AAX - both
             // get the linear taper with `SetNumberOfSteps`, which is
             // how AAX represents stepped automatable controls.
@@ -812,9 +816,9 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         sample_rate: 44100.0,
         max_block_size: 8192,
         prepared: false,
-        scratch: truce_core::buffer::RawBufferScratch::default(),
+        scratch: RawBufferScratch::default(),
         editor: None,
-        transport_slot: truce_core::TransportSlot::new(),
+        transport_slot: TransportSlot::new(),
         state_cache: Mutex::new(None),
         // Start at 1 so the first cached entry (revision 0) never
         // matches and we always serialize on the first save_state call.

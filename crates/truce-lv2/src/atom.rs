@@ -405,16 +405,16 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
 // Encode truce EventList into an LV2_Atom_Sequence output port
 // ---------------------------------------------------------------------------
 
-/// Overwrite the port's sequence body with MIDI events from `events`. Sets
-/// the proper header/atom sizes so the host knows how many bytes to read.
+/// Overwrite the port's sequence body with the events destined for
+/// MIDI output port `port`, setting the header/atom sizes so the host
+/// knows how many bytes to read. `port_count` is the plugin's declared
+/// output-port count; an event whose [`Event::port`] exceeds it routes
+/// to port 0. Single-port plugins call with `port = 0`,
+/// `port_count = 1`.
 ///
 /// # Safety
 /// `out` must point to a writable atom sequence buffer with capacity the
 /// host allocated (typically a few KB).
-/// Write the events destined for MIDI output port `port` into `out`.
-/// `port_count` is the plugin's declared output-port count; an event
-/// whose [`truce_core::Event::port`] exceeds it routes to port 0.
-/// Single-port plugins call with `port = 0`, `port_count = 1`.
 pub unsafe fn write_midi_out_sequence(
     out: *mut AtomSequence,
     events: &EventList,

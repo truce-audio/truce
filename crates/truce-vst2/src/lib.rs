@@ -10,16 +10,21 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use truce_core::TransportSlot;
+use truce_core::buffer::RawBufferScratch;
 use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::midi::decode_short_message;
+use truce_core::info::{PluginInfo, resolve_name_override};
+use truce_core::meters::MeterStore;
+use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
+use truce_core::plugin::PluginRuntime;
 use truce_core::state;
 use truce_core::wrapper::{
-    SharedPlugin, default_io_channels, first_bus_layout, log_midi_ports_clamped,
+    ParamCStrings, SharedPlugin, default_io_channels, first_bus_layout, log_midi_ports_clamped,
     log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
 };
 use truce_core::{Float, Sample};
@@ -55,7 +60,7 @@ struct Vst2Instance<P: PluginExport> {
     /// Shared meter storage, set once at instance creation. The
     /// editor's `get_meter` closure reads these atomic slots instead
     /// of the plugin instance.
-    meter_store: Arc<truce_core::meters::MeterStore>,
+    meter_store: Arc<MeterStore>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
@@ -94,7 +99,7 @@ struct Vst2Instance<P: PluginExport> {
     /// `plugin.process()` whenever the host wire precision
     /// (`processReplacing` f32 / `processDoubleReplacing` f64)
     /// differs from the plugin's.
-    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
+    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// `AEffect` pointer, set by the C shim after creation. Used for host callbacks.
     aeffect_ptr: *mut std::ffi::c_void,
@@ -103,7 +108,7 @@ struct Vst2Instance<P: PluginExport> {
     /// Buffered parent window handle when editor open arrives before state load.
     pending_editor_parent: Option<*mut std::ffi::c_void>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<TransportSlot>,
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
@@ -245,12 +250,12 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         // from tripping the contract assert.
         max_block_size: 8192,
         prepared: false,
-        scratch: truce_core::buffer::RawBufferScratch::default(),
+        scratch: RawBufferScratch::default(),
         editor: None,
         aeffect_ptr: std::ptr::null_mut(),
         state_loaded: false,
         pending_editor_parent: None,
-        transport_slot: truce_core::TransportSlot::new(),
+        transport_slot: TransportSlot::new(),
         pending_state: Arc::new(StateLoadQueue::new(1)),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
@@ -534,7 +539,6 @@ fn notify_process_param_changes<P: PluginExport>(inst: &Vst2Instance<P>) {
 /// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
 /// Transport, etc.).
 fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
-    use truce_core::midi::{downconvert_to_midi1, pitch_bend_to_bytes};
     // VST2 is MIDI 1.0 only; down-convert any 2.0 output first so it
     // isn't dropped.
     let body = downconvert_to_midi1(&event.body).unwrap_or(event.body);
@@ -1074,8 +1078,8 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 /// Plugin display-name returned from `effGetEffectName`. Reads
 /// `truce.toml`'s `vst2_name` (baked into `PluginInfo` by
 /// `truce::plugin_info!`), falling back to `PluginInfo::name`.
-fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(info.vst2_name, info.name)
+fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
+    resolve_name_override(info.vst2_name, info.name)
 }
 
 pub fn register_vst2<P: PluginExport>() {
@@ -1126,7 +1130,7 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         bypass_param_id,
         accepts_midi_in: i32::from(info.accepts_midi_in),
         emits_midi: i32::from(info.emits_midi),
-        supports_f64: i32::from(<P as truce_core::plugin::PluginRuntime>::Sample::IS_F64),
+        supports_f64: i32::from(<P as PluginRuntime>::Sample::IS_F64),
     }));
 
     let callbacks = Box::leak(Box::new(Vst2Callbacks {
@@ -1160,7 +1164,7 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
     // the bypass-id scan above).
     let mut param_descs: Vec<Vst2ParamDescriptor> = Vec::with_capacity(infos.len());
     for pi in &infos {
-        let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
+        let cs = ParamCStrings::from_info(pi);
         param_descs.push(Vst2ParamDescriptor {
             id: pi.id,
             name: cs.name.into_raw(),

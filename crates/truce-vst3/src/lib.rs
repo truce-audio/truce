@@ -10,6 +10,8 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use truce_core::TransportSlot;
+use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{
@@ -18,21 +20,25 @@ use truce_core::editor::{
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::PluginCategory;
+use truce_core::info::{PluginCategory, PluginInfo, resolve_name_override};
+use truce_core::meters::MeterStore;
 use truce_core::midi::{
-    decode_short_message, per_note_bend_from_semitones, per_note_bend_semitones,
+    decode_short_message, denorm_7bit, denorm_pitch_bend, downconvert_to_midi1,
+    per_note_bend_from_semitones, per_note_bend_semitones, pitch_bend_to_bytes,
 };
+use truce_core::plugin::PluginRuntime;
 use truce_core::state;
 use truce_core::wrapper::{
-    SharedPlugin, default_io_channels, log_missing_bus_layout, run_audio_block,
+    ParamCStrings, SharedPlugin, default_io_channels, log_missing_bus_layout, run_audio_block,
     run_extern_callback_with, run_register, shared_plugin,
 };
+use truce_params::MidiSource;
 use truce_params::sample::{Float, Sample};
 use truce_params::{ParamInfo, ParamRange, Params};
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper
@@ -60,7 +66,7 @@ struct Vst3Instance<P: PluginExport> {
     /// Shared meter storage, set once at instance creation. The
     /// editor's `get_meter` closure reads these atomic slots instead
     /// of the plugin instance.
-    meter_store: Arc<truce_core::meters::MeterStore>,
+    meter_store: Arc<MeterStore>,
     event_list: EventList,
     sysex_inputs_pending: bool,
     output_events: EventList,
@@ -98,7 +104,7 @@ struct Vst3Instance<P: PluginExport> {
     /// the widening-scratch path (host wire is `f32`, plugin DSP is
     /// `f64`) transparently. Same-precision plugins (`prelude32`)
     /// stay zero-copy through the host pointers.
-    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
+    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
     /// Cached `(id, range)` pairs sorted by id. Built once in
     /// `cb_create` from `params().param_infos()`. Hosts call
     /// `cb_param_normalize` / `cb_param_denormalize` extremely often
@@ -109,7 +115,7 @@ struct Vst3Instance<P: PluginExport> {
     param_ranges: Vec<(u32, ParamRange)>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<TransportSlot>,
     /// Content scale reported by the host via
     /// `IPlugViewContentScaleSupport::setContentScaleFactor`. Defaults
     /// to 1.0 when the host never calls it (macOS Cocoa hosts, VST3
@@ -135,7 +141,7 @@ struct Vst3Instance<P: PluginExport> {
     /// doesn't accept MIDI input. Atomic because the shim writes the
     /// last automation point from the audio thread while the host
     /// reads `getParamNormalized` on the main thread.
-    midi_proxy_values: Vec<std::sync::atomic::AtomicU64>,
+    midi_proxy_values: Vec<AtomicU64>,
     /// Correlates the host's per-voice `noteId` counters (arbitrary,
     /// assigned at note-on) to the `(channel, note)` pair truce's
     /// per-note events address. Written and read only on the audio
@@ -252,10 +258,10 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         // process-before-activate path from tripping the contract assert.
         max_block_size: 8192,
         prepared: false,
-        scratch: truce_core::buffer::RawBufferScratch::default(),
+        scratch: RawBufferScratch::default(),
         param_ranges,
         editor: None,
-        transport_slot: truce_core::TransportSlot::new(),
+        transport_slot: TransportSlot::new(),
         host_scale: 1.0,
         pending_state: Arc::new(StateLoadQueue::new(1)),
         latency_cache,
@@ -265,7 +271,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 // Bounded by MIDI_PROXY_COUNT.
                 #[allow(clippy::cast_possible_truncation)]
                 let controller = (i as u32) % MIDI_PROXY_PER_CHANNEL;
-                std::sync::atomic::AtomicU64::new(midi_proxy_default(controller).to_bits())
+                AtomicU64::new(midi_proxy_default(controller).to_bits())
             })
             .collect(),
         note_id_map: NoteIdMap::new(),
@@ -688,7 +694,7 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
         if let Some(rel) = id.checked_sub(MIDI_PROXY_ID_BASE)
             && let Some(slot) = inst.midi_proxy_values.get(rel as usize)
         {
-            return f64::from_bits(slot.load(std::sync::atomic::Ordering::Relaxed));
+            return f64::from_bits(slot.load(Ordering::Relaxed));
         }
         inst.params_arc.get_plain(id).unwrap_or(0.0)
     }
@@ -704,10 +710,7 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
         if let Some(rel) = id.checked_sub(MIDI_PROXY_ID_BASE)
             && let Some(slot) = inst.midi_proxy_values.get(rel as usize)
         {
-            slot.store(
-                value.clamp(0.0, 1.0).to_bits(),
-                std::sync::atomic::Ordering::Relaxed,
-            );
+            slot.store(value.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
             return;
         }
         inst.params_arc.set_plain(id, value);
@@ -903,7 +906,6 @@ unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) ->
 /// rather than emitted as a zeroed packet (which earlier hosts
 /// interpreted as a `note 0` Note-Off).
 fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
-    use truce_core::midi::{downconvert_to_midi1, pitch_bend_to_bytes};
     // MIDI 2.0 channel-voice output has no UMP transport on VST3, so
     // down-convert to 1.0. Bodies that map to a predefined expression
     // type ride note expression via `note_expression_of` - converting
@@ -979,9 +981,6 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
 // value; the MIDI encoders take `f32`.
 #[allow(clippy::cast_possible_truncation)]
 fn midi_event_from_param(info: &ParamInfo, plain: f64) -> Option<EventBody> {
-    use truce_core::midi::{denorm_7bit, denorm_pitch_bend};
-    use truce_params::MidiSource;
-
     let source = info.midi_map?;
     let channel = info.midi_channel.unwrap_or(0);
     let norm = info.range.normalize(plain) as f32; // 0.0..=1.0
@@ -1084,7 +1083,6 @@ fn midi_proxy_default(controller: u32) -> f64 {
 /// host's `0..=1` wheel/controller position (the shim's denormalize is
 /// identity for proxy ids, so the plain value passes through).
 fn midi_proxy_event(channel: u8, controller: u32, normalized: f32) -> EventBody {
-    use truce_core::midi::{denorm_7bit, denorm_pitch_bend};
     match controller {
         MIDI_PROXY_PITCH_BEND => EventBody::PitchBend {
             group: 0,
@@ -1580,7 +1578,6 @@ unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport>(
     controller: i16,
     out_param_id: *mut u32,
 ) -> i32 {
-    use truce_params::MidiSource;
     // VST3 `ControllerNumbers`: 0..=127 are CCs; the extended values
     // mirror the output path's encoding (`ivstmidicontrollers.h`).
     let source = match controller {
@@ -1766,8 +1763,8 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 /// Plugin display-name surfaced as `PClassInfo::name`. Reads
 /// `truce.toml`'s `vst3_name` (baked into `PluginInfo` by
 /// `truce::plugin_info!`), falling back to `PluginInfo::name`.
-fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(info.vst3_name, info.name)
+fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
+    resolve_name_override(info.vst3_name, info.name)
 }
 
 pub fn register_vst3<P: PluginExport>() {
@@ -1802,7 +1799,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
 
     let mut param_descs: Vec<Vst3ParamDescriptor> = Vec::with_capacity(param_infos.len());
     for pi in &param_infos {
-        let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
+        let cs = ParamCStrings::from_info(pi);
 
         let mut flags: i32 = 0;
         if pi.flags.contains(truce_params::ParamFlags::AUTOMATABLE) {
@@ -1937,7 +1934,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         num_outputs,
         midi_output_ports,
         midi_input_ports,
-        supports_f64: i32::from(<P as truce_core::plugin::PluginRuntime>::Sample::IS_F64),
+        supports_f64: i32::from(<P as PluginRuntime>::Sample::IS_F64),
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {
