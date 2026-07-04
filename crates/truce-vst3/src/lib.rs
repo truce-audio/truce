@@ -143,24 +143,44 @@ struct Vst3Instance<P: PluginExport> {
     /// reads `getParamNormalized` on the main thread.
     midi_proxy_values: Vec<AtomicU64>,
     /// Correlates the host's per-voice `noteId` counters (arbitrary,
-    /// assigned at note-on) to the `(channel, note)` pair truce's
-    /// per-note events address. Written and read only on the audio
-    /// thread inside `cb_process`.
+    /// assigned at note-on, scoped per event bus) to the
+    /// `(channel, note)` pair truce's per-note events address. Written
+    /// and read on the audio thread inside `cb_process`; cleared by
+    /// `cb_reset` while audio is stopped.
     note_id_map: NoteIdMap,
 }
 
-/// Fixed-capacity `noteId -> (channel, note)` correlation for incoming
-/// VST3 note expression. A `noteId` is an arbitrary per-voice counter
-/// the host assigns on note-on, so expression events can't be decoded
-/// without remembering which note each id belongs to. Inline array +
-/// linear scan keeps the audio thread alloc-free; 128 slots covers
-/// every simultaneously-sounding voice a host realistically drives.
+/// Fixed-capacity `(port, noteId) -> (channel, note)` correlation for
+/// incoming VST3 note expression. A `noteId` is an arbitrary per-voice
+/// counter the host assigns on note-on - and scopes per event bus, so
+/// two buses can carry the same id for different voices - meaning
+/// expression events can't be decoded without remembering which note
+/// each id addresses on which bus. Inline array + linear scan keeps
+/// the audio thread alloc-free; 128 slots covers every
+/// simultaneously-sounding voice a host realistically drives.
 struct NoteIdMap {
-    /// `(note_id, channel, note)`; `note_id < 0` marks a free slot
-    /// (hosts only assign non-negative ids, `-1` means unassigned).
-    slots: [(i32, u8, u8); Self::CAPACITY],
+    slots: [NoteIdSlot; Self::CAPACITY],
     /// Round-robin overwrite position for when every slot is live.
     cursor: usize,
+}
+
+/// One tracked voice. `note_id < 0` marks a free slot (hosts only
+/// assign non-negative ids, `-1` means unassigned).
+#[derive(Clone, Copy)]
+struct NoteIdSlot {
+    note_id: i32,
+    port: u8,
+    channel: u8,
+    note: u8,
+}
+
+impl NoteIdSlot {
+    const FREE: Self = Self {
+        note_id: -1,
+        port: 0,
+        channel: 0,
+        note: 0,
+    };
 }
 
 impl NoteIdMap {
@@ -168,48 +188,52 @@ impl NoteIdMap {
 
     fn new() -> Self {
         Self {
-            slots: [(-1, 0, 0); Self::CAPACITY],
+            slots: [NoteIdSlot::FREE; Self::CAPACITY],
             cursor: 0,
         }
     }
 
-    /// Track a sounding note. Re-registering a live id updates it in
-    /// place; when the map is full the oldest slot is overwritten so a
-    /// missed note-off can never wedge the map.
-    fn insert(&mut self, note_id: i32, channel: u8, note: u8) {
+    /// Track a sounding note. Re-registering a live `(port, id)` pair
+    /// updates it in place; when the map is full the oldest slot is
+    /// overwritten so a leaked entry can never wedge the map. Entries
+    /// deliberately outlive their note-off - hosts keep sending
+    /// expression through the release phase - so slots are reclaimed
+    /// by overwrite or [`Self::clear`], never by removal.
+    fn insert(&mut self, port: u8, note_id: i32, channel: u8, note: u8) {
         if note_id < 0 {
             return;
         }
         let slot = self
             .slots
             .iter()
-            .position(|(id, _, _)| *id == note_id)
-            .or_else(|| self.slots.iter().position(|(id, _, _)| *id < 0))
+            .position(|s| s.note_id == note_id && s.port == port)
+            .or_else(|| self.slots.iter().position(|s| s.note_id < 0))
             .unwrap_or_else(|| {
                 let c = self.cursor;
                 self.cursor = (c + 1) % Self::CAPACITY;
                 c
             });
-        self.slots[slot] = (note_id, channel, note);
+        self.slots[slot] = NoteIdSlot {
+            note_id,
+            port,
+            channel,
+            note,
+        };
     }
 
-    fn remove(&mut self, note_id: i32) {
-        if note_id < 0 {
-            return;
-        }
-        if let Some(slot) = self.slots.iter().position(|(id, _, _)| *id == note_id) {
-            self.slots[slot] = (-1, 0, 0);
-        }
-    }
-
-    fn lookup(&self, note_id: i32) -> Option<(u8, u8)> {
+    fn lookup(&self, port: u8, note_id: i32) -> Option<(u8, u8)> {
         if note_id < 0 {
             return None;
         }
         self.slots
             .iter()
-            .find(|(id, _, _)| *id == note_id)
-            .map(|&(_, channel, note)| (channel, note))
+            .find(|s| s.note_id == note_id && s.port == port)
+            .map(|s| (s.channel, s.note))
+    }
+
+    fn clear(&mut self) {
+        self.slots = [NoteIdSlot::FREE; Self::CAPACITY];
+        self.cursor = 0;
     }
 }
 
@@ -316,6 +340,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
                 .store(plugin.latency(), Ordering::Relaxed);
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
         }
+        // Voices don't survive a reset; a stale correlation could
+        // route new expression to a dead (channel, note).
+        inst.note_id_map.clear();
         inst.prepared = true;
     }
 }
@@ -457,9 +484,10 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                     // the host's full-precision `0..=1` value, and
                     // `note_id` is the host's per-voice counter -
                     // resolve it through the map built from note-ons
-                    // below. An id the map doesn't know (note already
-                    // released, or a host bug) is unattributable;
-                    // drop the event rather than guess a pitch.
+                    // below. An id the map doesn't know (never
+                    // note-on'd, overwritten, or a host bug) is
+                    // unattributable; drop the event rather than
+                    // guess a pitch.
                     let type_id = ev.data1;
                     // Tuning is semitone-denominated: VST3's ±120 st
                     // domain re-scales onto the wire's ±48 st
@@ -470,7 +498,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                         unit_to_u32(ev.ne_value)
                     };
                     inst.note_id_map
-                        .lookup(ev.note_id)
+                        .lookup(ev.port, ev.note_id)
                         .and_then(|(channel, note)| {
                             let make_pn_cc = |cc| EventBody::PerNoteCC {
                                 group: 0,
@@ -496,17 +524,15 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                             }
                         })
                 } else {
-                    // Correlate the host's noteId with the note it
-                    // addresses so later note-expression events can be
-                    // resolved. A note-on with velocity 0 releases in
-                    // MIDI terms, so treat it as a removal too.
-                    match ev.status & 0xF0 {
-                        0x90 if ev.data2 > 0 => {
-                            inst.note_id_map
-                                .insert(ev.note_id, ev.status & 0x0F, ev.data1);
-                        }
-                        0x80 | 0x90 => inst.note_id_map.remove(ev.note_id),
-                        _ => {}
+                    // Correlate the host's per-bus noteId with the
+                    // note it addresses so later note-expression
+                    // events can be resolved. The entry survives the
+                    // note-off: hosts keep sending expression through
+                    // the release phase, and stale slots are reclaimed
+                    // by round-robin overwrite.
+                    if ev.status & 0xF0 == 0x90 && ev.data2 > 0 {
+                        inst.note_id_map
+                            .insert(ev.port, ev.note_id, ev.status & 0x0F, ev.data1);
                     }
                     decode_short_message(ev.status, ev.data1, ev.data2)
                 };
@@ -2280,17 +2306,24 @@ mod tests {
     }
 
     #[test]
-    fn note_id_map_resolves_and_releases() {
+    fn note_id_map_scopes_ids_per_port() {
         let mut map = NoteIdMap::new();
-        // Host counters are arbitrary - nothing like the pitch.
-        map.insert(90210, 3, 64);
-        assert_eq!(map.lookup(90210), Some((3, 64)));
-        assert_eq!(map.lookup(64), None); // pitch is not a key
-        map.remove(90210);
-        assert_eq!(map.lookup(90210), None);
+        // Host counters are arbitrary - nothing like the pitch - and
+        // scoped per event bus: the same id on two buses is two
+        // distinct voices.
+        map.insert(0, 90210, 3, 64);
+        map.insert(1, 90210, 5, 72);
+        assert_eq!(map.lookup(0, 90210), Some((3, 64)));
+        assert_eq!(map.lookup(1, 90210), Some((5, 72)));
+        assert_eq!(map.lookup(2, 90210), None);
+        assert_eq!(map.lookup(0, 64), None); // pitch is not a key
         // Unassigned ids never enter the map.
-        map.insert(-1, 0, 60);
-        assert_eq!(map.lookup(-1), None);
+        map.insert(0, -1, 0, 60);
+        assert_eq!(map.lookup(0, -1), None);
+        // A reset drops every correlation.
+        map.clear();
+        assert_eq!(map.lookup(0, 90210), None);
+        assert_eq!(map.lookup(1, 90210), None);
     }
 
     #[test]
@@ -2299,19 +2332,20 @@ mod tests {
         for i in 0..NoteIdMap::CAPACITY {
             // Bounded by CAPACITY = 128, fits in both domains.
             #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-            map.insert(1000 + i as i32, 0, i as u8);
+            map.insert(0, 1000 + i as i32, 0, i as u8);
         }
         // Full map: the next insert takes the round-robin slot rather
         // than being dropped, and the newest entry resolves.
-        map.insert(5000, 1, 72);
-        assert_eq!(map.lookup(5000), Some((1, 72)));
-        // A missed note-off can't wedge the map forever: eventually the
-        // stale id is overwritten.
+        map.insert(0, 5000, 1, 72);
+        assert_eq!(map.lookup(0, 5000), Some((1, 72)));
+        // Entries outlive their note-off by design, so a full map of
+        // released voices still can't wedge it: stale ids fall to the
+        // round-robin overwrite.
         for i in 0..NoteIdMap::CAPACITY {
             #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-            map.insert(6000 + i as i32, 2, i as u8);
+            map.insert(0, 6000 + i as i32, 2, i as u8);
         }
-        assert_eq!(map.lookup(1000), None);
+        assert_eq!(map.lookup(0, 1000), None);
     }
 
     #[test]
