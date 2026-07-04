@@ -555,10 +555,11 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // input thread pushes, the audio thread drains, neither blocks.
     // On overflow the producer drops the oldest event (see midi.rs).
     let pending: Arc<ArrayQueue<MidiEvent>> = Arc::new(ArrayQueue::new(256));
+    let initial_max_frames = config.buffer_size_max_frames(&default_config);
     let plugin = Arc::new(Mutex::new({
         let mut p = P::create();
         p.init();
-        p.reset(sample_rate, config.buffer_size_max_frames(&default_config));
+        p.reset(sample_rate, initial_max_frames);
         p.params().set_sample_rate(sample_rate);
         // Apply `--state <path>` BEFORE snapping smoothers so the
         // first audio block sees the restored values, not defaults
@@ -688,6 +689,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         current_name: Arc::clone(&output_current_name),
         input_channel_route: Arc::clone(&input_controller.channel_route),
         output_channel_route: Arc::clone(&output_channel_route),
+        promised_max_frames: Arc::new(AtomicUsize::new(initial_max_frames)),
         #[cfg(feature = "playback")]
         playback: playback.clone(),
         #[cfg(feature = "playback")]
@@ -872,6 +874,10 @@ struct OutputResources<P: PluginExport> {
     /// Output channel routing (encoded [`ChannelRoute`]). Shared with
     /// `OutputController` (menu writes it).
     output_channel_route: Arc<AtomicUsize>,
+    /// The `max_frames` the plugin was last `reset()` with. A device
+    /// switch onto a larger buffer bound must renew the promise
+    /// before the new stream's first callback.
+    promised_max_frames: Arc<AtomicUsize>,
     /// Optional `.wav` playback source (gated on the `playback`
     /// feature). When present, summed into the input bus alongside
     /// the mic ring - see the matrix in `cli.rs::HELP`.
@@ -1021,11 +1027,21 @@ fn open_output_stream<P: PluginExport>(
     let supported = device
         .default_output_config()
         .map_err(|e| format!("could not query the output config for the scratch bound: {e}"))?;
-    scratch.ensure_capacity(
-        channels,
-        channels,
-        config.buffer_size_max_frames(&supported),
-    );
+    let frame_bound = config.buffer_size_max_frames(&supported);
+    // The plugin sized its DSP for the bound it was last `reset()`
+    // with; a device whose maximum exceeds it could deliver blocks
+    // past that promise. Renew it before the stream opens (no
+    // callback is running - the old stream is already dropped).
+    if frame_bound > res.promised_max_frames.load(Ordering::Relaxed) {
+        res.promised_max_frames
+            .store(frame_bound, Ordering::Relaxed);
+        let mut p = plugin_a
+            .lock()
+            .expect("plugin mutex poisoned at audio setup");
+        p.reset(sample_rate, frame_bound);
+        p.params().snap_smoothers();
+    }
+    scratch.ensure_capacity(channels, channels, frame_bound);
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device

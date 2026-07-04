@@ -52,6 +52,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 - AU shim callback ABI is append-only again, with a self-validating handshake: the fixed-offset version word carries a magic tag (a pre-2.0 binary's leading function pointer can't masquerade as a version), the registration symbol is versioned (`truce_au_register_v2`) so a mismatched staticlib/shim link fails at build time, and the AU v3 appex checks the version word at instantiation and refuses a pre-2.0 framework instead of reading shifted callback slots.
 - `cargo truce run` builds the standalone `--no-default-features`, keeping playback; a new `--features` flag re-adds extras.
 - The standalone pre-grows the f64 widening scratch before the stream starts, bounded by the device's reported maximum buffer size (8192-frame fallback when unreported).
+- A standalone device switch onto a larger buffer bound re-issues `reset`, so the plugin never receives blocks past the max it sized its DSP for.
 - VST3 rejects a processing setup or block whose sample size was never negotiated.
 - `cargo truce validate` scrubs cargo-injected dynamic-linker vars (`DYLD_*`, `LD_LIBRARY_PATH`, `LD_PRELOAD`) before spawning any bundle-loading validator - pluginval, clap-validator, auval, and the AAX runner.
 - CLAP: `CLAP_EVENT_NOTE_CHOKE` delivers a velocity-0 `NoteOff` instead of being dropped. (#174)
