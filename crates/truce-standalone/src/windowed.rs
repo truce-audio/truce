@@ -531,9 +531,15 @@ where
             // renders out of bounds.
             let ((min_w, min_h), (max_w, max_h)) = self.editor_min_max;
             let os_size = {
+                // Guard `clamp`'s min <= max precondition: an editor
+                // whose reported max is below its min (inconsistent
+                // bounds) would otherwise panic the host. Floor the max
+                // at the min so a bad editor pins to its min size
+                // instead of crashing.
+                let (min_w, min_h) = (min_w.max(1), min_h.max(1));
                 let clamped = (
-                    os_size.0.clamp(min_w.max(1), max_w),
-                    os_size.1.clamp(min_h.max(1), max_h),
+                    os_size.0.clamp(min_w, max_w.max(min_w)),
+                    os_size.1.clamp(min_h, max_h.max(min_h)),
                 );
                 if clamped != os_size {
                     resize_outer_window(window, clamped.0, clamped.1);

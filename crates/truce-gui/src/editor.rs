@@ -467,8 +467,13 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     #[must_use]
     pub fn min_size(&self) -> (u32, u32) {
         match &self.layout {
-            Layout::Grid(gl) => gl.min_snapped_size(),
-            Layout::Rows(_) => self.size(),
+            // A non-resizable grid has exactly one size. The snapped
+            // probes only span a range for resizable grids (which set
+            // explicit min/max cells); probing a fixed grid reflows it
+            // and can report min > max, so pin both to the natural size
+            // like a `Rows` layout.
+            Layout::Grid(gl) if gl.resizable => gl.min_snapped_size(),
+            Layout::Grid(_) | Layout::Rows(_) => self.size(),
         }
     }
 
@@ -476,8 +481,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     #[must_use]
     pub fn max_size(&self) -> (u32, u32) {
         match &self.layout {
-            Layout::Grid(gl) => gl.max_snapped_size(),
-            Layout::Rows(_) => self.size(),
+            Layout::Grid(gl) if gl.resizable => gl.max_snapped_size(),
+            Layout::Grid(_) | Layout::Rows(_) => self.size(),
         }
     }
 
