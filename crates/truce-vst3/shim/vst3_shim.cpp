@@ -242,7 +242,8 @@ struct Vst3Callbacks {
                                        uint32_t* /*type_id*/,
                                        int32_t* /*note_id*/,
                                        uint32_t* /*sample_offset*/,
-                                       double* /*value*/);
+                                       double* /*value*/,
+                                       uint8_t* /*port*/);
     // GUI
     int32_t (*gui_has_editor)(void*);
     void (*gui_get_size)(void*, uint32_t*, uint32_t*);
@@ -1108,10 +1109,16 @@ public:
                     int32 noteId = -1;
                     uint32_t sampleOffset = 0;
                     double value = 0.0;
+                    uint8_t port = 0;
                     g_cb->get_output_note_expression(ctx, i, &typeId, &noteId,
-                                                     &sampleOffset, &value);
+                                                     &sampleOffset, &value, &port);
                     Vst3OutNoteExprEvent ev = {};
                     ev.type = 4; // kNoteExpressionValueEvent (SDK ivstevents.h)
+                    /* Same bus as the correlated note-on (same clamp as
+                     * the channel-voice drain): hosts scope noteIds per
+                     * bus, so bus-0 expressions on a bus-1 note never
+                     * correlate. */
+                    ev.busIndex = (port < g_desc->midi_output_ports) ? port : 0;
                     ev.sampleOffset = sampleOffset;
                     ev.noteExpression.typeId = typeId;
                     ev.noteExpression.noteId = noteId;

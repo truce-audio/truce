@@ -202,7 +202,10 @@ pub struct Vst3Callbacks {
     pub get_output_note_expression_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     /// Fill the index-th note-expression event: `type_id` is the VST3
     /// `NoteExpressionTypeID`, `note_id` correlates to the emitted
-    /// `NoteOn`, `value` is normalized `0..=1`.
+    /// `NoteOn`, `value` is normalized `0..=1`, `port` is the event
+    /// output bus the correlated note rode - hosts scope `noteId`s per
+    /// bus, so an expression on a different bus than its note would
+    /// never correlate.
     pub get_output_note_expression: unsafe extern "C" fn(
         ctx: *mut c_void,
         index: u32,
@@ -210,6 +213,7 @@ pub struct Vst3Callbacks {
         out_note_id: *mut i32,
         out_sample_offset: *mut u32,
         out_value: *mut f64,
+        out_port: *mut u8,
     ),
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,

@@ -1331,6 +1331,7 @@ unsafe extern "C" fn cb_get_output_note_expression<P: PluginExport>(
     out_note_id: *mut i32,
     out_sample_offset: *mut u32,
     out_value: *mut f64,
+    out_port: *mut u8,
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
@@ -1345,6 +1346,9 @@ unsafe extern "C" fn cb_get_output_note_expression<P: PluginExport>(
             *out_note_id = note_id;
             *out_sample_offset = event.sample_offset;
             *out_value = value;
+            // The correlated note-on rode this bus; the shim clamps
+            // like the note path so both land on the same one.
+            *out_port = event.port;
         }
     }
 }
