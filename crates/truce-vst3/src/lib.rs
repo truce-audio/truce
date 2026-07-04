@@ -549,11 +549,14 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 // and no `Params` write - a proxy is not a plugin
                 // parameter. The shim's denormalize is identity for
                 // proxy ids, so `pc.value` is the host's raw `0..=1`.
-                if let Some((channel, controller)) = midi_proxy_decode(pc.id) {
+                // The id carries the event bus it was mapped for, so
+                // multi-port plugins keep controllers per port.
+                if let Some((port, channel, controller)) = midi_proxy_decode(pc.id) {
                     #[allow(clippy::cast_possible_truncation)]
                     let normalized = pc.value.clamp(0.0, 1.0) as f32;
-                    inst.event_list.push(Event::new(
+                    inst.event_list.push(Event::on_port(
                         sample_offset,
+                        port,
                         midi_proxy_event(channel, controller, normalized),
                     ));
                     continue;
@@ -1032,24 +1035,37 @@ const MIDI_PROXY_ID_BASE: u32 = 1 << 25;
 /// deliberately not proxied - `kIsProgramChange` parameters interact
 /// with unit/program-list metadata, so it stays explicit-binding-only.
 const MIDI_PROXY_PER_CHANNEL: u32 = 130;
-const MIDI_PROXY_COUNT: u32 = 16 * MIDI_PROXY_PER_CHANNEL;
+/// One event-input bus's worth of proxies (16 channels). A plugin
+/// gets one bank per declared MIDI input port, so controllers keep
+/// their bus attribution - the host queries `IMidiMapping` per bus
+/// and a shared id would merge every bus's values into one parameter
+/// queue before truce ever saw them.
+const MIDI_PROXY_BANK: u32 = 16 * MIDI_PROXY_PER_CHANNEL;
 const MIDI_PROXY_PRESSURE: u32 = 128;
 const MIDI_PROXY_PITCH_BEND: u32 = 129;
 
-fn midi_proxy_id(channel: u8, controller: u32) -> u32 {
-    MIDI_PROXY_ID_BASE + u32::from(channel.min(15)) * MIDI_PROXY_PER_CHANNEL + controller
+fn midi_proxy_id(port: u8, channel: u8, controller: u32) -> u32 {
+    MIDI_PROXY_ID_BASE
+        + u32::from(port) * MIDI_PROXY_BANK
+        + u32::from(channel.min(15)) * MIDI_PROXY_PER_CHANNEL
+        + controller
 }
 
-/// `(channel, controller)` for a proxy id, `None` for real param ids.
-fn midi_proxy_decode(id: u32) -> Option<(u8, u32)> {
+/// `(port, channel, controller)` for a proxy id, `None` for real
+/// param ids. Accepts the full 256-bank shape; ids past the plugin's
+/// declared port count can't occur in practice because registration
+/// and the `IMidiMapping` resolver only hand out ids for real buses.
+fn midi_proxy_decode(id: u32) -> Option<(u8, u8, u32)> {
     let rel = id.checked_sub(MIDI_PROXY_ID_BASE)?;
-    if rel >= MIDI_PROXY_COUNT {
+    if rel >= 256 * MIDI_PROXY_BANK {
         return None;
     }
-    // rel / 130 is bounded to 0..16 by the check above.
+    // Bank / channel indices are bounded to 0..256 / 0..16 by the
+    // check above and the modulo.
     #[allow(clippy::cast_possible_truncation)]
     Some((
-        (rel / MIDI_PROXY_PER_CHANNEL) as u8,
+        (rel / MIDI_PROXY_BANK) as u8,
+        (rel % MIDI_PROXY_BANK / MIDI_PROXY_PER_CHANNEL) as u8,
         rel % MIDI_PROXY_PER_CHANNEL,
     ))
 }
@@ -1093,7 +1109,7 @@ fn midi_proxy_event(channel: u8, controller: u32, normalized: f32) -> EventBody 
 /// input, zero otherwise (no surface change for non-MIDI plugins).
 fn midi_proxy_len<P: PluginExport>() -> usize {
     if P::info().accepts_midi_in {
-        MIDI_PROXY_COUNT as usize
+        MIDI_PROXY_BANK as usize * usize::from(P::info().midi_input_ports)
     } else {
         0
     }
@@ -1553,7 +1569,7 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport>(
     _ctx: *mut std::ffi::c_void,
-    _bus_index: i32,
+    bus_index: i32,
     channel: i16,
     controller: i16,
     out_param_id: *mut u32,
@@ -1570,20 +1586,26 @@ unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport>(
     };
     let channel = u8::try_from(channel).unwrap_or(0);
     // Returns a hit-flag (1/0); the shim maps it to kResultOk /
-    // kResultFalse for the VST3 boundary. Explicit bindings win;
-    // everything unbound falls through to the hidden proxy for the
-    // `(channel, controller)` so event-consuming plugins still hear
-    // the MIDI (program change excepted - not proxied).
+    // kResultFalse for the VST3 boundary. Explicit bindings win on
+    // every bus - a bound parameter is one value, so per-port
+    // separation doesn't apply to it. Everything unbound falls
+    // through to the hidden proxy bank for the queried bus, keeping
+    // controllers attributed per port (program change excepted -
+    // not proxied).
     if let Some(id) = truce_params::map_source_to_param(&P::param_infos_static(), channel, source) {
         unsafe { out_param_id.write(id) };
         return 1;
     }
+    let Ok(port) = u8::try_from(bus_index) else {
+        return 0;
+    };
     if P::info().accepts_midi_in
+        && port < P::info().midi_input_ports
         && channel < 16
         && let Ok(controller) = u32::try_from(controller)
         && controller < MIDI_PROXY_PER_CHANNEL
     {
-        unsafe { out_param_id.write(midi_proxy_id(channel, controller)) };
+        unsafe { out_param_id.write(midi_proxy_id(port, channel, controller)) };
         return 1;
     }
     0
@@ -1800,40 +1822,50 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // Hidden MIDI input proxies (see the MIDI-proxy block above):
     // appended *after* the real params so the shim's index-based
     // structures (unit table, ParameterInfo enumeration) keep their
-    // positions. Non-automatable (flags 0), identity 0..=1 range,
-    // grouped under a "MIDI" unit. The CStrings intentionally leak -
-    // registration runs once per process, matching the real params'
-    // `into_raw` pattern.
+    // positions. One bank per declared MIDI input port so multi-port
+    // plugins keep controllers attributed per bus. Non-automatable
+    // (flags 0), identity 0..=1 range, grouped under a "MIDI" unit.
+    // The CStrings intentionally leak - registration runs once per
+    // process, matching the real params' `into_raw` pattern.
     if info.accepts_midi_in {
         let empty_units = || CString::default().into_raw();
-        for channel in 0u8..16 {
-            for controller in 0..MIDI_PROXY_PER_CHANNEL {
-                let (name, short) = match controller {
-                    MIDI_PROXY_PITCH_BEND => (
-                        format!("MIDI Ch {} Pitch Bend", channel + 1),
-                        format!("M{}PB", channel + 1),
-                    ),
-                    MIDI_PROXY_PRESSURE => (
-                        format!("MIDI Ch {} Pressure", channel + 1),
-                        format!("M{}Pr", channel + 1),
-                    ),
-                    cc => (
-                        format!("MIDI Ch {} CC {cc}", channel + 1),
-                        format!("M{}C{cc}", channel + 1),
-                    ),
-                };
-                param_descs.push(Vst3ParamDescriptor {
-                    id: midi_proxy_id(channel, controller),
-                    name: CString::new(name).unwrap_or_default().into_raw(),
-                    short_name: CString::new(short).unwrap_or_default().into_raw(),
-                    units: empty_units(),
-                    min: 0.0,
-                    max: 1.0,
-                    default_normalized: midi_proxy_default(controller),
-                    step_count: 0,
-                    flags: 0,
-                    group: CString::new("MIDI").unwrap_or_default().into_raw(),
-                });
+        for port in 0..info.midi_input_ports {
+            // Single-port plugins keep the unprefixed names hosts
+            // already display; only multi-port names carry the bus.
+            let (name_prefix, short_prefix) = if info.midi_input_ports > 1 {
+                (format!("MIDI In {} ", port + 1), format!("I{}", port + 1))
+            } else {
+                (String::from("MIDI "), String::new())
+            };
+            for channel in 0u8..16 {
+                for controller in 0..MIDI_PROXY_PER_CHANNEL {
+                    let (name, short) = match controller {
+                        MIDI_PROXY_PITCH_BEND => (
+                            format!("{name_prefix}Ch {} Pitch Bend", channel + 1),
+                            format!("{short_prefix}M{}PB", channel + 1),
+                        ),
+                        MIDI_PROXY_PRESSURE => (
+                            format!("{name_prefix}Ch {} Pressure", channel + 1),
+                            format!("{short_prefix}M{}Pr", channel + 1),
+                        ),
+                        cc => (
+                            format!("{name_prefix}Ch {} CC {cc}", channel + 1),
+                            format!("{short_prefix}M{}C{cc}", channel + 1),
+                        ),
+                    };
+                    param_descs.push(Vst3ParamDescriptor {
+                        id: midi_proxy_id(port, channel, controller),
+                        name: CString::new(name).unwrap_or_default().into_raw(),
+                        short_name: CString::new(short).unwrap_or_default().into_raw(),
+                        units: empty_units(),
+                        min: 0.0,
+                        max: 1.0,
+                        default_normalized: midi_proxy_default(controller),
+                        step_count: 0,
+                        flags: 0,
+                        group: CString::new("MIDI").unwrap_or_default().into_raw(),
+                    });
+                }
             }
         }
     }
@@ -2038,13 +2070,25 @@ mod midi_proxy_tests {
     use truce_core::events::EventBody;
 
     #[test]
-    fn id_round_trips_across_the_bank() {
-        for channel in 0u8..16 {
-            for controller in 0..MIDI_PROXY_PER_CHANNEL {
-                let id = midi_proxy_id(channel, controller);
-                assert_eq!(midi_proxy_decode(id), Some((channel, controller)));
+    fn id_round_trips_across_the_banks() {
+        // Every (port, channel, controller) triple survives the trip -
+        // multi-timbral hosts rely on the port dimension to keep each
+        // bus's controllers separate.
+        for port in [0u8, 1, 3, 255] {
+            for channel in 0u8..16 {
+                for controller in 0..MIDI_PROXY_PER_CHANNEL {
+                    let id = midi_proxy_id(port, channel, controller);
+                    assert_eq!(midi_proxy_decode(id), Some((port, channel, controller)));
+                }
             }
         }
+    }
+
+    #[test]
+    fn ports_get_distinct_ids() {
+        // The whole point of per-port banks: the same (channel, cc)
+        // on two buses must be two parameter queues host-side.
+        assert_ne!(midi_proxy_id(0, 4, 74), midi_proxy_id(1, 4, 74));
     }
 
     #[test]
@@ -2055,9 +2099,9 @@ mod midi_proxy_tests {
         assert_eq!(midi_proxy_decode(0), None);
         assert_eq!(midi_proxy_decode(truce_params::METER_ID_BASE), None);
         assert_eq!(midi_proxy_decode(MIDI_PROXY_ID_BASE - 1), None);
-        // One past the bank is out again.
+        // One past the last bank is out again.
         assert_eq!(
-            midi_proxy_decode(midi_proxy_id(15, MIDI_PROXY_PER_CHANNEL - 1) + 1),
+            midi_proxy_decode(midi_proxy_id(255, 15, MIDI_PROXY_PER_CHANNEL - 1) + 1),
             None
         );
     }
