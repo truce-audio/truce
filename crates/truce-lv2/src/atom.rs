@@ -19,7 +19,7 @@ use std::ffi::c_void;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::midi::{downconvert_to_midi1, parse_midi1, pitch_bend_to_bytes};
+use truce_core::midi::{downconvert_to_midi1, parse_midi1, pitch_bend_to_bytes, route_midi_port};
 
 use crate::urid::{Urid, UridMap};
 
@@ -440,7 +440,7 @@ pub unsafe fn write_midi_out_sequence(
         for event in events.iter() {
             // Only this port's events land in this sequence; an
             // out-of-range port collapses to port 0.
-            if event.port.min(port_count.saturating_sub(1)) != port {
+            if route_midi_port(event.port, port_count) != port {
                 continue;
             }
             // `SysEx` events have a variable-length payload that

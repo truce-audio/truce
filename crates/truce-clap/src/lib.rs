@@ -98,6 +98,7 @@ use truce_core::info::{MidiDialect, PluginCategory, PluginInfo};
 use truce_core::midi::{
     PER_NOTE_VOLUME_MAX_GAIN, decode_short_message, denorm_7bit, downconvert_to_midi1,
     event_to_midi1, per_note_bend_from_semitones, per_note_bend_semitones, pitch_bend_to_bytes,
+    route_midi_port,
 };
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
@@ -1001,12 +1002,14 @@ unsafe fn convert_input_events<P: PluginExport>(
             }
 
             let sample_offset = (*header).time;
-            // Stamp each event with the MIDI port it arrived on, clamped
-            // to the plugin's declared input-port count so an event on a
-            // port the plugin doesn't expose routes to 0. Non-MIDI
-            // events report 0. Single-port plugins always get 0.
-            let port = clap_input_port(header, (*header).type_)
-                .min(data.info.midi_input_ports.saturating_sub(1));
+            // Stamp each event with the MIDI port it arrived on; an
+            // event on a port the plugin doesn't expose routes to 0.
+            // Non-MIDI events report 0. Single-port plugins always
+            // get 0.
+            let port = route_midi_port(
+                clap_input_port(header, (*header).type_),
+                data.info.midi_input_ports,
+            );
 
             match (*header).type_ {
                 CLAP_EVENT_NOTE_ON => {
@@ -1511,10 +1514,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             // host an unsorted queue.
             data.output_events.ensure_sorted_by_offset();
             // Route each output event to the note port the plugin
-            // stamped it with, clamped to the declared output-port count.
-            let out_port_max = data.info.midi_output_ports.saturating_sub(1);
+            // stamped it with; an out-of-range port routes to 0.
             for event in data.output_events.iter() {
-                let out_port = event.port.min(out_port_max);
+                let out_port = route_midi_port(event.port, data.info.midi_output_ports);
                 match &event.body {
                     EventBody::NoteOn {
                         channel,
@@ -2301,13 +2303,16 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
         // note outputs than inputs fails every test that fetches the
         // note-port config. Answer an out-of-range query with the
         // matching port of the *other* direction - what the sweep meant
-        // to ask. Compliant hosts iterate `0..count(direction)` and can
-        // never reach this; remove when the validator queries the
-        // direction it iterates.
-        let is_input = if index < ports {
-            is_input
+        // to ask. `ports` flips along with the direction so the name
+        // below numbers by the resolved direction's count (the same
+        // port id must always answer with the same name). Compliant
+        // hosts iterate `0..count(direction)` and can never reach
+        // this; remove when the validator queries the direction it
+        // iterates.
+        let (is_input, ports) = if index < ports {
+            (is_input, ports)
         } else if index < opposite {
-            !is_input
+            (!is_input, opposite)
         } else {
             return false;
         };

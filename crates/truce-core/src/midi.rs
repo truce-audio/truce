@@ -449,6 +449,16 @@ pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
     })
 }
 
+/// Route a MIDI port index onto a plugin's declared port count: an
+/// in-range port passes through, anything else lands on port 0 - the
+/// default/main port, not the arbitrary last one. Shared by every
+/// wrapper's port stamping/routing so out-of-range handling can't
+/// drift per format (the VST3 shim implements the same rule in C++).
+#[must_use]
+pub fn route_midi_port(port: u8, count: u8) -> u8 {
+    if port < count { port } else { 0 }
+}
+
 /// Centre of a 32-bit per-note pitch bend (`0x8000_0000`), as `f64`.
 const PER_NOTE_BEND_CENTER: f64 = 2_147_483_648.0;
 
@@ -809,6 +819,13 @@ mod tests {
             })
             .is_none()
         );
+    }
+
+    #[test]
+    fn out_of_range_port_routes_to_zero() {
+        assert_eq!(route_midi_port(1, 2), 1); // in range passes through
+        assert_eq!(route_midi_port(2, 2), 0); // past the count -> default port
+        assert_eq!(route_midi_port(0, 0), 0); // portless plugin
     }
 
     #[test]

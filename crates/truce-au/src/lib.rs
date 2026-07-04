@@ -37,7 +37,8 @@ use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, Trans
 use truce_core::export::PluginExport;
 use truce_core::info::MidiDialect;
 use truce_core::midi::{
-    decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes, upconvert_to_midi2,
+    decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes, route_midi_port,
+    upconvert_to_midi2,
 };
 use truce_core::state;
 use truce_core::ump::{
@@ -965,12 +966,10 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
             .filter_map(try_encode_au_midi)
             .nth(index as usize)
         {
-            // Route to the plugin's chosen MIDI output cable, clamped to
-            // the declared count so an out-of-range port lands on 0. The
-            // appex passes `port` straight to `midiOutputEventBlock`.
-            packet.port = packet
-                .port
-                .min(P::info().midi_output_ports.saturating_sub(1));
+            // Route to the plugin's chosen MIDI output cable; an
+            // out-of-range port lands on 0. The appex passes `port`
+            // straight to `midiOutputEventBlock`.
+            packet.port = route_midi_port(packet.port, P::info().midi_output_ports);
             *out = packet;
         }
     }
@@ -1101,12 +1100,9 @@ unsafe extern "C" fn cb_output_ump_at<P: PluginExport>(
             index as usize,
             UmpProtocol::from_wire(protocol),
         ) {
-            // Clamp the cable to the declared output-port count, matching
-            // the byte path; the appex passes it to
-            // `midiOutputEventListBlock`.
-            packet.cable = packet
-                .cable
-                .min(P::info().midi_output_ports.saturating_sub(1));
+            // Route the cable like the byte path (out-of-range lands
+            // on 0); the appex passes it to `midiOutputEventListBlock`.
+            packet.cable = route_midi_port(packet.cable, P::info().midi_output_ports);
             *out = packet;
         }
     }
