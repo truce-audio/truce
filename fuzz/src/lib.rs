@@ -77,9 +77,14 @@ pub fn midi_short(data: &[u8]) {
         return;
     }
     if let Some(body) = decode_short_message(data[0], data[1], data[2]) {
-        // Anything the decoder accepts must be re-encodable or be a
-        // deliberately encode-less variant; encoding must not panic.
-        let _ = event_to_midi1(&body);
+        // Fixpoint oracle: the first decode normalizes (7-bit masks,
+        // velocity-0 NoteOn -> NoteOff), so everything it accepts must
+        // re-encode, and one more decode must reproduce the body
+        // exactly.
+        let (len, bytes) =
+            event_to_midi1(&body).expect("decoded 1.0 channel voice must re-encode");
+        let again = decode_short_message(bytes[0], bytes[1], if len > 2 { bytes[2] } else { 0 });
+        assert_eq!(again, Some(body), "decode-encode-decode is not a fixpoint");
     }
     let _ = parse_midi1(data[0] & 0x0F, &data[1..]);
 }
@@ -92,7 +97,16 @@ pub fn ump_decode(data: &[u8]) {
     let word = |i: usize| u32::from_le_bytes(data[4 * i..4 * i + 4].try_into().expect("len 16"));
     let words = [word(0), word(1), word(2), word(3)];
     if let Some(body) = decode_ump_channel_voice_2(words) {
-        let _ = encode_ump_channel_voice_2(&body);
+        // Fixpoint oracle: a decoded body is already normalized
+        // (in-domain fields), so every decodable status must have an
+        // encoder arm and one more decode must reproduce the body.
+        let packet =
+            encode_ump_channel_voice_2(&body).expect("decoded 2.0 channel voice must re-encode");
+        assert_eq!(
+            decode_ump_channel_voice_2(packet),
+            Some(body),
+            "decode-encode-decode is not a fixpoint"
+        );
     }
 }
 

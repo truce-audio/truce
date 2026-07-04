@@ -169,22 +169,21 @@ mod tests {
             .expect("own envelope must load");
         assert_eq!(loaded.params, vec![(0, -6.0)]);
 
-        let foreign =
-            parse_or_migrate::<Plugin>(b"{\"legacy\":true}", hash, PluginFormat::Clap, None);
-        assert!(foreign.is_none(), "foreign bytes must fail without a hook");
+        // Foreign bytes must fail without a hook.
+        truce_test::assert_state_migration_rejected::<Plugin>(
+            PluginFormat::Clap,
+            None,
+            b"{\"legacy\":true}",
+        );
 
+        // A future envelope version must fail, never reach the hook.
         let mut future = serialize_state(hash, &[], &[], &[]);
         future[4..8].copy_from_slice(&2u32.to_le_bytes());
-        assert!(
-            parse_or_migrate::<Plugin>(&future, hash, PluginFormat::Clap, None).is_none(),
-            "future envelope version must fail, never reach the hook"
-        );
+        truce_test::assert_state_migration_rejected::<Plugin>(PluginFormat::Clap, None, &future);
 
+        // A wrong-plugin envelope must fail without a hook.
         let renamed = serialize_state(hash ^ 1, &[0], &[-6.0], &[]);
-        assert!(
-            parse_or_migrate::<Plugin>(&renamed, hash, PluginFormat::Clap, None).is_none(),
-            "wrong-plugin envelope must fail without a hook"
-        );
+        truce_test::assert_state_migration_rejected::<Plugin>(PluginFormat::Clap, None, &renamed);
     }
 
     #[test]

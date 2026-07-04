@@ -431,14 +431,10 @@ mod tests {
 
     #[test]
     fn truncated_legacy_state_is_refused() {
-        let blob = &legacy_blob()[..40];
-        assert!(
-            Eq::migrate_state(&ForeignState::Raw {
-                format: PluginFormat::Clap,
-                source_key: None,
-                bytes: blob,
-            })
-            .is_none()
+        truce_test::assert_state_migration_rejected::<Plugin>(
+            PluginFormat::Clap,
+            None,
+            &legacy_blob()[..40],
         );
     }
 

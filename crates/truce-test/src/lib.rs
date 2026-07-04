@@ -129,6 +129,29 @@ pub fn assert_state_migration<P: PluginExport>(
     migrated
 }
 
+/// Rejection twin of [`assert_state_migration`]: route `foreign_bytes`
+/// through the same parse-or-migrate path and assert the load is
+/// refused (default `migrate_state`, or the hook declined) - the
+/// wrapper would report failure to the host instead of resetting to
+/// defaults or eating garbage.
+///
+/// # Panics
+///
+/// Panics if the bytes were accepted.
+pub fn assert_state_migration_rejected<P: PluginExport>(
+    format: truce_core::state::PluginFormat,
+    source_key: Option<&str>,
+    foreign_bytes: &[u8],
+) {
+    let info = P::info();
+    let hash = state::shared_plugin_state_hash(&info);
+    assert!(
+        state::parse_or_migrate::<P>(foreign_bytes, hash, format, source_key).is_none(),
+        "foreign bytes were accepted ({format:?}, key {source_key:?}) - expected the load to be \
+         refused"
+    );
+}
+
 /// Assert state save/load round-trips correctly.
 ///
 /// Saves state, creates a new instance, loads state, and verifies
