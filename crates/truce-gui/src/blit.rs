@@ -1,22 +1,33 @@
 //! Pixel buffer → wgpu surface blit pipeline.
 //!
 //! Uploads an RGBA pixel buffer to a GPU texture, then draws it to the
-//! surface at its **native** pixel size, centred, with the rest of the
-//! surface left black. When the surface matches the texture
-//! (the usual case, and every resizable editor once `set_size` catches
-//! up) that quad is the whole surface, identical to a plain fullscreen
-//! blit. When the surface is *larger* than the texture - a fixed-size
-//! editor whose host (REAPER's LV2 X11 embedding) grew the window past
-//! the editor - the texture renders 1:1 instead of being stretched to
-//! fill (the blurry GUI), with black letterboxing the gap. Copied from
-//! truce-slint, then extended with the native-size quad.
+//! surface at its **native** pixel size, centred on **integer**
+//! (whole-pixel) margins, with the rest of the surface left black. When
+//! the surface matches the texture (the usual case, and every resizable
+//! editor once `set_size` catches up) that quad is the whole surface,
+//! identical to a plain fullscreen blit. When the surface is *larger*
+//! than the texture - a fixed-size editor whose host (REAPER's LV2 X11
+//! embedding) grew the window past the editor - the texture renders 1:1
+//! instead of being stretched to fill (the blurry GUI), with black
+//! letterboxing the gap. Copied from truce-slint, then extended with
+//! the native-size quad.
+//!
+//! The centring is pixel-snapped on purpose: a symmetric ±scale quad
+//! centres with a half-pixel offset whenever the letterbox margin is
+//! odd, which makes a native-size (nearest-sampled) blit shimmer as the
+//! surface wobbles ±1px under a fixed texture - REAPER cycling an embed
+//! window between e.g. 277 and 278 px wide. Flooring the margin to a
+//! whole pixel keeps every texel on exactly one output pixel.
 
 const BLIT_SHADER: &str = r"
-// `scale` = texture_size / surface_size: the fraction of the surface
-// the native-size texture covers, centred within it.
+// `rect` = the texture quad's NDC bounds (left, top, right, bottom),
+// computed CPU-side from *integer* letterbox margins so the texture
+// always lands on exact output pixels. Passing pixel-snapped bounds
+// (rather than a symmetric ±scale that centres with a half-pixel offset
+// on odd margins) keeps a native-size blit from shimmering when the
+// surface size wobbles by a pixel under it.
 struct Params {
-    scale: vec2<f32>,
-    _pad: vec2<f32>,
+    rect: vec4<f32>,
 };
 @group(0) @binding(2) var<uniform> params: Params;
 
@@ -36,11 +47,11 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
     );
     let u = unit[idx];
     var out: VertexOutput;
-    // Centred: the quad spans [-scale, +scale] of NDC on each axis, so
-    // the leftover surface is split evenly into the letterbox margins.
+    // Map the unit quad onto the pixel-snapped NDC rect: x from left
+    // (rect.x) to right (rect.z), y from top (rect.y) to bottom (rect.w).
     out.position = vec4(
-        params.scale.x * (2.0 * u.x - 1.0),
-        params.scale.y * (1.0 - 2.0 * u.y),
+        mix(params.rect.x, params.rect.z, u.x),
+        mix(params.rect.y, params.rect.w, u.y),
         0.0,
         1.0,
     );
@@ -208,9 +219,9 @@ impl BlitPipeline {
 
     /// Draw the texture to a render target sized `(surf_w, surf_h)`
     /// physical pixels. The texture is drawn at its native size,
-    /// centred; any surface area beyond it is cleared to black
-    /// (letterbox). When the surface matches the texture this is a
-    /// plain fullscreen blit.
+    /// centred on whole-pixel margins; any surface area beyond it is
+    /// cleared to black (letterbox). When the surface matches the
+    /// texture this is a plain fullscreen blit.
     // Window dimensions are a few thousand px at most - far below
     // `f32`'s 2^24 exact-integer ceiling, so the ratio is exact.
     #[allow(clippy::cast_precision_loss)]
@@ -222,15 +233,27 @@ impl BlitPipeline {
         surf_w: u32,
         surf_h: u32,
     ) {
-        // `scale` = texture / surface. >1 (surface smaller than the
-        // texture) draws the texture oversized and clips at the surface
-        // edge - acceptable for the rare "host shrank below natural"
-        // case; the common path is `<= 1` (letterbox) or `== 1`.
-        let sx = self.width as f32 / surf_w.max(1) as f32;
-        let sy = self.height as f32 / surf_h.max(1) as f32;
+        // Integer-snapped letterbox: place the native-size texture at a
+        // whole-pixel margin, so every texel maps to exactly one output
+        // pixel (no fractional offset -> no shimmer when the surface
+        // wobbles ±1px under a fixed texture). When the texture is
+        // larger than the surface the margin floors to 0 and the quad
+        // extends past the edge, clipping - matches the prior "host
+        // shrank below natural" behavior.
+        let sw = surf_w.max(1);
+        let sh = surf_h.max(1);
+        let left = sw.saturating_sub(self.width) / 2;
+        let top = sh.saturating_sub(self.height) / 2;
+        // Pixel bounds -> NDC. y is flipped (row 0 = top = +1).
+        let l = (left as f32 / sw as f32) * 2.0 - 1.0;
+        let r = ((left + self.width) as f32 / sw as f32) * 2.0 - 1.0;
+        let t = 1.0 - (top as f32 / sh as f32) * 2.0;
+        let b = 1.0 - ((top + self.height) as f32 / sh as f32) * 2.0;
         let mut bytes = [0u8; 16];
-        bytes[0..4].copy_from_slice(&sx.to_ne_bytes());
-        bytes[4..8].copy_from_slice(&sy.to_ne_bytes());
+        bytes[0..4].copy_from_slice(&l.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&t.to_ne_bytes());
+        bytes[8..12].copy_from_slice(&r.to_ne_bytes());
+        bytes[12..16].copy_from_slice(&b.to_ne_bytes());
         queue.write_buffer(&self.uniform_buf, 0, &bytes);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

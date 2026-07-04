@@ -839,11 +839,12 @@ impl BlitBackend {
     /// cell-snapped via resize-increment hints) or the host, and is not
     /// bit-identical to `to_physical_px(logical, scale)` - sizing the
     /// surface from the logical value instead leaves the window's
-    /// trailing edge showing whatever is behind it. The blit's
-    /// fullscreen-triangle pass samples its texture across the whole
-    /// surface, so surface != texture size just rescales the image to
-    /// fill - no gap. Called from the `Resized` handler, where the
-    /// window's actual physical size is authoritative.
+    /// trailing edge showing whatever is behind it. The blit draws the
+    /// texture at native size on a pixel-snapped centre, so a surface a
+    /// few px larger than the texture letterboxes that difference to
+    /// black (no stretch, no garbage) rather than rescaling. Called from
+    /// the `Resized` handler, where the window's actual physical size is
+    /// authoritative.
     fn configure_surface(&mut self, phys_w: u32, phys_h: u32) {
         let client = self.client.clone();
         let Some(parts) = self.parts_mut() else {
@@ -1230,7 +1231,10 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 // configure the surface to - so without this the trailing
                 // edge of the window shows whatever is behind it. Driving
                 // the surface from the authoritative `info.physical_size()`
-                // here closes that gap; the blit scales the pixmap to fill.
+                // here closes that gap; the blit letterboxes any ≤few-px
+                // difference to black on a pixel-snapped centre (no
+                // stretch), so a fixed editor under a host that wobbles
+                // the embed size ±1px stays crisp instead of shimmering.
                 if phys.width > 0
                     && phys.height > 0
                     && let Some(backend) = guard.as_mut()
