@@ -619,9 +619,13 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
                 inst->rustCtx, sfv->inParamID, value, buf, sizeof(buf));
             if (len == 0) return kAudioUnitErr_InvalidParameter;
             /* Ownership transfers to the caller per the property's
-             * Copy rule. */
-            sfv->outString = CFStringCreateWithCString(NULL, buf,
-                                                       kCFStringEncodingUTF8);
+             * Copy rule. Creation can fail (invalid UTF-8); noErr with
+             * a NULL outString would hand the host a string it can't
+             * use but believes exists. */
+            CFStringRef str = CFStringCreateWithCString(NULL, buf,
+                                                        kCFStringEncodingUTF8);
+            if (!str) return kAudioUnitErr_InvalidParameter;
+            sfv->outString = str;
             *ioSize = sizeof(AudioUnitParameterStringFromValue);
             return noErr;
         }
