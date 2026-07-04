@@ -108,6 +108,9 @@ struct AuInstance<P: PluginExport> {
     /// the clear, so it doesn't touch this flag.)
     sysex_inputs_pending: bool,
     output_events: EventList,
+    /// Resume point for the appex's sequential `output_ump_at` drain;
+    /// reset alongside `output_events` each block.
+    ump_drain_cursor: UmpDrainCursor,
     /// Per-sub-block scratch for `chunked_process::process_chunked`.
     sub_event_scratch: EventList,
     /// Cached param-info table for the chunker's split predicate.
@@ -212,6 +215,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sysex_inputs_pending: false,
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        ump_drain_cursor: UmpDrainCursor::HEAD,
         sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
         min_subblock_samples: info.automation.min_subblock_samples,
@@ -472,6 +476,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             TransportInfo::default()
         };
         inst.output_events.clear();
+        inst.ump_drain_cursor = UmpDrainCursor::HEAD;
         inst.transport_slot.write(&transport);
 
         let mut transport_snap = transport;
@@ -1058,19 +1063,55 @@ fn au_ump_packet_count(list: &EventList, event: &Event, protocol: UmpProtocol) -
     }
 }
 
-/// The `index`-th packet of the flattened UMP output stream.
+/// Resume point for the sequential UMP output drain. `output_ump_at`
+/// addresses the flattened packet stream by index; without a cursor
+/// every call rescans from the head, turning a SysEx-heavy drain
+/// quadratic (one large `SysEx` is thousands of packets in a single
+/// render).
+struct UmpDrainCursor {
+    /// Packets contributed by events before [`Self::event_pos`].
+    packets_before: usize,
+    /// Event position the next lookup resumes from.
+    event_pos: usize,
+    /// Protocol the positions were computed for.
+    protocol: UmpProtocol,
+}
+
+impl UmpDrainCursor {
+    /// Head of the stream; also the per-block reset value.
+    const HEAD: Self = Self {
+        packets_before: 0,
+        event_pos: 0,
+        protocol: UmpProtocol::Midi2,
+    };
+}
+
+/// The `index`-th packet of the flattened UMP output stream. Resumes
+/// from `cursor` when the query continues forward in the same
+/// protocol (the appex drains indices in ascending order); a
+/// backwards or cross-protocol query restarts at the head.
 fn au_ump_packet_at(
     list: &EventList,
-    mut index: usize,
+    index: usize,
     protocol: UmpProtocol,
+    cursor: &mut UmpDrainCursor,
 ) -> Option<AuUmpEvent> {
-    for event in list.iter() {
+    if protocol != cursor.protocol || index < cursor.packets_before {
+        *cursor = UmpDrainCursor {
+            protocol,
+            ..UmpDrainCursor::HEAD
+        };
+    }
+    let mut remaining = index - cursor.packets_before;
+    for (pos, event) in list.iter().enumerate().skip(cursor.event_pos) {
         let n = au_ump_packet_count(list, event, protocol);
-        if index < n {
+        if remaining < n {
+            cursor.event_pos = pos;
+            cursor.packets_before = index - remaining;
             if matches!(event.body, EventBody::SysEx { .. }) {
                 // SysEx carries no group; packets go out on group 0. The
                 // cable still routes by the event's port.
-                let words = encode_sysex7_packet(0, list.sysex_bytes(&event.body), index)?;
+                let words = encode_sysex7_packet(0, list.sysex_bytes(&event.body), remaining)?;
                 return Some(AuUmpEvent {
                     sample_offset: event.sample_offset,
                     cable: event.port,
@@ -1081,7 +1122,7 @@ fn au_ump_packet_at(
             }
             return try_encode_au_ump(event, protocol);
         }
-        index -= n;
+        remaining -= n;
     }
     None
 }
@@ -1109,11 +1150,12 @@ unsafe extern "C" fn cb_output_ump_at<P: PluginExport>(
     out: *mut AuUmpEvent,
 ) {
     unsafe {
-        let inst = &*ctx.cast::<AuInstance<P>>();
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         if let Some(mut packet) = au_ump_packet_at(
             &inst.output_events,
             index as usize,
             UmpProtocol::from_wire(protocol),
+            &mut inst.ump_drain_cursor,
         ) {
             // Route the cable like the byte path (out-of-range lands
             // on 0); the appex passes it to `midiOutputEventListBlock`.
@@ -1708,7 +1750,7 @@ mod tests {
     use truce_core::events::{Event, EventBody, EventList};
     use truce_shim_types::AU_SHIM_TYPES_H;
 
-    use super::{UmpProtocol, au_ump_packet_at, au_ump_packet_count};
+    use super::{UmpDrainCursor, UmpProtocol, au_ump_packet_at, au_ump_packet_count};
 
     #[test]
     fn ump_output_flattens_sysex_into_packet_chain() {
@@ -1744,16 +1786,19 @@ mod tests {
             .sum();
         assert_eq!(total, 4);
 
+        // One cursor across the drain, like the appex's ascending walk.
+        let mut cur = UmpDrainCursor::HEAD;
+
         // Packet 0: the note (MT 0x2, one word, in a 1.0 stream).
-        let note = au_ump_packet_at(&list, 0, proto).unwrap();
+        let note = au_ump_packet_at(&list, 0, proto, &mut cur).unwrap();
         assert_eq!(note.word_count, 1);
         assert_eq!(note.sample_offset, 10);
         assert_eq!(note.cable, 1);
 
         // Packets 1-2: the SysEx chain - MT 0x3, Start then End, both
         // stamped with the event's offset and port.
-        let start = au_ump_packet_at(&list, 1, proto).unwrap();
-        let end = au_ump_packet_at(&list, 2, proto).unwrap();
+        let start = au_ump_packet_at(&list, 1, proto, &mut cur).unwrap();
+        let end = au_ump_packet_at(&list, 2, proto, &mut cur).unwrap();
         for p in [&start, &end] {
             assert_eq!((p.words[0] >> 28) & 0xF, 0x3);
             assert_eq!(p.word_count, 2);
@@ -1764,9 +1809,15 @@ mod tests {
         assert_eq!((end.words[0] >> 20) & 0xF, 0x3, "End status");
 
         // Packet 3: the CC; then the stream ends.
-        let cc = au_ump_packet_at(&list, 3, proto).unwrap();
+        let cc = au_ump_packet_at(&list, 3, proto, &mut cur).unwrap();
         assert_eq!(cc.sample_offset, 30);
-        assert!(au_ump_packet_at(&list, 4, proto).is_none());
+        assert!(au_ump_packet_at(&list, 4, proto, &mut cur).is_none());
+
+        // A backwards query restarts at the head and still resolves;
+        // a stale forward cursor must never skip real packets.
+        let back = au_ump_packet_at(&list, 1, proto, &mut cur).unwrap();
+        assert_eq!(back.sample_offset, 20);
+        assert_eq!((back.words[0] >> 20) & 0xF, 0x1, "Start status");
     }
 
     #[test]
@@ -1797,16 +1848,19 @@ mod tests {
             },
         ));
 
+        // One cursor across both protocols: the switch must restart
+        // the walk, not resume 1.0 positions into the 2.0 stream.
+        let mut cur = UmpDrainCursor::HEAD;
         for (proto, mt, words) in [
             (UmpProtocol::Midi1, 0x2u32, 1u8),
             (UmpProtocol::Midi2, 0x4, 2),
         ] {
             for i in 0..2 {
-                let p = au_ump_packet_at(&list, i, proto).unwrap();
+                let p = au_ump_packet_at(&list, i, proto, &mut cur).unwrap();
                 assert_eq!((p.words[0] >> 28) & 0xF, mt);
                 assert_eq!(p.word_count, words);
             }
-            assert!(au_ump_packet_at(&list, 2, proto).is_none());
+            assert!(au_ump_packet_at(&list, 2, proto, &mut cur).is_none());
         }
 
         // A 2.0-only body with no 1.0 form drops from a 1.0 stream but
@@ -1821,8 +1875,9 @@ mod tests {
                 flags: 0,
             },
         ));
-        assert!(au_ump_packet_at(&pnm, 0, UmpProtocol::Midi1).is_none());
-        assert!(au_ump_packet_at(&pnm, 0, UmpProtocol::Midi2).is_some());
+        let mut cur = UmpDrainCursor::HEAD;
+        assert!(au_ump_packet_at(&pnm, 0, UmpProtocol::Midi1, &mut cur).is_none());
+        assert!(au_ump_packet_at(&pnm, 0, UmpProtocol::Midi2, &mut cur).is_some());
     }
 
     #[test]

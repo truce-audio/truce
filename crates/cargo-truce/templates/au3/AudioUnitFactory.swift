@@ -503,10 +503,13 @@ class TruceAUAudioUnit: AUAudioUnit {
                 let evTime = AUEventSampleTime(bufStart + Int64(ue.sample_offset))
                 var list = MIDIEventList()
                 let pkt = MIDIEventListInit(&list, listProto)
-                let words: [UInt32] = [ue.words.0, ue.words.1, ue.words.2, ue.words.3]
-                _ = words.withUnsafeBufferPointer { wp in
+                // Stack-borrow the C words array; a Swift Array here
+                // would heap-allocate per packet inside the render
+                // block, and a large SysEx is thousands of packets.
+                _ = withUnsafeBytes(of: ue.words) { raw in
                     MIDIEventListAdd(&list, MemoryLayout<MIDIEventList>.size, pkt, 0,
-                                     Int(ue.word_count), wp.baseAddress!)
+                                     Int(ue.word_count),
+                                     raw.baseAddress!.assumingMemoryBound(to: UInt32.self))
                 }
                 _ = listBlock(evTime, ue.cable, &list)
             }
