@@ -41,7 +41,7 @@ use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
 use objc::{class, msg_send, sel, sel_impl};
 
 use crate::audio::{ChannelRoute, DeviceCache, InputController, OutputController};
-use crate::midi::{MidiChannel, MidiController};
+use crate::midi::{MIDI_MENU_MAX_PORTS, MidiChannel, MidiController};
 use crate::presets::PresetController;
 use crate::vlog;
 
@@ -212,15 +212,23 @@ pub fn install(
         let midi_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
         let _: () = msg_send![plugin_menu, addItem: midi_sep];
 
-        // One device submenu per plugin MIDI input port. A single-port
-        // plugin gets the familiar "MIDI Input"; a multi-port one gets
-        // "MIDI Input - Port 1 / 2 / ..." so each controller routes to
-        // its own port. Each submenu's items encode their port in the
-        // NSMenuItem tag (see `populate_midi_input_menu`).
+        // One device submenu per plugin MIDI input port, capped at
+        // `MIDI_MENU_MAX_PORTS` to match the Windows menu. A single-
+        // port plugin gets the familiar "MIDI Input"; a multi-port one
+        // gets "MIDI Input - Port 1 / 2 / ..." so each controller
+        // routes to its own port. Each submenu's items encode their
+        // port in the NSMenuItem tag (see `populate_midi_input_menu`).
         let midi_ports = midi.port_count().max(1);
-        let mut midi_input_menus: Vec<*mut Object> = Vec::with_capacity(midi_ports);
-        for port in 0..midi_ports {
-            let label = if midi_ports == 1 {
+        let menu_ports = midi_ports.min(MIDI_MENU_MAX_PORTS);
+        if midi_ports > menu_ports {
+            vlog!(
+                "MIDI menu shows the first {menu_ports} of {midi_ports} input ports; \
+                 route the rest with --midi-input"
+            );
+        }
+        let mut midi_input_menus: Vec<*mut Object> = Vec::with_capacity(menu_ports);
+        for port in 0..menu_ports {
+            let label = if menu_ports == 1 {
                 "MIDI Input".to_string()
             } else {
                 format!("MIDI Input - Port {}", port + 1)

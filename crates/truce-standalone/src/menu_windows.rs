@@ -57,7 +57,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::audio::{self, ChannelRoute, InputController, OutputController};
-use crate::midi::{self, MidiChannel, MidiController};
+use crate::midi::{self, MIDI_MENU_MAX_PORTS, MidiChannel, MidiController};
 use crate::presets::PresetController;
 use crate::vlog;
 
@@ -87,12 +87,13 @@ const MENU_CMD_OUTPUT_CHANNELS_END: u16 = 0xC4FF;
 /// `MENU_CMD_MIDI_INPUT_BASE + p * MENU_CMD_MIDI_PORT_STRIDE`: the
 /// first ID disconnects that port ("None"), the rest are one device
 /// each (name recovered via `GetMenuStringW`, like the audio device
-/// menus). Stride 64 fits 4 ports; deeper multi-port plugins still
-/// route via `--midi-input` on the CLI, just without a menu row.
-const MENU_CMD_MIDI_INPUT_BASE: u16 = 0xC500;
-const MENU_CMD_MIDI_INPUT_END: u16 = 0xC5FF;
+/// menus). The 0xC900..=0xCCFF window holds stride 64 x
+/// `MIDI_MENU_MAX_PORTS` (16) command ids; deeper multi-port plugins
+/// still route via `--midi-input` on the CLI, just without a menu row.
+const MENU_CMD_MIDI_INPUT_BASE: u16 = 0xC900;
+const MENU_CMD_MIDI_INPUT_END: u16 = 0xCCFF;
 const MENU_CMD_MIDI_PORT_STRIDE: u16 = 64;
-const MENU_CMD_MIDI_MAX_PORTS: usize = 4;
+const MENU_CMD_MIDI_MAX_PORTS: usize = MIDI_MENU_MAX_PORTS;
 
 /// MIDI channel items: `cmd == base + MidiChannel::encode()` (Omni
 /// encodes to 0xFF, channels to 0-15).

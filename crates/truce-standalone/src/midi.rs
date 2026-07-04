@@ -30,6 +30,12 @@ use crate::vlog;
 
 const HOTPLUG_POLL: Duration = Duration::from_secs(1);
 
+/// Most plugin MIDI input ports the platform menus build a device
+/// picker for, shared by the macOS and Windows menu bars so the two
+/// platforms cap identically. Ports past the cap still route via the
+/// repeatable `--midi-input` CLI flag, which has no cap.
+pub(crate) const MIDI_MENU_MAX_PORTS: usize = 16;
+
 /// `channel_filter` sentinel meaning "accept every channel".
 const OMNI: u8 = 0xFF;
 
