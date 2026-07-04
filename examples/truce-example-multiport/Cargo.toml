@@ -45,6 +45,8 @@ truce-lv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }
+# One-off, for the `audible_demo` test's WAV output only.
+hound = "3"
 
 [lints]
 workspace = true

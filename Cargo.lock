@@ -4293,6 +4293,7 @@ name = "truce-example-multiport"
 version = "1.0.5"
 dependencies = [
  "clap-sys",
+ "hound",
  "truce",
  "truce-aax",
  "truce-au",

@@ -159,7 +159,15 @@ impl Multiport {
     }
 
     fn note_on(&mut self, port: u8, channel: u8, note: u8, amp: f32) {
-        let slot = self.voices.iter().position(|v| !v.active).unwrap_or(0); // steal voice 0 if the pool is full
+        // Prefer a free slot; if the pool is full, steal a voice
+        // that's already fading (in release) before cutting a still-
+        // held one; only then fall back to slot 0.
+        let slot = self
+            .voices
+            .iter()
+            .position(|v| !v.active)
+            .or_else(|| self.voices.iter().position(|v| v.releasing))
+            .unwrap_or(0);
         self.voices[slot] = Voice {
             active: true,
             releasing: false,
@@ -175,9 +183,14 @@ impl Multiport {
     }
 
     fn find(&mut self, port: u8, channel: u8, note: u8) -> Option<&mut Voice> {
-        self.voices
-            .iter_mut()
-            .find(|v| v.active && v.port == port && v.channel == channel && v.note == note)
+        // Target a still-sounding voice, never one already in
+        // release: retriggering a note before its tail dies leaves a
+        // decaying voice and a fresh one for the same note, and a
+        // note-off must release the fresh one - matching the decaying
+        // voice first would leave the fresh note held forever.
+        self.voices.iter_mut().find(|v| {
+            v.active && !v.releasing && v.port == port && v.channel == channel && v.note == note
+        })
     }
 
     fn handle(&mut self, port: u8, body: EventBody) {
@@ -386,6 +399,19 @@ mod tests {
         )
     }
 
+    fn note_off_port(port: u8, note: u8) -> Event {
+        Event::on_port(
+            0,
+            port,
+            EventBody::NoteOff {
+                group: 0,
+                channel: 0,
+                note,
+                velocity: 0,
+            },
+        )
+    }
+
     fn peak(samples: &[f32]) -> f32 {
         samples.iter().fold(0.0, |m, s| m.max(s.abs()))
     }
@@ -399,6 +425,28 @@ mod tests {
     fn note_makes_sound() {
         let (_p, out) = render(&[note_on_port(0, 69)]);
         assert!(peak(&out) > 0.0, "a note should be audible");
+    }
+
+    #[test]
+    fn retriggered_note_is_not_stuck() {
+        // Hold, release, then retrigger the same note before its
+        // release tail dies, and release again - the legato / repeated
+        // playing that leaves a decaying voice and a fresh voice for
+        // one note. The second note-off must land on the fresh voice;
+        // if it matched the already-releasing one, the fresh note
+        // would hang forever.
+        let (p, _) = render(&[
+            note_on_port(0, 60),
+            note_off_port(0, 60),
+            note_on_port(0, 60),
+            note_off_port(0, 60),
+        ]);
+        let held = p
+            .voices
+            .iter()
+            .filter(|v| v.active && !v.releasing && v.note == 60)
+            .count();
+        assert_eq!(held, 0, "retriggered note left a voice held forever");
     }
 
     #[test]

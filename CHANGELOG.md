@@ -33,7 +33,8 @@ Across formats:
 A plugin can expose more than one MIDI **input** port. The headline use is a multi-timbral instrument (the Kontakt / Vienna Ensemble Pro shape): one instance with several 16-channel input ports, so the host routes a separate track to each and each plays its own sound. Declare the count with `midi_input_ports` in `truce.toml`; the plugin reads `event.port` to tell them apart (see the `Event` change above).
 
 - **CLAP (N note ports), VST3 (N event buses), and LV2 (N atom ports) deliver the port on input.** VST2 / AU v2 / AU v3 / AAX carry a single input port and log a skip when a plugin declares more.
-- `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
+- **Host routing is per-host.** REAPER maps its track MIDI buses to plugin ports only for VST3, and only with "Map REAPER MIDI Buses to VST3 MIDI Buses" enabled (off by default; in the FX pin-connector's I/O menu) - then a track send to Bus 2 reaches port 1. REAPER does not map buses to CLAP note ports today. Route a distinct source to each bus and the plugin reads them off `event.port`.
+- `truce-example-multiport` is the reference: two input ports, a distinct patch per port. Its `audible_demo` test renders port 0 and port 1 to a stereo WAV (left/right) so the port dispatch is checkable without a host.
 - `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
 
 ### Legacy state migration
