@@ -53,7 +53,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 - `cargo truce run` builds the standalone `--no-default-features`, keeping playback; a new `--features` flag re-adds extras.
 - The standalone pre-grows the f64 widening scratch before the stream starts (no first-callback allocation).
 - VST3 rejects a processing setup or block whose sample size was never negotiated.
-- `cargo truce validate` scrubs cargo-injected `DYLD_*` vars before spawning pluginval.
+- `cargo truce validate` scrubs cargo-injected dynamic-linker vars (`DYLD_*`, `LD_LIBRARY_PATH`, `LD_PRELOAD`) before spawning any bundle-loading validator - pluginval, clap-validator, auval, and the AAX runner.
 - CLAP: `CLAP_EVENT_NOTE_CHOKE` delivers a velocity-0 `NoteOff` instead of being dropped. (#174)
 - Preset enumeration (CLAP discovery, AU factory lists, the standalone menu) lists only presets whose payload the plugin can load - foreign or corrupt files are skipped instead of listed-then-refused, and a skipped file no longer fails a CLAP crawl. `from_location` routes foreign envelopes through `migrate_state`, same as a session load.
 - CLAP: an out-of-range key/channel on a note event drops it instead of delivering note 255 / channel 255. Wildcard (`-1`) axes drop a `NOTE_ON` (the spec requires concrete addresses there) but expand a `NOTE_OFF` / `NOTE_CHOKE` to the sounding notes they match, so note_id-addressing hosts can't leave voices ringing.

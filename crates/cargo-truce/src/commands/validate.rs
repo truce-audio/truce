@@ -7,9 +7,34 @@ use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
 use crate::tmp_verify;
 use crate::{PluginDef, Res, dirs, load_config, tag_warn};
+use std::ffi::OsStr;
 #[cfg(target_os = "macos")]
 use std::fs;
 use std::path::Path;
+
+/// A `Command` for a validator that loads the plugin bundle, with
+/// cargo-injected dynamic-linker vars scrubbed. `cargo run -- validate`
+/// injects `DYLD_FALLBACK_LIBRARY_PATH` (macOS) / `LD_LIBRARY_PATH`
+/// (Linux) pointing at target/debug deps; inherited by a child that
+/// `dlopen`s the bundle, they break its dylib resolution (pluginval
+/// scanned zero types; clap-validator, auval, and the AAX runner load
+/// the same way). The wider `DYLD_*` family is scrubbed for the same
+/// reason - any of them can redirect the bundle's resolution.
+fn validator_command(program: impl AsRef<OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    for var in [
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        "DYLD_FALLBACK_FRAMEWORK_PATH",
+        "DYLD_INSERT_LIBRARIES",
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+    ] {
+        cmd.env_remove(var);
+    }
+    cmd
+}
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::path::PathBuf;
 use std::process::Command;
@@ -267,7 +292,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     p.resolved_fourcc(),
                     config.vendor.au_manufacturer
                 );
-                let output = Command::new("auval")
+                let output = validator_command("auval")
                     .args([
                         "-v",
                         p.resolved_au_type(),
@@ -324,7 +349,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     sub,
                     config.vendor.au_manufacturer
                 );
-                let output = Command::new("auval")
+                let output = validator_command("auval")
                     .args([
                         "-v",
                         p.resolved_au_type(),
@@ -391,13 +416,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     continue;
                 };
                 eprint!("  {} ... ", p.name);
-                let mut cmd = Command::new(&pv);
-                // `cargo run -- validate` injects DYLD_FALLBACK_LIBRARY_PATH
-                // (target/debug deps) into our env; inherited by pluginval
-                // it breaks the bundle's dylib resolution and the scan
-                // reports zero types. Scrub the DYLD vars for the child.
-                cmd.env_remove("DYLD_FALLBACK_LIBRARY_PATH");
-                cmd.env_remove("DYLD_LIBRARY_PATH");
+                let mut cmd = validator_command(&pv);
                 cmd.args([
                     "--validate",
                     validate_path.to_str().unwrap(),
@@ -493,7 +512,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let validate_path = installed.clone();
 
                 eprint!("  {} ... ", p.name);
-                let mut cmd = Command::new(&cv);
+                let mut cmd = validator_command(&cv);
                 cmd.args(["validate", &validate_path.to_string_lossy()]);
                 // clap-validator requires location paths to start
                 // with '/', but the CLAP header defines FILE
@@ -626,7 +645,7 @@ fn validate_aax(plugins: &[&PluginDef], aax_explicit: bool) -> usize {
             continue;
         }
         eprint!("  {} ... ", p.name);
-        let output = Command::new(&runner).arg(&bundle).output();
+        let output = validator_command(&runner).arg(&bundle).output();
         let output = match output {
             Ok(o) => o,
             Err(e) => {
