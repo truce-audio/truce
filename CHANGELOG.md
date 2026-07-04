@@ -14,7 +14,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 
 ### MIDI 2.0 / UMP
 
-- Opt in per direction in `truce.toml`: `midi2 = true` sets both; `midi2_input` / `midi2_output` override one. Without the opt-in, 2.0 input down-converts to 1.0 before delivery.
+- Opt in per direction in `truce.toml`: `midi2 = true` sets both; `midi2_input` / `midi2_output` override one. Without the opt-in, 2.0 input down-converts to 1.0 before delivery. Opting a port-less direction (or a port-less plugin) into 2.0 is a compile error, and port-less directions normalize to a 1.0 dialect.
 - **CLAP** decodes `CLAP_EVENT_MIDI2` + note expressions on input and emits CLAP-native output (notes, expressions, raw MIDI).
 - **AU v3** declares `audioUnitMIDIProtocol` from the input dialect; output rides the host's `MIDIEventList` block for every dialect, protocol-pure in the host's `hostMIDIProtocol`, with the byte block as fallback (macOS 12+ / iOS 15+).
 - **VST3** carries per-note control as note expression both ways: `INoteExpressionController` is declared, host `noteId`s resolve back to `(channel, note)`, values cross at full `f64` precision, and unmapped per-note CCs degrade to channel CCs. Channel-level MIDI input rides hidden per-port `IMidiMapping` proxy parameters so event-consuming plugins hear CC / pitch bend / pressure.

@@ -609,13 +609,17 @@ pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
     // validate path fails with the plugin named, mirroring the
     // compile error truce-derive raises for the same config.
     for p in &config.plugin {
-        if let Err(msg) = truce_build::midi_wiring(
+        let check = truce_build::midi_wiring(
             &p.category,
             p.midi_input,
             p.midi_output,
             p.midi_input_ports,
             p.midi_output_ports,
-        ) {
+        )
+        .and_then(|wiring| {
+            truce_build::midi2_dialects(&wiring, p.midi2, p.midi2_input, p.midi2_output)
+        });
+        if let Err(msg) = check {
             return Err(format!("[[plugin]] `{}`: {msg}", p.crate_name).into());
         }
     }

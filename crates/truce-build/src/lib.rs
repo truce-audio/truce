@@ -87,6 +87,58 @@ pub fn midi_wiring(
     })
 }
 
+/// Resolve the effective MIDI 2.0 dialect per direction
+/// (`(input_is_midi2, output_is_midi2)`) from the `midi2` /
+/// `midi2_input` / `midi2_output` truce.toml keys and the resolved
+/// [`MidiWiring`].
+///
+/// An explicit per-direction opt-in must match a direction that has a
+/// port - `midi2_input = true` on a plugin with no MIDI input is a
+/// contradiction, same as the port-count/capability mismatches
+/// [`midi_wiring`] rejects. The blanket `midi2 = true` only needs a
+/// port in *either* direction (an instrument with MIDI in and no MIDI
+/// out is the common case) and quietly doesn't apply to a port-less
+/// direction: the resolved dialect normalizes to 1.0 there, so
+/// `PluginInfo` never claims a 2.0 dialect on a direction that
+/// advertises no port.
+///
+/// # Errors
+///
+/// A `midi2*` key that opts a port-less direction (or, for the
+/// blanket key, a port-less plugin) into MIDI 2.0.
+pub fn midi2_dialects(
+    wiring: &MidiWiring,
+    midi2: bool,
+    midi2_input: Option<bool>,
+    midi2_output: Option<bool>,
+) -> Result<(bool, bool), String> {
+    if midi2_input == Some(true) && wiring.input_ports == 0 {
+        return Err(
+            "`midi2_input = true` but the plugin has no MIDI input port; add `midi_input = true` \
+             / `midi_input_ports`, or drop the key"
+                .into(),
+        );
+    }
+    if midi2_output == Some(true) && wiring.output_ports == 0 {
+        return Err(
+            "`midi2_output = true` but the plugin has no MIDI output port; add `midi_output = \
+             true` / `midi_output_ports`, or drop the key"
+                .into(),
+        );
+    }
+    if midi2 && wiring.input_ports == 0 && wiring.output_ports == 0 {
+        return Err(
+            "`midi2 = true` but the plugin has no MIDI ports; declare `midi_input` / \
+             `midi_output` (or port counts), or drop the key"
+                .into(),
+        );
+    }
+    Ok((
+        midi2_input.unwrap_or(midi2) && wiring.input_ports > 0,
+        midi2_output.unwrap_or(midi2) && wiring.output_ports > 0,
+    ))
+}
+
 /// One direction of [`midi_wiring`]: resolve the port count, from
 /// which the capability follows as `count > 0`.
 fn resolve_midi_direction(
@@ -254,8 +306,11 @@ pub struct PluginDef {
     pub midi_output: Option<bool>,
     /// Opt this plugin's MIDI ports into MIDI 2.0 / UMP. `false` (the
     /// default) keeps MIDI 1.0. Only formats with a UMP transport (CLAP)
-    /// honor it; others deliver MIDI 1.0 regardless. Requires a MIDI
-    /// port to exist (see `midi_input` / `midi_output` / category).
+    /// honor it; others deliver MIDI 1.0 regardless. Requires at least
+    /// one MIDI port in either direction - enforced by
+    /// [`midi2_dialects`] as a compile error - and applies only to
+    /// directions that have a port (an instrument with MIDI in and no
+    /// MIDI out keeps a 1.0 output dialect).
     #[serde(default)]
     pub midi2: bool,
     /// Override the *input* port's MIDI 2.0 dialect independently of
@@ -494,7 +549,7 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MidiWiring, extract_json_string, midi_wiring};
+    use super::{MidiWiring, extract_json_string, midi_wiring, midi2_dialects};
 
     fn wiring(w: MidiWiring) -> (bool, bool, u8, u8) {
         (
@@ -552,6 +607,36 @@ mod tests {
         assert_eq!(
             wiring(midi_wiring("instrument", None, None, Some(0), None).unwrap()),
             (false, false, 0, 0)
+        );
+    }
+
+    #[test]
+    fn midi2_requires_a_port_where_it_applies() {
+        let effect = midi_wiring("effect", None, None, None, None).unwrap(); // 0/0 ports
+        let instrument = midi_wiring("instrument", None, None, None, None).unwrap(); // 1/0
+
+        // Explicit per-direction opt-in on a port-less direction is a
+        // contradiction, like the capability/port-count mismatches.
+        assert!(midi2_dialects(&effect, false, Some(true), None).is_err());
+        assert!(midi2_dialects(&instrument, false, None, Some(true)).is_err());
+        // Blanket key on a port-less plugin is one too.
+        assert!(midi2_dialects(&effect, true, None, None).is_err());
+
+        // The common case: `midi2 = true` on an instrument applies to
+        // the input and normalizes the port-less output to 1.0.
+        assert_eq!(
+            midi2_dialects(&instrument, true, None, None).unwrap(),
+            (true, false)
+        );
+        // Opting out is always applicable.
+        assert_eq!(
+            midi2_dialects(&instrument, true, Some(false), None).unwrap(),
+            (false, false)
+        );
+        // No opt-in at all: both stay 1.0.
+        assert_eq!(
+            midi2_dialects(&instrument, false, None, None).unwrap(),
+            (false, false)
         );
     }
 

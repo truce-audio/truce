@@ -75,6 +75,36 @@ fn find_plugin<'a>(config: &'a Config, pkg_name: &str) -> &'a PluginDef {
 ///     truce::plugin_info!()
 /// }
 /// ```
+/// Resolve the plugin's MIDI wiring and per-direction 2.0 dialects,
+/// or the `compile_error!` tokens for a contradictory truce.toml
+/// (capability vs port count, or a `midi2*` opt-in on a port-less
+/// direction).
+fn resolve_midi(
+    plugin: &truce_build::PluginDef,
+) -> Result<(truce_build::MidiWiring, bool, bool), TokenStream> {
+    let to_tokens = |msg: String| -> TokenStream {
+        syn::Error::new(proc_macro2::Span::call_site(), msg)
+            .to_compile_error()
+            .into()
+    };
+    let wiring = truce_build::midi_wiring(
+        &plugin.category,
+        plugin.midi_input,
+        plugin.midi_output,
+        plugin.midi_input_ports,
+        plugin.midi_output_ports,
+    )
+    .map_err(to_tokens)?;
+    let (midi2_in, midi2_out) = truce_build::midi2_dialects(
+        &wiring,
+        plugin.midi2,
+        plugin.midi2_input,
+        plugin.midi2_output,
+    )
+    .map_err(to_tokens)?;
+    Ok((wiring, midi2_in, midi2_out))
+}
+
 // `au_name` / `au3_name` (and similar `vst2_name` / `vst3_name`)
 // mirror the user-facing truce.toml keys; renaming would break the
 // 1:1 with the TOML schema.
@@ -118,30 +148,16 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         "tool" => quote! { ::truce::core::PluginCategory::Tool },
         _ => quote! { ::truce::core::PluginCategory::Effect },
     };
-    // MIDI wiring: capability flags and port counts resolved together
-    // (capability is `count > 0`) so every format wrapper reads one
-    // coherent declaration instead of re-deriving from the category. A
-    // contradictory truce.toml (`midi_input = false` with
-    // `midi_input_ports = 2`) is a compile error.
-    let wiring = match truce_build::midi_wiring(
-        &plugin.category,
-        plugin.midi_input,
-        plugin.midi_output,
-        plugin.midi_input_ports,
-        plugin.midi_output_ports,
-    ) {
-        Ok(w) => w,
-        Err(msg) => {
-            return syn::Error::new(proc_macro2::Span::call_site(), msg)
-                .to_compile_error()
-                .into();
-        }
+    // MIDI wiring + dialects resolved together (capability is
+    // `count > 0`; a port-less direction can't be 2.0) so every format
+    // wrapper reads one coherent declaration. A contradictory
+    // truce.toml is a compile error.
+    let (wiring, midi2_in, midi2_out) = match resolve_midi(plugin) {
+        Ok(v) => v,
+        Err(tokens) => return tokens,
     };
     let (accepts_midi_in, emits_midi) = (wiring.accepts_midi_in, wiring.emits_midi);
     let (midi_input_ports, midi_output_ports) = (wiring.input_ports, wiring.output_ports);
-    // MIDI 2.0 opt-in. `midi2` sets both ports' dialect; the optional
-    // `midi2_input` / `midi2_output` keys override one direction (a
-    // 1.0 -> 2.0 promoter wants 1.0 in, 2.0 out).
     let dialect_tokens = |on: bool| {
         if on {
             quote! { ::truce::core::info::MidiDialect::Midi2 }
@@ -149,8 +165,8 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
             quote! { ::truce::core::info::MidiDialect::Midi1 }
         }
     };
-    let midi_input_dialect = dialect_tokens(plugin.midi2_input.unwrap_or(plugin.midi2));
-    let midi_output_dialect = dialect_tokens(plugin.midi2_output.unwrap_or(plugin.midi2));
+    let midi_input_dialect = dialect_tokens(midi2_in);
+    let midi_output_dialect = dialect_tokens(midi2_out);
     // NoteEffect plugins map to `aumi` (Apple's MIDI Processor type).
     // Pairs with empty `bus_layouts` at the plugin level: aumi
     // plugins must not expose audio I/O. Logic routes `aumi` to the
