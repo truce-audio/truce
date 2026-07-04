@@ -11,7 +11,10 @@
 //! - **Output Device** submenu - same for outputs
 //! - **Input / Output Channels** submenus - channel routing (when the
 //!   device exposes >= 2 channels)
-//! - **MIDI Input** submenu - lists MIDI ports (repopulated on open)
+//! - **MIDI Input** submenu(s) - one per plugin MIDI input port
+//!   ("MIDI Input - Port k" when the plugin declares more than one,
+//!   up to four in the menu), each listing MIDI devices (repopulated
+//!   on open)
 //! - **MIDI Channel** submenu - Omni / channel 1-16 filter
 //!
 //! Attached to the baseview window via `SetMenu`. Routes clicks
@@ -79,12 +82,17 @@ const MENU_CMD_INPUT_CHANNELS_END: u16 = 0xC3FF;
 const MENU_CMD_OUTPUT_CHANNELS_BASE: u16 = 0xC400;
 const MENU_CMD_OUTPUT_CHANNELS_END: u16 = 0xC4FF;
 
-/// MIDI-input device items. `MENU_CMD_MIDI_NONE` disconnects; the
-/// `[BASE, END]` range holds one ID per port (name recovered via
-/// `GetMenuStringW`, like the audio device menus).
-const MENU_CMD_MIDI_NONE: u16 = 0xC500;
-const MENU_CMD_MIDI_INPUT_BASE: u16 = 0xC501;
+/// MIDI-input device items, one strided block per plugin MIDI input
+/// port inside `[0xC500, 0xC5FF]`. Port `p`'s block starts at
+/// `MENU_CMD_MIDI_INPUT_BASE + p * MENU_CMD_MIDI_PORT_STRIDE`: the
+/// first ID disconnects that port ("None"), the rest are one device
+/// each (name recovered via `GetMenuStringW`, like the audio device
+/// menus). Stride 64 fits 4 ports; deeper multi-port plugins still
+/// route via `--midi-input` on the CLI, just without a menu row.
+const MENU_CMD_MIDI_INPUT_BASE: u16 = 0xC500;
 const MENU_CMD_MIDI_INPUT_END: u16 = 0xC5FF;
+const MENU_CMD_MIDI_PORT_STRIDE: u16 = 64;
+const MENU_CMD_MIDI_MAX_PORTS: usize = 4;
 
 /// MIDI channel items: `cmd == base + MidiChannel::encode()` (Omni
 /// encodes to 0xFF, channels to 0-15).
@@ -129,7 +137,9 @@ struct MenuState {
     /// MIDI device / channel control + its submenus, repopulated on
     /// `WM_INITMENUPOPUP`.
     midi: MidiController,
-    hmenu_midi_input: HMENU,
+    /// One MIDI-input device popup per plugin MIDI input port, indexed
+    /// by port. Length is `min(port_count, MENU_CMD_MIDI_MAX_PORTS)`.
+    hmenu_midi_inputs: Vec<HMENU>,
     hmenu_midi_channel: HMENU,
     /// Preset library handle backing the Presets menu.
     presets: PresetController,
@@ -263,20 +273,35 @@ pub fn install(
         };
 
         // MIDI section, appended into the same Settings popup behind a
-        // separator: input device + channel filter. Submenus are empty
-        // here; repopulated on open. Built for every plugin (any can
-        // receive MIDI).
-        let midi_input_menu = CreatePopupMenu();
-        let midi_channel_menu = CreatePopupMenu();
-        if !midi_input_menu.is_null() && !midi_channel_menu.is_null() {
-            AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
-            let in_label = wide("MIDI Input");
-            AppendMenuW(
-                plugin_menu,
-                MF_POPUP,
-                midi_input_menu as usize,
-                in_label.as_ptr(),
+        // separator: one input-device picker per plugin MIDI input
+        // port + a channel filter. Submenus are empty here; repopulated
+        // on open. Built for every plugin (any can receive MIDI).
+        let midi_ports = midi.port_count().max(1);
+        let menu_ports = midi_ports.min(MENU_CMD_MIDI_MAX_PORTS);
+        if midi_ports > MENU_CMD_MIDI_MAX_PORTS {
+            vlog!(
+                "MIDI menu shows the first {MENU_CMD_MIDI_MAX_PORTS} of {midi_ports} input ports; \
+                 route the rest with --midi-input"
             );
+        }
+        let midi_channel_menu = CreatePopupMenu();
+        let mut hmenu_midi_inputs: Vec<HMENU> = Vec::with_capacity(menu_ports);
+        if !midi_channel_menu.is_null() {
+            AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
+            for port in 0..menu_ports {
+                let popup = CreatePopupMenu();
+                if popup.is_null() {
+                    break;
+                }
+                let label = if midi_ports == 1 {
+                    "MIDI Input".to_string()
+                } else {
+                    format!("MIDI Input - Port {}", port + 1)
+                };
+                let in_label = wide(&label);
+                AppendMenuW(plugin_menu, MF_POPUP, popup as usize, in_label.as_ptr());
+                hmenu_midi_inputs.push(popup);
+            }
             let ch_label = wide("MIDI Channel");
             AppendMenuW(
                 plugin_menu,
@@ -317,7 +342,7 @@ pub fn install(
             hmenu_output_channels: output_ch_menu,
             channels,
             midi,
-            hmenu_midi_input: midi_input_menu,
+            hmenu_midi_inputs,
             hmenu_midi_channel: midi_channel_menu,
             presets,
             hmenu_presets,
@@ -578,16 +603,20 @@ unsafe extern "system" fn subclass_proc(
                     return 0;
                 }
 
-                if cmd_id == MENU_CMD_MIDI_NONE {
-                    vlog!("midi input: none");
-                    state.midi.set_device(None);
-                    return 0;
-                }
-
                 if (MENU_CMD_MIDI_INPUT_BASE..=MENU_CMD_MIDI_INPUT_END).contains(&cmd_id) {
-                    if let Some(name) = get_menu_string(state.hmenu_midi_input, u32::from(cmd_id)) {
-                        vlog!("midi input: {name}");
-                        state.midi.set_device(Some(name));
+                    // Decode the strided block: which plugin port, and
+                    // whether it's that port's "None" (disconnect) row.
+                    let rel = cmd_id - MENU_CMD_MIDI_INPUT_BASE;
+                    let port = (rel / MENU_CMD_MIDI_PORT_STRIDE) as u8;
+                    let is_none = rel.is_multiple_of(MENU_CMD_MIDI_PORT_STRIDE);
+                    if is_none {
+                        vlog!("midi input (port {port}): none");
+                        state.midi.set_device_on(port, None);
+                    } else if let Some(popup) = state.hmenu_midi_inputs.get(usize::from(port))
+                        && let Some(name) = get_menu_string(*popup, u32::from(cmd_id))
+                    {
+                        vlog!("midi input (port {port}): {name}");
+                        state.midi.set_device_on(port, Some(name));
                     }
                     return 0;
                 }
@@ -642,10 +671,18 @@ unsafe extern "system" fn subclass_proc(
                         state.output.channel_route(),
                         MENU_CMD_OUTPUT_CHANNELS_BASE,
                     );
-                } else if !state.hmenu_midi_input.is_null() && popup == state.hmenu_midi_input {
+                } else if let Some(port) = state
+                    .hmenu_midi_inputs
+                    .iter()
+                    .position(|&m| !m.is_null() && m == popup)
+                {
                     let names = midi::list_midi_devices();
-                    let current = state.midi.current_name();
-                    repopulate_midi_input_menu(popup, &names, current.as_deref());
+                    // Port index fits u8 (bounded by the plugin's MIDI
+                    // input port count, itself clamped to 4 in the menu).
+                    #[allow(clippy::cast_possible_truncation)]
+                    let port = port as u8;
+                    let current = state.midi.current_name_on(port);
+                    repopulate_midi_input_menu(popup, port, &names, current.as_deref());
                 } else if !state.hmenu_midi_channel.is_null() && popup == state.hmenu_midi_channel {
                     repopulate_midi_channel_menu(popup, state.midi.channel());
                 } else if !state.hmenu_presets.is_null() && popup == state.hmenu_presets {
@@ -820,32 +857,39 @@ unsafe fn append_channel_item(
 // Why: `i as u16` for the command ID - the loop breaks at `i >= 254`
 // so the cast is bounded well below `u16::MAX`.
 #[allow(clippy::cast_possible_truncation)]
-unsafe fn repopulate_midi_input_menu(popup: HMENU, devices: &[String], current: Option<&str>) {
+unsafe fn repopulate_midi_input_menu(
+    popup: HMENU,
+    port: u8,
+    devices: &[String],
+    current: Option<&str>,
+) {
     unsafe {
         let count = GetMenuItemCount(popup);
         for _ in 0..count {
             DeleteMenu(popup, 0, MF_BYPOSITION);
         }
 
+        // Port `port`'s command block: `base` disconnects it, `base +
+        // 1 + i` selects device `i` (bounded by the stride).
+        let base = MENU_CMD_MIDI_INPUT_BASE + u16::from(port) * MENU_CMD_MIDI_PORT_STRIDE;
+
         let mut none_flags = MF_STRING;
         if current.is_none() {
             none_flags |= MF_CHECKED;
         }
         let none = wide("None");
-        AppendMenuW(
-            popup,
-            none_flags,
-            MENU_CMD_MIDI_NONE as usize,
-            none.as_ptr(),
-        );
+        AppendMenuW(popup, none_flags, base as usize, none.as_ptr());
 
         if devices.is_empty() {
             return;
         }
         AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
         for (i, name) in devices.iter().enumerate() {
-            // Keep IDs inside the reserved range.
-            if MENU_CMD_MIDI_INPUT_BASE as usize + i > MENU_CMD_MIDI_INPUT_END as usize {
+            // One device ID per slot after `base`, capped by the stride.
+            let Ok(offset) = u16::try_from(i + 1) else {
+                break;
+            };
+            if offset >= MENU_CMD_MIDI_PORT_STRIDE {
                 break;
             }
             let mut flags = MF_STRING;
@@ -853,7 +897,7 @@ unsafe fn repopulate_midi_input_menu(popup: HMENU, devices: &[String], current: 
                 flags |= MF_CHECKED;
             }
             let text = wide(name);
-            let cmd_id = MENU_CMD_MIDI_INPUT_BASE + i as u16;
+            let cmd_id = base + offset;
             AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
         }
     }

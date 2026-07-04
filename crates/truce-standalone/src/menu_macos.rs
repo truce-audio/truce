@@ -10,7 +10,9 @@
 //! - **Output Device** submenu - same for outputs
 //! - **Input / Output Channels** submenus - channel routing (when the
 //!   device exposes >= 2 channels)
-//! - **MIDI Input** submenu - lists MIDI ports (repopulated on open)
+//! - **MIDI Input** submenu(s) - one per plugin MIDI input port
+//!   ("MIDI Input - Port k" when the plugin declares more than one),
+//!   each listing the MIDI devices (repopulated on open)
 //! - **MIDI Channel** submenu - Omni / channel 1-16 filter
 //!
 //! Installed via `NSApp.setMainMenu(...)`.
@@ -70,9 +72,10 @@ struct MenuState {
     /// MIDI device / channel control. `None`-as-feature: the MIDI
     /// submenus are only built for plugins that take note input.
     midi: MidiController,
-    /// MIDI-input device submenu - repopulated on open. Null when the
+    /// One MIDI-input device submenu per plugin MIDI input port,
+    /// indexed by port. Each is repopulated on open. Empty when the
     /// MIDI menu isn't built.
-    midi_input_menu: *mut Object,
+    midi_input_menus: Vec<*mut Object>,
     /// The Presets menu - identified on open to refresh its children.
     presets_menu: *mut Object,
     /// Presets > Load submenu - re-enumerated on each open so saves
@@ -209,11 +212,26 @@ pub fn install(
         let midi_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
         let _: () = msg_send![plugin_menu, addItem: midi_sep];
 
-        let midi_input_item = make_menu_item("MIDI Input");
-        let _: () = msg_send![midi_input_item, setTarget: target];
-        let midi_input_menu = make_menu("MIDI Input");
-        let _: () = msg_send![midi_input_item, setSubmenu: midi_input_menu];
-        let _: () = msg_send![plugin_menu, addItem: midi_input_item];
+        // One device submenu per plugin MIDI input port. A single-port
+        // plugin gets the familiar "MIDI Input"; a multi-port one gets
+        // "MIDI Input - Port 1 / 2 / ..." so each controller routes to
+        // its own port. Each submenu's items encode their port in the
+        // NSMenuItem tag (see `populate_midi_input_menu`).
+        let midi_ports = midi.port_count().max(1);
+        let mut midi_input_menus: Vec<*mut Object> = Vec::with_capacity(midi_ports);
+        for port in 0..midi_ports {
+            let label = if midi_ports == 1 {
+                "MIDI Input".to_string()
+            } else {
+                format!("MIDI Input - Port {}", port + 1)
+            };
+            let item = make_menu_item(&label);
+            let _: () = msg_send![item, setTarget: target];
+            let menu = make_menu(&label);
+            let _: () = msg_send![item, setSubmenu: menu];
+            let _: () = msg_send![plugin_menu, addItem: item];
+            midi_input_menus.push(menu);
+        }
 
         let midi_chan_item = make_menu_item("MIDI Channel");
         let _: () = msg_send![midi_chan_item, setTarget: target];
@@ -230,7 +248,7 @@ pub fn install(
             output_item,
             input_dev_menu,
             output_dev_menu,
-            midi_input_menu,
+            midi_input_menus.clone(),
             target,
         );
 
@@ -243,8 +261,10 @@ pub fn install(
             let _: () = msg_send![input_dev_menu, setDelegate: target];
         }
         let _: () = msg_send![output_dev_menu, setDelegate: target];
-        // The MIDI-input submenu repopulates its device list on open.
-        let _: () = msg_send![midi_input_menu, setDelegate: target];
+        // Each MIDI-input submenu repopulates its device list on open.
+        for menu in &midi_input_menus {
+            let _: () = msg_send![*menu, setDelegate: target];
+        }
 
         let _: () = msg_send![plugin_menu_item, setSubmenu: plugin_menu];
 
@@ -558,16 +578,34 @@ unsafe fn update_channel_checkmarks(menu: *mut Object, selected_tag: i64) {
     }
 }
 
-/// Tag for the "None" row in the MIDI-input submenu. Distinct from the
-/// device rows (which use the default tag 0 and select by title).
-const MIDI_INPUT_NONE_TAG: i64 = -1;
+/// Encode a MIDI-input item's target port into its `NSMenuItem` tag.
+/// Device rows carry the plugin port (`0..N`); the "None" row for a
+/// port carries `-1 - port` so it's distinct from every device row.
+/// A device's name still comes from the item title.
+fn midi_input_device_tag(port: u8) -> i64 {
+    i64::from(port)
+}
+fn midi_input_none_tag(port: u8) -> i64 {
+    -1 - i64::from(port)
+}
 
-/// Rebuild the MIDI-input submenu: a "None" row (disconnect) followed
-/// by one row per available port. The active device (or "None") is
-/// checkmarked. Device rows select by title; "None" by its tag.
+/// Decode a MIDI-input item tag back to `(port, is_none)`.
+fn decode_midi_input_tag(tag: i64) -> (u8, bool) {
+    if tag < 0 {
+        (u8::try_from(-1 - tag).unwrap_or(0), true)
+    } else {
+        (u8::try_from(tag).unwrap_or(0), false)
+    }
+}
+
+/// Rebuild one port's MIDI-input submenu: a "None" row (disconnect)
+/// followed by one row per available device. The active device (or
+/// "None") is checkmarked. Every item's tag encodes `port` so the
+/// action routes to the right plugin MIDI port.
 unsafe fn populate_midi_input_menu(
     menu: *mut Object,
     target: *mut Object,
+    port: u8,
     devices: &[String],
     current: Option<&str>,
 ) {
@@ -584,7 +622,7 @@ unsafe fn populate_midi_input_menu(
             keyEquivalent: empty
         ];
         let _: () = msg_send![item, setTarget: target];
-        let _: () = msg_send![item, setTag: MIDI_INPUT_NONE_TAG];
+        let _: () = msg_send![item, setTag: midi_input_none_tag(port)];
         let on: BOOL = if current.is_none() { YES } else { NO };
         let _: () = msg_send![item, setState: i64::from(on)];
         let _: () = msg_send![menu, addItem: item];
@@ -605,6 +643,7 @@ unsafe fn populate_midi_input_menu(
                 keyEquivalent: empty
             ];
             let _: () = msg_send![item, setTarget: target];
+            let _: () = msg_send![item, setTag: midi_input_device_tag(port)];
             let on: BOOL = if current.is_some_and(|c| c == name.as_str()) {
                 YES
             } else {
@@ -820,20 +859,22 @@ fn ensure_class() -> &'static Class {
             select_output_channels_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
-        // MIDI input device chosen. The "None" row (tag 1) disconnects;
-        // every other row carries a device name in its title.
+        // MIDI input device chosen. The item tag encodes the plugin
+        // port and whether it's the "None" (disconnect) row; device
+        // rows carry the name in their title.
         extern "C" fn select_midi_input_action(this: &Object, _: Sel, sender: *mut Object) {
             unsafe {
                 let Some(state) = state_from(this) else {
                     return;
                 };
                 let tag: i64 = msg_send![sender, tag];
-                if tag == MIDI_INPUT_NONE_TAG {
-                    vlog!("midi input: none");
-                    state.midi.set_device(None);
+                let (port, is_none) = decode_midi_input_tag(tag);
+                if is_none {
+                    vlog!("midi input (port {port}): none");
+                    state.midi.set_device_on(port, None);
                 } else if let Some(name) = item_title(sender) {
-                    vlog!("midi input: {name}");
-                    state.midi.set_device(Some(name));
+                    vlog!("midi input (port {port}): {name}");
+                    state.midi.set_device_on(port, Some(name));
                 }
             }
         }
@@ -902,15 +943,18 @@ fn ensure_class() -> &'static Class {
                     return;
                 }
 
-                if !state.midi_input_menu.is_null() && menu == state.midi_input_menu {
+                if let Some(port) = state
+                    .midi_input_menus
+                    .iter()
+                    .position(|&m| !m.is_null() && m == menu)
+                {
                     let names = crate::midi::list_midi_devices();
-                    let current = state.midi.current_name();
-                    populate_midi_input_menu(
-                        state.midi_input_menu,
-                        state.target,
-                        &names,
-                        current.as_deref(),
-                    );
+                    // Port index fits u8 (bounded by the plugin's
+                    // MIDI input port count).
+                    #[allow(clippy::cast_possible_truncation)]
+                    let port = port as u8;
+                    let current = state.midi.current_name_on(port);
+                    populate_midi_input_menu(menu, state.target, port, &names, current.as_deref());
                     return;
                 }
 
@@ -1074,7 +1118,7 @@ unsafe fn make_menu_target(
         target: std::ptr::null_mut(),
         device_cache: DeviceCache::new(),
         midi,
-        midi_input_menu: std::ptr::null_mut(),
+        midi_input_menus: Vec::new(),
         presets_menu: std::ptr::null_mut(),
         preset_load_menu: std::ptr::null_mut(),
         preset_save_item: std::ptr::null_mut(),
@@ -1092,7 +1136,7 @@ unsafe fn update_menu_state(
     output_item: *mut Object,
     input_device_menu: *mut Object,
     output_device_menu: *mut Object,
-    midi_input_menu: *mut Object,
+    midi_input_menus: Vec<*mut Object>,
     target_self: *mut Object,
 ) {
     unsafe {
@@ -1105,7 +1149,7 @@ unsafe fn update_menu_state(
         state.output_item = output_item;
         state.input_device_menu = input_device_menu;
         state.output_device_menu = output_device_menu;
-        state.midi_input_menu = midi_input_menu;
+        state.midi_input_menus = midi_input_menus;
         state.target = target_self;
     }
 }

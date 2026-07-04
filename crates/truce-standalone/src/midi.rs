@@ -125,9 +125,13 @@ enum MidiCmd {
 #[derive(Clone)]
 pub struct MidiController {
     cmd_tx: mpsc::Sender<MidiCmd>,
-    /// Worker mirrors the connected device name here so the menu can
-    /// check the active device. `None` = nothing connected.
-    current_name: Arc<Mutex<Option<String>>>,
+    /// Worker mirrors each port's connected device name here (indexed
+    /// by plugin MIDI input port) so the per-port menus can checkmark
+    /// the active device. `None` = that port has nothing connected.
+    current_names: Arc<Mutex<Vec<Option<String>>>>,
+    /// Number of plugin MIDI input port slots (>= 1). The menus build
+    /// this many device submenus.
+    port_count: usize,
     /// Channel filter, read live in the `midir` callback. [`OMNI`] or a
     /// 0-based channel.
     channel: Arc<AtomicU8>,
@@ -152,7 +156,22 @@ impl MidiController {
     /// `None`.
     #[must_use]
     pub fn current_name(&self) -> Option<String> {
-        self.current_name.lock().ok().and_then(|g| g.clone())
+        self.current_name_on(0)
+    }
+
+    /// Name of the device feeding plugin MIDI port `port`, or `None`.
+    #[must_use]
+    pub fn current_name_on(&self, port: u8) -> Option<String> {
+        self.current_names
+            .lock()
+            .ok()
+            .and_then(|g| g.get(usize::from(port)).cloned().flatten())
+    }
+
+    /// Number of plugin MIDI input ports the menus should expose (>= 1).
+    #[must_use]
+    pub fn port_count(&self) -> usize {
+        self.port_count
     }
 
     /// Restrict the input to one channel (or `Omni` for all). Takes
@@ -196,7 +215,8 @@ impl MidiInputThread {
         pending: Arc<ArrayQueue<MidiEvent>>,
     ) -> (Self, MidiController) {
         let stop = Arc::new(AtomicBool::new(false));
-        let current_name = Arc::new(Mutex::new(None));
+        let slots = num_ports.max(1);
+        let current_names = Arc::new(Mutex::new(vec![None; slots]));
         let initial_channel = opts
             .midi_channel
             .as_deref()
@@ -205,7 +225,6 @@ impl MidiInputThread {
         let channel = Arc::new(AtomicU8::new(initial_channel.encode()));
         let (cmd_tx, cmd_rx) = mpsc::channel::<MidiCmd>();
 
-        let slots = num_ports.max(1);
         if opts.midi_inputs.len() > slots {
             eprintln!(
                 "(--midi-input: {} devices given but the plugin has {slots} MIDI input port(s); \
@@ -216,7 +235,7 @@ impl MidiInputThread {
         let initial_devices = opts.midi_inputs.clone();
 
         let stop_thread = Arc::clone(&stop);
-        let current_thread = Arc::clone(&current_name);
+        let names_thread = Arc::clone(&current_names);
         let channel_thread = Arc::clone(&channel);
         std::thread::Builder::new()
             .name("truce-standalone-midi".into())
@@ -227,7 +246,7 @@ impl MidiInputThread {
                     cmd_rx,
                     pending,
                     stop_thread,
-                    current_thread,
+                    names_thread,
                     channel_thread,
                 );
             })
@@ -235,7 +254,8 @@ impl MidiInputThread {
 
         let controller = MidiController {
             cmd_tx,
-            current_name,
+            current_names,
+            port_count: slots,
             channel,
         };
         (Self { stop }, controller)
@@ -266,7 +286,7 @@ fn midi_thread(
     cmd_rx: mpsc::Receiver<MidiCmd>,
     pending: Arc<ArrayQueue<MidiEvent>>,
     stop: Arc<AtomicBool>,
-    current_name: Arc<Mutex<Option<String>>>,
+    current_names: Arc<Mutex<Vec<Option<String>>>>,
     channel: Arc<AtomicU8>,
 ) {
     // One slot per plugin MIDI input port; the i-th initial
@@ -285,7 +305,7 @@ fn midi_thread(
 
     while !stop.load(Ordering::Relaxed) {
         for slot in &mut slots {
-            reconcile(slot, &pending, &channel, &current_name);
+            reconcile(slot, &pending, &channel, &current_names);
         }
 
         // Block until the menu changes a device or the hot-plug poll
@@ -307,14 +327,13 @@ fn midi_thread(
 
 /// Bring one slot's connection in line with its `desired` device:
 /// drop it if the desired device changed / vanished, then (re)connect
-/// when a matching port is present. Only port 0 mirrors its device
-/// name into `current_name` (the interactive menus' single-device
-/// view); higher ports are CLI-driven and log their connection.
+/// when a matching port is present. Mirrors the slot's device name
+/// into `current_names[port]` so the per-port menus checkmark it.
 fn reconcile(
     slot: &mut Slot,
     pending: &Arc<ArrayQueue<MidiEvent>>,
     channel: &Arc<AtomicU8>,
-    current_name: &Arc<Mutex<Option<String>>>,
+    current_names: &Arc<Mutex<Vec<Option<String>>>>,
 ) {
     if slot.connection.is_some() {
         let keep = match slot.desired.as_deref() {
@@ -337,9 +356,7 @@ fn reconcile(
             }
             slot.connection = None;
             slot.connected_name.clear();
-            if slot.port == 0 {
-                set_current(current_name, None);
-            }
+            set_current(current_names, slot.port, None);
         }
     }
 
@@ -350,9 +367,7 @@ fn reconcile(
         vlog!("MIDI input (port {}): {name}", slot.port);
         slot.connection = Some(conn);
         slot.connected_name.clone_from(&name);
-        if slot.port == 0 {
-            set_current(current_name, Some(name));
-        }
+        set_current(current_names, slot.port, Some(name));
     }
 }
 
@@ -420,9 +435,11 @@ fn try_connect(
     Some((conn, name))
 }
 
-fn set_current(current_name: &Arc<Mutex<Option<String>>>, value: Option<String>) {
-    if let Ok(mut g) = current_name.lock() {
-        *g = value;
+fn set_current(current_names: &Arc<Mutex<Vec<Option<String>>>>, port: u8, value: Option<String>) {
+    if let Ok(mut g) = current_names.lock()
+        && let Some(slot) = g.get_mut(usize::from(port))
+    {
+        *slot = value;
     }
 }
 
