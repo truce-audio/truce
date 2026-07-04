@@ -247,6 +247,14 @@ pub fn downconvert_to_midi1(body: &EventBody) -> Option<EventBody> {
             note,
             pressure: hi7_32(pressure),
         },
+        // A per-note CC index >= 128 (MIDI 2.0 carries an 8-bit index)
+        // has no MIDI 1.0 CC number - a 1.0 CC data byte is 7-bit.
+        // Emitting it verbatim sets bit 7, which a 1.0 parser reads as
+        // a status byte and desyncs the stream. Drop it rather than
+        // alias it onto a real controller by masking.
+        EventBody::ControlChange2 { cc, .. } | EventBody::PerNoteCC { cc, .. } if cc >= 128 => {
+            return None;
+        }
         EventBody::ControlChange2 {
             group,
             channel,
@@ -371,6 +379,38 @@ mod tests {
                 value: 127,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn downconvert_drops_out_of_range_per_note_cc() {
+        // A per-note CC index >= 128 has no MIDI 1.0 CC number; emitting
+        // it would put bit 7 in a data byte and desync the 1.0 stream.
+        for cc in [128u8, 200, 255] {
+            assert!(
+                downconvert_to_midi1(&EventBody::PerNoteCC {
+                    group: 0,
+                    channel: 3,
+                    note: 60,
+                    cc,
+                    value: u32::MAX,
+                    registered: true,
+                })
+                .is_none(),
+                "per-note CC index {cc} must drop, not emit a corrupt data byte"
+            );
+        }
+        // A valid 7-bit index still down-converts.
+        assert!(matches!(
+            downconvert_to_midi1(&EventBody::PerNoteCC {
+                group: 0,
+                channel: 3,
+                note: 60,
+                cc: 127,
+                value: 0,
+                registered: true,
+            }),
+            Some(EventBody::ControlChange { cc: 127, .. })
         ));
     }
 
