@@ -54,6 +54,7 @@ A plugin can expose more than one MIDI **input** port. The headline use is a mul
 
 ### Fixes
 
+- **`cargo truce run` builds the standalone `--no-default-features`.** The preview binary needs no format wrapper; linking clap / vst3 / au / aax / lv2 only bloated it and ran their load-time registration constructors (e.g. the AU shim's MIDI-port-clamp warning) in a host that never uses them. New `--features` flag re-adds any you want alongside `standalone`.
 - **The standalone pre-grows the f64 widening scratch before the stream starts.** An `f64` plugin's first cpal callback allocated its per-channel widen/narrow buffers on the real-time thread; the scratch is now sized to the stream's frame bound up front, matching every format wrapper.
 - **VST3 rejects a processing setup or block whose sample size was never negotiated.** A host that ignored `canProcessSampleSize` would have its channel pointers reinterpreted at the wrong width; `setupProcessing` and `process` now refuse the mismatch.
 - **`cargo truce validate` scrubs cargo-injected `DYLD_*` vars before spawning pluginval.** Under `cargo run -- validate`, the inherited `DYLD_FALLBACK_LIBRARY_PATH` broke the bundle load inside pluginval and the scan reported zero types.
