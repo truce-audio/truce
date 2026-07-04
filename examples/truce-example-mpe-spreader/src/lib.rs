@@ -31,6 +31,7 @@
 use std::f64::consts::TAU;
 use std::sync::Arc;
 
+use truce::core::midi::{upscale_7_to_16, upscale_7_to_32, upscale_14_to_32};
 use truce::prelude::*;
 use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, dropdown, knob, widgets};
@@ -163,25 +164,6 @@ impl Spreader {
     }
 }
 
-// 7-bit -> 16-bit, exact endpoints (0->0, 127->65535). The masked
-// division fits the narrower type; the lint can't prove it.
-#[allow(clippy::cast_possible_truncation)]
-fn vel7_to_16(v: u8) -> u16 {
-    ((u32::from(v) * 0xFFFF) / 127) as u16
-}
-
-// 7-bit -> 32-bit controller value.
-#[allow(clippy::cast_possible_truncation)]
-fn cc7_to_32(v: u8) -> u32 {
-    ((u64::from(v) * u64::from(u32::MAX)) / 127) as u32
-}
-
-// 14-bit -> 32-bit pitch bend; 8192 (centre) -> ~0x8000_0000.
-#[allow(clippy::cast_possible_truncation)]
-fn bend14_to_32(v: u16) -> u32 {
-    ((u64::from(v) * u64::from(u32::MAX)) / 16383) as u32
-}
-
 // LFO sample -> 32-bit per-note pitch bend around centre.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn lfo_bend(depth: f64, s: f64) -> u32 {
@@ -238,7 +220,7 @@ impl PluginLogic for Spreader {
                             group: g,
                             channel: ch,
                             note,
-                            velocity: vel7_to_16(velocity),
+                            velocity: upscale_7_to_16(velocity),
                             attribute_type: 0,
                             attribute: 0,
                         },
@@ -269,7 +251,7 @@ impl PluginLogic for Spreader {
                             group: g,
                             channel: ch,
                             note,
-                            velocity: vel7_to_16(velocity),
+                            velocity: upscale_7_to_16(velocity),
                             attribute_type: 0,
                             attribute: 0,
                         },
@@ -291,7 +273,7 @@ impl PluginLogic for Spreader {
                                     channel: h.channel,
                                     note,
                                     cc: CC_BRIGHTNESS,
-                                    value: cc7_to_32(value),
+                                    value: upscale_7_to_32(value),
                                     registered: true,
                                 },
                             ));
@@ -310,7 +292,7 @@ impl PluginLogic for Spreader {
                             group,
                             channel,
                             cc,
-                            value: cc7_to_32(value),
+                            value: upscale_7_to_32(value),
                         },
                     ));
                 }
@@ -324,7 +306,7 @@ impl PluginLogic for Spreader {
                         EventBody::PitchBend2 {
                             group,
                             channel,
-                            value: bend14_to_32(value),
+                            value: upscale_14_to_32(value),
                         },
                     ));
                 }
@@ -340,7 +322,7 @@ impl PluginLogic for Spreader {
                             group,
                             channel,
                             note,
-                            pressure: cc7_to_32(pressure),
+                            pressure: upscale_7_to_32(pressure),
                         },
                     ));
                 }
@@ -354,7 +336,7 @@ impl PluginLogic for Spreader {
                         EventBody::ChannelPressure2 {
                             group,
                             channel,
-                            pressure: cc7_to_32(pressure),
+                            pressure: upscale_7_to_32(pressure),
                         },
                     ));
                 }

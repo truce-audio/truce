@@ -1237,11 +1237,16 @@ fn note_expression_of(body: &EventBody) -> Option<(u32, i32, f64)> {
     // Predefined VST3 NoteExpressionTypeIDs (reverse of the input map):
     // Volume=0, Pan=1, Tuning=2, Vibrato=3, Expression=4, Brightness=5.
     let (type_id, channel, note, value) = match *body {
+        // Registered per-note controllers only: the predefined VST3
+        // expression types carry the registered indices' semantics;
+        // an assignable index is manufacturer-defined and must not
+        // alias onto them.
         EventBody::PerNoteCC {
             channel,
             note,
             cc,
             value,
+            registered: true,
             ..
         } => {
             let type_id = match cc {
@@ -2236,6 +2241,23 @@ mod tests {
                 cc: 20,
                 value: 0,
                 registered: true,
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn assignable_per_note_cc_is_not_an_expression() {
+        // Only registered per-note indices carry the predefined
+        // expression semantics; an assignable index 7 is not volume.
+        assert!(
+            note_expression_of(&EventBody::PerNoteCC {
+                group: 0,
+                channel: 0,
+                note: 60,
+                cc: 7,
+                value: u32::MAX,
+                registered: false,
             })
             .is_none()
         );

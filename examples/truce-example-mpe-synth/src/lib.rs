@@ -59,6 +59,10 @@ struct Voice {
     base_freq: f64,
     /// Per-note bend, semitones.
     bend_semis: f64,
+    /// Rendered frequency: `base_freq` with per-note + channel bend
+    /// applied. Cached at event time - the `powf` behind it is far too
+    /// hot for the per-voice per-sample render loop.
+    freq: f64,
     /// Velocity amplitude, 0..1.
     amp: f32,
     /// Per-note brightness, 0..1 (default full).
@@ -91,6 +95,30 @@ impl Synth {
         }
     }
 
+    /// Store a channel bend and retune every sounding voice on the
+    /// channel so the cached `freq` tracks it.
+    fn set_channel_bend(&mut self, channel: u8, semis: f64) {
+        self.channel_bend[usize::from(channel)] = semis;
+        for v in self
+            .voices
+            .iter_mut()
+            .filter(|v| v.active && v.channel == channel)
+        {
+            Self::retune(v, semis);
+        }
+    }
+
+    /// Equal-tempered bend ratio. Event-time only (`powf`).
+    fn bend_ratio(semis: f64) -> f64 {
+        2.0_f64.powf(semis / 12.0)
+    }
+
+    /// Re-derive a voice's cached `freq` from its base pitch and the
+    /// current per-note + channel bends.
+    fn retune(v: &mut Voice, channel_bend: f64) {
+        v.freq = v.base_freq * Self::bend_ratio(v.bend_semis + channel_bend);
+    }
+
     fn note_on(&mut self, channel: u8, note: u8, amp: f32) {
         // Prefer a free slot; if the pool is full, steal a voice
         // that's already fading (in release) before cutting a still-
@@ -102,14 +130,16 @@ impl Synth {
             .or_else(|| self.voices.iter().position(|v| v.releasing))
             .unwrap_or(0);
         let (pan_l, pan_r) = pan_gains(channel);
+        let base_freq = midi_note_to_freq(note);
         self.voices[slot] = Voice {
             active: true,
             releasing: false,
             channel,
             note,
             phase: 0.0,
-            base_freq: midi_note_to_freq(note),
+            base_freq,
             bend_semis: 0.0,
+            freq: base_freq * Self::bend_ratio(self.channel_bend[usize::from(channel)]),
             amp,
             cutoff: 1.0,
             env: 0.0,
@@ -155,8 +185,10 @@ impl Synth {
                 value,
                 ..
             } => {
+                let ch_bend = self.channel_bend[usize::from(channel)];
                 if let Some(v) = self.find(channel, note) {
                     v.bend_semis = bend32_semis(value, PER_NOTE_BEND_SEMIS);
+                    Self::retune(v, ch_bend);
                 }
             }
             EventBody::PerNoteCC {
@@ -171,10 +203,10 @@ impl Synth {
                 }
             }
             EventBody::PitchBend2 { channel, value, .. } => {
-                self.channel_bend[usize::from(channel)] = bend32_semis(value, CHANNEL_BEND_SEMIS);
+                self.set_channel_bend(channel, bend32_semis(value, CHANNEL_BEND_SEMIS));
             }
             EventBody::PitchBend { channel, value, .. } => {
-                self.channel_bend[usize::from(channel)] = bend14_semis(value);
+                self.set_channel_bend(channel, bend14_semis(value));
             }
             // 32-bit macro CC drives the master-cutoff param at full res.
             EventBody::ControlChange2 {
@@ -273,8 +305,7 @@ impl PluginLogic for Synth {
             let mut left = 0.0f32;
             let mut right = 0.0f32;
             for v in self.voices.iter_mut().filter(|v| v.active) {
-                let semis = v.bend_semis + self.channel_bend[usize::from(v.channel)];
-                let freq = v.base_freq * 2.0_f64.powf(semis / 12.0);
+                let freq = v.freq;
                 let raw = osc(v.phase);
                 v.phase = (v.phase + freq / self.sample_rate).fract();
                 // Per-voice cutoff scaled by the master macro.

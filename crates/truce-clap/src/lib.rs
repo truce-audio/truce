@@ -610,11 +610,16 @@ fn u32_from_unit(v: f64) -> u32 {
 /// the rest are `0..1`.
 fn clap_note_expression_of(body: &EventBody) -> Option<(i32, u8, u8, f64)> {
     match *body {
+        // Registered per-note controllers only: the predefined CLAP
+        // expression ids carry the registered indices' semantics
+        // (7 = volume, 74 = brightness, ...); an assignable index is
+        // manufacturer-defined and must not alias onto them.
         EventBody::PerNoteCC {
             channel,
             note,
             cc,
             value,
+            registered: true,
             ..
         } => {
             let id = match cc {
@@ -3415,6 +3420,23 @@ mod note_expression_tests {
             panic!("expected volume PerNoteCC, got {body:?}");
         };
         assert!((f64::from(value) / f64::from(u32::MAX) - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn assignable_per_note_cc_is_not_an_expression() {
+        // Only registered per-note indices carry the predefined
+        // expression semantics; an assignable index 7 is not volume.
+        assert!(
+            clap_note_expression_of(&EventBody::PerNoteCC {
+                group: 0,
+                channel: 0,
+                note: 60,
+                cc: 7,
+                value: u32::MAX,
+                registered: false,
+            })
+            .is_none()
+        );
     }
 
     #[test]

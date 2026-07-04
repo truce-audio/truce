@@ -204,9 +204,11 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
 /// is a note-off. Per-note
 /// richness (`PerNoteCC` / `PerNotePitchBend`) collapses onto the note's
 /// channel - the note identity is lost but the controller stays visible
-/// (MPE-style degradation). Returns `None` for bodies that are already
-/// MIDI 1.0, aren't channel voice, or have no 1.0 form (per-note
-/// management, (N)RPN controllers).
+/// (MPE-style degradation); registered per-note controllers only, since
+/// assignable indices are manufacturer-defined and correspond to no CC.
+/// Returns `None` for bodies that are already MIDI 1.0, aren't channel
+/// voice, or have no 1.0 form (per-note management, assignable per-note
+/// controllers, (N)RPN controllers).
 #[must_use]
 #[allow(clippy::cast_possible_truncation)]
 pub fn downconvert_to_midi1(body: &EventBody) -> Option<EventBody> {
@@ -249,6 +251,14 @@ pub fn downconvert_to_midi1(body: &EventBody) -> Option<EventBody> {
             note,
             pressure: hi7_32(pressure),
         },
+        // Only *registered* per-note controllers mirror the MIDI 1.0
+        // CC numbering (index 7 = volume, 74 = brightness, ...);
+        // assignable indices are manufacturer-defined, so collapsing
+        // one onto the same-numbered channel CC would alias it onto an
+        // unrelated standard controller. Drop assignables instead.
+        EventBody::PerNoteCC {
+            registered: false, ..
+        } => return None,
         // A per-note CC index >= 128 (MIDI 2.0 carries an 8-bit index)
         // has no MIDI 1.0 CC number - a 1.0 CC data byte is 7-bit.
         // Emitting it verbatim sets bit 7, which a 1.0 parser reads as
@@ -340,6 +350,29 @@ fn upscale(src: u32, src_bits: u32, dst_bits: u32) -> u32 {
     out
 }
 
+/// 7-bit -> 16-bit spec up-scaling: exact center (`64 -> 0x8000`) and
+/// exact max (`127 -> 0xFFFF`), unlike a plain shift or linear rescale.
+#[must_use]
+pub fn upscale_7_to_16(v: u8) -> u16 {
+    // Bounded by the 16-bit target width.
+    #[allow(clippy::cast_possible_truncation)]
+    let out = upscale(u32::from(v), 7, 16) as u16;
+    out
+}
+
+/// 7-bit -> 32-bit spec up-scaling (see [`upscale_7_to_16`]).
+#[must_use]
+pub fn upscale_7_to_32(v: u8) -> u32 {
+    upscale(u32::from(v), 7, 32)
+}
+
+/// 14-bit -> 32-bit spec up-scaling: `0x2000 -> 0x8000_0000` exactly,
+/// so a centered 1.0 pitch bend stays a centered 2.0 bend.
+#[must_use]
+pub fn upscale_14_to_32(v: u16) -> u32 {
+    upscale(u32::from(v), 14, 32)
+}
+
 /// Up-convert a MIDI 1.0 channel-voice [`EventBody`] to its MIDI 2.0
 /// equivalent. Used when a wrapper emits into a MIDI 2.0 protocol
 /// stream (AU v3's `MIDIEventList`): the UMP spec forbids mixing 1.0
@@ -350,11 +383,6 @@ fn upscale(src: u32, src_bits: u32, dst_bits: u32) -> u32 {
 /// voice.
 #[must_use]
 pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
-    // Bounded by the target widths, so the narrowing casts can't lose bits.
-    #[allow(clippy::cast_possible_truncation)]
-    let up7_16 = |v: u8| upscale(u32::from(v), 7, 16) as u16;
-    let up7_32 = |v: u8| upscale(u32::from(v), 7, 32);
-    let up14_32 = |v: u16| upscale(u32::from(v), 14, 32);
     Some(match *body {
         EventBody::NoteOn {
             group,
@@ -378,7 +406,7 @@ pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
             group,
             channel,
             note,
-            velocity: up7_16(velocity),
+            velocity: upscale_7_to_16(velocity),
             attribute_type: 0,
             attribute: 0,
         },
@@ -391,7 +419,7 @@ pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
             group,
             channel,
             note,
-            velocity: up7_16(velocity),
+            velocity: upscale_7_to_16(velocity),
             attribute_type: 0,
             attribute: 0,
         },
@@ -404,7 +432,7 @@ pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
             group,
             channel,
             note,
-            pressure: up7_32(pressure),
+            pressure: upscale_7_to_32(pressure),
         },
         EventBody::ControlChange {
             group,
@@ -415,7 +443,7 @@ pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
             group,
             channel,
             cc,
-            value: up7_32(value),
+            value: upscale_7_to_32(value),
         },
         EventBody::ChannelPressure {
             group,
@@ -424,7 +452,7 @@ pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
         } => EventBody::ChannelPressure2 {
             group,
             channel,
-            pressure: up7_32(pressure),
+            pressure: upscale_7_to_32(pressure),
         },
         EventBody::PitchBend {
             group,
@@ -433,7 +461,7 @@ pub fn upconvert_to_midi2(body: &EventBody) -> Option<EventBody> {
         } => EventBody::PitchBend2 {
             group,
             channel,
-            value: up14_32(value),
+            value: upscale_14_to_32(value),
         },
         EventBody::ProgramChange {
             group,
@@ -826,6 +854,44 @@ mod tests {
         assert_eq!(route_midi_port(1, 2), 1); // in range passes through
         assert_eq!(route_midi_port(2, 2), 0); // past the count -> default port
         assert_eq!(route_midi_port(0, 0), 0); // portless plugin
+    }
+
+    #[test]
+    fn upscale_preserves_center_and_endpoints() {
+        assert_eq!(upscale_14_to_32(0x2000), 0x8000_0000); // centered bend stays centered
+        assert_eq!(upscale_14_to_32(0x3FFF), u32::MAX);
+        assert_eq!(upscale_14_to_32(0), 0);
+        assert_eq!(upscale_7_to_16(64), 0x8000);
+        assert_eq!(upscale_7_to_32(127), u32::MAX);
+    }
+
+    #[test]
+    fn assignable_per_note_cc_has_no_midi1_form() {
+        // Assignable (registered: false) per-note controller indices
+        // are manufacturer-defined - collapsing index 7 onto channel
+        // CC 7 would alias it onto Volume.
+        let assignable = EventBody::PerNoteCC {
+            group: 0,
+            channel: 0,
+            note: 60,
+            cc: 7,
+            value: u32::MAX,
+            registered: false,
+        };
+        assert_eq!(downconvert_to_midi1(&assignable), None);
+        // The registered twin still degrades to the channel CC.
+        let registered = EventBody::PerNoteCC {
+            group: 0,
+            channel: 0,
+            note: 60,
+            cc: 7,
+            value: u32::MAX,
+            registered: true,
+        };
+        assert!(matches!(
+            downconvert_to_midi1(&registered),
+            Some(EventBody::ControlChange { cc: 7, .. })
+        ));
     }
 
     #[test]
