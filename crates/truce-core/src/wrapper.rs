@@ -28,10 +28,12 @@ use crate::export::PluginExport;
 /// The mediation lock every format wrapper puts around its plugin
 /// instance. The audio thread holds the lock for the duration of a
 /// block (`process`, `reset`, the queued state apply); host-thread
-/// state callbacks lock for the serialization; GUI closures use
-/// `try_lock` with an empty fallback so an editor frame never blocks
-/// on the audio thread. `parking_lot`'s uncontended path is a single
-/// CAS - noise next to the atomics a block already pays.
+/// state callbacks and the editor's `get_state` closure block for
+/// the read - safe in that direction, and bounded by the block the
+/// audio thread is finishing. Meters ride the lock-free `MeterStore`
+/// instead, so per-frame GUI paints never touch this lock.
+/// `parking_lot`'s uncontended path is a single CAS - noise next to
+/// the atomics a block already pays.
 ///
 /// A `Mutex` rather than an `RwLock`: the only non-audio accessors
 /// are a host state save and an editor preset capture - both rare -

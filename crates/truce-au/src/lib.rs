@@ -71,7 +71,8 @@ struct AuInstance<P: PluginExport> {
     /// The plugin behind the wrapper-standard mediation lock: the
     /// audio thread locks per block, `cb_state_save` (host thread)
     /// locks for the serialization, the editor's `get_state` closure
-    /// `try_lock`s. See `truce_core::wrapper::SharedPlugin`.
+    /// blocks for the (bounded) read. See
+    /// `truce_core::wrapper::SharedPlugin`.
     plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`cb_param_*`) read params through this
@@ -1380,13 +1381,15 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     }),
                     get_meter: Box::new(move |id| meter_store.read(id)),
                     get_state: Box::new(move || {
-                        // Editor preset capture: never block the GUI
-                        // on the audio thread. Losing the race to an
-                        // in-flight block returns empty; the editor
-                        // retries on a later frame.
-                        plugin_lock
-                            .try_lock()
-                            .map_or_else(Vec::new, |plugin| plugin.save_state())
+                        // Editor state read. Blocking here is safe and
+                        // bounded: the GUI thread holds nothing the
+                        // audio thread waits on, and the audio thread
+                        // releases the plugin lock at every block end -
+                        // single-digit ms worst case. A try_lock's
+                        // empty fallback was ambiguous with "no custom
+                        // state", so a lost race silently kept stale
+                        // editor state.
+                        plugin_lock.lock().save_state()
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes -

@@ -953,9 +953,12 @@ where
             }),
             get_meter: Box::new(move |id| plugin_meter.try_lock().map_or(0.0, |p| p.get_meter(id))),
             get_state: Box::new(move || {
+                // Blocking is bounded by the audio callback's lock
+                // hold (a block's worth); a try_lock's empty fallback
+                // silently kept stale editor state on a lost race.
+                // Poisoned (audio thread panicked) degrades to empty.
                 plugin_save
-                    .try_lock()
-                    .ok()
+                    .lock()
                     .map(|p| p.save_state())
                     .unwrap_or_default()
             }),
