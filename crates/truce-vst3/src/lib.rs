@@ -133,6 +133,75 @@ struct Vst3Instance<P: PluginExport> {
     /// last automation point from the audio thread while the host
     /// reads `getParamNormalized` on the main thread.
     midi_proxy_values: Vec<std::sync::atomic::AtomicU64>,
+    /// Correlates the host's per-voice `noteId` counters (arbitrary,
+    /// assigned at note-on) to the `(channel, note)` pair truce's
+    /// per-note events address. Written and read only on the audio
+    /// thread inside `cb_process`.
+    note_id_map: NoteIdMap,
+}
+
+/// Fixed-capacity `noteId -> (channel, note)` correlation for incoming
+/// VST3 note expression. A `noteId` is an arbitrary per-voice counter
+/// the host assigns on note-on, so expression events can't be decoded
+/// without remembering which note each id belongs to. Inline array +
+/// linear scan keeps the audio thread alloc-free; 128 slots covers
+/// every simultaneously-sounding voice a host realistically drives.
+struct NoteIdMap {
+    /// `(note_id, channel, note)`; `note_id < 0` marks a free slot
+    /// (hosts only assign non-negative ids, `-1` means unassigned).
+    slots: [(i32, u8, u8); Self::CAPACITY],
+    /// Round-robin overwrite position for when every slot is live.
+    cursor: usize,
+}
+
+impl NoteIdMap {
+    const CAPACITY: usize = 128;
+
+    fn new() -> Self {
+        Self {
+            slots: [(-1, 0, 0); Self::CAPACITY],
+            cursor: 0,
+        }
+    }
+
+    /// Track a sounding note. Re-registering a live id updates it in
+    /// place; when the map is full the oldest slot is overwritten so a
+    /// missed note-off can never wedge the map.
+    fn insert(&mut self, note_id: i32, channel: u8, note: u8) {
+        if note_id < 0 {
+            return;
+        }
+        let slot = self
+            .slots
+            .iter()
+            .position(|(id, _, _)| *id == note_id)
+            .or_else(|| self.slots.iter().position(|(id, _, _)| *id < 0))
+            .unwrap_or_else(|| {
+                let c = self.cursor;
+                self.cursor = (c + 1) % Self::CAPACITY;
+                c
+            });
+        self.slots[slot] = (note_id, channel, note);
+    }
+
+    fn remove(&mut self, note_id: i32) {
+        if note_id < 0 {
+            return;
+        }
+        if let Some(slot) = self.slots.iter().position(|(id, _, _)| *id == note_id) {
+            self.slots[slot] = (-1, 0, 0);
+        }
+    }
+
+    fn lookup(&self, note_id: i32) -> Option<(u8, u8)> {
+        if note_id < 0 {
+            return None;
+        }
+        self.slots
+            .iter()
+            .find(|(id, _, _)| *id == note_id)
+            .map(|&(_, channel, note)| (channel, note))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +265,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 std::sync::atomic::AtomicU64::new(midi_proxy_default(controller).to_bits())
             })
             .collect(),
+        note_id_map: NoteIdMap::new(),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
@@ -374,43 +444,54 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             for ev in event_slice {
                 let body = if ev.status & 0xF0 == 0xF0 {
                     // VST3-specific: note expression carried in the
-                    // same event struct. `data1=typeId`,
-                    // `data2=value*127`, `note_id=noteId`. Spec says
-                    // `data2 ∈ 0..=127`, but the C++ shim isn't
-                    // required to clamp - values 128..=255 are
-                    // ABI-legal. Clamp first and scale through u64 so
-                    // the multiplication can't wrap and `data2 == 127`
-                    // maps to exactly `u32::MAX`.
+                    // same event struct. `data1=typeId`, `ne_value` is
+                    // the host's full-precision `0..=1` value, and
+                    // `note_id` is the host's per-voice counter -
+                    // resolve it through the map built from note-ons
+                    // below. An id the map doesn't know (note already
+                    // released, or a host bug) is unattributable;
+                    // drop the event rather than guess a pitch.
                     let type_id = ev.data1;
-                    let data2_clamped = u64::from(ev.data2.min(127));
-                    // `data2_clamped <= 127`, so the product fits in
-                    // u32 by construction.
-                    #[allow(clippy::cast_possible_truncation)]
-                    let value = (data2_clamped * u64::from(u32::MAX) / 127) as u32;
-                    let note = ev.note_id;
-                    let make_pn_cc = |cc| EventBody::PerNoteCC {
-                        group: 0,
-                        channel: 0,
-                        note,
-                        cc,
-                        value,
-                        registered: true,
-                    };
-                    match type_id {
-                        0 => Some(make_pn_cc(7)),  // volume
-                        1 => Some(make_pn_cc(10)), // pan
-                        2 => Some(EventBody::PerNotePitchBend {
-                            group: 0,
-                            channel: 0,
-                            note,
-                            value,
-                        }), // tuning
-                        3 => Some(make_pn_cc(1)),  // vibrato
-                        4 => Some(make_pn_cc(11)), // expression
-                        5 => Some(make_pn_cc(74)), // brightness
-                        _ => None,
-                    }
+                    let value = unit_to_u32(ev.ne_value);
+                    inst.note_id_map
+                        .lookup(ev.note_id)
+                        .and_then(|(channel, note)| {
+                            let make_pn_cc = |cc| EventBody::PerNoteCC {
+                                group: 0,
+                                channel,
+                                note,
+                                cc,
+                                value,
+                                registered: true,
+                            };
+                            match type_id {
+                                0 => Some(make_pn_cc(7)),  // volume
+                                1 => Some(make_pn_cc(10)), // pan
+                                2 => Some(EventBody::PerNotePitchBend {
+                                    group: 0,
+                                    channel,
+                                    note,
+                                    value,
+                                }), // tuning
+                                3 => Some(make_pn_cc(1)),  // vibrato
+                                4 => Some(make_pn_cc(11)), // expression
+                                5 => Some(make_pn_cc(74)), // brightness
+                                _ => None,
+                            }
+                        })
                 } else {
+                    // Correlate the host's noteId with the note it
+                    // addresses so later note-expression events can be
+                    // resolved. A note-on with velocity 0 releases in
+                    // MIDI terms, so treat it as a removal too.
+                    match ev.status & 0xF0 {
+                        0x90 if ev.data2 > 0 => {
+                            inst.note_id_map
+                                .insert(ev.note_id, ev.status & 0x0F, ev.data1);
+                        }
+                        0x80 | 0x90 => inst.note_id_map.remove(ev.note_id),
+                        _ => {}
+                    }
                     decode_short_message(ev.status, ev.data1, ev.data2)
                 };
                 if let Some(body) = body {
@@ -857,8 +938,9 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
         status,
         data1,
         data2,
-        note_id: 0,
         port: event.port,
+        note_id: -1,
+        ne_value: 0.0,
     })
 }
 
@@ -1166,6 +1248,17 @@ fn vst3_note_id(channel: u8, note: u8) -> i32 {
 /// `NoteExpressionValue` domain.
 fn u32_to_unit(v: u32) -> f64 {
     f64::from(v) / f64::from(u32::MAX)
+}
+
+/// Inverse of [`u32_to_unit`]: widen a VST3 `NoteExpressionValue` into
+/// the wire-native 32-bit per-note domain. Hosts are supposed to stay
+/// in `0..=1`, but the value crosses an FFI boundary - clamp first.
+fn unit_to_u32(v: f64) -> u32 {
+    // Clamped to `0..=u32::MAX` before the cast, so no truncation or
+    // sign loss is possible.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let scaled = (v.clamp(0.0, 1.0) * f64::from(u32::MAX)).round() as u32;
+    scaled
 }
 
 unsafe extern "C" fn cb_get_output_note_expression_count<P: PluginExport>(
@@ -2056,6 +2149,64 @@ mod tests {
         assert_eq!(vst3_note_id(0, 0), 0);
         assert_eq!(vst3_note_id(2, 60), 0x013C); // (2 << 7) | 60
         assert_eq!(vst3_note_id(15, 127), 0x07FF); // (15 << 7) | 127
+    }
+
+    #[test]
+    fn midi_event_layout_matches_shim() {
+        // The C++ shim static_asserts the same shape; a drift on either
+        // side fails its build or this test.
+        assert_eq!(std::mem::size_of::<Vst3MidiEvent>(), 24);
+        assert_eq!(std::mem::align_of::<Vst3MidiEvent>(), 8);
+    }
+
+    #[test]
+    fn note_id_map_resolves_and_releases() {
+        let mut map = NoteIdMap::new();
+        // Host counters are arbitrary - nothing like the pitch.
+        map.insert(90210, 3, 64);
+        assert_eq!(map.lookup(90210), Some((3, 64)));
+        assert_eq!(map.lookup(64), None); // pitch is not a key
+        map.remove(90210);
+        assert_eq!(map.lookup(90210), None);
+        // Unassigned ids never enter the map.
+        map.insert(-1, 0, 60);
+        assert_eq!(map.lookup(-1), None);
+    }
+
+    #[test]
+    fn note_id_map_overflow_overwrites_oldest() {
+        let mut map = NoteIdMap::new();
+        for i in 0..NoteIdMap::CAPACITY {
+            // Bounded by CAPACITY = 128, fits in both domains.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+            map.insert(1000 + i as i32, 0, i as u8);
+        }
+        // Full map: the next insert takes the round-robin slot rather
+        // than being dropped, and the newest entry resolves.
+        map.insert(5000, 1, 72);
+        assert_eq!(map.lookup(5000), Some((1, 72)));
+        // A missed note-off can't wedge the map forever: eventually the
+        // stale id is overwritten.
+        for i in 0..NoteIdMap::CAPACITY {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+            map.insert(6000 + i as i32, 2, i as u8);
+        }
+        assert_eq!(map.lookup(1000), None);
+    }
+
+    #[test]
+    fn unit_conversion_round_trips_full_precision() {
+        // A centered tuning value must survive the crossing exactly -
+        // the old 7-bit path decoded 0.5 as ~0.496 (about a semitone
+        // flat over the +/-120 st tuning domain).
+        let center = unit_to_u32(0.5);
+        assert!((u32_to_unit(center) - 0.5).abs() < 1e-9);
+        assert_eq!(unit_to_u32(0.0), 0);
+        assert_eq!(unit_to_u32(1.0), u32::MAX);
+        // FFI hygiene: out-of-domain hosts get clamped, not wrapped.
+        assert_eq!(unit_to_u32(-0.25), 0);
+        assert_eq!(unit_to_u32(1.5), u32::MAX);
+        assert_eq!(unit_to_u32(f64::NAN), 0);
     }
 
     #[test]

@@ -64,13 +64,18 @@ pub struct Vst3MidiEvent {
     pub status: u8,
     pub data1: u8,
     pub data2: u8,
-    // Carries the 8-bit VST3 noteId for note-expression events
-    // (status 0xF0); zero on regular MIDI events where the byte just
-    // pads the struct to 4-byte alignment.
-    pub note_id: u8,
     /// Event bus index the event arrived on / goes out on, mapped to
     /// [`truce_core::Event::port`]. `0` for single-port plugins.
     pub port: u8,
+    /// The host's VST3 `noteId` on note on/off and note-expression
+    /// events; `-1` when the host assigned none (and on every other
+    /// event kind). Full `i32` because hosts hand out arbitrary
+    /// per-voice counters, not pitches.
+    pub note_id: i32,
+    /// Full-precision note-expression value (`0..=1`) for
+    /// status-`0xF0` events; `0.0` otherwise. Carried separately from
+    /// `data2` so the host's `f64` survives the crossing unquantized.
+    pub ne_value: f64,
 }
 
 /// Transport info passed from the C++ shim to Rust.

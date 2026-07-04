@@ -69,6 +69,8 @@ static const TUID IEditControllerHostEditing_iid = MAKE_IID(0x0F194781, 0x8D984A
 static const TUID IMidiMapping_iid = MAKE_IID(0xDF0FF9F7, 0x49B74669, 0xB63AB732, 0x7ADBF5E5);
 static const TUID IProcessContextRequirements_iid = MAKE_IID(0x2A654303, 0xEF764E3C, 0xA8E8C6F3, 0xDBAE0F77);
 static const TUID IUnitInfo_iid       = MAKE_IID(0x3D4BD6B5, 0x913A4FD2, 0xA886E768, 0xA5332E1F);
+static const TUID INoteExpressionController_iid =
+    MAKE_IID(0xB7F8F859, 0x41234872, 0x91169581, 0x4F3721A3);
 static const TUID IPlugViewContentScaleSupport_iid =
     MAKE_IID(0x65ED9690, 0x8AC44525, 0x8AADEF7A, 0x72EA703F);
 
@@ -146,16 +148,22 @@ struct Vst3MidiEvent {
     uint8_t status;
     uint8_t data1;
     uint8_t data2;
-    // Carries the 8-bit VST3 noteId for note-expression events
-    // (status 0xF0); zero on regular MIDI events where the byte just
-    // pads the struct to 4-byte alignment. Mirrors `note_id` in
-    // `truce-vst3/src/ffi.rs`.
-    uint8_t note_id;
     // Event bus index the event arrived on / goes out on, mapped to
     // `Event::port`. Zero for single-port plugins. Mirrors `port` in
     // `truce-vst3/src/ffi.rs`.
     uint8_t port;
+    // The host's noteId on note on/off and note-expression events;
+    // -1 when the host assigned none (and on every other event kind).
+    // Full int32 because hosts hand out arbitrary per-voice counters,
+    // not pitches.
+    int32_t note_id;
+    // Full-precision note-expression value (0..=1) for status-0xF0
+    // events; 0.0 otherwise. Carried separately from data2 so the
+    // host's double survives the crossing unquantized.
+    double ne_value;
 };
+static_assert(sizeof(Vst3MidiEvent) == 24 && alignof(Vst3MidiEvent) == 8,
+              "layout must match truce-vst3/src/ffi.rs");
 
 struct Vst3Transport {
     int32_t playing;
@@ -827,8 +835,12 @@ public:
                     continue;
 
                 // Stamp the event bus index onto whatever slot the
-                // switch fills next (numMidi only advances on a fill).
+                // switch fills next (numMidi only advances on a fill),
+                // and default the note-expression-only fields so the
+                // cases that don't carry them hand Rust clean values.
                 midiEvents[numMidi].port = ev.busIndex < 0 ? 0 : (uint8_t)ev.busIndex;
+                midiEvents[numMidi].note_id = -1;
+                midiEvents[numMidi].ne_value = 0.0;
 
                 switch (ev.type) {
                     case 0: // kNoteOnEvent
@@ -836,7 +848,7 @@ public:
                         midiEvents[numMidi].status = 0x90 | (ev.noteOn.channel & 0x0F);
                         midiEvents[numMidi].data1 = ev.noteOn.pitch & 0x7F;
                         midiEvents[numMidi].data2 = (uint8_t)(ev.noteOn.velocity * 127.0f);
-                        midiEvents[numMidi].note_id = 0;
+                        midiEvents[numMidi].note_id = ev.noteOn.noteId;
                         numMidi++;
                         break;
                     case 1: // kNoteOffEvent
@@ -844,7 +856,7 @@ public:
                         midiEvents[numMidi].status = 0x80 | (ev.noteOff.channel & 0x0F);
                         midiEvents[numMidi].data1 = ev.noteOff.pitch & 0x7F;
                         midiEvents[numMidi].data2 = (uint8_t)(ev.noteOff.velocity * 127.0f);
-                        midiEvents[numMidi].note_id = 0;
+                        midiEvents[numMidi].note_id = ev.noteOff.noteId;
                         numMidi++;
                         break;
                     case 3: // kPolyPressureEvent
@@ -852,23 +864,27 @@ public:
                         midiEvents[numMidi].status = 0xA0 | (ev.polyPressure.channel & 0x0F);
                         midiEvents[numMidi].data1 = ev.polyPressure.pitch & 0x7F;
                         midiEvents[numMidi].data2 = (uint8_t)(ev.polyPressure.pressure * 127.0f);
-                        midiEvents[numMidi].note_id = 0;
                         numMidi++;
                         break;
                     case 4: // kNoteExpressionValueEvent
-                        // Convert to CC-like event: status=0xF0 (custom),
-                        // data1=typeId, data2=value*127
+                        // status=0xF0 marker, data1=typeId, full-precision
+                        // value in ne_value, host voice counter in note_id
+                        // (Rust resolves it to channel/pitch via the map it
+                        // builds from note-on noteIds).
                         // typeId: 0=volume, 1=pan, 2=tuning, 3=vibrato, 4=expression, 5=brightness
+                        // Custom typeIds (kCustomStart 100000+) don't fit
+                        // data1 and have no truce mapping; skip them.
+                        if (ev.noteExpressionValue.typeId > 5) break;
                         midiEvents[numMidi].sample_offset = ev.sampleOffset;
                         midiEvents[numMidi].status = 0xF0; // marker for note expression
                         midiEvents[numMidi].data1 = (uint8_t)ev.noteExpressionValue.typeId;
-                        midiEvents[numMidi].data2 = (uint8_t)(ev.noteExpressionValue.value * 127.0);
-                        midiEvents[numMidi].note_id = (uint8_t)(ev.noteExpressionValue.noteId & 0xFF);
+                        midiEvents[numMidi].data2 = 0;
+                        midiEvents[numMidi].note_id = ev.noteExpressionValue.noteId;
+                        midiEvents[numMidi].ne_value = ev.noteExpressionValue.value;
                         numMidi++;
                         break;
                     case 65535: // kLegacyMIDICCOutEvent
                         midiEvents[numMidi].sample_offset = ev.sampleOffset;
-                        midiEvents[numMidi].note_id = 0;
                         switch (ev.midiCCOut.controlNumber) {
                             case 128: // kCtrlAfterTouch: channel pressure
                                 midiEvents[numMidi].status = 0xD0 | (ev.midiCCOut.channel & 0x0F);
@@ -1608,7 +1624,42 @@ struct IUnitInfoVtbl {
     tresult (*setUnitProgramData)(void*, int32, int32, void*);
 };
 
-// The actual COM object layout: 4 vtable pointers followed by the C++ object
+// Structs from the SDK's ivstnoteexpression.h. Natural alignment
+// matches the SDK's packing on every 64-bit target we build for
+// (the SDK packs to 16, which is >= the largest member alignment).
+struct NoteExpressionValueDescription {
+    double defaultValue;
+    double minimum;
+    double maximum;
+    int32 stepCount;
+};
+
+struct NoteExpressionTypeInfo {
+    uint32 typeId;
+    char16 title[128];
+    char16 shortTitle[128];
+    char16 units[128];
+    int32 unitId;
+    NoteExpressionValueDescription valueDesc;
+    uint32 associatedParameterId;
+    int32 flags;
+};
+static_assert(sizeof(NoteExpressionTypeInfo) == 816,
+              "must match the SDK's packed layout");
+
+struct INoteExpressionControllerVtbl {
+    tresult (*queryInterface)(void*, const TUID, void**);
+    uint32  (*addRef)(void*);
+    uint32  (*release)(void*);
+    int32   (*getNoteExpressionCount)(void*, int32, int16_t);
+    tresult (*getNoteExpressionInfo)(void*, int32, int16_t, int32, NoteExpressionTypeInfo*);
+    tresult (*getNoteExpressionStringByValue)(void*, int32, int16_t, uint32, double, char16*);
+    tresult (*getNoteExpressionValueByString)(void*, int32, int16_t, uint32, const char16*, double*);
+};
+
+// The actual COM object layout: one pointer per implemented interface
+// vtable, followed by the C++ object. `com_from_*` offsets index into
+// this pointer block, so new interfaces append before `impl` only.
 struct TruceComponentCOM {
     IComponentVtbl* vtbl_component;
     IAudioProcessorVtbl* vtbl_processor;
@@ -1617,6 +1668,7 @@ struct TruceComponentCOM {
     IMidiMappingVtbl* vtbl_midimapping;
     IProcessContextRequirementsVtbl* vtbl_pcr;
     IUnitInfoVtbl* vtbl_unitinfo;
+    INoteExpressionControllerVtbl* vtbl_note_expression;
     TruceComponent impl;
 };
 
@@ -1681,6 +1733,15 @@ tresult TruceComponent::queryInterface(void* comBase, const TUID iid, void** obj
         *obj = &com->vtbl_unitinfo;
         return kResultOk;
     }
+    // Only MIDI-taking plugins accept note expression. Cubase-family
+    // hosts probe this interface to decide whether to offer (and send)
+    // note-expression input at all.
+    if (iid_equal(iid, INoteExpressionController_iid) &&
+        g_desc && g_desc->midi_input_ports > 0) {
+        addRef();
+        *obj = &com->vtbl_note_expression;
+        return kResultOk;
+    }
     *obj = nullptr;
     return kResultFalse;
 }
@@ -1712,6 +1773,10 @@ static TruceComponentCOM* com_from_pcr(void* self) {
 static TruceComponentCOM* com_from_unitinfo(void* self) {
     return reinterpret_cast<TruceComponentCOM*>(
         reinterpret_cast<char*>(self) - 6 * sizeof(void*));
+}
+static TruceComponentCOM* com_from_note_expression(void* self) {
+    return reinterpret_cast<TruceComponentCOM*>(
+        reinterpret_cast<char*>(self) - 7 * sizeof(void*));
 }
 
 // --- Component vtable functions ---
@@ -1873,6 +1938,88 @@ static IUnitInfoVtbl g_unitinfo_vtbl = {
     ui_ni_iiiv,
 };
 
+// --- NoteExpressionController vtable functions ---
+#define NEXP(self) (com_from_note_expression(self)->impl)
+
+// The predefined VST3 note-expression types truce bridges to per-note
+// MIDI 2.0 events (PerNoteCC 7/10/1/11/74 and PerNotePitchBend for
+// tuning). Order is the enumeration order hosts see. Flags value 1 is
+// the SDK's kIsBipolar.
+static const struct {
+    uint32 typeId;
+    const char* title;
+    const char* shortTitle;
+    double defaultValue;
+    int32 flags;
+} g_note_expression_types[] = {
+    {0, "Volume",     "Vol",  1.0, 0},
+    {1, "Pan",        "Pan",  0.5, 1},
+    {2, "Tuning",     "Tun",  0.5, 1},
+    {3, "Vibrato",    "Vibr", 0.0, 0},
+    {4, "Expression", "Expr", 1.0, 0},
+    {5, "Brightness", "Bri",  0.5, 0},
+};
+static const int32 kNumNoteExpressionTypes =
+    (int32)(sizeof(g_note_expression_types) / sizeof(g_note_expression_types[0]));
+
+static tresult nexp_qi(void* s, const TUID iid, void** obj) { return NEXP(s).queryInterface(com_from_note_expression(s), iid, obj); }
+static uint32 nexp_addRef(void* s) { return NEXP(s).addRef(); }
+static uint32 nexp_release(void* s) { auto* com = com_from_note_expression(s); auto r = com->impl.release(); if (r == 0) { com->impl.~TruceComponent(); free(com); } return r; }
+static int32 nexp_getCount(void*, int32 busIndex, int16_t /*channel*/) {
+    if (!g_desc || busIndex < 0 || busIndex >= g_desc->midi_input_ports) return 0;
+    return kNumNoteExpressionTypes;
+}
+static tresult nexp_getInfo(void* s, int32 busIndex, int16_t channel, int32 index,
+                            NoteExpressionTypeInfo* info) {
+    if (!info || nexp_getCount(s, busIndex, channel) == 0 ||
+        index < 0 || index >= kNumNoteExpressionTypes)
+        return kInvalidArgument;
+    const auto& t = g_note_expression_types[index];
+    memset(info, 0, sizeof(*info));
+    info->typeId = t.typeId;
+    str_to_char16(info->title, t.title, 128);
+    str_to_char16(info->shortTitle, t.shortTitle, 128);
+    info->unitId = -1; // kNoUnitId: not tied to an IUnitInfo unit
+    info->valueDesc.defaultValue = t.defaultValue;
+    info->valueDesc.minimum = 0.0;
+    info->valueDesc.maximum = 1.0;
+    info->valueDesc.stepCount = 0; // continuous
+    info->flags = t.flags;
+    return kResultOk;
+}
+// Tuning's normalized 0..1 spans -120..+120 semitones per the SDK
+// (0.5 = no detune); the other types read naturally as percent.
+static tresult nexp_getStringByValue(void*, int32 /*busIndex*/, int16_t /*channel*/,
+                                     uint32 typeId, double value, char16* string) {
+    if (!string) return kInvalidArgument;
+    char buf[64];
+    if (typeId == 2) snprintf(buf, sizeof(buf), "%.2f st", (value - 0.5) * 240.0);
+    else snprintf(buf, sizeof(buf), "%.1f %%", value * 100.0);
+    str_to_char16(string, buf, 128);
+    return kResultOk;
+}
+static tresult nexp_getValueByString(void*, int32 /*busIndex*/, int16_t /*channel*/,
+                                     uint32 typeId, const char16* string, double* value) {
+    if (!string || !value) return kResultFalse;
+    char buf[64];
+    int i = 0;
+    for (; string[i] && i < 63; i++) buf[i] = (char)string[i];
+    buf[i] = 0;
+    char* end = nullptr;
+    double parsed = strtod(buf, &end);
+    if (end == buf) return kResultFalse;
+    double v = (typeId == 2) ? parsed / 240.0 + 0.5 : parsed / 100.0;
+    if (v < 0.0) v = 0.0;
+    if (v > 1.0) v = 1.0;
+    *value = v;
+    return kResultOk;
+}
+
+static INoteExpressionControllerVtbl g_nexp_vtbl = {
+    nexp_qi, nexp_addRef, nexp_release,
+    nexp_getCount, nexp_getInfo, nexp_getStringByValue, nexp_getValueByString
+};
+
 static TruceComponentCOM* create_component() {
     auto* com = (TruceComponentCOM*)calloc(1, sizeof(TruceComponentCOM));
     if (!com) return nullptr;
@@ -1883,6 +2030,7 @@ static TruceComponentCOM* create_component() {
     com->vtbl_midimapping = &g_mmap_vtbl;
     com->vtbl_pcr = &g_pcr_vtbl;
     com->vtbl_unitinfo = &g_unitinfo_vtbl;
+    com->vtbl_note_expression = &g_nexp_vtbl;
     new (&com->impl) TruceComponent();
     return com;
 }
