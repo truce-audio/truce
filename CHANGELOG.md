@@ -39,7 +39,7 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 
 ### Internals
 
-- **Instance mediation**: wrappers hold the plugin behind a `std::sync::Mutex` (on macOS it donates the waiting audio thread's priority to the lock owner); editors read meters from the lock-free `MeterStore`, and state reads block briefly - keep `save_state` cheap. (#175)
+- **Instance mediation**: the audio thread owns the plugin lock per block; everything routine stays off it (meters ride the lock-free `MeterStore`, state loads hand off through a queue and apply on the audio thread). Only a host state save or an editor preset capture (rare, bounded reads) take the lock, and on macOS a waiting audio thread donates its priority to the holder. (#175)
 - **Miri + fuzzing**: `cargo miri test` runs green on the pure-Rust core, and a `fuzz/` crate covers the state envelope, presets, MIDI/UMP decode, and SysEx reassembly with round-trip oracles. New `Miri` (PR gate) and `Fuzz` (weekly) workflows.
 - **The built-in font stack moved from fontdue to skrifa** - one glyph rasterizer in `truce-font`. Metrics unchanged; glyph edge anti-aliasing differs slightly.
 - **The hot-reload ABI canary is epoch-versioned** (`ABI_EPOCH` field + versioned `truce_abi_canary_v2` export), so layout changes invisible to size checks are caught and stale pre-2.0 logic dylibs are refused cleanly.
