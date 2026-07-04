@@ -89,9 +89,21 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         // / lv2 into the preview binary only bloats it and runs their
         // load-time registration constructors (e.g. the AU shim's,
         // which logs a MIDI-port clamp warning) in a host that never
-        // uses them. `--features standalone` plus anything the user
-        // asked for.
-        let mut features = vec!["standalone".to_string()];
+        // uses them.
+        //
+        // `truce-standalone/playback` is enabled directly (not via a
+        // plugin-level feature) because that routing differs across
+        // plugins - the scaffold gates it behind a default
+        // `standalone-playback` feature that `--no-default-features`
+        // drops, while examples fold it into `standalone`. Enabling
+        // the dependency feature works for both and keeps the
+        // `--input-file` / `--output-file` / `--no-playback` preview
+        // flags (cfg'd on `playback`) available. Plus `standalone`
+        // and anything the user asked for.
+        let mut features = vec![
+            "standalone".to_string(),
+            "truce-standalone/playback".to_string(),
+        ];
         features.extend(extra_features);
         let features = features.join(",");
         cargo_build(
