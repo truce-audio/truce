@@ -2,12 +2,9 @@
 
 Notable changes per release.
 
-## Unreleased
-
-- The built-in CPU editor on Windows no longer occasionally opens stretched (until a manual resize) when the host resizes the editor right after open: resize requests that raced the threaded GPU init used to be dropped, leaving the swapchain at the open-time size for the compositor to stretch over the real window. They are now replayed once init lands, and the swapchain is additionally reconciled against the window's actual client rect on the first ready frame.
-
 ## 2.0.1
 
+- The built-in editor on Windows no longer occasionally opens stretched (until a manual resize) when the host resizes the editor right after open: resize requests that raced the threaded GPU init used to be dropped, leaving the swapchain at the open-time size for the compositor to stretch over the real window. They are now replayed once init lands, and the swapchain is additionally reconciled against the window's actual client rect on the first ready frame.
 - Smoother real-time behavior on Linux: a host save or editor preset capture can no longer stall the audio thread behind a preempted GUI thread - the plugin lock now boosts the holder with the waiting audio thread's priority, matching what macOS already did.
 - Fuzzing now verifies SysEx reassembly is the exact inverse of the encoder (not just crash-free), and one crashing fuzz target no longer eats the other targets' time.
 
