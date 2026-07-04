@@ -27,6 +27,7 @@ const TRUCE_STATE_KEY_URI: &str = "urn:truce:state-blob";
 /// `LV2_State_Status` - returned by store/retrieve + our save/restore.
 const LV2_STATE_SUCCESS: u32 = 0;
 const LV2_STATE_ERR_UNKNOWN: u32 = 1;
+const LV2_STATE_ERR_NO_PROPERTY: u32 = 5;
 
 /// `LV2_State_Flags` - bit 0 is POD (we always are), bit 1 is PORTABLE.
 const LV2_STATE_IS_POD: u32 = 1 << 0;
@@ -195,14 +196,19 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
                     )
                 })
         };
-        if let Some(state) = state {
-            inst.plugin.params().restore_values(&state.params);
-            inst.plugin.params().snap_smoothers();
-            if let Some(extra) = state.extra
-                && let Err(e) = inst.plugin.load_state(&extra)
-            {
-                eprintln!("truce: lv2 load_state failed: {e}");
-            }
+        let Some(state) = state else {
+            // Nothing parsed and `migrate_state` declined (or the
+            // property was absent entirely): fail the load honestly,
+            // like the other formats - a success here would leave the
+            // host believing defaults are the restored session.
+            return LV2_STATE_ERR_NO_PROPERTY;
+        };
+        inst.plugin.params().restore_values(&state.params);
+        inst.plugin.params().snap_smoothers();
+        if let Some(extra) = state.extra
+            && let Err(e) = inst.plugin.load_state(&extra)
+        {
+            eprintln!("truce: lv2 load_state failed: {e}");
         }
         LV2_STATE_SUCCESS
     })
