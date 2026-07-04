@@ -198,8 +198,10 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
 /// (`midi_input_dialect == Midi1`) *receives* 2.0 - it should see 1.0
 /// rather than have the event dropped.
 ///
-/// 16/32-bit values take their high 7/14 bits; a live `NoteOn2` keeps a
-/// non-zero velocity so it can't collapse into a note-off. Per-note
+/// 16/32-bit values take their high 7/14 bits; a `NoteOn2` downconverts
+/// with velocity at least 1 (the spec's 2.0 -> 1.0 translation rule) -
+/// 2.0's velocity 0 is a real note-on, while a 1.0 velocity-0 `NoteOn`
+/// is a note-off. Per-note
 /// richness (`PerNoteCC` / `PerNotePitchBend`) collapses onto the note's
 /// channel - the note identity is lost but the controller stays visible
 /// (MPE-style degradation). Returns `None` for bodies that are already
@@ -222,7 +224,7 @@ pub fn downconvert_to_midi1(body: &EventBody) -> Option<EventBody> {
             group,
             channel,
             note,
-            velocity: hi7_16(velocity).max(u8::from(velocity > 0)),
+            velocity: hi7_16(velocity).max(1),
         },
         EventBody::NoteOff2 {
             group,
@@ -518,18 +520,26 @@ mod tests {
 
     #[test]
     fn downconvert_keeps_live_note_off_the_note_off_boundary() {
-        // A tiny non-zero 16-bit velocity must not become a note-off.
-        let Some(EventBody::NoteOn { velocity, .. }) = downconvert_to_midi1(&EventBody::NoteOn2 {
-            group: 0,
-            channel: 0,
-            note: 60,
-            velocity: 1,
-            attribute_type: 0,
-            attribute: 0,
-        }) else {
-            panic!("expected NoteOn");
-        };
-        assert_eq!(velocity, 1);
+        // Any NoteOn2 - a tiny 16-bit velocity, and 2.0's genuine
+        // velocity-0 note-on alike - must downconvert with velocity
+        // at least 1 (the spec's translation rule): a 1.0 velocity-0
+        // NoteOn is a note-off, which would silently release the note
+        // instead of sounding it.
+        for velocity2 in [0u16, 1] {
+            let Some(EventBody::NoteOn { velocity, .. }) =
+                downconvert_to_midi1(&EventBody::NoteOn2 {
+                    group: 0,
+                    channel: 0,
+                    note: 60,
+                    velocity: velocity2,
+                    attribute_type: 0,
+                    attribute: 0,
+                })
+            else {
+                panic!("expected NoteOn");
+            };
+            assert_eq!(velocity, 1);
+        }
     }
 
     #[test]
