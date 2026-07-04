@@ -54,9 +54,8 @@ A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, opt-in per plugin. Exis
 - VST3 rejects a processing setup or block whose sample size was never negotiated.
 - `cargo truce validate` scrubs cargo-injected `DYLD_*` vars before spawning pluginval.
 - CLAP: `CLAP_EVENT_NOTE_CHOKE` delivers a velocity-0 `NoteOff` instead of being dropped. (#174)
-- CLAP: wildcard (`-1`) `NOTE_OFF` / `NOTE_CHOKE` expand to the sounding notes they match instead of dropping.
+- CLAP: an out-of-range key/channel on a note event drops it instead of delivering note 255 / channel 255. Wildcard (`-1`) axes drop a `NOTE_ON` (the spec requires concrete addresses there) but expand a `NOTE_OFF` / `NOTE_CHOKE` to the sounding notes they match, so note_id-addressing hosts can't leave voices ringing.
 - CLAP: the output event queue is sorted by sample offset before reaching the host.
-- CLAP: note events with a wildcard or out-of-range key/channel are dropped instead of delivered as note 255 / channel 255.
 - CLAP: note-port queries answer clap-validator's swapped-direction sweep.
 
 ## 1.0.5
