@@ -541,6 +541,14 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             }
         }
 
+        // The per-port loops above append each atom port's events as
+        // separate runs (port 0 patch:Set, port 0 MIDI, port 1 MIDI,
+        // ...), so the merged list isn't offset-ordered. The chunker's
+        // cursor breaks at the first offset past a sub-block boundary
+        // and would silently skip a later port's earlier events -
+        // every wrapper sorts the merged stream before processing.
+        inst.event_list.sort();
+
         // Build AudioBuffer from port pointers via the shared
         // `RawBufferScratch::build` helper. The helper owns the
         // raw-pointer-to-slice conversion plus the alias-detection
