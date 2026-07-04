@@ -435,6 +435,9 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
                 );
                 continue;
             };
+            // Bit-for-bit reinterpretation: `fourcc` packs four bytes
+            // into the AAX SDK's signed fourcc type; the descriptor
+            // slot stores the same 32 bits unsigned.
             #[allow(clippy::cast_sign_loss)]
             {
                 legacy_chunk_ids[num_legacy_chunk_ids as usize] = fourcc(bytes) as u32;
@@ -892,12 +895,6 @@ pub unsafe fn _process<P: PluginExport>(
             return;
         }
 
-        // Apply any pending state-load before per-block work so the
-        // plugin sees consistent params and extra state for the entire
-        // block. See `pending_state` field comment for the queue-overflow
-        // policy. Bumps `state_revision` so the next `_save_state` call
-        // re-captures the restored values rather than handing back the
-        // stale cache.
         // Lock the plugin for the whole block. Uncontended this is
         // one CAS; contended only when a host/GUI state callback is
         // mid-serialization, which then delays this block by the
@@ -906,6 +903,12 @@ pub unsafe fn _process<P: PluginExport>(
         let plugin_arc = Arc::clone(&inst.plugin);
         let mut plugin = lock_plugin(&plugin_arc);
 
+        // Apply any pending state-load before per-block work so the
+        // plugin sees consistent params and extra state for the entire
+        // block. See `pending_state` field comment for the queue-overflow
+        // policy. Bumps `state_revision` so the next `_save_state` call
+        // re-captures the restored values rather than handing back the
+        // stale cache.
         if let Some(state) = inst.pending_state.pop() {
             state::apply_state(&mut *plugin, &state);
             inst.state_revision.fetch_add(1, Ordering::Release);

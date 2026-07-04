@@ -294,19 +294,19 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             return ok;
         }
 
-        /* opcode 77 - VST 2.4 host announces the precision it will
+        /* VST 2.4 host announces the precision it will
          * process with (`value`: 0 = f32, 1 = f64). Both entry points
          * stay valid regardless, so this is just an ack: accept f32
          * always, f64 only when advertised. */
-        case 77 /* effSetProcessPrecision */:
+        case effSetProcessPrecision:
             if (value == 0) return 1;
             return (value == 1 && g_vst2_descriptor
                     && g_vst2_descriptor->supports_f64) ? 1 : 0;
 
-        /* opcode 44 - host announces bypass on/off. Route to the
+        /* Host announces bypass on/off. Route to the
          * IS_BYPASS-flagged param (if any) so the param value tracks
          * the host's master-bypass UI. `value` is 0 (off) or 1 (on). */
-        case 44 /* effSetBypass */: {
+        case effSetBypass: {
             if (!g_vst2_callbacks || !inst->rust_ctx || !g_vst2_descriptor) return 0;
             if (g_vst2_descriptor->bypass_param_id == 0xFFFFFFFFu) return 0;
             g_vst2_callbacks->param_set_normalized(

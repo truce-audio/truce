@@ -577,6 +577,7 @@ unsafe extern "C" fn clap_plugin_stop_processing<P: PluginExport>(_plugin: *cons
 unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
+        data.sounding_notes.clear_all();
         let mut instance = lock_plugin(&data.plugin);
         instance.reset(data.sample_rate, data.max_block_size);
         instance.params().snap_smoothers();
@@ -725,6 +726,13 @@ impl NoteAxis {
 /// bounded by real polyphony instead of the 2048-slot address space.
 /// Notes started through raw-MIDI or UMP events aren't tracked; hosts
 /// that address notes with wildcards start them with note events.
+///
+/// Known limitations, both spec-legal: the host's `note_id` is not
+/// round-tripped onto output events (truce emits `note_id: -1`), and
+/// `CLAP_EVENT_NOTE_END` is never emitted - so a polyphonic-modulation
+/// host can't correlate a truce plugin's output notes with its own
+/// voice bookkeeping, and it reclaims voices by its own timeout
+/// rather than on the plugin's say-so.
 struct SoundingNotes {
     /// 2048 bits (16 channels x 128 keys) per input port.
     ports: Vec<[u64; 32]>,
@@ -753,6 +761,15 @@ impl SoundingNotes {
         if let Some(bits) = self.ports.get_mut(usize::from(port)) {
             let (word, mask) = Self::index(channel, key);
             bits[word] &= !mask;
+        }
+    }
+
+    /// Forget every sounding note - the host reset all playing state,
+    /// so stale bits would make a later wildcard note-off emit
+    /// releases for notes that no longer exist.
+    fn clear_all(&mut self) {
+        for bits in &mut self.ports {
+            bits.fill(0);
         }
     }
 

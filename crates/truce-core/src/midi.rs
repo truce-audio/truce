@@ -206,6 +206,10 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
 /// channel - the note identity is lost but the controller stays visible
 /// (MPE-style degradation); registered per-note controllers only, since
 /// assignable indices are manufacturer-defined and correspond to no CC.
+/// `ProgramChange2`'s bank pair is dropped: MIDI 1.0 spells it as a
+/// separate CC 0 / CC 32 pair *before* the program change, and this
+/// one-in-one-out API can't emit three events for one - callers that
+/// need the bank must expand it themselves.
 /// Returns `None` for bodies that are already MIDI 1.0, aren't channel
 /// voice, or have no 1.0 form (per-note management, assignable per-note
 /// controllers, (N)RPN controllers).

@@ -214,10 +214,10 @@ pub fn encode_ump_channel_voice_2(body: &EventBody) -> Option<[u32; 4]> {
         EventBody::PitchBend2 { value, .. } => (0xE, 0, 0, value),
         EventBody::RegisteredController {
             bank, index, value, ..
-        } => (0x2, bank, index, value),
+        } => (0x2, bank, index & 0x7F, value),
         EventBody::AssignableController {
             bank, index, value, ..
-        } => (0x3, bank, index, value),
+        } => (0x3, bank, index & 0x7F, value),
         EventBody::ProgramChange2 { program, bank, .. } => {
             // "B" (bank-valid) flag rides byte_b bit 0; the bank pair
             // sits in word 1 bytes 1..0, program in word 1 byte 3.
@@ -235,11 +235,16 @@ pub fn encode_ump_channel_voice_2(body: &EventBody) -> Option<[u32; 4]> {
         _ => return None,
     };
     let (group, channel) = cv2_addr(body)?;
+    // `byte_a` is a 7-bit field in every arm (note / channel-CC index /
+    // (N)RPN bank); an out-of-domain value would set the reserved high
+    // bit on the wire, which the decoder (and hosts) mask on read -
+    // mask on write too, matching the 1.0 encoder. `byte_b` is
+    // byte-wide except the (N)RPN index, masked at its arms.
     let w0 = (0x4 << 28)
         | (u32::from(group & 0x0F) << 24)
         | (u32::from(status) << 20)
         | (u32::from(channel & 0x0F) << 16)
-        | (u32::from(byte_a) << 8)
+        | (u32::from(byte_a & 0x7F) << 8)
         | u32::from(byte_b);
     Some([w0, w1, 0, 0])
 }
@@ -769,10 +774,10 @@ mod tests {
         assert!(decode_ump_channel_voice_2([0x3000_0000, 0, 0, 0]).is_none());
     }
 
-    // `EventBody` has no `PartialEq` (it carries float-bearing
-    // `TransportInfo`), so assert the encode/decode pair is mutually
-    // consistent by re-encoding the decoded body and comparing the
-    // 128-bit packet. `encode_bits_match_spec` anchors the encoder to
+    // Compare at the 128-bit packet level rather than `EventBody ==`:
+    // packet equality is the stronger claim (bit-exact wire round
+    // trip, reserved bits included), and it is what hosts see.
+    // `encode_bits_match_spec` anchors the encoder to
     // the wire independently, so a shared-bug false pass can't hide.
     #[track_caller]
     fn cv2_round_trip(body: EventBody) {

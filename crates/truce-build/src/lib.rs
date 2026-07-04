@@ -225,11 +225,11 @@ pub struct VendorConfig {
 #[derive(Deserialize, Debug)]
 pub struct PluginDef {
     pub name: String,
-    /// Required, matching `cargo-truce::PluginDef`. Deliberately unread
-    /// after deserialization: presence makes serde fail early on a
-    /// config missing `bundle_id` (at proc-macro expansion time)
-    /// instead of later at `cargo truce install`.
-    #[allow(dead_code, reason = "schema-validity check at deserialize time")]
+    /// The stable per-plugin identity key: [`plugin_id`] derives
+    /// `clap_id` / `vst3_id` / the state-envelope hash from it, so it
+    /// is part of the state wire contract - renaming a plugin's
+    /// display `name` never changes its identity, changing `bundle_id`
+    /// always does.
     pub bundle_id: String,
     #[serde(rename = "crate")]
     pub crate_name: String,

@@ -823,8 +823,6 @@ mod tests {
     /// so future refactors don't regress either layer silently.
     #[test]
     fn midi_roundtrip() {
-        use truce_core::events::{Event, EventBody, EventList};
-
         let urid = test_urid_map();
         let mut buf = vec![0u8; 4096];
         let seq = buf.as_mut_ptr().cast::<AtomSequence>();

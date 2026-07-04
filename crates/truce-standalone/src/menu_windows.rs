@@ -13,8 +13,8 @@
 //!   device exposes >= 2 channels)
 //! - **MIDI Input** submenu(s) - one per plugin MIDI input port
 //!   ("MIDI Input - Port k" when the plugin declares more than one,
-//!   up to four in the menu), each listing MIDI devices (repopulated
-//!   on open)
+//!   up to `MIDI_MENU_MAX_PORTS` in the menu), each listing MIDI
+//!   devices (repopulated on open)
 //! - **MIDI Channel** submenu - Omni / channel 1-16 filter
 //!
 //! Attached to the baseview window via `SetMenu`. Routes clicks
@@ -83,7 +83,7 @@ const MENU_CMD_OUTPUT_CHANNELS_BASE: u16 = 0xC400;
 const MENU_CMD_OUTPUT_CHANNELS_END: u16 = 0xC4FF;
 
 /// MIDI-input device items, one strided block per plugin MIDI input
-/// port inside `[0xC500, 0xC5FF]`. Port `p`'s block starts at
+/// port inside `[0xC900, 0xCCFF]`. Port `p`'s block starts at
 /// `MENU_CMD_MIDI_INPUT_BASE + p * MENU_CMD_MIDI_PORT_STRIDE`: the
 /// first ID disconnects that port ("None"), the rest are one device
 /// each (name recovered via `GetMenuStringW`, like the audio device
@@ -679,7 +679,8 @@ unsafe extern "system" fn subclass_proc(
                 {
                     let names = midi::list_midi_devices();
                     // Port index fits u8 (bounded by the plugin's MIDI
-                    // input port count, itself clamped to 4 in the menu).
+                    // input port count, itself capped at
+                    // `MIDI_MENU_MAX_PORTS` in the menu).
                     #[allow(clippy::cast_possible_truncation)]
                     let port = port as u8;
                     let current = state.midi.current_name_on(port);

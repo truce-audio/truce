@@ -40,6 +40,8 @@
 #define effSetChunk         24
 #define effProcessEvents    25
 #define effCanBeAutomated   26
+#define effSetBypass        44
+#define effSetProcessPrecision 77
 #define effGetProductString 48
 #define effGetVendorString  47
 #define effGetVendorVersion 49
