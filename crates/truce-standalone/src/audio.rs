@@ -1331,6 +1331,16 @@ fn audio_callback<P: PluginExport>(
 ) {
     let num_frames = data.len() / channels;
 
+    let Ok(mut plugin) = plugin.try_lock() else {
+        data.fill(0.0);
+        return;
+    };
+
+    // Drain queued MIDI only after the lock is held. A lost try_lock
+    // (an editor state read in flight) returns early above, and events
+    // drained before it would be wiped by the next callback's
+    // `event_list.clear()` - dropped notes. Left in `pending` they
+    // arrive one block late at offset 0 instead.
     event_list.clear();
     output_events.clear();
     while let Some(ev) = pending.pop() {
@@ -1340,11 +1350,6 @@ fn audio_callback<P: PluginExport>(
             body: ev.body,
         });
     }
-
-    let Ok(mut plugin) = plugin.try_lock() else {
-        data.fill(0.0);
-        return;
-    };
 
     // Re-shape the persistent channel scratch to (channels, num_frames)
     // and zero it. `Vec::resize` and `Vec::resize(.., 0.0)` only
