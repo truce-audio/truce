@@ -112,7 +112,13 @@ where
     let mut block_start = 0usize;
     let mut event_idx = 0usize;
     let mut last_status = ProcessStatus::Normal;
-    let min_sub = min_subblock_samples as usize;
+    // Floor at 1: a sub-block can't be shorter than one sample, so 0
+    // and 1 both mean "split at every event". Without the floor, an
+    // event sitting exactly on `block_start` (e.g. a Transport at
+    // offset 0, which every wrapper pushes) yields `block_end ==
+    // block_start`, a zero-length sub-block, and a `while block_start
+    // < total` loop that never advances - hanging the audio thread.
+    let min_sub = (min_subblock_samples as usize).max(1);
 
     while block_start < total {
         // Find the next split-eligible event at or past
@@ -435,6 +441,28 @@ mod tests {
         ));
         let next = find_next_split(&events, &infos, 0, 0);
         assert_eq!(next, Some((100, 0)));
+    }
+
+    #[test]
+    fn offset_zero_split_needs_min_offset_at_least_one() {
+        // The `min_subblock_samples.max(1)` clamp in `process_chunked`
+        // rests on this: with `min_offset == 0`, an event sitting
+        // exactly on `block_start` (offset 0 - a Transport every
+        // wrapper pushes) is returned as a split point, so `block_end
+        // == block_start` yields a zero-length sub-block and the loop
+        // never advances (hang). With `min_offset >= 1` that event
+        // coalesces, so `block_end` moves forward and the loop
+        // terminates.
+        let infos: [ParamInfo; 0] = [];
+        let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        events.push(Event::new(
+            0,
+            EventBody::Transport(TransportInfo::default()),
+        ));
+        // Unclamped (0): the offset-0 event splits at 0 - the hang.
+        assert_eq!(find_next_split(&events, &infos, 0, 0), Some((0, 0)));
+        // Clamped (>= 1): coalesced, no split at the block start.
+        assert_eq!(find_next_split(&events, &infos, 0, 1), None);
     }
 
     #[test]
