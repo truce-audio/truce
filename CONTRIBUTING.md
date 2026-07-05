@@ -89,46 +89,28 @@ prioritizing, all-format work beats another single-format capability.
 
 Every feature lands with an example, and the example is how it gets
 manually verified before merge: `cargo truce run` it, play it, hear
-it - on top of the usual unit and `driver!` tests, not instead of
-them. Examples are canonical reference code that plugin authors copy,
+it - on top of unit tests and sample-accurate `truce_test::driver!`
+scripts in the example crate's tests (no host needed), not instead
+of them. Examples are canonical reference code that plugin authors copy,
 so each must be a small but real plugin demonstrating the feature's
 idiomatic shape, not a synthetic stub. If no useful example can be
 written, treat that as a design smell and raise it in the PR.
 
-## Code quality
+Consult the format specs for what *correct* looks like, but never
+trust a host to match them: host-specific behavior is always unknown
+and considered hostile. Manual testing of new features in real hosts
+is therefore required, and **every PR carries a manual-testing
+section** stating what was loaded in which hosts and what was
+verified. "No host-facing changes" is a valid entry when true.
 
-- `cargo clippy --workspace --all-targets -- -D warnings` must be
-  clean.
-- `cargo fmt --all --check` must be clean.
-- `cargo test --workspace --lib` must pass.
-- New crates / modules need rustdoc-warning-free `cargo doc
-  --workspace --no-deps`.
-- Comments explain **why**, not what. Don't reference past audits or
-  PRs by name — those rot.
-- Don't add error handling, fallbacks, or validation for scenarios
-  that can't happen. Trust internal code.
+### Host testing
 
-## Testing
-
-CI runs clippy, the unit + integration suite, screenshot pixel-diff
-tests, and plugin validation (clap-validator, pluginval) across macOS,
-Linux, and Windows; all of it must pass before merge. The notes below
-cover what to add or check by hand on top of that.
-
-- **DSP / processing changes** — cover them with `truce_test::driver!`
-  scripts (sample-accurate, no host needed). Add to the relevant
-  example crate's tests.
-- **Layout changes** — regenerate the screenshot baselines with
-  `cargo truce screenshot -p <crate> --out <path>`; the screenshot
-  tests gate on a strict pixel diff.
-
-### GUI framework changes
-
-Changes to the GUI framework itself — window embedding, resize, focus,
-DPI, the editor lifecycle — can't be covered by the screenshot tests,
-which pin the built-in editor's pixel output but not its behavior once
-embedded in a host. Verify them by loading a plugin in real DAWs,
-following the tiered matrix below.
+Anything whose behavior depends on the host - window embedding,
+resize, focus, DPI, the editor lifecycle, MIDI routing, state and
+preset recall, transport - can't be pinned by CI: screenshot tests
+fix the built-in editor's pixels and validators check spec
+conformance, not what a shipping DAW actually does. Verify by
+loading a plugin in real DAWs, following the tiered matrix below.
 
 - **Tier 1** — must be tested and verified before merge. A bug found
   here is a blocker.
@@ -145,6 +127,27 @@ following the tiered matrix below.
 
 Hosts and OSes outside the Tier 1 table fall to Tier 2, except VST2,
 which is Tier 3 everywhere — not actively tested.
+
+## Code quality
+
+CI enforces the gates below across macOS, Linux, and Windows, along
+with the unit + integration suite, screenshot pixel-diff tests, and
+plugin validation (clap-validator, pluginval); all of it must pass
+before merge.
+
+- `cargo clippy --workspace --all-targets -- -D warnings` must be
+  clean.
+- `cargo fmt --all --check` must be clean.
+- `cargo test --workspace --lib` must pass.
+- New crates / modules need rustdoc-warning-free `cargo doc
+  --workspace --no-deps`.
+- Layout changes regenerate the screenshot baselines with
+  `cargo truce screenshot -p <crate> --out <path>` (the pixel diff
+  is strict).
+- Comments explain **why**, not what. Don't reference past audits or
+  PRs by name — those rot.
+- Don't add error handling, fallbacks, or validation for scenarios
+  that can't happen. Trust internal code.
 
 ## Releases
 
