@@ -44,6 +44,22 @@ pedantic = { level = "warn", priority = -1 }
 [patch."https://github.com/vizia/baseview.git"]
 baseview = { git = "https://github.com/truce-audio/baseview.git", branch = "baseview-truce-vizia" }
 
+# vizia_core 0.4.0's Context::modify_timer has a real infinite-loop bug
+# (vizia/vizia#530, fix PR vizia/vizia#749, not yet merged upstream at time
+# of writing): the search loop only ever peeks the running_timers min-heap's
+# top entry and never advances past a non-matching one, so a timer that
+# isn't currently the top-of-heap entry spins the UI thread forever - no
+# blocking wait involved, so it doesn't present as a hung/waiting thread.
+# Two timers running at once are enough to trigger it, and vizia_core
+# itself always registers one (Environment::caret_timer, started on any
+# Textbox focus-in) - so any truce-vizia plugin with both a Textbox and its
+# own meter-refresh timer (started right after the plugin's editor setup
+# closure returns, see ViziaEditor::open) can hit this reliably. Redirect
+# to the fix branch on our fork until the upstream PR lands; swap this for
+# the real upstream rev (or drop it entirely) once #749 merges.
+[patch."https://github.com/vizia/vizia.git"]
+vizia_core = { git = "https://github.com/lxndrbe/vizia.git", branch = "fix/modify-timer-at-24c4743" }
+
 [package]
 name = "truce-vizia"
 version = "2.0.1"
