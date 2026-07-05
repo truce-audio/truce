@@ -80,8 +80,19 @@ loading a plugin in real DAWs, following the tiered matrix below.
 | Linux | Bitwig, REAPER |
 | iOS | AUM |
 
-Hosts and OSes outside the Tier 1 table fall to Tier 2, except VST2,
-which is Tier 3 everywhere — not actively tested.
+Hosts and OSes outside the Tier 1 table fall to Tier 2.
+
+The plugin **formats** carry the same tiers - which formats a change
+must be verified against, in the Tier 1 hosts above, before merge:
+
+| Tier | Formats |
+|------|---------|
+| Tier 1 | CLAP, VST3, AU v3, AAX |
+| Tier 2 | AU v2 |
+| Tier 3 | VST2, LV2 |
+
+VST2 and LV2 are maintained but not actively tested; bugs there are
+accepted as reports and fixed opportunistically.
 
 ## Code quality
 
