@@ -3267,14 +3267,14 @@ dependencies = [
  "raw-window-handle 0.5.2",
  "skia-safe",
  "vizia_core",
- "vizia_id",
- "vizia_input",
+ "vizia_id 0.4.0 (git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6)",
+ "vizia_input 0.4.0 (git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6)",
 ]
 
 [[package]]
 name = "vizia_core"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743#2b2fa061377c9f902ec341c92f7dbddfdfee95d8"
 dependencies = [
  "accesskit",
  "bitflags 2.13.0",
@@ -3293,8 +3293,8 @@ dependencies = [
  "unic-langid",
  "unicode-bidi",
  "unicode-segmentation",
- "vizia_id",
- "vizia_input",
+ "vizia_id 0.4.0 (git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743)",
+ "vizia_input 0.4.0 (git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743)",
  "vizia_reactive",
  "vizia_storage",
  "vizia_style",
@@ -3304,7 +3304,22 @@ dependencies = [
 [[package]]
 name = "vizia_id"
 version = "0.4.0"
+source = "git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743#2b2fa061377c9f902ec341c92f7dbddfdfee95d8"
+
+[[package]]
+name = "vizia_id"
+version = "0.4.0"
 source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+
+[[package]]
+name = "vizia_input"
+version = "0.4.0"
+source = "git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743#2b2fa061377c9f902ec341c92f7dbddfdfee95d8"
+dependencies = [
+ "bitflags 2.13.0",
+ "keyboard-types",
+ "vizia_id 0.4.0 (git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743)",
+]
 
 [[package]]
 name = "vizia_input"
@@ -3313,13 +3328,13 @@ source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb
 dependencies = [
  "bitflags 2.13.0",
  "keyboard-types",
- "vizia_id",
+ "vizia_id 0.4.0 (git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6)",
 ]
 
 [[package]]
 name = "vizia_reactive"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743#2b2fa061377c9f902ec341c92f7dbddfdfee95d8"
 dependencies = [
  "parking_lot",
  "smallvec",
@@ -3328,15 +3343,15 @@ dependencies = [
 [[package]]
 name = "vizia_storage"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743#2b2fa061377c9f902ec341c92f7dbddfdfee95d8"
 dependencies = [
- "vizia_id",
+ "vizia_id 0.4.0 (git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743)",
 ]
 
 [[package]]
 name = "vizia_style"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743#2b2fa061377c9f902ec341c92f7dbddfdfee95d8"
 dependencies = [
  "bitflags 2.13.0",
  "cssparser",
@@ -3351,10 +3366,10 @@ dependencies = [
 [[package]]
 name = "vizia_window"
 version = "0.4.0"
-source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
+source = "git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743#2b2fa061377c9f902ec341c92f7dbddfdfee95d8"
 dependencies = [
  "bitflags 2.13.0",
- "vizia_input",
+ "vizia_input 0.4.0 (git+https://github.com/lxndrbe/vizia.git?branch=fix%2Fmodify-timer-at-24c4743)",
 ]
 
 [[package]]
