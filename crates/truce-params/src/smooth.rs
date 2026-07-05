@@ -11,15 +11,23 @@ pub enum SmoothingStyle {
 /// Per-parameter smoother. All methods take `&self` for interior
 /// mutability, enabling use through `Arc<Params>`.
 ///
-/// **Threading.** The audio thread is the sole writer of `current`
-/// (via `next` / `snap`) and the sole reader of `coeff`. The
-/// editor / main thread is the sole writer of `sample_rate` and
-/// `coeff` via [`Self::set_sample_rate`], which computes the new
-/// coefficient locally from the supplied `sr` before storing -
-/// so a concurrent audio block sees either the old (`sample_rate`,
-/// `coeff`) pair or the new one, never a mid-update split. The
-/// stored `sample_rate` field is informational; it isn't read in
-/// the audio path, only by future writers as a freshness check.
+/// **Threading.** `current` is advanced by the audio thread via
+/// [`Self::next`] (a `Relaxed` load-modify-store) and jumped via
+/// [`Self::snap`] from whichever thread applies a value: the audio
+/// thread on reset / state restore, and the main thread on activate
+/// and on a host state load (`snap_smoothers` under `apply_params`).
+/// The `Relaxed` accesses can't tear, but a main-thread `snap` racing
+/// an audio-thread `next` can be lost - so a preset load may ramp
+/// toward the restored target over the next block instead of jumping
+/// to it. That's benign: the target itself is already published, so
+/// the value still converges within the smoothing window. `coeff` is
+/// read only by the audio thread; the main thread writes `sample_rate`
+/// and `coeff` via [`Self::set_sample_rate`], which computes the new
+/// coefficient locally from the supplied `sr` before storing - so a
+/// concurrent audio block sees either the old (`sample_rate`, `coeff`)
+/// pair or the new one, never a mid-update split. The stored
+/// `sample_rate` field is informational; it isn't read in the audio
+/// path, only by future writers as a freshness check.
 pub struct Smoother {
     style: SmoothingStyle,
     current: AtomicF64,
