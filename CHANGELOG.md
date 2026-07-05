@@ -5,6 +5,7 @@ Notable changes per release.
 ## 2.0.2
 
 - AU now reports plugin latency and tail time to the host, so delay compensation aligns lookahead limiters and linear-phase EQs instead of leaving them early in the mix (both were hardcoded to zero on AU v2 and v3).
+- Windows installer generation escapes the Inno `{` metacharacter in plugin and vendor names, so a name with braces (or an Inno constant like `{sys}`) no longer aborts the ISCC build or redirects a path; quote-escaping is now applied only in the quoted parameter contexts where Inno reads it.
 
 ## 2.0.1
 

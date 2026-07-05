@@ -1050,7 +1050,7 @@ fn iss_preset_files(
             .join("clap-presets")
             .join(format!("{}.presets", p.file_stem()))
             .join("*");
-        let name = iss_escape(&p.file_stem());
+        let name = iss_escape_quoted(&p.file_stem());
         let dest = format!("{}\\CLAP\\{name}.presets", scoped_cf(scope));
         out.push_str(&iss_dual_dest(
             &iss_escape_path(&src),
@@ -1089,7 +1089,7 @@ fn iss_preset_files(
             .join("standalone-presets")
             .join(format!("{bin_stem}.presets"))
             .join("*");
-        let dest = format!("{{app}}\\{}.presets", iss_escape(&bin_stem));
+        let dest = format!("{{app}}\\{}.presets", iss_escape_quoted(&bin_stem));
         out.push_str(&iss_dual_dest(
             &iss_escape_path(&src),
             &dest,
@@ -1481,12 +1481,20 @@ fn render_iss(
 
     let mut setup = String::new();
     setup.push_str("[Setup]\r\n");
-    let _ = write!(setup, "AppId={{{{{}}}}}\r\n", iss_escape(&app_id));
-    let _ = write!(setup, "AppName={}\r\n", iss_escape(&p.name));
-    let _ = write!(setup, "AppVersion={}\r\n", iss_escape(version));
-    let _ = write!(setup, "AppPublisher={}\r\n", iss_escape(publisher));
+    let _ = write!(setup, "AppId={{{{{}}}}}\r\n", iss_escape_directive(&app_id));
+    let _ = write!(setup, "AppName={}\r\n", iss_escape_directive(&p.name));
+    let _ = write!(setup, "AppVersion={}\r\n", iss_escape_directive(version));
+    let _ = write!(
+        setup,
+        "AppPublisher={}\r\n",
+        iss_escape_directive(publisher)
+    );
     if !publisher_url.is_empty() {
-        let _ = write!(setup, "AppPublisherURL={}\r\n", iss_escape(&publisher_url));
+        let _ = write!(
+            setup,
+            "AppPublisherURL={}\r\n",
+            iss_escape_directive(&publisher_url)
+        );
     }
     // `{autopf}` resolves to `{commonpf}` in admin install mode and
     // `{userpf}` (`%LOCALAPPDATA%\Programs`) in non-admin mode - right
@@ -1504,8 +1512,8 @@ fn render_iss(
         setup,
         "DefaultDirName={}\\{}\\{}\r\n",
         pf_const,
-        iss_escape(publisher),
-        iss_escape(&p.file_stem()),
+        iss_escape_directive(publisher),
+        iss_escape_directive(&p.file_stem()),
     );
     setup.push_str("DisableDirPage=yes\r\n");
     let _ = write!(setup, "OutputDir={}\r\n", iss_escape_path(dist_dir));
@@ -1517,8 +1525,8 @@ fn render_iss(
     let _ = write!(
         setup,
         "OutputBaseFilename={}-{}-windows\r\n",
-        iss_escape(&p.crate_name),
-        iss_escape(version),
+        iss_escape_directive(&p.crate_name),
+        iss_escape_directive(version),
     );
     setup.push_str("Compression=lzma2\r\n");
     setup.push_str("SolidCompression=yes\r\n");
@@ -1537,7 +1545,7 @@ fn render_iss(
     write_privileges_required(&mut setup, scope, formats);
     setup.push_str("WizardStyle=modern\r\n");
     setup.push_str("UninstallDisplayName=");
-    setup.push_str(&iss_escape(&p.name));
+    setup.push_str(&iss_escape_directive(&p.name));
     setup.push_str("\r\n");
     if let Some(icon) = &installer_icon {
         let _ = write!(setup, "SetupIconFile={}\r\n", iss_escape_path(icon));
@@ -1603,7 +1611,7 @@ fn render_iss(
         // match the on-disk install layout.
         write_icons_section(
             &mut setup,
-            &iss_escape(&p.file_stem()),
+            &iss_escape_quoted(&p.file_stem()),
             &bin_stem,
             "standalone",
             scope,
@@ -1856,7 +1864,7 @@ fn render_suite_iss(
                 // Suite-installer Start Menu shortcut: same path-vs-
                 // display split as the per-plugin renderer above.
                 (
-                    iss_escape(&plugin.file_stem()),
+                    iss_escape_quoted(&plugin.file_stem()),
                     bin_stem,
                     format!("{prefix}\\standalone"),
                 )
@@ -1943,12 +1951,28 @@ fn write_suite_setup_section(
         .filter(|p| p.exists());
 
     setup.push_str("[Setup]\r\n");
-    let _ = write!(setup, "AppId={{{{{}}}}}\r\n", iss_escape(&suite_app_id));
-    let _ = write!(setup, "AppName={}\r\n", iss_escape(&suite.def.name));
-    let _ = write!(setup, "AppVersion={}\r\n", iss_escape(version));
-    let _ = write!(setup, "AppPublisher={}\r\n", iss_escape(publisher));
+    let _ = write!(
+        setup,
+        "AppId={{{{{}}}}}\r\n",
+        iss_escape_directive(&suite_app_id)
+    );
+    let _ = write!(
+        setup,
+        "AppName={}\r\n",
+        iss_escape_directive(&suite.def.name)
+    );
+    let _ = write!(setup, "AppVersion={}\r\n", iss_escape_directive(version));
+    let _ = write!(
+        setup,
+        "AppPublisher={}\r\n",
+        iss_escape_directive(publisher)
+    );
     if !publisher_url.is_empty() {
-        let _ = write!(setup, "AppPublisherURL={}\r\n", iss_escape(&publisher_url));
+        let _ = write!(
+            setup,
+            "AppPublisherURL={}\r\n",
+            iss_escape_directive(&publisher_url)
+        );
     }
     // Same `{userpf}`/`{autopf}` matrix as per-plugin - see
     // `render_iss` for the rationale: `--user` mixed with AAX/VST2
@@ -1959,16 +1983,16 @@ fn write_suite_setup_section(
         setup,
         "DefaultDirName={}\\{}\\{}\r\n",
         pf_const,
-        iss_escape(publisher),
-        iss_escape(&suite.def.name),
+        iss_escape_directive(publisher),
+        iss_escape_directive(&suite.def.name),
     );
     setup.push_str("DisableDirPage=yes\r\n");
     let _ = write!(setup, "OutputDir={}\r\n", iss_escape_path(dist_dir));
     let _ = write!(
         setup,
         "OutputBaseFilename={}-{}-windows\r\n",
-        iss_escape(&suite.def.bundle_id),
-        iss_escape(version),
+        iss_escape_directive(&suite.def.bundle_id),
+        iss_escape_directive(version),
     );
     setup.push_str("Compression=lzma2\r\n");
     setup.push_str("SolidCompression=yes\r\n");
@@ -1979,7 +2003,7 @@ fn write_suite_setup_section(
     let _ = write!(
         setup,
         "UninstallDisplayName={}\r\n",
-        iss_escape(&suite.def.name)
+        iss_escape_directive(&suite.def.name)
     );
     if let Some(icon) = &installer_icon {
         let _ = write!(setup, "SetupIconFile={}\r\n", iss_escape_path(icon));
@@ -2010,7 +2034,7 @@ fn write_suite_components_section(
         let _ = write!(
             setup,
             "Name: \"{prefix}\"; Description: \"{}\"; Types: full custom\r\n",
-            iss_escape(&plugin.name)
+            iss_escape_quoted(&plugin.name)
         );
         let plugin_staging = staging_root.join(&plugin.bundle_id);
         for fmt in formats {
@@ -2282,7 +2306,7 @@ fn iss_files_block(
             // source side (`format!("{}.vst3", p.file_stem())` above)
             // and the per-plugin install go through, so "Truce Dry/
             // Wet.vst3" doesn't land as a nested `Truce Dry\Wet.vst3`.
-            let name = iss_escape(&p.file_stem());
+            let name = iss_escape_quoted(&p.file_stem());
             let subdir = arch.vst3_bundle_subdir();
             let dest = format!(
                 "{}\\VST3\\{name}.vst3\\Contents\\{subdir}",
@@ -2355,7 +2379,7 @@ fn iss_files_block(
             // live at `{commoncf}\Avid\Audio\Plug-Ins\<stem>.aaxplugin`
             // and the install side uses `p.file_stem()`, so the
             // packager has to too.
-            let name = iss_escape(&p.file_stem());
+            let name = iss_escape_quoted(&p.file_stem());
             let subdir = arch.aax_bundle_subdir();
             let bundle_root = format!("{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin");
             let mut out = String::new();
@@ -2567,7 +2591,7 @@ fn iss_uninstall_lines(
     // an uninstaller that ran cleanly but left the bundle in place
     // (Windows file APIs reject literal `/` in a leaf name, so the
     // mismatched delete silently no-op'd).
-    let safe_stem = iss_escape(&truce_utils::safe_filename(plugin_name));
+    let safe_stem = iss_escape_quoted(&truce_utils::safe_filename(plugin_name));
     let comp = |suffix: &str| -> String {
         match component_prefix {
             Some(prefix) => format!("{prefix}\\{suffix}"),
@@ -2657,14 +2681,34 @@ fn run_iscc(iss_path: &Path) -> Res {
 // .iss value escaping
 // ---------------------------------------------------------------------------
 
-fn iss_escape(s: &str) -> String {
-    s.replace('"', "\"\"")
+/// Escape a value for an unquoted `[Setup]` directive (`AppName=`,
+/// `AppPublisher=`, `UninstallDisplayName=`, ...), which Inno reads
+/// literally to end of line. `"` is an ordinary character there, so
+/// doubling it would show a spurious quote; but `{` still opens a
+/// constant (`{app}`, `{sys}`), so a literal brace must be `{{` or
+/// ISCC aborts on an unknown constant (or expands a known one).
+fn iss_escape_directive(s: &str) -> String {
+    s.replace('{', "{{")
 }
 
+/// Escape a value that sits inside a double-quoted parameter string in
+/// `[Files]` / `[Icons]` / `[Components]` / `[UninstallDelete]`
+/// (`Source: "..."`, `Name: "..."`, `Description: "..."`). Inside the
+/// quotes Inno treats `""` as an escaped quote and still expands
+/// `{...}` constants, so double both.
+fn iss_escape_quoted(s: &str) -> String {
+    s.replace('{', "{{").replace('"', "\"\"")
+}
+
+/// Escape a filesystem path for either context. A Windows path can't
+/// contain `"` (a reserved filename char), so only `{` needs doubling -
+/// correct inside a quoted `Source:` and after an unquoted `OutputDir=`
+/// alike. Also normalizes `/` to `\`.
 fn iss_escape_path(p: &Path) -> String {
-    let s = p.display().to_string();
-    let s = s.replace('/', "\\");
-    iss_escape(&s)
+    p.display()
+        .to_string()
+        .replace('/', "\\")
+        .replace('{', "{{")
 }
 
 // ---------------------------------------------------------------------------
@@ -2752,4 +2796,45 @@ fn has_arm64_msvc_toolchain() -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{iss_escape_directive, iss_escape_path, iss_escape_quoted};
+    use std::path::Path;
+
+    #[test]
+    fn directive_doubles_brace_leaves_quote() {
+        // Inno reads `[Setup]` directive values literally to EOL: `{`
+        // opens a constant (must be `{{` for a literal), `"` is plain.
+        assert_eq!(iss_escape_directive("Acme {Labs}"), "Acme {{Labs}");
+        assert_eq!(
+            iss_escape_directive("Acme {sys} Audio"),
+            "Acme {{sys} Audio"
+        );
+        assert_eq!(iss_escape_directive("Acme \"Audio\""), "Acme \"Audio\"");
+        assert_eq!(iss_escape_directive("Plain Name"), "Plain Name");
+    }
+
+    #[test]
+    fn quoted_doubles_brace_and_quote() {
+        // Inside a `"..."` parameter, `""` is an escaped quote and
+        // `{...}` still expands, so both double.
+        assert_eq!(iss_escape_quoted("Acme {Labs}"), "Acme {{Labs}");
+        assert_eq!(iss_escape_quoted("Comp \"X\""), "Comp \"\"X\"\"");
+        assert_eq!(iss_escape_quoted("{app}\"x\""), "{{app}\"\"x\"\"");
+    }
+
+    #[test]
+    fn path_doubles_brace_and_normalizes_separators() {
+        // A Windows path can't hold `"`, so only `{` needs doubling.
+        assert_eq!(
+            iss_escape_path(Path::new("C:/Users/{weird}/x")),
+            r"C:\Users\{{weird}\x"
+        );
+        assert_eq!(
+            iss_escape_path(Path::new("C:/plain/path")),
+            r"C:\plain\path"
+        );
+    }
 }
