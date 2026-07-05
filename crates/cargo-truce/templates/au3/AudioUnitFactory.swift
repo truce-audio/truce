@@ -770,8 +770,22 @@ class TruceAUAudioUnit: AUAudioUnit {
     }
     override var isMusicDeviceOrEffect: Bool { true }
     override var canProcessInPlace: Bool { g_descriptor?.pointee.num_inputs ?? 0 > 0 }
-    override var latency: TimeInterval { 0 }
-    override var tailTime: TimeInterval { 0 }
+    // Report the plugin's latency / release tail so the host aligns
+    // delay compensation. Samples come from a cache the framework
+    // refreshes each block; divide by the sample rate for seconds. The
+    // `latency_samples` / `tail_samples` callbacks are ABI version 3,
+    // so gate on the (magic-validated) reported version - this appex
+    // may be newer than the framework binary it binds.
+    override var latency: TimeInterval {
+        guard let ctx = rustCtx, let cb = g_callbacks,
+              truceAbiTailVersion(cb) >= 3, _sampleRate > 0 else { return 0 }
+        return TimeInterval(cb.pointee.latency_samples(ctx)) / _sampleRate
+    }
+    override var tailTime: TimeInterval {
+        guard let ctx = rustCtx, let cb = g_callbacks,
+              truceAbiTailVersion(cb) >= 3, _sampleRate > 0 else { return 0 }
+        return TimeInterval(cb.pointee.tail_samples(ctx)) / _sampleRate
+    }
     override var shouldBypassEffect: Bool { get { false } set { } }
 }
 

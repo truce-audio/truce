@@ -638,14 +638,28 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
 
         case kAudioUnitProperty_Latency: {
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            *(Float64 *)outData = 0.0;
+            // Report the plugin's latency in seconds (samples / rate)
+            // so the host's delay compensation aligns the track. The
+            // Rust callback reads a cache refreshed each block, so this
+            // main-thread query never takes the plugin lock. Staticlib
+            // and shim are one binary, so `latency_samples` is always
+            // present (no cross-binary version gate needed here).
+            double secs = 0.0;
+            if (g_callbacks && g_callbacks->latency_samples && inst->rustCtx &&
+                inst->sampleRate > 0.0)
+                secs = g_callbacks->latency_samples(inst->rustCtx) / inst->sampleRate;
+            *(Float64 *)outData = secs;
             *ioSize = sizeof(Float64);
             return noErr;
         }
 
         case kAudioUnitProperty_TailTime: {
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            *(Float64 *)outData = 0.0;
+            double secs = 0.0;
+            if (g_callbacks && g_callbacks->tail_samples && inst->rustCtx &&
+                inst->sampleRate > 0.0)
+                secs = g_callbacks->tail_samples(inst->rustCtx) / inst->sampleRate;
+            *(Float64 *)outData = secs;
             *ioSize = sizeof(Float64);
             return noErr;
         }
