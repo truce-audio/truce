@@ -4,11 +4,13 @@
 #[cfg(target_os = "macos")]
 use super::PkgFormat;
 use crate::commands::install::presets;
-use crate::preset_codec::xml_escape;
 #[cfg(target_os = "macos")]
 use crate::install_scope::PkgScope;
 #[cfg(target_os = "macos")]
 use crate::pace_sign_aax_macos;
+// Every `xml_escape` call site here is a macOS plist writer.
+#[cfg(target_os = "macos")]
+use crate::preset_codec::xml_escape;
 use crate::{Config, PluginDef, Res, codesign_bundle};
 #[cfg(target_os = "macos")]
 use crate::{MacosPackagingConfig, copy_dir_recursive};

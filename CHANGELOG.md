@@ -11,6 +11,9 @@ Notable changes per release.
 - VST3 bridges host MIDI-mapped controllers back to events via a sorted per-id cache and binary search instead of a linear parameter-table scan on the audio thread; plugins with no MIDI-mapped parameters skip the lookup entirely.
 - CLAP and VST3: loading state into a suspended (inactive) plugin now applies the custom-state blob immediately instead of queuing it for the audio thread that never runs; a following state save no longer re-serializes stale custom state. Active plugins keep the audio-thread handoff.
 - A `min_subblock_samples = 0` in `[automation]` no longer hangs the audio thread: the sub-block chunker floors it at 1 (0 and 1 both mean "split at every event"), so an event on the block start can't produce a zero-length sub-block that spins forever.
+- The generated Linux `install.sh` shell-quotes plugin and vendor names, so a name containing `$(...)`, backticks, or quotes can no longer run as a command at install time.
+- macOS packaging XML-escapes plugin and vendor names in the emitted `Info.plist` and installer `distribution.xml`, so a name with `&`, `<`, `>`, or a quote no longer produces malformed XML that breaks `pkgbuild` / `productbuild`.
+- VST2 macOS bundles now derive `CFBundleIdentifier` from the configured vendor id instead of a hardcoded `com.truce.` prefix, matching the other formats.
 
 ## 2.0.1
 

@@ -717,9 +717,14 @@ fn write_install_sh(
         .collect::<Vec<_>>()
         .join(" ");
 
+    // `{{PROJECT}}` lands in an unquoted `cat <<EOF` heredoc (and
+    // comments); `{{VENDOR}}` in comments. Both still expand `$` /
+    // backticks there, so escape. `{{PLUGIN_NAMES}}` is a space-joined
+    // list of validated bundle ids (no shell metachars); `{{PLUGIN_CASES}}`
+    // is already shell-quoted by `format_plugin_case`.
     let rendered = INSTALL_SH_TEMPLATE
-        .replace("{{PROJECT}}", &project_label)
-        .replace("{{VENDOR}}", &config.vendor.name)
+        .replace("{{PROJECT}}", &heredoc_escape(&project_label))
+        .replace("{{VENDOR}}", &heredoc_escape(&config.vendor.name))
         .replace("{{PLUGIN_NAMES}}", &plugin_names)
         .replace("{{PLUGIN_CASES}}", &plugin_cases);
 
@@ -729,35 +734,62 @@ fn write_install_sh(
     Ok(())
 }
 
+/// Single-quote a value for safe interpolation into the generated
+/// `install.sh`. Inside single quotes the shell treats everything
+/// literally; an embedded `'` is closed, escaped, and reopened
+/// (`'\''`). Neutralizes `$(...)`, backticks, `$var`, and quotes in a
+/// display name / bundle filename that would otherwise run on the end
+/// user's machine at `./install.sh` time.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Escape a value for an *unquoted* `cat <<EOF` heredoc, where the
+/// shell still expands `$`, backticks, and `\`. Backslash first so the
+/// escapes it emits aren't themselves re-escaped.
+fn heredoc_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
+}
+
 /// One case-block per plugin in the install.sh's main loop.
 /// Source paths reference the format-grouped tarball layout
 /// (`clap/<filename>` etc.); destination paths come from the
-/// template's `dest_dir()` helper.
+/// template's `dest_dir()` helper. `bundle_id` is validated
+/// (lowercase `a-z0-9` + `-_.`), so the `case` label is safe raw; the
+/// free-text display name and filenames are single-quoted.
 fn format_plugin_case(p: &PluginSummary) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "    {})", p.bundle_id);
-    let _ = writeln!(s, "        echo \"  Installing {} ...\"", p.display_name);
+    let _ = writeln!(
+        s,
+        "        echo \"  Installing \"{}\" ...\"",
+        sh_quote(&p.display_name)
+    );
     for b in &p.bundles {
         let _ = writeln!(
             s,
-            "        install_bundle \"{format}\" \"{format}/{name}\"",
+            "        install_bundle \"{format}\" \"{format}/\"{name}",
             format = b.format,
-            name = b.name,
+            name = sh_quote(&b.name),
         );
     }
     if let Some(src) = &p.clap_presets {
-        let _ = writeln!(s, "        install_clap_presets \"{src}\"");
+        let _ = writeln!(s, "        install_clap_presets {}", sh_quote(src));
     }
     if let Some(src) = &p.vst3_presets {
-        let _ = writeln!(s, "        install_vst3_presets \"{src}\"");
+        let _ = writeln!(s, "        install_vst3_presets {}", sh_quote(src));
     }
     if let Some(bin) = &p.standalone {
-        let _ = writeln!(
-            s,
-            "        install_standalone \"standalone/{bin}\" \"{bin}\""
-        );
+        let q = sh_quote(bin);
+        let _ = writeln!(s, "        install_standalone \"standalone/\"{q} {q}");
         if let Some(src) = &p.standalone_presets {
-            let _ = writeln!(s, "        install_standalone_presets \"{src}\" \"{bin}\"");
+            let _ = writeln!(
+                s,
+                "        install_standalone_presets {} {q}",
+                sh_quote(src)
+            );
         }
     }
     s.push_str("        ;;");
@@ -928,4 +960,27 @@ fn set_executable(_path: &Path) -> std::io::Result<()> {
     // meaningful to do. Result-typed so the cfg(unix) caller path
     // doesn't need a parallel branch.
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{heredoc_escape, sh_quote};
+
+    #[test]
+    fn sh_quote_wraps_and_neutralizes() {
+        assert_eq!(sh_quote("plain"), "'plain'");
+        // Inside single quotes only `'` is special; it closes, escapes,
+        // and reopens. `$`, `(`, backticks stay literal.
+        assert_eq!(sh_quote("$(x)`y`"), "'$(x)`y`'");
+        assert_eq!(sh_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn heredoc_escape_neutralizes_expansion() {
+        // Backslash first so the escapes it emits aren't re-escaped.
+        assert_eq!(heredoc_escape("$"), "\\$");
+        assert_eq!(heredoc_escape("`"), "\\`");
+        assert_eq!(heredoc_escape("\\"), "\\\\");
+        assert_eq!(heredoc_escape("a$(x)`y`b"), "a\\$(x)\\`y\\`b");
+    }
 }
