@@ -7,6 +7,7 @@ Notable changes per release.
 - AU now reports plugin latency and tail time to the host, so delay compensation aligns lookahead limiters and linear-phase EQs instead of leaving them early in the mix (both were hardcoded to zero on AU v2 and v3).
 - Windows installer generation escapes the Inno `{` metacharacter in plugin and vendor names, so a name with braces (or an Inno constant like `{sys}`) no longer aborts the ISCC build or redirects a path; quote-escaping is now applied only in the quoted parameter contexts where Inno reads it.
 - LV2 MIDI output no longer risks a buffer overrun on a MIDI-dense block: the event-write bounds check now accounts for the atom and sequence-body headers that precede the events, so a near-full host output buffer can't be written past.
+- AU v2: a plugin that changes its own parameters during `process()` no longer notifies the host from the audio thread (`AUEventListenerNotify` takes locks); the changes are handed to a dedicated thread through a wait-free queue and flushed off the render path.
 
 ## 2.0.1
 
