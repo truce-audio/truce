@@ -12,6 +12,11 @@ use std::slice;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
+// The AU v2 param-notify pump is macOS-only (v2 doesn't exist on iOS).
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicBool;
+#[cfg(target_os = "macos")]
+use std::thread::{self, JoinHandle, Thread};
 
 // `Float::from_f64` is only invoked from the macOS-only `set_param`
 // closure in `cb_gui_open` (the AU v2 host notifier path). Gate the
@@ -75,6 +80,87 @@ use ffi::{
 /// after the host already moved on.
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
+/// Wait-free queue for AU v2 process-emitted `ParamChange` feedback:
+/// the audio thread pushes `(param_id, plain_value)`, the notifier
+/// thread drains and forwards them to the host. Sized to a full
+/// block's worth of emissions so a normal block never drops.
+#[cfg(target_os = "macos")]
+type ParamNotifyQueue = crossbeam_queue::ArrayQueue<(u32, f32)>;
+
+/// Off-audio-thread host-notify pump for AU v2 (macOS only). When a
+/// plugin changes its own parameters during `process()`, the host UI /
+/// automation must be told - but `AudioUnitSetParameter` +
+/// `AUEventListenerNotify` take locks and dispatch host callbacks,
+/// forbidden on the audio path. So `cb_process` pushes the changes to a
+/// wait-free queue and unparks this thread, which flushes them off the
+/// render thread. `Drop` stops and joins the thread before the
+/// `AuInstance` (and the AU-shim component the notify targets) is torn
+/// down.
+#[cfg(target_os = "macos")]
+struct ParamNotifier {
+    queue: Arc<ParamNotifyQueue>,
+    stop: Arc<AtomicBool>,
+    /// Cached for a cheap `unpark` from the audio thread.
+    thread: Thread,
+    handle: Option<JoinHandle<()>>,
+}
+
+#[cfg(target_os = "macos")]
+impl ParamNotifier {
+    /// Spawn the notifier for the instance the AU shim maps to `ctx`.
+    /// Returns `None` if the thread can't be spawned (feedback is then
+    /// silently skipped rather than run on the audio thread).
+    ///
+    /// # Safety
+    /// `ctx` must stay a valid AU-shim instance handle until this
+    /// notifier is dropped - guaranteed because it lives in the
+    /// `AuInstance` and `cb_destroy` drops it (joining the thread)
+    /// before the shim frees the component.
+    unsafe fn spawn(ctx: SendPtr<std::ffi::c_void>) -> Option<Self> {
+        let queue = Arc::new(ParamNotifyQueue::new(EVENT_LIST_PREALLOC));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (q, s) = (Arc::clone(&queue), Arc::clone(&stop));
+        let drain = move || {
+            while let Some((id, value)) = q.pop() {
+                // SAFETY: `ctx` is an opaque key the C side maps to its
+                // component; the Rust instance is never dereferenced
+                // through it, and this thread is joined before the
+                // component is freed.
+                unsafe { truce_au_v2_host_set_param(ctx.as_ptr().cast_mut(), id, value) };
+            }
+        };
+        let handle = thread::Builder::new()
+            .name("truce-au-param-notify".to_string())
+            .spawn(move || {
+                while !s.load(Ordering::Acquire) {
+                    drain();
+                    thread::park();
+                }
+                // Flush anything queued between the last drain and stop.
+                drain();
+            })
+            .ok()?;
+        let thread = handle.thread().clone();
+        Some(Self {
+            queue,
+            stop,
+            thread,
+            handle: Some(handle),
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for ParamNotifier {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.thread.unpark();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 struct AuInstance<P: PluginExport> {
     /// The plugin behind the wrapper-standard mediation lock: the
     /// audio thread locks per block, `cb_state_save` (host thread)
@@ -97,6 +183,11 @@ struct AuInstance<P: PluginExport> {
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
+    /// AU v2 (macOS) process-emitted `ParamChange` feedback pump. Set
+    /// once in `cb_create` (after the instance has its final address);
+    /// `None` only if the notifier thread failed to spawn.
+    #[cfg(target_os = "macos")]
+    param_notify: Option<ParamNotifier>,
     event_list: EventList,
     /// Set when `cb_au_push_sysex_input` has queued `SysEx` for the
     /// upcoming `cb_process` block. AU v2 hosts deliver `SysEx` input
@@ -212,6 +303,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin: shared_plugin(plugin),
         latency_cache,
         tail_cache,
+        #[cfg(target_os = "macos")]
+        param_notify: None,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sysex_inputs_pending: false,
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
@@ -234,7 +327,19 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
             .filter_map(|k| CString::new(*k).ok())
             .collect(),
     });
-    Box::into_raw(instance).cast::<std::ffi::c_void>()
+    let raw = Box::into_raw(instance);
+    // Spawn the param-notify thread now that the instance has its final
+    // address: the AU shim will map exactly this pointer to its
+    // component, and the notifier hands it back to the host-set FFI.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        // SAFETY: `raw` is live until `cb_destroy`, which drops
+        // `param_notify` (joining the thread) before the shim frees the
+        // component; the notifier only uses the pointer as an opaque key.
+        let ctx = SendPtr::new(raw.cast::<std::ffi::c_void>().cast_const());
+        (*raw).param_notify = ParamNotifier::spawn(ctx);
+    }
+    raw.cast::<std::ffi::c_void>()
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
@@ -503,19 +608,27 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inst.scratch
             .finish_widening(outputs, num_output_channels, len_u32(num_frames));
 
-        // AU v2 (macOS): notify the host of process-emitted parameter
-        // changes so its UI / automation reflect values the plugin
-        // changed during processing. AU v3 (iOS) has no host-notify -
-        // the Swift shim polls the parameter tree - matching the
-        // editor-side `set_param` split.
+        // AU v2 (macOS): hand process-emitted parameter changes to the
+        // notifier thread so the host's UI / automation reflect values
+        // the plugin changed during processing. The host set + listener
+        // broadcast takes locks and dispatches host callbacks, so it
+        // can't run here on the audio thread - we only push (wait-free)
+        // and unpark. A full queue drops the change rather than block.
+        // AU v3 (iOS) has no host-notify: the Swift shim polls the
+        // parameter tree, matching the editor-side `set_param` split.
         #[cfg(target_os = "macos")]
-        for event in inst.output_events.iter() {
-            if let EventBody::ParamChange { id, value } = event.body {
-                // SAFETY (outer `unsafe` closure): `ctx` is the live
-                // instance the shim mapped to its TruceAUv2; the
-                // notifier only touches the C-side component, not
-                // `inst`. `value` is plain, as AU wants.
-                truce_au_v2_host_set_param(ctx, id, f32::from_f64(value));
+        if let Some(notifier) = &inst.param_notify {
+            let mut pushed = false;
+            for event in inst.output_events.iter() {
+                if let EventBody::ParamChange { id, value } = event.body {
+                    // `value` is plain, as AU wants.
+                    if notifier.queue.push((id, f32::from_f64(value))).is_ok() {
+                        pushed = true;
+                    }
+                }
+            }
+            if pushed {
+                notifier.thread.unpark();
             }
         }
 
@@ -1960,5 +2073,45 @@ mod tests {
              crate::ffi::TRUCE_AU_ABI_VERSION ({}); bump both together when appending a callback",
             crate::ffi::TRUCE_AU_ABI_VERSION,
         );
+    }
+
+    /// The AU v2 param-notify pump drains what the audio thread queues
+    /// and joins cleanly on drop (no teardown hang). Uses a dummy,
+    /// never-registered `ctx`: the C-side map lookup compares it by
+    /// pointer identity and returns NULL, so the host-set FFI is a safe
+    /// no-op - we exercise the queue/thread lifecycle, not `CoreAudio`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn param_notifier_drains_and_joins() {
+        use std::time::{Duration, Instant};
+
+        use truce_core::editor::SendPtr;
+
+        use super::ParamNotifier;
+
+        let dummy = core::ptr::dangling::<std::ffi::c_void>();
+        // SAFETY: `dummy` is only ever compared (never dereferenced) by
+        // the C map lookup, and the notifier is dropped (joined) below
+        // while still in scope.
+        let notifier =
+            unsafe { ParamNotifier::spawn(SendPtr::new(dummy)) }.expect("spawn notifier");
+
+        // Payload value is irrelevant (the host-set FFI no-ops here).
+        for i in 0..100u32 {
+            assert!(notifier.queue.push((i, 1.0)).is_ok());
+        }
+        notifier.thread.unpark();
+
+        let start = Instant::now();
+        while !notifier.queue.is_empty() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "notifier did not drain the queue"
+            );
+            std::thread::yield_now();
+        }
+
+        // Must stop + join without hanging.
+        drop(notifier);
     }
 }
