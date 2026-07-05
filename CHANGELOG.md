@@ -9,6 +9,7 @@ Notable changes per release.
 - LV2 MIDI output no longer risks a buffer overrun on a MIDI-dense block: the event-write bounds check now accounts for the atom and sequence-body headers that precede the events, so a near-full host output buffer can't be written past.
 - AU v2: a plugin that changes its own parameters during `process()` no longer notifies the host from the audio thread (`AUEventListenerNotify` takes locks); the changes are handed to a dedicated thread through a wait-free queue and flushed off the render path.
 - VST3 bridges host MIDI-mapped controllers back to events via a sorted per-id cache and binary search instead of a linear parameter-table scan on the audio thread; plugins with no MIDI-mapped parameters skip the lookup entirely.
+- CLAP and VST3: loading state into a suspended (inactive) plugin now applies the custom-state blob immediately instead of queuing it for the audio thread that never runs; a following state save no longer re-serializes stale custom state. Active plugins keep the audio-thread handoff.
 
 ## 2.0.1
 
