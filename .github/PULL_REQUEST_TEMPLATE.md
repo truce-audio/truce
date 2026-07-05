@@ -32,7 +32,7 @@ showing the idiomatic shape, verified by running it: `cargo truce
 run`, play it, hear it. If no useful example can be written, that's
 a design smell: raise it here. Not applicable for pure fixes. -->
 
-## Manual testing (required)
+## Manual testing
 
 <!-- Required on every PR. Specs define correct behavior, but
 host-specific behavior is unknown and hostile - list what you
