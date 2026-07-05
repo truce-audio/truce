@@ -113,6 +113,12 @@ struct Vst3Instance<P: PluginExport> {
     /// are static for the life of the plugin instance, so caching is
     /// safe.
     param_ranges: Vec<(u32, ParamRange)>,
+    /// Precomputed MIDI-controller bindings, sorted by param id, for the
+    /// audio-thread bridge in `process_block`. Only params with a
+    /// `midi_map` appear, so it's empty for the common no-mapping plugin
+    /// and the per-change lookup short-circuits (`binary_search` on an
+    /// empty slice is `O(1)`).
+    midi_maps: Vec<(u32, MidiMap)>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
@@ -261,6 +267,13 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         param_infos.iter().map(|i| (i.id, i.range)).collect();
     // Sort by id so `binary_search_by_key` works in the hot lookups.
     param_ranges.sort_by_key(|(id, _)| *id);
+    // Precompute the MIDI-controller bindings, sorted by id, so the
+    // audio thread bridges mapped controllers without a linear scan.
+    let mut midi_maps: Vec<(u32, MidiMap)> = param_infos
+        .iter()
+        .filter_map(|i| MidiMap::from_param(i).map(|m| (i.id, m)))
+        .collect();
+    midi_maps.sort_by_key(|(id, _)| *id);
     let params_arc = plugin.params_arc();
     let meter_store = plugin.meter_store();
     let latency_cache = AtomicU32::new(plugin.latency());
@@ -284,6 +297,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         prepared: false,
         scratch: RawBufferScratch::default(),
         param_ranges,
+        midi_maps,
         editor: None,
         transport_slot: TransportSlot::new(),
         host_scale: 1.0,
@@ -600,13 +614,11 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 // back into the MIDI event the plugin expects, in
                 // addition to the plain `ParamChange` so the bound
                 // parameter still tracks the controller.
-                if let Some(info) = inst.param_infos.iter().find(|i| i.id == pc.id)
-                    && let Some(body) = midi_event_from_param(info, pc.value)
-                {
+                if let Ok(idx) = inst.midi_maps.binary_search_by_key(&pc.id, |(id, _)| *id) {
                     inst.event_list.push(Event {
                         sample_offset,
                         port: 0,
-                        body,
+                        body: midi_event_from_map(&inst.midi_maps[idx].1, pc.value),
                     });
                 }
                 inst.event_list.push(Event {
@@ -1006,11 +1018,37 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
 // `norm as f32` is a lossless-enough narrowing of a clamped `0..=1`
 // value; the MIDI encoders take `f32`.
 #[allow(clippy::cast_possible_truncation)]
-fn midi_event_from_param(info: &ParamInfo, plain: f64) -> Option<EventBody> {
-    let source = info.midi_map?;
-    let channel = info.midi_channel.unwrap_or(0);
-    let norm = info.range.normalize(plain) as f32; // 0.0..=1.0
-    Some(match source {
+/// A parameter's precomputed MIDI-controller binding. Built once per
+/// instance for every param that declares a `midi_map`, so the audio
+/// thread can bridge a mapped controller change to its `EventBody`
+/// through a binary search instead of a linear `ParamInfo` scan.
+#[derive(Clone, Copy)]
+struct MidiMap {
+    source: MidiSource,
+    channel: u8,
+    range: ParamRange,
+}
+
+impl MidiMap {
+    /// The binding `info` declares, or `None` when it has no `midi_map`.
+    fn from_param(info: &ParamInfo) -> Option<Self> {
+        Some(Self {
+            source: info.midi_map?,
+            channel: info.midi_channel.unwrap_or(0),
+            range: info.range,
+        })
+    }
+}
+
+/// Bridge a MIDI-mapped parameter change back into the `EventBody` the
+/// plugin expects. VST3 has no native input event for channel MIDI, so
+/// the host delivers it as a parameter change on the mapped id.
+// `normalize` yields a `0.0..=1.0` value; the MIDI encoders take `f32`.
+#[allow(clippy::cast_possible_truncation)]
+fn midi_event_from_map(map: &MidiMap, plain: f64) -> EventBody {
+    let channel = map.channel;
+    let norm = map.range.normalize(plain) as f32; // 0.0..=1.0
+    match map.source {
         // Host-normalized `0..1` is the pitch-wheel position (0 = full
         // down, 0.5 = center, 1 = full up); shift to `[-1, 1]` for the
         // 14-bit encoder.
@@ -1035,7 +1073,7 @@ fn midi_event_from_param(info: &ParamInfo, plain: f64) -> Option<EventBody> {
             channel,
             program: denorm_7bit(norm),
         },
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2215,10 +2253,52 @@ mod tests {
         }
     }
 
+    /// Bridge a param change the way `process_block` does: only a param
+    /// with a `midi_map` produces an event.
+    fn bridge(info: &ParamInfo, plain: f64) -> Option<EventBody> {
+        MidiMap::from_param(info).map(|m| midi_event_from_map(&m, plain))
+    }
+
     #[test]
     fn unmapped_param_does_not_bridge() {
         let i = info(ParamRange::Linear { min: 0.0, max: 1.0 }, None);
-        assert!(midi_event_from_param(&i, 0.5).is_none());
+        assert!(bridge(&i, 0.5).is_none());
+    }
+
+    #[test]
+    fn midi_map_cache_holds_only_mapped_ids_and_binary_searches() {
+        // The `process_block` fast path: build the sorted cache the way
+        // `cb_create` does, then look up by id. Unmapped params are
+        // absent, so their ids (and unknown ids) miss.
+        let range = ParamRange::Linear {
+            min: 0.0,
+            max: 127.0,
+        };
+        let mut mapped_cc = info(range, Some(MidiSource::Cc(74)));
+        mapped_cc.id = 5;
+        let mut unmapped = info(range, None);
+        unmapped.id = 2;
+        let mut mapped_bend = info(range, Some(MidiSource::PitchBend));
+        mapped_bend.id = 9;
+
+        let mut cache: Vec<(u32, MidiMap)> = [&mapped_cc, &unmapped, &mapped_bend]
+            .into_iter()
+            .filter_map(|i| MidiMap::from_param(i).map(|m| (i.id, m)))
+            .collect();
+        cache.sort_by_key(|(id, _)| *id);
+
+        assert_eq!(cache.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [5, 9]);
+
+        let find = |id: u32| cache.binary_search_by_key(&id, |(i, _)| *i);
+        // The mapped CC bridges to a ControlChange on its number.
+        let idx = find(5).expect("mapped id 5 present");
+        assert!(matches!(
+            midi_event_from_map(&cache[idx].1, 127.0),
+            EventBody::ControlChange { cc: 74, .. }
+        ));
+        assert!(find(9).is_ok(), "mapped id 9 present");
+        assert!(find(2).is_err(), "unmapped id absent");
+        assert!(find(999).is_err(), "unknown id absent");
     }
 
     #[test]
@@ -2454,16 +2534,16 @@ mod tests {
 
         // Center wheel -> 8192.
         assert!(matches!(
-            midi_event_from_param(&i, 0.0),
+            bridge(&i, 0.0),
             Some(EventBody::PitchBend { value: 8192, .. })
         ));
         // Full down -> 0, full up -> 16383.
         assert!(matches!(
-            midi_event_from_param(&i, -1.0),
+            bridge(&i, -1.0),
             Some(EventBody::PitchBend { value: 0, .. })
         ));
         assert!(matches!(
-            midi_event_from_param(&i, 1.0),
+            bridge(&i, 1.0),
             Some(EventBody::PitchBend { value: 16383, .. })
         ));
     }
@@ -2475,7 +2555,7 @@ mod tests {
             Some(MidiSource::Cc(74)),
         );
         assert!(matches!(
-            midi_event_from_param(&cc, 1.0),
+            bridge(&cc, 1.0),
             Some(EventBody::ControlChange {
                 cc: 74,
                 value: 127,
@@ -2488,7 +2568,7 @@ mod tests {
             Some(MidiSource::ChannelPressure),
         );
         assert!(matches!(
-            midi_event_from_param(&pressure, 0.0),
+            bridge(&pressure, 0.0),
             Some(EventBody::ChannelPressure { pressure: 0, .. })
         ));
 
@@ -2497,7 +2577,7 @@ mod tests {
             Some(MidiSource::ProgramChange),
         );
         assert!(matches!(
-            midi_event_from_param(&program, 1.0),
+            bridge(&program, 1.0),
             Some(EventBody::ProgramChange { program: 127, .. })
         ));
     }
