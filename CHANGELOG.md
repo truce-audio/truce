@@ -4,20 +4,13 @@ Notable changes per release.
 
 ## 2.0.2
 
-- AU now reports plugin latency and tail time to the host, so delay compensation aligns lookahead limiters and linear-phase EQs instead of leaving them early in the mix (both were hardcoded to zero on AU v2 and v3).
-- macOS `--user` packages that bundle a system-only format (AAX, AU v3, or the standalone app) now widen the installer to the system domain so those components can actually install; the `.pkg` filename keeps its `-user` suffix. Previously the distribution.xml offered only the user domain, leaving the system-only components unable to land.
-- Windows installer generation escapes the Inno `{` metacharacter in plugin and vendor names, so a name with braces (or an Inno constant like `{sys}`) no longer aborts the ISCC build or redirects a path; quote-escaping is now applied only in the quoted parameter contexts where Inno reads it.
-- LV2 MIDI output no longer risks a buffer overrun on a MIDI-dense block: the event-write bounds check now accounts for the atom and sequence-body headers that precede the events, so a near-full host output buffer can't be written past.
-- AU v2: a plugin that changes its own parameters during `process()` no longer notifies the host from the audio thread (`AUEventListenerNotify` takes locks); the changes are handed to a dedicated thread through a wait-free queue and flushed off the render path.
-- VST3 bridges host MIDI-mapped controllers back to events via a sorted per-id cache and binary search instead of a linear parameter-table scan on the audio thread; plugins with no MIDI-mapped parameters skip the lookup entirely.
-- CLAP and VST3: loading state into a suspended (inactive) plugin now applies the custom-state blob immediately instead of queuing it for the audio thread that never runs; a following state save no longer re-serializes stale custom state. Active plugins keep the audio-thread handoff.
-- A `min_subblock_samples = 0` in `[automation]` no longer hangs the audio thread: the sub-block chunker floors it at 1 (0 and 1 both mean "split at every event"), so an event on the block start can't produce a zero-length sub-block that spins forever.
-- The generated Linux `install.sh` shell-quotes plugin and vendor names, so a name containing `$(...)`, backticks, or quotes can no longer run as a command at install time.
-- macOS packaging XML-escapes plugin and vendor names in the emitted `Info.plist` and installer `distribution.xml`, so a name with `&`, `<`, `>`, or a quote no longer produces malformed XML that breaks `pkgbuild` / `productbuild`.
-- VST2 macOS bundles now derive `CFBundleIdentifier` from the configured vendor id instead of a hardcoded `com.truce.` prefix, matching the other formats.
-- AU v3 identity is fully vendor-rooted: the embedded framework's `CFBundleIdentifier`, and the `pluginkit` ids that `cargo truce uninstall` / `reset-au` evict, no longer assume a `com.` vendor prefix. A vendor id like `io.acme` now uninstalls / resets correctly instead of targeting a mangled `com.io.acme...` id that never matched what install registered.
-- Windows standalone: an editor that reports a `max_size` below its `min_size` no longer aborts the host process. The outer-window size clamps now floor the max at the min (pinning to the min size) instead of tripping `i32::clamp`'s panic inside the window subclass, matching the macOS behavior.
-- `cargo truce preset import` / `pull --category` no longer rewrites a same-named preset that lives in a different category; the in-place update now matches on both category and name, so a display name shared across two categories stays distinct.
+- Audio Unit plugins now report their latency and tail time to the host, so lookahead limiters and linear-phase EQs stay time-aligned in the mix instead of playing early.
+- Plugins ship correctly under any vendor identity: VST2 bundle IDs and Audio Unit registrations use your configured reverse-DNS vendor ID everywhere, so third-party plugins install, update, and uninstall cleanly (some IDs previously assumed a `com.truce` prefix).
+- Plugin and vendor names with special characters (`&`, `{`, `<`, quotes, `$`) no longer break installer generation on Windows, macOS, or Linux.
+- macOS `--user` installers that include AAX, AU v3, or the standalone app now install those components instead of silently skipping them.
+- `cargo truce preset import` / `pull --category` no longer overwrites a same-named preset that lives in a different category.
+- Loading a preset or session into an inactive plugin no longer drops the plugin's custom state on the next save.
+- Stability fixes: a Windows standalone crash when an editor reports inconsistent size limits, an audio-thread hang when `min_subblock_samples` is set to 0, and a buffer-overrun risk in dense LV2 MIDI output; plus smoother real-time behavior under heavy MIDI-controller automation.
 
 ## 2.0.1
 
