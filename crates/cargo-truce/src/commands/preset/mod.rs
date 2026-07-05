@@ -413,6 +413,16 @@ enum ImportOutcome {
     Unchanged,
 }
 
+/// Whether `meta` names the same library slot as `(name, category)`.
+/// The library is unique per (category, name), so both must match for
+/// an in-place update; a same-named preset in a different category is a
+/// distinct slot. Categories compare by their resolved subdirectory
+/// (`safe_filename`), since an import-created preset stores its category
+/// implicitly as that directory rather than in the file.
+fn same_library_slot(meta: &PresetMeta, name: &str, category: &str) -> bool {
+    meta.name == name && safe_filename(&meta.category) == safe_filename(category)
+}
+
 /// Land one decoded preset in the authored library. A library preset
 /// with the same display name is regenerated in place (uuid and
 /// metadata preserved, params / extra replaced) unless `always_new`;
@@ -434,7 +444,7 @@ fn import_into_library(
 
     if !always_new {
         for existing in &library {
-            if existing.meta.name != name {
+            if !same_library_slot(&existing.meta, name, category) {
                 continue;
             }
             let mut have: Vec<(u32, f64)> = existing.params.clone();
@@ -863,5 +873,36 @@ fn collect_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
         } else if PresetFormat::from_path(&path).is_some_and(|f| f != PresetFormat::AuthoredToml) {
             out.push(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use truce_utils::preset::PresetMeta;
+
+    use super::same_library_slot;
+
+    fn meta(name: &str, category: &str) -> PresetMeta {
+        PresetMeta {
+            name: name.to_string(),
+            category: category.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn library_slot_matches_on_category_and_name() {
+        assert!(same_library_slot(&meta("Warm", "Lead"), "Warm", "Lead"));
+        // Same name, different category: a distinct slot - must not
+        // rewrite the Lead preset when importing into Bass.
+        assert!(!same_library_slot(&meta("Warm", "Lead"), "Warm", "Bass"));
+        // Different name: distinct slot.
+        assert!(!same_library_slot(&meta("Warm", "Lead"), "Cold", "Lead"));
+        // Root (uncategorized) matches root.
+        assert!(same_library_slot(&meta("Warm", ""), "Warm", ""));
+        // Category compares by resolved directory: a raw `A/B` flag
+        // matches a preset whose backfilled category is the sanitized
+        // `A-B` subdirectory name.
+        assert!(same_library_slot(&meta("Warm", "A-B"), "Warm", "A/B"));
     }
 }

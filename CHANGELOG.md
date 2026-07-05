@@ -16,6 +16,7 @@ Notable changes per release.
 - VST2 macOS bundles now derive `CFBundleIdentifier` from the configured vendor id instead of a hardcoded `com.truce.` prefix, matching the other formats.
 - AU v3 identity is fully vendor-rooted: the embedded framework's `CFBundleIdentifier`, and the `pluginkit` ids that `cargo truce uninstall` / `reset-au` evict, no longer assume a `com.` vendor prefix. A vendor id like `io.acme` now uninstalls / resets correctly instead of targeting a mangled `com.io.acme...` id that never matched what install registered.
 - Windows standalone: an editor that reports a `max_size` below its `min_size` no longer aborts the host process. The outer-window size clamps now floor the max at the min (pinning to the min size) instead of tripping `i32::clamp`'s panic inside the window subclass, matching the macOS behavior.
+- `cargo truce preset import` / `pull --category` no longer rewrites a same-named preset that lives in a different category; the in-place update now matches on both category and name, so a display name shared across two categories stays distinct.
 
 ## 2.0.1
 
