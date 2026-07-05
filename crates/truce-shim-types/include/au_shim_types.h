@@ -37,9 +37,11 @@
 // `truce_au::ffi::TRUCE_AU_ABI_VERSION` (a lockstep test guards it).
 // v2: `output_ump_count` / `output_ump_at` gained the `protocol`
 // argument; an appex must not drain a v1 binary through them.
+// v3: appended `latency_samples` / `tail_samples`; an appex must not
+// query them on a pre-v3 binary (the pointers would be past its tail).
 #define TRUCE_AU_ABI_MAGIC_MASK 0xFFFFFF00u
 #define TRUCE_AU_ABI_MAGIC 0x54417500u
-#define TRUCE_AU_ABI_VERSION 0x54417502u
+#define TRUCE_AU_ABI_VERSION 0x54417503u
 
 typedef struct {
     uint8_t component_type[4];
@@ -294,6 +296,18 @@ typedef struct {
     const char *(*legacy_state_key_at)(void *ctx, uint32_t index);
     int32_t (*state_load_foreign)(void *ctx, const char *key,
                                   const uint8_t *data, uint32_t len);
+    /* Plugin delay compensation. Both return the plugin's current
+     * latency / release-tail length in *samples*; the shim divides by
+     * the sample rate to report seconds through
+     * kAudioUnitProperty_Latency / kAudioUnitProperty_TailTime (v2) and
+     * AUAudioUnit.latency / .tailTime (v3). Values track the plugin's
+     * `latency()` / `tail()` and are refreshed on reset and every
+     * process block; a host reads them after initialization, so a
+     * static-latency plugin reports correctly. Appended per the
+     * append-only rule; a pre-v3 binary lacks them (gate on
+     * abi_version). */
+    uint32_t (*latency_samples)(void *ctx);
+    uint32_t (*tail_samples)(void *ctx);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

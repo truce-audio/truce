@@ -961,6 +961,34 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
     })
 }
 
+/// Plugin latency in samples, for the host's delay compensation.
+/// Reads the atomic cache the audio thread refreshes each block (and
+/// `cb_reset` / `cb_create` seed) rather than taking the plugin lock,
+/// so a host's main-thread property query never contends with render.
+unsafe extern "C" fn cb_latency_samples<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        if ctx.is_null() {
+            return 0;
+        }
+        (*ctx.cast::<AuInstance<P>>())
+            .latency_cache
+            .load(Ordering::Relaxed)
+    }
+}
+
+/// Plugin release-tail length in samples. Same cache/threading story
+/// as [`cb_latency_samples`].
+unsafe extern "C" fn cb_tail_samples<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        if ctx.is_null() {
+            return 0;
+        }
+        (*ctx.cast::<AuInstance<P>>())
+            .tail_cache
+            .load(Ordering::Relaxed)
+    }
+}
+
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
@@ -1669,6 +1697,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         legacy_state_key_count: cb_legacy_state_key_count::<P>,
         legacy_state_key_at: cb_legacy_state_key_at::<P>,
         state_load_foreign: cb_state_load_foreign::<P>,
+        latency_samples: cb_latency_samples::<P>,
+        tail_samples: cb_tail_samples::<P>,
     }));
 
     let param_descs = param_descs.leak();

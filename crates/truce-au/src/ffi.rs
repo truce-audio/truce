@@ -88,8 +88,8 @@ pub struct AuParamDescriptor {
 /// `#define` together when appending a callback (or changing an
 /// unreleased tail callback's signature); a test asserts they match.
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
-/// argument.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7502;
+/// argument. v3: appended `latency_samples` / `tail_samples`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7503;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -254,6 +254,16 @@ pub struct AuCallbacks {
         data: *const u8,
         len: u32,
     ) -> i32,
+    /// Plugin latency in samples, for host delay compensation. The
+    /// shim divides by the sample rate to report seconds. Tracks the
+    /// plugin's `latency()`; refreshed on reset and every process
+    /// block. Appended per the append-only rule (gate on `abi_version`
+    /// cross-binary).
+    pub latency_samples: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Plugin release-tail length in samples. Mirrors
+    /// [`Self::latency_samples`] for `kAudioUnitProperty_TailTime` /
+    /// `AUAudioUnit.tailTime`.
+    pub tail_samples: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both
