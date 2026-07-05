@@ -104,11 +104,13 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
     // `install/au_v3.rs` and `commands/uninstall.rs` actually register.
     eprintln!("Flushing pluginkit registrations...");
     if let Ok(config) = load_config() {
-        let vid = config.vendor.id.trim_start_matches("com.");
+        // Must match the vendor-rooted ids `install/au_v3.rs` registers;
+        // a `com.` prefix would miss any vendor id not starting with it.
+        let vid = config.vendor.id.as_str();
         for p in &config.plugin {
             for pattern in [
-                format!("com.{}.{}.v3.ext", vid, p.bundle_id),
-                format!("com.{}.{}.au", vid, p.bundle_id),
+                format!("{vid}.{}.v3.ext", p.bundle_id),
+                format!("{vid}.{}.au", p.bundle_id),
             ] {
                 let _ = Command::new("pluginkit")
                     .args(["-e", "ignore", "-i", &pattern])

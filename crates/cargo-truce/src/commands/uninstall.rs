@@ -24,10 +24,12 @@ struct RemoveTarget {
 
 #[cfg(target_os = "macos")]
 fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
-    let vid = config.vendor.id.trim_start_matches("com.");
+    // Match the vendor-rooted ids install registers (see `reset_au`);
+    // a `com.` prefix would miss any vendor id not starting with it.
+    let vid = config.vendor.id.as_str();
     for pattern in [
-        format!("com.{}.{}.v3.ext", vid, plugin.bundle_id),
-        format!("com.{}.{}.au", vid, plugin.bundle_id),
+        format!("{vid}.{}.v3.ext", plugin.bundle_id),
+        format!("{vid}.{}.au", plugin.bundle_id),
     ] {
         let _ = Command::new("pluginkit")
             .args(["-e", "ignore", "-i", &pattern])

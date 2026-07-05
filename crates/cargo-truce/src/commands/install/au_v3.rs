@@ -313,12 +313,14 @@ fn assemble_framework_bundle(
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>{fw}</string>
-<key>CFBundleIdentifier</key><string>com.{vid}.{suf}.framework</string>
+<key>CFBundleIdentifier</key><string>{vendor_id}.{suf}.framework</string>
 <key>CFBundlePackageType</key><string>FMWK</string>
 <key>CFBundleVersion</key><string>1</string>
 </dict></plist>"#,
             fw = fw_name,
-            vid = config.vendor.id.trim_start_matches("com."),
+            // Vendor-rooted, matching the app/appex ids below; a hardcoded
+            // `com.` prefix would mangle any vendor id not starting with it.
+            vendor_id = config.vendor.id,
             suf = p.bundle_id,
         ),
     )?;

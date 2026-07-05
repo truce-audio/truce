@@ -14,6 +14,7 @@ Notable changes per release.
 - The generated Linux `install.sh` shell-quotes plugin and vendor names, so a name containing `$(...)`, backticks, or quotes can no longer run as a command at install time.
 - macOS packaging XML-escapes plugin and vendor names in the emitted `Info.plist` and installer `distribution.xml`, so a name with `&`, `<`, `>`, or a quote no longer produces malformed XML that breaks `pkgbuild` / `productbuild`.
 - VST2 macOS bundles now derive `CFBundleIdentifier` from the configured vendor id instead of a hardcoded `com.truce.` prefix, matching the other formats.
+- AU v3 identity is fully vendor-rooted: the embedded framework's `CFBundleIdentifier`, and the `pluginkit` ids that `cargo truce uninstall` / `reset-au` evict, no longer assume a `com.` vendor prefix. A vendor id like `io.acme` now uninstalls / resets correctly instead of targeting a mangled `com.io.acme...` id that never matched what install registered.
 
 ## 2.0.1
 
