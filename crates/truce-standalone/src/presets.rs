@@ -110,7 +110,6 @@ pub fn apply_on_launch<P: PluginExport>(
 /// thread and apply. The audio callback `try_lock`s and skips at
 /// most one block while held. For the (deferred) preset menu /
 /// key bindings.
-#[allow(dead_code)]
 pub fn load_into<P: PluginExport>(store: &PresetStore, plugin: &Arc<Mutex<P>>, sel: &str) -> bool {
     let Ok(mut guard) = plugin.lock() else {
         eprintln!("could not lock plugin to load preset");

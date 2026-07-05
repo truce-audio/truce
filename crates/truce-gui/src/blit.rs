@@ -9,8 +9,8 @@
 //! than the texture - a fixed-size editor whose host (REAPER's LV2 X11
 //! embedding) grew the window past the editor - the texture renders 1:1
 //! instead of being stretched to fill (the blurry GUI), with black
-//! letterboxing the gap. Copied from truce-slint, then extended with
-//! the native-size quad.
+//! letterboxing the gap. The native-size quad is what keeps the texture
+//! 1:1 in that oversized-window case rather than scaling it up.
 //!
 //! The centring is pixel-snapped on purpose: a symmetric ±scale quad
 //! centres with a half-pixel offset whenever the letterbox margin is
@@ -75,8 +75,9 @@ pub struct BlitPipeline {
     bind_group: wgpu::BindGroup,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    /// Holds the `scale` (texture/surface fraction) the vertex shader
-    /// reads; rewritten each `render` from the live surface size.
+    /// Holds the pixel-snapped NDC `rect` (left, top, right, bottom)
+    /// the vertex shader maps the quad onto; rewritten each `render`
+    /// from the live surface size.
     uniform_buf: wgpu::Buffer,
     width: u32,
     height: u32,
@@ -168,9 +169,8 @@ impl BlitPipeline {
             cache: None,
         });
 
-        // 16 bytes: `scale` (vec2) + padding to satisfy the uniform's
-        // 16-byte alignment. Initialised to (1, 1) - a full-surface
-        // blit - and rewritten each `render`.
+        // 16 bytes: the `rect` (vec4 of NDC bounds). Initialised to a
+        // full-surface blit and rewritten each `render`.
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("blit-scale-uniform"),
             size: 16,

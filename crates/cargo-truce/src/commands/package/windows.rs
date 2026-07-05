@@ -2467,10 +2467,6 @@ fn scoped_programs(scope: PkgScope) -> &'static str {
     }
 }
 
-/// Emit one `[Files]` line for a destination computed via `scoped_cf`.
-/// One line covers all three scopes - Inno's `{auto*}` constants handle
-/// the `--ask` branching for us, so we no longer need a pair of
-/// `IsAdminInstallMode`-gated entries.
 /// `[Files]` entries for an LV2 bundle's `<slug>.lv2/` directory.
 ///
 /// LV2's filesystem spec puts system installs in `%COMMONPROGRAMFILES%\LV2`

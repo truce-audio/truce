@@ -5,7 +5,7 @@
 //! `truce-egui`, `truce-iced`, `truce-slint`) build on. Crates that
 //! only need to *describe* layouts and react to platform-translated
 //! input events depend on this crate; the heavy machinery
-//! (tiny-skia, baseview, truce-font, fontdue) stays in `truce-gui`.
+//! (tiny-skia, baseview, truce-font/skrifa) stays in `truce-gui`.
 //!
 //! The split exists so `truce-plugin` (the user-facing
 //! `PluginLogic` trait crate) can name `GridLayout` /

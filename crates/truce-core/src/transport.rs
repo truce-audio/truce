@@ -42,7 +42,7 @@ pub struct TransportSlot {
     data: UnsafeCell<TransportInfo>,
 }
 
-// Safety: writes are guarded by the seq counter so concurrent reads
+// SAFETY: writes are guarded by the seq counter so concurrent reads
 // detect torn states and retry; readers only observe the data when
 // seq is even and unchanged across the read.
 unsafe impl Sync for TransportSlot {}

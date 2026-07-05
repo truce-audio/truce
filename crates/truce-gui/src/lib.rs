@@ -43,7 +43,7 @@ pub mod interaction;
 pub mod platform;
 mod render_core;
 
-// `CpuBackend` (tiny-skia `RenderBackend` impl) + `font` (fontdue
+// `CpuBackend` (tiny-skia `RenderBackend` impl) + `font` (skrifa
 // glyph cache) live in the sibling `truce-cpu` crate so the CPU
 // rasterizer is a peer of `truce-gpu`'s `WgpuBackend` in the crate
 // graph. Re-exported under their historical `truce_gui::*` paths

@@ -17,7 +17,7 @@ struct CachedGlyph {
     width: u32,
     height: u32,
     advance: f32,  // horizontal advance in pixels
-    y_offset: f32, // offset from baseline (negative = above baseline)
+    y_offset: f32, // `glyph.y_min`, y-up (negative = below baseline)
 }
 
 struct GlyphCache {

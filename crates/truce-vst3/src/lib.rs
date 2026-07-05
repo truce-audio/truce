@@ -152,9 +152,10 @@ struct Vst3Instance<P: PluginExport> {
     tail_cache: AtomicU32,
     /// Last-seen values of the hidden MIDI proxy params (f64 bits),
     /// indexed by `id - MIDI_PROXY_ID_BASE`. Empty when the plugin
-    /// doesn't accept MIDI input. Atomic because the shim writes the
-    /// last automation point from the audio thread while the host
-    /// reads `getParamNormalized` on the main thread.
+    /// doesn't accept MIDI input. Written by `cb_param_set_value` and
+    /// read by `cb_param_get_value` - both host-thread; atomic for
+    /// interior mutability through the shared `&Inst` those callbacks
+    /// hold.
     midi_proxy_values: Vec<AtomicU64>,
     /// Correlates the host's per-voice `noteId` counters (arbitrary,
     /// assigned at note-on, scoped per event bus) to the
