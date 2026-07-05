@@ -15,8 +15,6 @@
 // reading into. Per-cast site allows would just be noise.
 #![allow(clippy::cast_ptr_alignment)]
 
-use std::ffi::c_void;
-
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::midi::{downconvert_to_midi1, parse_midi1, pitch_bend_to_bytes, route_midi_port};
@@ -405,6 +403,22 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
 // Encode truce EventList into an LV2_Atom_Sequence output port
 // ---------------------------------------------------------------------------
 
+/// Bytes available for sequence *events* in a host output-port buffer.
+/// The host sets `atom.size` to the buffer's total capacity measured
+/// from `out` (the LV2 convention a plugin feeds straight to
+/// `lv2_atom_forge_set_buffer`), so the outer atom header and the
+/// sequence-body header - both written before the first event - come
+/// out of it. Guarding events against the raw `atom.size` would permit
+/// one padded event past the buffer end. Saturating so a degenerate
+/// undersized buffer yields 0 rather than underflowing.
+///
+/// # Safety
+/// `out` must point to a readable [`AtomSequence`].
+unsafe fn sequence_event_capacity(out: *const AtomSequence) -> usize {
+    let total = unsafe { (*out).atom.size } as usize;
+    total.saturating_sub(core::mem::size_of::<Atom>() + core::mem::size_of::<AtomSequenceBody>())
+}
+
 /// Overwrite the port's sequence body with the events destined for
 /// MIDI output port `port`, setting the header/atom sizes so the host
 /// knows how many bytes to read. `port_count` is the plugin's declared
@@ -426,9 +440,11 @@ pub unsafe fn write_midi_out_sequence(
         if out.is_null() || urid.midi_event == 0 {
             return;
         }
-        // Host passes us a sequence where atom.size is the *capacity* of the
-        // body buffer on entry. We overwrite it with the actual size on exit.
-        let capacity = (*out).atom.size as usize;
+        // On entry `atom.size` is the whole output buffer's capacity
+        // (from `out`); we overwrite it with the actual body size on
+        // exit. `event_capacity` is what's left for events after the
+        // two fixed headers `body_start` skips past.
+        let event_capacity = sequence_event_capacity(out);
         let atom_size = core::mem::size_of::<Atom>();
         let header_size = core::mem::size_of::<AtomSequenceBody>();
         let body_start = out.cast::<u8>().add(atom_size + header_size);
@@ -452,7 +468,7 @@ pub unsafe fn write_midi_out_sequence(
                 let body_len = inner.len() + 2; // +2 for the 0xF0/0xF7 framing
                 let total = core::mem::size_of::<AtomEventHeader>() + body_len;
                 let padded = (total + 7) & !7;
-                if offset + padded > capacity {
+                if offset + padded > event_capacity {
                     break;
                 }
                 let ev_ptr = body_start.add(offset).cast::<AtomEventHeader>();
@@ -545,7 +561,7 @@ pub unsafe fn write_midi_out_sequence(
             };
             let total = core::mem::size_of::<AtomEventHeader>() + n;
             let padded = (total + 7) & !7;
-            if offset + padded > capacity {
+            if offset + padded > event_capacity {
                 break; // out of buffer space; drop remaining events
             }
             let ev_ptr = body_start.add(offset).cast::<AtomEventHeader>();
@@ -568,10 +584,6 @@ pub unsafe fn write_midi_out_sequence(
 /// Called each `run()` block so the UI's `port_event` receives the latest
 /// transport info.
 ///
-/// If `extra_atom` is non-null (caller-supplied `atom:eventTransfer` URID
-/// context), the sequence body's `unit` field is set to the URID of
-/// `atom:Sequence` so hosts that validate atom-type match it.
-///
 /// # Safety
 /// `out` must be a writable atom sequence of at least a few hundred bytes.
 /// `info` is read by value; the sequence body is overwritten.
@@ -584,7 +596,10 @@ pub unsafe fn write_time_position_sequence(
         if out.is_null() || urid.time_position == 0 || urid.atom_object == 0 {
             return;
         }
-        let capacity = (*out).atom.size as usize;
+        // Bytes for the object after the two fixed headers `body_start`
+        // skips (see `sequence_event_capacity`); guarding against the
+        // raw `atom.size` would over-permit by those 16 bytes.
+        let event_capacity = sequence_event_capacity(out);
         let atom_size = core::mem::size_of::<Atom>();
         let body_header = core::mem::size_of::<AtomSequenceBody>();
         let body_start = out.cast::<u8>().add(atom_size + body_header);
@@ -607,7 +622,7 @@ pub unsafe fn write_time_position_sequence(
 
         // Reserve the whole event in-place so property writers can align.
         let ev_ptr = body_start.cast::<AtomEventHeader>();
-        if ev_header_size + obj_header_size > capacity {
+        if ev_header_size + obj_header_size > event_capacity {
             (*out).atom.size = len_u32(body_header);
             return;
         }
@@ -637,7 +652,7 @@ pub unsafe fn write_time_position_sequence(
             }
             let total = prop_header_size + value_size;
             let padded = (total + 7) & !7;
-            if ev_header_size + prop_offset + padded > capacity {
+            if ev_header_size + prop_offset + padded > event_capacity {
                 return false;
             }
             let entry = obj_body_start.add(prop_offset);
@@ -730,10 +745,6 @@ pub unsafe fn write_time_position_sequence(
         (*out).atom.size = len_u32(body_header + event_total);
     }
 }
-
-// Dead-import quiet: keep c_void referenced so future extension code
-// compiles without edits.
-const _: Option<*mut c_void> = None;
 
 #[cfg(test)]
 mod tests {
@@ -999,6 +1010,64 @@ mod tests {
         assert!(
             (seen[0].2 - 0.625).abs() < 1e-9,
             "patch:value f32 recovered"
+        );
+    }
+
+    #[test]
+    fn midi_out_never_writes_past_atom_size() {
+        // The LV2 forge treats `atom.size` as the bytes writable from
+        // `out`, so events (which start after the outer atom header and
+        // the sequence-body header) must fit in `atom.size - 16`. With
+        // `atom.size = 100` and 24-byte padded MIDI events, three fit
+        // (ending at byte 88); a fourth would land at [88, 112) and run
+        // 12 bytes past the writable region. A canary past byte 100
+        // catches that overrun.
+        let urid = test_urid_map();
+        let cap = 100usize;
+        let buf_len = 200usize;
+        let mut buf = vec![0xAAu8; buf_len];
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+        unsafe {
+            (*seq).atom.size = len_u32(cap);
+        }
+
+        // More events than can fit, all on port 0.
+        let mut events = EventList::with_capacity(16);
+        for i in 0..8u32 {
+            events.push(Event::new(
+                i,
+                EventBody::NoteOn {
+                    group: 0,
+                    channel: 0,
+                    note: 60,
+                    velocity: 100,
+                },
+            ));
+        }
+
+        unsafe {
+            write_midi_out_sequence(seq, &events, &urid, 0, 1);
+        }
+
+        // Nothing was written at or beyond the forge-writable limit.
+        assert!(
+            buf[cap..].iter().all(|&b| b == 0xAA),
+            "wrote past out + atom.size (buffer overrun)"
+        );
+
+        // And it did write the events that do fit: three 24-byte events
+        // plus the 8-byte sequence-body header.
+        let ev = core::mem::size_of::<AtomEventHeader>();
+        let midi_padded = (ev + 3 + 7) & !7;
+        let events_bytes =
+            cap - core::mem::size_of::<Atom>() - core::mem::size_of::<AtomSequenceBody>();
+        let fit = events_bytes / midi_padded;
+        assert_eq!(fit, 3, "test sizing assumption");
+        let reported = unsafe { (*seq).atom.size } as usize;
+        assert_eq!(
+            reported,
+            core::mem::size_of::<AtomSequenceBody>() + fit * midi_padded,
+            "atom.size reports the body it actually wrote"
         );
     }
 }

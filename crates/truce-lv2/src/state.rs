@@ -5,7 +5,7 @@
 //! handle. We stash a single blob of truce's standard `serialize_state`
 //! output under a well-known URI.
 
-use std::ffi::{CString, c_char, c_void};
+use std::ffi::c_void;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -255,10 +255,6 @@ unsafe fn probe_legacy_uris<P: PluginExport>(
     }
     None
 }
-
-// Quiet unused-import for future generic symbol lookups.
-const _: Option<CString> = None;
-const _: Option<*const c_char> = None;
 
 #[cfg(test)]
 mod tests {
