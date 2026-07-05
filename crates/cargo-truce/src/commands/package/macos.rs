@@ -117,6 +117,17 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     if formats.is_empty() {
         return Err("no formats to package".into());
     }
+    // AAX / AU v3 / standalone are system-only on macOS; a `--user`
+    // package that includes one still needs the localSystem domain to
+    // install it, so widen the installer scope to System. The `.pkg`
+    // filename keeps the requested scope's suffix (see `run_productbuild`)
+    // so CI scripts still find it.
+    let effective_scope =
+        if scope == PkgScope::User && formats.iter().any(PkgFormat::is_system_only_on_macos) {
+            PkgScope::System
+        } else {
+            scope
+        };
 
     let all_plugins: Vec<&PluginDef> =
         crate::commands::pick_plugins(&config, parsed.plugin_filter.as_deref())?;
@@ -190,6 +201,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
         config: &config,
         formats: &formats,
         scope,
+        effective_scope,
         version: &version,
         no_notarize: parsed.no_notarize,
         no_pace_sign: parsed.no_pace_sign,
@@ -381,7 +393,7 @@ fn package_one_suite(
         &extras_by_plugin,
         suite_version,
         Some(&o.config.macos.packaging),
-        o.scope,
+        o.effective_scope,
     );
     let dist_xml_path = suite_staging.join("distribution.xml");
     fs::write(&dist_xml_path, &dist_xml)?;
@@ -943,7 +955,14 @@ pub(crate) fn build_and_lipo_standalone(
 struct PackageOpts<'a> {
     config: &'a Config,
     formats: &'a [PkgFormat],
+    /// The developer-requested scope. Drives the `.pkg` filename suffix
+    /// so a build's output name stays stable regardless of widening.
     scope: PkgScope,
+    /// The requested scope, widened to System when the package contains
+    /// a system-only format (AAX / AU v3 / standalone) that a `--user`
+    /// installer's domains couldn't reach. Drives the distribution.xml
+    /// domains + per-component auth.
+    effective_scope: PkgScope,
     version: &'a str,
     no_notarize: bool,
     no_pace_sign: bool,
@@ -1131,7 +1150,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &extras,
         o.version,
         Some(&o.config.macos.packaging),
-        o.scope,
+        o.effective_scope,
         crate::read_standalone_bin_name(&p.crate_name).is_some(),
     );
     let dist_xml_path = staging.join("distribution.xml");
@@ -1197,8 +1216,10 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
 }
 
 /// Step 6 of the per-plugin packaging pipeline: productbuild → signed
-/// `.pkg`. The dist suffix uses the developer-requested `scope` so the
-/// `.pkg` filename stays stable for the developer's CI scripts.
+/// `.pkg`. The dist suffix uses the developer-requested `scope`, not the
+/// widened `effective_scope` - a `--user` build that widened to System
+/// because it bundles AAX still gets the `-user` filename so the
+/// developer's CI scripts find it.
 fn run_productbuild(
     p: &PluginDef,
     dist_dir: &Path,
