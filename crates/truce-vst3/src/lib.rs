@@ -38,7 +38,7 @@ use truce_params::{ParamInfo, ParamRange, Params};
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper
@@ -97,6 +97,14 @@ struct Vst3Instance<P: PluginExport> {
     /// then has to clean up. Pluginval's "process before activate"
     /// robustness paths exercise exactly this case.
     prepared: bool,
+    /// `true` between `setActive(true)` and `setActive(false)`.
+    /// `cb_state_load` reads it to decide whether the audio thread will
+    /// drain `pending_state`: if inactive, no `cb_process` runs, so it
+    /// applies the custom-state blob synchronously rather than leaving
+    /// it stranded (which would let a following `getState` re-serialize
+    /// stale extra state). Written only from `cb_set_active` (main
+    /// thread); unlike `prepared`, it tracks deactivation too.
+    active: AtomicBool,
     /// Reused per-block scratch for `RawBufferScratch::build`.
     /// Lives on the instance so the audio thread doesn't allocate.
     ///
@@ -295,6 +303,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         // process-before-activate path from tripping the contract assert.
         max_block_size: 8192,
         prepared: false,
+        active: AtomicBool::new(false),
         scratch: RawBufferScratch::default(),
         param_ranges,
         midi_maps,
@@ -358,6 +367,16 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         // route new expression to a dead (channel, note).
         inst.note_id_map.clear();
         inst.prepared = true;
+    }
+}
+
+/// `IComponent::setActive`. Tracks activation so `cb_state_load` knows
+/// whether the audio thread will drain the pending-state queue.
+unsafe extern "C" fn cb_set_active<P: PluginExport>(ctx: *mut std::ffi::c_void, active: i32) {
+    unsafe {
+        (*ctx.cast::<Vst3Instance<P>>())
+            .active
+            .store(active != 0, Ordering::Relaxed);
     }
 }
 
@@ -614,6 +633,12 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 // back into the MIDI event the plugin expects, in
                 // addition to the plain `ParamChange` so the bound
                 // parameter still tracks the controller.
+                //
+                // The bridged event is port 0: an explicit `midi_map`
+                // binds one plugin parameter across every bus, so the
+                // host delivers a bus-less parameter change with no
+                // originating port to recover - unlike the per-bus
+                // proxy ids decoded above.
                 if let Ok(idx) = inst.midi_maps.binary_search_by_key(&pc.id, |(id, _)| *id) {
                     inst.event_list.push(Event {
                         sample_offset,
@@ -884,11 +909,22 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // running a process block. pluginval / DAW preset reload
         // both observe this.
         state::apply_params(&*inst.params_arc, &deserialized);
-        // Hand the deserialized state to the audio thread for
-        // application. `force_push` overwrites any older pending
-        // blob - see the `pending_state` field comment for why
-        // newest-wins is the right policy.
-        let _ = inst.pending_state.force_push(deserialized);
+        if inst.active.load(Ordering::Relaxed) {
+            // Active: the audio thread drains `pending_state` at the top
+            // of the next block and applies the custom-state blob under
+            // its exclusive `&mut plugin`. `force_push` overwrites any
+            // older pending blob - see the `pending_state` field comment
+            // for why newest-wins is right.
+            let _ = inst.pending_state.force_push(deserialized);
+        } else {
+            // Inactive: no `cb_process` will run, so apply the full
+            // state (params + extra) synchronously under the plugin
+            // lock - uncontended here since no audio thread is
+            // processing. Otherwise a `getState` before the next
+            // activate would re-serialize stale custom state.
+            let mut plugin = lock_plugin(&inst.plugin);
+            state::apply_state(&mut *plugin, &deserialized);
+        }
         if let Some(ref mut editor) = inst.editor {
             editor.state_changed();
         }
@@ -2040,6 +2076,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         midi_mapping_get_param_id: cb_midi_mapping_get_param_id::<P>,
         get_output_param_count: cb_get_output_param_count::<P>,
         get_output_param: cb_get_output_param::<P>,
+        set_active: cb_set_active::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

@@ -262,6 +262,10 @@ struct Vst3Callbacks {
     uint32_t (*get_output_param_count)(void*);
     void (*get_output_param)(void*, uint32_t /*index*/, uint32_t* /*id*/,
                              int32_t* /*sample_offset*/, double* /*value*/);
+    // IComponent::setActive. `active != 0` between activate and
+    // deactivate; lets Rust apply a suspended-plugin state load
+    // synchronously instead of stranding it in the audio-thread queue.
+    void (*set_active)(void*, int32_t /*active*/);
 };
 
 // ---------------------------------------------------------------------------
@@ -584,6 +588,11 @@ public:
                 }
             }
             g_cb->reset(ctx, sampleRate, maxFrames);
+        }
+        // Tell Rust the activation state for both directions so a state
+        // load while suspended isn't stranded in the audio-thread queue.
+        if (g_cb && ctx) {
+            g_cb->set_active(ctx, state ? 1 : 0);
         }
         return kResultOk;
     }

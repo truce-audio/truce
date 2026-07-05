@@ -221,6 +221,14 @@ struct ClapPluginData<P: PluginExport> {
     /// transfer race-free: no GUI-thread `&mut plugin` is ever
     /// constructed.
     pending_state: Arc<StateLoadQueue>,
+    /// `true` between `activate` and `deactivate`. `state_load` reads it
+    /// to decide whether the audio thread will drain `pending_state`: if
+    /// inactive, no `process` runs, so it applies the custom-state blob
+    /// synchronously instead of leaving it stranded in the queue (which
+    /// would let a following `get_state` re-serialize stale extra
+    /// state). Main-thread-only (`activate` / `deactivate` / `state_load`
+    /// are serialized by the host).
+    active: AtomicBool,
     /// Flag: GUI changed params, need rescan on main thread.
     needs_rescan: Arc<AtomicBool>,
     /// Shared transport slot: audio thread writes each block, editor reads.
@@ -556,12 +564,17 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
             }
         }
 
+        data.active.store(true, Ordering::Relaxed);
         true
     }
 }
 
-unsafe extern "C" fn clap_plugin_deactivate<P: PluginExport>(_plugin: *const clap_plugin) {
-    // Nothing to do.
+unsafe extern "C" fn clap_plugin_deactivate<P: PluginExport>(plugin: *const clap_plugin) {
+    unsafe {
+        data_from_plugin::<P>(plugin)
+            .active
+            .store(false, Ordering::Relaxed);
+    }
 }
 
 unsafe extern "C" fn clap_plugin_start_processing<P: PluginExport>(
@@ -2227,11 +2240,22 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         // immediately after a load round-trip.
         state::apply_params(&*data.params_arc, &deserialized);
 
-        // Hand the deserialized state to the audio thread for
-        // application. `force_push` overwrites any older pending blob
-        // - see the `pending_state` field comment for why "newest
-        // wins" is the right policy here.
-        let _ = data.pending_state.force_push(deserialized);
+        if data.active.load(Ordering::Relaxed) {
+            // Active: the audio thread will drain `pending_state` at the
+            // top of the next block and apply the custom-state blob
+            // under its exclusive `&mut plugin`. `force_push` overwrites
+            // any older pending blob - see the `pending_state` field
+            // comment for why "newest wins" is right.
+            let _ = data.pending_state.force_push(deserialized);
+        } else {
+            // Inactive: no `process` will run, so the queue would never
+            // drain and the plugin's custom state would stay stale until
+            // the next activate. Apply the full state (params + extra)
+            // synchronously under the plugin lock - uncontended here
+            // since no audio thread is processing.
+            let mut instance = lock_plugin(&data.plugin);
+            state::apply_state(&mut *instance, &deserialized);
+        }
 
         if let Some(ref mut editor) = data.editor {
             editor.state_changed();
@@ -3319,6 +3343,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         host_params: ptr::null(),
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         pending_state: Arc::new(StateLoadQueue::new(1)),
+        active: AtomicBool::new(false),
         needs_rescan: Arc::new(AtomicBool::new(false)),
         transport_slot: TransportSlot::new(),
         host_scale: 1.0,

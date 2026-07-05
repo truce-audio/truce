@@ -266,6 +266,11 @@ pub struct Vst3Callbacks {
         out_sample_offset: *mut i32,
         out_value: *mut f64,
     ),
+    /// `IComponent::setActive`. `active != 0` between activate and
+    /// deactivate. Lets `cb_state_load` tell whether the audio thread
+    /// will drain the pending-state queue (active) or whether it must
+    /// apply the custom-state blob synchronously (inactive).
+    pub set_active: unsafe extern "C" fn(ctx: *mut c_void, active: i32),
 }
 
 unsafe extern "C" {
