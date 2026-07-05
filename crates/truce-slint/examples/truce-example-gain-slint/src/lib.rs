@@ -40,6 +40,8 @@ impl GainSlint {
 }
 
 impl PluginLogic for GainSlint {
+    type Params = GainParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -76,9 +78,9 @@ impl PluginLogic for GainSlint {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<GainParams>) -> Box<dyn Editor> {
         SlintEditor::new(
-            self.params.clone(),
+            params.clone(),
             (176, 290),
             |state: PluginContext<GainParams>| -> SyncFn<GainParams> {
                 let ui = GainUi::new().unwrap();

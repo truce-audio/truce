@@ -538,6 +538,8 @@ impl ZooIced {
 }
 
 impl PluginLogic for ZooIced {
+    type Params = ZooParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -578,8 +580,8 @@ impl PluginLogic for ZooIced {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
-        IcedEditor::<ZooParams, ZooUi>::new(Arc::new(ZooParams::new()), (WINDOW_W, WINDOW_H))
+    fn editor(params: Arc<ZooParams>) -> Box<dyn Editor> {
+        IcedEditor::<ZooParams, ZooUi>::new(params, (WINDOW_W, WINDOW_H))
             .with_meter_ids(vec![
                 P::MIn,
                 P::ML,

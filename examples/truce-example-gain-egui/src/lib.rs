@@ -65,6 +65,8 @@ impl GainEgui {
 }
 
 impl PluginLogic for GainEgui {
+    type Params = GainParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -101,8 +103,8 @@ impl PluginLogic for GainEgui {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
-        EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
+    fn editor(params: Arc<GainParams>) -> Box<dyn Editor> {
+        EguiEditor::new(params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
             .with_visuals(truce_egui::theme::dark())
             .with_font(JETBRAINS_MONO)
             .resizable(true)

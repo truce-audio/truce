@@ -184,6 +184,8 @@ impl Arpeggio {
 }
 
 impl PluginLogic for Arpeggio {
+    type Params = ArpParams;
+
     /// MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
     /// AAX (which has no audio-less plugin category) auto-adds a
     /// stereo passthrough inside `truce-aax` so the DAW's track
@@ -336,7 +338,7 @@ impl PluginLogic for Arpeggio {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<ArpParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             dropdown(P::Rate, "Rate"),
             knob(P::Gate, "Gate"),
@@ -345,7 +347,7 @@ impl PluginLogic for Arpeggio {
         ])])
         .with_cols(2)
         .with_title("ARPEGGIO")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

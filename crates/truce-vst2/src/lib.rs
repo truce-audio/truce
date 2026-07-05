@@ -15,6 +15,7 @@ use truce_core::buffer::RawBufferScratch;
 use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::editor::EditorBuilder;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -22,11 +23,12 @@ use truce_core::info::{PluginInfo, resolve_name_override};
 use truce_core::meters::MeterStore;
 use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
 use truce_core::plugin::PluginRuntime;
+use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::wrapper::{
     ParamCStrings, SharedPlugin, default_io_channels, first_bus_layout, lock_plugin,
     log_midi_ports_clamped, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
-    run_register, shared_plugin,
+    run_register, save_extra, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::{ParamFlags, ParamInfo, Params};
@@ -62,6 +64,14 @@ struct Vst2Instance<P: PluginExport> {
     /// editor's `get_meter` closure reads these atomic slots instead
     /// of the plugin instance.
     meter_store: Arc<MeterStore>,
+    /// Lock-free custom-state slot the audio thread publishes
+    /// into, read by `save_state` so a snapshot-capable plugin's
+    /// save never takes the plugin lock. Cached outside the lock.
+    snapshot: Arc<SnapshotSlot>,
+    /// Lock-free editor factory, cached at creation - building
+    /// the editor never takes the plugin lock (`--shell` rebuilds
+    /// from the reloaded dylib, so GUI edits hot-reload).
+    editor_builder: EditorBuilder<P::Params>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
@@ -230,11 +240,15 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let param_infos = plugin.params().param_infos();
     let params_arc = plugin.params_arc();
     let meter_store = plugin.meter_store();
+    let snapshot = plugin.snapshot_slot();
+    let editor_builder = plugin.editor_builder();
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(Vst2Instance::<P> {
         plugin: shared_plugin(plugin),
         params_arc,
+        snapshot,
+        editor_builder,
         meter_store,
         latency_cache,
         tail_cache,
@@ -757,7 +771,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // process"; impls that copy from atomic params are fine.
         // Lock the plugin for the serialization; a block in flight
         // holds the lock, so this waits for the block boundary.
-        let extra = lock_plugin(&inst.plugin).save_state();
+        let extra = save_extra(&inst.snapshot, &inst.plugin);
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let len = blob.len();
@@ -907,9 +921,10 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         }
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if inst.editor.is_none() {
-            // Editor construction needs `&mut P`; the lock waits out
-            // at most one in-flight audio block.
-            inst.editor = lock_plugin(&inst.plugin).editor();
+            // Built from the lock-free param store the wrapper already
+            // holds outside the plugin lock, so opening the GUI never
+            // stalls the audio thread.
+            inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
         i32::from(inst.editor.is_some())
     }
@@ -954,6 +969,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
         if let Some(ref mut editor) = inst.editor {
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);
+            let snapshot = Arc::clone(&inst.snapshot);
             let plugin_lock = Arc::clone(&inst.plugin);
             let effect_ptr = SendPtr::new(inst.aeffect_ptr);
             let params_for_set = params.clone();
@@ -1004,7 +1020,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         // empty fallback was ambiguous with "no custom
                         // state", so a lost race silently kept stale
                         // editor state.
-                        lock_plugin(&plugin_lock).save_state()
+                        save_extra(&snapshot, &plugin_lock)
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes - exactly

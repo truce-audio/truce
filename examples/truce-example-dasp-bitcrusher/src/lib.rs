@@ -59,6 +59,8 @@ fn quantize(s: f32, bits: u8) -> f32 {
 }
 
 impl PluginLogic for Bitcrusher {
+    type Params = BitcrusherParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -96,14 +98,14 @@ impl PluginLogic for Bitcrusher {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<BitcrusherParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Bits, "Bits"),
             knob(P::Hold, "Hold"),
             knob(P::Mix, "Mix"),
         ])])
         .with_title("BITCRUSHER")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

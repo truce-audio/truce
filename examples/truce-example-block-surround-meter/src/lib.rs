@@ -81,6 +81,8 @@ const METER_IDS: [P; CHANS] = [P::ChL, P::ChR, P::ChC, P::ChLfe, P::ChLs, P::ChR
 const METER_FLOOR_DB: f32 = -60.0;
 
 impl PluginLogic for SurroundMeter {
+    type Params = SurroundMeterParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         // CHANS is a compile-time constant (6) that fits trivially
         // in u32; the cast is the cleanest way to feed it to
@@ -142,13 +144,13 @@ impl PluginLogic for SurroundMeter {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<SurroundMeterParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             meter(&METER_IDS, "5.1").at(0, 0).rows(2),
             knob(P::Trim, "Trim").at(0, 2),
         ])])
         .with_title("5.1 MTR")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

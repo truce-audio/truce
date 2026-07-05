@@ -75,6 +75,8 @@ impl StateExample {
 }
 
 impl PluginLogic for StateExample {
+    type Params = StateExampleParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
     }
@@ -93,8 +95,17 @@ impl PluginLogic for StateExample {
         ProcessStatus::Normal
     }
 
-    fn save_state(&self) -> Vec<u8> {
-        self.memo.serialize()
+    fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+        // Opt into lock-free save: the audio thread publishes the memo
+        // into the shell's slot each block, and the host serializes it
+        // without ever taking the plugin lock. (The default `save_state`
+        // delegates here, so the fallback path stays consistent.)
+        //
+        // `serialize_into` clears and refills `buf`, reusing its
+        // capacity - no allocation once warmed, as the audio thread
+        // requires.
+        self.memo.serialize_into(buf);
+        true
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
@@ -124,10 +135,10 @@ impl PluginLogic for StateExample {
         self.state_load_count = self.state_load_count.saturating_add(1);
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<StateExampleParams>) -> Box<dyn Editor> {
         Box::new(
             EguiEditor::with_ui(
-                self.params.clone(),
+                params.clone(),
                 (WINDOW_W, WINDOW_H),
                 StateExampleUi {
                     binding: StateBinding::default(),
@@ -353,5 +364,98 @@ mod tests {
         truce_test::screenshot!(Plugin, "screenshots/state_default_windows.png")
             .pixel_threshold(2)
             .run();
+    }
+
+    // --- Lock-free path proofs ---
+    //
+    // Both hold the plugin lock (standing in for an in-flight audio
+    // block) and require the host-side operation to complete anyway. If
+    // either op took the plugin lock, the spawned thread would block for
+    // the whole hold and the `recv_timeout` would elapse - the tests
+    // fail loudly instead of hanging.
+
+    use std::sync::mpsc;
+    use std::time::Duration;
+    use truce_core::buffer::AudioBuffer;
+    use truce_core::events::{EventList, TransportInfo};
+    use truce_core::export::PluginExport;
+    use truce_core::plugin::PluginRuntime;
+    use truce_core::process::ProcessContext;
+    use truce_core::wrapper::{lock_plugin, save_extra, shared_plugin};
+
+    #[test]
+    fn shell_publishes_snapshot_during_process() {
+        let mut inst = Plugin::create();
+        inst.init();
+        let snapshot = inst.snapshot_slot();
+        // Nothing is published before the first block.
+        assert!(snapshot.read().is_none());
+
+        inst.reset(44100.0, 64);
+        let input = vec![0.0f32; 64];
+        let inputs: Vec<&[f32]> = vec![&input, &input];
+        let mut out0 = vec![0.0f32; 64];
+        let mut out1 = vec![0.0f32; 64];
+        let mut outputs: Vec<&mut [f32]> = vec![&mut out0, &mut out1];
+        // SAFETY: the slices outlive the buffer and match `len`.
+        let mut buffer = unsafe { AudioBuffer::from_slices(&inputs, &mut outputs, 64) };
+        let events = EventList::default();
+        let transport = TransportInfo::default();
+        let mut output_events = EventList::default();
+        let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut output_events);
+        inst.process(&mut buffer, &events, &mut ctx);
+
+        // The shell published the plugin's `snapshot_into` bytes, and
+        // they equal what `save_state` emits (which delegates to it).
+        let published = snapshot
+            .read()
+            .expect("shell should publish a snapshot after a block");
+        assert_eq!(published, inst.save_state());
+    }
+
+    #[test]
+    fn editor_construction_never_takes_the_plugin_lock() {
+        let inst = Plugin::create();
+        let params = inst.params_arc();
+        // The wrapper caches this builder at creation, outside the lock.
+        let make_editor = inst.editor_builder();
+        let plugin = shared_plugin(inst);
+        let _held = lock_plugin(&plugin);
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            // The builder binds only the lock-free param store, so it
+            // returns while the plugin lock is held.
+            let _ = tx.send(make_editor(params).is_some());
+        });
+        let built = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("editor construction blocked on the held plugin lock");
+        assert!(built, "state example must return an editor");
+    }
+
+    #[test]
+    fn save_reads_snapshot_without_the_plugin_lock() {
+        let inst = Plugin::create();
+        let snapshot = inst.snapshot_slot();
+        // Publish a snapshot the way the shell's `process` does.
+        snapshot.publish(|buf| {
+            buf.clear();
+            buf.extend_from_slice(&[0xAB, 0xCD]);
+            true
+        });
+        let plugin = shared_plugin(inst);
+        let _held = lock_plugin(&plugin);
+
+        let (tx, rx) = mpsc::channel();
+        let snap = Arc::clone(&snapshot);
+        let plug = Arc::clone(&plugin);
+        std::thread::spawn(move || {
+            let _ = tx.send(save_extra(&snap, &plug));
+        });
+        let bytes = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("save blocked on the held plugin lock");
+        assert_eq!(bytes, vec![0xAB, 0xCD]);
     }
 }

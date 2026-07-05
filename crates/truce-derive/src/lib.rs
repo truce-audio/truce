@@ -2534,7 +2534,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                 {
                     let field_start = buf.len();
                     buf.extend_from_slice(&0u32.to_le_bytes());
-                    ::truce::core::custom_state::StateField::write_field(&self.#ident, &mut buf);
+                    ::truce::core::custom_state::StateField::write_field(&self.#ident, buf);
                     let field_len = (buf.len() - field_start - 4) as u32;
                     buf[field_start..field_start + 4].copy_from_slice(&field_len.to_le_bytes());
                 }
@@ -2574,11 +2574,10 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl ::truce::core::custom_state::State for #name {
-            fn serialize(&self) -> Vec<u8> {
-                let mut buf = Vec::new();
+            fn serialize_into(&self, buf: &mut Vec<u8>) {
+                buf.clear();
                 buf.extend_from_slice(&#field_count.to_le_bytes());
                 #(#write_fields)*
-                buf
             }
 
             fn deserialize(data: &[u8]) -> Option<Self> {

@@ -51,6 +51,8 @@ impl Gate {
 }
 
 impl PluginLogic for Gate {
+    type Params = GateParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -107,13 +109,13 @@ impl PluginLogic for Gate {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<GateParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Threshold, "Thresh").at(0, 0),
             meter(&[P::MeterLeft, P::MeterRight], "Level").at(1, 0),
         ])])
         .with_title("GATE")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
-use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::meters::MeterStore;
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_core::snapshot::SnapshotSlot;
 use truce_core::state::{ForeignState, MigratedState, StateLoadError};
 use truce_params::Params;
 use truce_params::sample::Sample;
@@ -31,6 +31,13 @@ pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
     pub params: Arc<P>,
     logic: L,
     meters: Arc<MeterStore>,
+    /// Lock-free publish slot for `snapshot_into`-based state save.
+    snapshots: Arc<SnapshotSlot>,
+    /// Stays `true` until the logic reports (via `snapshot_into`), on a
+    /// block before it ever publishes, that it has no custom snapshot -
+    /// after which per-block publishing is skipped so non-opt-in plugins
+    /// pay nothing. A plugin that has published once stays subscribed.
+    try_snapshot: bool,
     sample_rate: f64,
     _sample: std::marker::PhantomData<fn() -> S>,
 }
@@ -56,6 +63,8 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
             params,
             logic,
             meters: MeterStore::new(),
+            snapshots: SnapshotSlot::new(),
+            try_snapshot: true,
             sample_rate: 44100.0,
             _sample: std::marker::PhantomData,
         }
@@ -65,6 +74,12 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
     /// for meter reads (see `PluginExport::meter_store`).
     pub fn meter_store(&self) -> Arc<MeterStore> {
         Arc::clone(&self.meters)
+    }
+
+    /// Shared snapshot slot for lock-free state save (see
+    /// `PluginExport::snapshot_slot`).
+    pub fn snapshot_slot(&self) -> Arc<SnapshotSlot> {
+        Arc::clone(&self.snapshots)
     }
 
     /// Access the plugin logic (for testing).
@@ -136,7 +151,9 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 
-        self.logic.process(buffer, events, &mut ctx)
+        let status = self.logic.process(buffer, events, &mut ctx);
+        publish_snapshot(&self.logic, &self.snapshots, &mut self.try_snapshot);
+        status
     }
 
     fn save_state(&self) -> Vec<u8> {
@@ -160,10 +177,6 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         <L as PluginLogicCore<S>>::migrate_state(foreign)
     }
 
-    fn editor(&mut self) -> Option<Box<dyn Editor>> {
-        Some(PluginLogicCore::editor(&self.logic))
-    }
-
     fn latency(&self) -> u32 {
         self.logic.latency()
     }
@@ -173,6 +186,39 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
 
     fn get_meter(&self, meter_id: u32) -> f32 {
         self.meters.read(meter_id)
+    }
+}
+
+/// Publish the plugin's `snapshot_into` bytes into `slot` on the audio
+/// thread. Shared by both shells.
+///
+/// Opting into snapshots is a static capability: `try_snapshot` latches
+/// off only when the logic reports "no snapshot" *before it has ever
+/// published one* (the default `snapshot_into` returning false), so a
+/// non-opt-in plugin stops paying after one block. Once a plugin has
+/// published, it stays subscribed for its lifetime - a plugin that
+/// returns true then later false is violating the contract, and we keep
+/// calling it rather than silently latching off and serving stale bytes.
+/// Never blocks: `SnapshotSlot::publish` skips on reader contention, in
+/// which case the closure doesn't run and the latch is left alone.
+pub(crate) fn publish_snapshot<S, L>(logic: &L, slot: &SnapshotSlot, try_snapshot: &mut bool)
+where
+    S: Sample,
+    L: PluginLogicCore<S> + ?Sized,
+{
+    if !*try_snapshot {
+        return;
+    }
+    let ran_unsupported = std::cell::Cell::new(false);
+    slot.publish(|buf| {
+        let wrote = logic.snapshot_into(buf);
+        ran_unsupported.set(!wrote);
+        wrote
+    });
+    // First-block opt-out only: a plugin that has already published is
+    // committed for its lifetime, so a later false never latches us off.
+    if ran_unsupported.get() && !slot.is_supported() {
+        *try_snapshot = false;
     }
 }
 
@@ -284,12 +330,6 @@ macro_rules! export_static {
                 <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::migrate_state(foreign)
             }
 
-            fn editor(
-                &mut self,
-            ) -> Option<Box<dyn $crate::__macro_deps::truce_core::editor::Editor>> {
-                self.inner.editor()
-            }
-
             fn latency(&self) -> u32 {
                 self.inner.latency()
             }
@@ -324,6 +364,27 @@ macro_rules! export_static {
                 &self,
             ) -> std::sync::Arc<$crate::__macro_deps::truce_core::meters::MeterStore> {
                 self.inner.meter_store()
+            }
+
+            fn snapshot_slot(
+                &self,
+            ) -> std::sync::Arc<$crate::__macro_deps::truce_core::snapshot::SnapshotSlot> {
+                self.inner.snapshot_slot()
+            }
+
+            fn editor_builder(
+                &self,
+            ) -> $crate::__macro_deps::truce_core::editor::EditorBuilder<$params> {
+                // Builds from the lock-free param store, never the
+                // embedded logic - the audio thread's `&mut logic` is
+                // irrelevant here, so opening the editor takes no lock.
+                Box::new(|params| {
+                    Some(
+                        <$logic as $crate::__macro_deps::truce_plugin::PluginEditor<Sample>>::editor(
+                            params,
+                        ),
+                    )
+                })
             }
         }
     };

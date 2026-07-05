@@ -119,6 +119,8 @@ fn sine_f32(phase: f64) -> f32 {
 }
 
 impl PluginLogic for Chord {
+    type Params = ChordParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         // Instrument: audio output only.
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
@@ -199,13 +201,13 @@ impl PluginLogic for Chord {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<ChordParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             dropdown(P::Chord, "Chord"),
             knob(P::Gain, "Gain"),
         ])])
         .with_title("CHORD")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

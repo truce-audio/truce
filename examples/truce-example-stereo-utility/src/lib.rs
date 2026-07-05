@@ -84,6 +84,8 @@ fn ms_to_samples(ms: f64, sr: f64, line_len: usize) -> usize {
 }
 
 impl PluginLogic for StereoUtility {
+    type Params = StereoUtilityParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
     }
@@ -137,7 +139,7 @@ impl PluginLogic for StereoUtility {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<StereoUtilityParams>) -> Box<dyn Editor> {
         // Reused-group params are addressed by their flattened id, read
         // off each side, so `left` and `right` resolve to distinct
         // controls despite sharing the `ChannelStrip` type.
@@ -145,22 +147,22 @@ impl PluginLogic for StereoUtility {
             section(
                 "LEFT",
                 vec![
-                    knob(self.params.left.gain.id(), "Gain"),
-                    knob(self.params.left.delay.id(), "Delay"),
-                    toggle(self.params.left.invert.id(), "Invert"),
+                    knob(params.left.gain.id(), "Gain"),
+                    knob(params.left.delay.id(), "Delay"),
+                    toggle(params.left.invert.id(), "Invert"),
                 ],
             ),
             section(
                 "RIGHT",
                 vec![
-                    knob(self.params.right.gain.id(), "Gain"),
-                    knob(self.params.right.delay.id(), "Delay"),
-                    toggle(self.params.right.invert.id(), "Invert"),
+                    knob(params.right.gain.id(), "Gain"),
+                    knob(params.right.delay.id(), "Delay"),
+                    toggle(params.right.invert.id(), "Invert"),
                 ],
             ),
         ])
         .with_title("STEREO UTILITY")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

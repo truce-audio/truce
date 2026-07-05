@@ -92,7 +92,22 @@ pub trait StateField: Sized {
 /// Derive with `#[derive(State)]`. The struct must also implement `Default`
 /// so missing fields can be filled with defaults when loading old state.
 pub trait State: Sized + Default {
-    fn serialize(&self) -> Vec<u8>;
+    /// Serialize into `buf`. Clears `buf` first, then reuses its
+    /// capacity - calling this repeatedly with the same buffer is
+    /// allocation-free once warmed, so it is the form to use on the
+    /// audio thread (e.g. `PluginLogic::snapshot_into`).
+    fn serialize_into(&self, buf: &mut Vec<u8>);
+
+    /// Serialize to a fresh `Vec`. Convenience wrapper over
+    /// [`Self::serialize_into`]; allocates, so prefer `serialize_into`
+    /// on the real-time path.
+    #[must_use]
+    fn serialize(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.serialize_into(&mut buf);
+        buf
+    }
+
     fn deserialize(data: &[u8]) -> Option<Self>;
 }
 

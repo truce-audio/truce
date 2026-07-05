@@ -101,6 +101,8 @@ impl ZooSlint {
 }
 
 impl PluginLogic for ZooSlint {
+    type Params = ZooParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -133,9 +135,9 @@ impl PluginLogic for ZooSlint {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<ZooParams>) -> Box<dyn Editor> {
         SlintEditor::new(
-            self.params.clone(),
+            params.clone(),
             (700, 900),
             |state: PluginContext<ZooParams>| -> SyncFn<ZooParams> {
                 let ui = ZooUi::new().unwrap();

@@ -354,6 +354,28 @@ impl<S: Sample> NativeLoader<S> {
         self.plugin.as_ref().map(std::convert::AsRef::as_ref)
     }
 
+    /// Build the loaded plugin's editor via the dylib's
+    /// `truce_build_editor` symbol, from `params_ptr` (the shell's
+    /// shared params). Receiverless by design: it does not borrow the
+    /// loaded logic instance (whose `&mut` the audio thread holds during
+    /// a block), so the reloaded editor code is picked up without racing
+    /// `process`. `None` when no library is loaded or the symbol is
+    /// missing (a stale pre-epoch-3 dylib, already refused by the canary
+    /// before it reaches here).
+    #[must_use]
+    pub fn build_editor(
+        &self,
+        params_ptr: *const (),
+    ) -> Option<Box<dyn truce_core::editor::Editor>> {
+        type BuildEditorFn = fn(*const ()) -> Box<dyn truce_core::editor::Editor>;
+        let library = self.library.as_ref()?;
+        // SAFETY: `export_plugin!` fixes this symbol's signature, and the
+        // ABI canary already verified this dylib matches the shell
+        // before the library was bound.
+        let build: Symbol<BuildEditorFn> = unsafe { library.get(b"truce_build_editor").ok()? };
+        Some(build(params_ptr))
+    }
+
     pub fn plugin_mut(&mut self) -> Option<&mut dyn PluginLogicCore<S>> {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }

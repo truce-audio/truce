@@ -59,6 +59,8 @@ impl Saturate {
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for Saturate {
+    type Params = SaturateParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -132,7 +134,7 @@ impl PluginLogic for Saturate {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<SaturateParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Drive, "Drive").at(0, 0),
             knob(P::Output, "Output").at(0, 1),
@@ -141,7 +143,7 @@ impl PluginLogic for Saturate {
                 .rows(2),
         ])])
         .with_title("SATURATE")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

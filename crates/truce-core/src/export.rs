@@ -48,6 +48,34 @@ pub trait PluginExport: PluginRuntime + Sized {
     /// alongside its params `Arc`.
     fn meter_store(&self) -> Arc<crate::meters::MeterStore>;
 
+    /// Shared snapshot slot for lock-free state save. The shell (audio
+    /// thread) publishes the plugin's custom state into it after each
+    /// block when the plugin overrides `snapshot_into`; the wrapper's
+    /// `save_state` reads it without taking the plugin lock. A plugin
+    /// that doesn't opt in never publishes, so the slot stays empty and
+    /// `save_state` falls back to the locked path.
+    ///
+    /// The `truce::plugin!` shells own the slot and return their handle
+    /// here; a hand-written impl keeps one alongside its params `Arc`.
+    fn snapshot_slot(&self) -> Arc<crate::snapshot::SnapshotSlot>;
+
+    /// A lock-free editor builder: hand it the param store and it
+    /// returns the editor (or `None` for a headless plugin).
+    ///
+    /// Called once at instance creation - format wrappers cache the
+    /// returned closure *outside* the plugin lock (alongside
+    /// `params_arc`), then invoke it when the host opens the GUI, so
+    /// editor construction never takes the plugin lock and never waits
+    /// on an in-flight audio block. The closure binds only the
+    /// lock-free param store, so a `--shell` build's closure rebuilds
+    /// from the *reloaded* dylib (GUI hot-reload survives, picked up on
+    /// the next editor close+open). The `truce::plugin!` shells provide
+    /// this; a hand-written impl returns a closure that builds its
+    /// editor directly. Default: a closure that returns `None`.
+    fn editor_builder(&self) -> crate::editor::EditorBuilder<Self::Params> {
+        Box::new(|_params| None)
+    }
+
     /// Static parameter metadata for registration-time access.
     ///
     /// Format wrappers' `register_*` paths (`truce-vst2`, `truce-vst3`,
@@ -100,6 +128,7 @@ pub trait PluginExport: PluginRuntime + Sized {
     /// at registration time.
     #[must_use]
     fn has_editor_static() -> bool {
-        Self::create().editor().is_some()
+        let plugin = Self::create();
+        plugin.editor_builder()(plugin.params_arc()).is_some()
     }
 }

@@ -125,6 +125,8 @@ impl Tremolo {
 const FREE_LFO_HZ: f64 = 2.0;
 
 impl PluginLogic for Tremolo {
+    type Params = TremoloParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
@@ -180,9 +182,9 @@ impl PluginLogic for Tremolo {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<TremoloParams>) -> Box<dyn Editor> {
         Box::new(
-            EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), tremolo_ui)
+            EguiEditor::new(params.clone(), (WINDOW_W, WINDOW_H), tremolo_ui)
                 .with_visuals(truce_egui::theme::dark())
                 .with_font(JETBRAINS_MONO),
         )

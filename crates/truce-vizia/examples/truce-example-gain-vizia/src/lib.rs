@@ -50,6 +50,8 @@ impl GainVizia {
 }
 
 impl PluginLogic for GainVizia {
+    type Params = GainParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -90,7 +92,7 @@ impl PluginLogic for GainVizia {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<GainParams>) -> Box<dyn Editor> {
         // Resize stays off for vizia plugins until `vizia_baseview`
         // upstream adds a window-event resize entry point. Today
         // `ViziaEditor::set_size` records the new logical size but
@@ -99,7 +101,7 @@ impl PluginLogic for GainVizia {
         // size without a visual change. The other backends (egui,
         // iced, slint, built-in) opt in; vizia follows once the
         // upstream patch lands.
-        ViziaEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_view)
+        ViziaEditor::new(params.clone(), (WINDOW_W, WINDOW_H), gain_view)
             .with_stylesheet(widgets::BASE_CSS)
             .with_font(JETBRAINS_MONO)
             .into_editor()

@@ -16,6 +16,8 @@ impl {struct_name} \{
 }
 
 impl PluginLogic for {struct_name} \{
+    type Params = {struct_name}Params;
+
 {bus_layouts_method | unescaped}    fn reset(&mut self, sr: f64, _bs: usize) \{
         self.params.set_sample_rate(sr);
         self.params.snap_smoothers();
@@ -23,9 +25,9 @@ impl PluginLogic for {struct_name} \{
 
 {process_body | unescaped}
 
-    fn editor(&self) -> Box<dyn Editor> \{
+    fn editor(params: Arc<{struct_name}Params>) -> Box<dyn Editor> \{
         truce_gui::default_editor(
-            self.params.clone(),
+            params,
             GridLayout::build(vec![widgets(vec![{layout_knob | unescaped}])]),
         )
     }

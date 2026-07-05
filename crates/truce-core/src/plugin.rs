@@ -1,6 +1,5 @@
 use crate::buffer::AudioBuffer;
 use crate::bus::BusLayout;
-use crate::editor::Editor;
 use crate::events::EventList;
 use crate::info::PluginInfo;
 use crate::process::{ProcessContext, ProcessStatus};
@@ -20,9 +19,10 @@ use truce_params::sample::Sample;
 ///
 /// ```ignore
 /// impl truce::prelude::PluginLogic for MyPlugin {
+///     type Params = MyPluginParams;
 ///     fn reset(&mut self, sr: f64, bs: usize) { /* ... */ }
 ///     fn process(&mut self, /* ... */) -> ProcessStatus { /* ... */ }
-///     fn editor(&self) -> Box<dyn Editor> { /* ... */ }
+///     fn editor(params: Arc<MyPluginParams>) -> Box<dyn Editor> { /* ... */ }
 /// }
 ///
 /// truce::plugin! { logic: MyPlugin, params: MyPluginParams }
@@ -158,11 +158,6 @@ pub trait PluginRuntime: Send + 'static {
     where
         Self: Sized,
     {
-        None
-    }
-
-    /// GUI editor. Return None for headless plugins.
-    fn editor(&mut self) -> Option<Box<dyn Editor>> {
         None
     }
 

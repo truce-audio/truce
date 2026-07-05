@@ -215,6 +215,8 @@ impl Synth {
 }
 
 impl PluginLogic for Synth {
+    type Params = SynthParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
@@ -298,7 +300,7 @@ impl PluginLogic for Synth {
         }
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<SynthParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![
             widgets(vec![
                 dropdown(P::Waveform, "Wave").cols(2),
@@ -307,22 +309,22 @@ impl PluginLogic for Synth {
             section(
                 "FILTER",
                 vec![
-                    knob(self.params.filter.cutoff.id(), "Cutoff"),
-                    knob(self.params.filter.resonance.id(), "Reso"),
+                    knob(params.filter.cutoff.id(), "Cutoff"),
+                    knob(params.filter.resonance.id(), "Reso"),
                 ],
             ),
             section(
                 "ENVELOPE",
                 vec![
-                    knob(self.params.envelope.attack.id(), "Attack"),
-                    knob(self.params.envelope.decay.id(), "Decay"),
-                    knob(self.params.envelope.sustain.id(), "Sustain"),
-                    knob(self.params.envelope.release.id(), "Release"),
+                    knob(params.envelope.attack.id(), "Attack"),
+                    knob(params.envelope.decay.id(), "Decay"),
+                    knob(params.envelope.sustain.id(), "Sustain"),
+                    knob(params.envelope.release.id(), "Release"),
                 ],
             ),
         ])
         .with_title("TRUCE SYNTH")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

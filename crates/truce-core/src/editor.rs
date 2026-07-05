@@ -6,6 +6,17 @@ use truce_params::sample::Float;
 
 use crate::events::TransportInfo;
 
+/// A lock-free editor factory bound to a plugin's param store.
+///
+/// `PluginExport::editor_builder` returns one of these at instance
+/// creation; format wrappers cache it outside the plugin lock and call
+/// it when the host opens the GUI. For a static build the closure builds
+/// the editor from the concrete logic type; for a `--shell` build it
+/// rebuilds from the currently loaded dylib, so GUI edits hot-reload
+/// (picked up on the next editor close+open). `Send + Sync` so wrappers
+/// can stash it in their instance struct and call it from the GUI thread.
+pub type EditorBuilder<P> = Box<dyn Fn(Arc<P>) -> Option<Box<dyn Editor>> + Send + Sync>;
+
 /// A raw pointer wrapper that is `Send + Sync`.
 ///
 /// Used to capture `*const Params` / host-handle pointers in
@@ -237,8 +248,8 @@ pub trait Editor: Send {
 /// wrapper.
 ///
 /// ```ignore
-/// fn editor(&self) -> Box<dyn Editor> {
-///     EguiEditor::new(self.params.clone(), (W, H), ui)
+/// fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
+///     EguiEditor::new(params, (W, H), ui)
 ///         .with_visuals(theme)
 ///         .into_editor()
 /// }

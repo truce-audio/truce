@@ -223,7 +223,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // Build a shadow plugin instance. It stays alive for the UI's lifetime
         // so editors that hold internal references to the plugin's params (e.g.
         // via Arc clones) remain valid.
-        let mut plugin = Box::new(P::create());
+        let plugin = Box::new(P::create());
         let params_arc = plugin.params_arc();
         let param_infos = plugin.params().param_infos();
 
@@ -260,7 +260,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
                 .collect(),
         );
 
-        let Some(mut editor) = plugin.editor() else {
+        let Some(mut editor) = plugin.editor_builder()(params_arc.clone()) else {
             return std::ptr::null_mut();
         };
 

@@ -29,6 +29,8 @@ impl SysexEcho {
 }
 
 impl PluginLogic for SysexEcho {
+    type Params = SysexEchoParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         // MIDI effect: no audio I/O.
         vec![BusLayout::new()]
@@ -61,10 +63,10 @@ impl PluginLogic for SysexEcho {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<SysexEchoParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![toggle(P::Enabled, "Enabled")])])
             .with_title("SYSEX")
-            .into_editor(&self.params)
+            .into_editor(&params)
     }
 }
 

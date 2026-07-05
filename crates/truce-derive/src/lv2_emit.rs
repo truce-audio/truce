@@ -10,11 +10,11 @@
 //!    test structs. Cheap metadata; no side effects beyond the file.
 //!
 //! 2. `__truce_lv2_emit_root!(<params_type>)` is invoked by
-//!    `truce::plugin!` with the root params type. It reads the root
-//!    sidecar, recursively walks `[[nested]]` references to aggregate
-//!    every param + meter, looks up plugin info from `truce.toml`,
-//!    and renders the final `manifest.ttl` / `plugin.ttl` next to the
-//!    sidecars.
+//!    `truce::plugin!` with the root params type. It reads that
+//!    struct's sidecar by name, recursively walks `[[nested]]`
+//!    references to aggregate every param + meter, looks up plugin
+//!    info from `truce.toml`, and renders the final `manifest.ttl` /
+//!    `plugin.ttl` next to the sidecars.
 //!
 //! Step 1 fires for non-plugin crates too, which is fine - those
 //! sidecars are unused unless something invokes `__truce_lv2_emit_root!`
@@ -160,9 +160,9 @@ pub(crate) fn write_enum_sidecar(enum_name: &syn::Ident, variant_count: usize) {
 /// `plugin.ttl`. Errors here surface as `compile_error!` tokens so the
 /// plugin author sees them at build time.
 pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
-    // Accept any path-shaped input; `syn::Type` rejects bare paths
-    // when the surrounding macro re-tokenizes them, while `syn::Path`
-    // is the right shape for "the params type's name."
+    // The input is the explicit `params:` type. `syn::Path` is the right
+    // shape ("the params type's name") because `syn::Type` rejects bare
+    // paths when the surrounding macro re-tokenizes them.
     let path: syn::Path = match syn::parse(input) {
         Ok(p) => p,
         Err(e) => return e.to_compile_error().into(),

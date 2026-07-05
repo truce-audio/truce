@@ -115,6 +115,26 @@ macro_rules! export_plugin {
             Box::new(<$logic>::new(params))
         }
 
+        // Editor construction lives in its own symbol (not the
+        // `PluginLogicCore` vtable, which `editor` left): it is
+        // receiverless, so the shell rebuilds the editor from this
+        // dylib's `$logic` and the shared `Arc<$params>` without
+        // touching the loaded logic instance. Because it is compiled
+        // into the logic dylib, a reload swaps in the new editor code -
+        // the host picks it up on the next editor close+open.
+        // `params_ptr` is the same shared params pointer `truce_create`
+        // receives.
+        #[unsafe(no_mangle)]
+        pub fn truce_build_editor(
+            params_ptr: *const (),
+        ) -> Box<dyn $crate::__macro_deps::truce_core::editor::Editor> {
+            let params: Arc<$params> = unsafe {
+                Arc::increment_strong_count(params_ptr as *const $params);
+                Arc::from_raw(params_ptr as *const $params)
+            };
+            <$logic as $crate::__macro_deps::truce_plugin::PluginEditor<Sample>>::editor(params)
+        }
+
         // `_v2` because `AbiCanary` crosses this boundary *by value*
         // (sret): if the two sides disagreed about its size, the call
         // itself would corrupt the caller's stack before any field
