@@ -10,7 +10,7 @@ description = "Built-in GUI for truce plugins"
 
 [dependencies]
 truce-core = { workspace = true }
-# `truce-cpu` (tiny-skia + fontdue) and `truce-gpu` (wgpu) are the
+# `truce-cpu` (tiny-skia + skrifa) and `truce-gpu` (wgpu) are the
 # two `RenderBackend` impls. Both optional, gated by the `cpu`
 # (default) / `gpu` features so plugins that opt into one don't
 # pull the other's compile.
@@ -63,7 +63,7 @@ objc2-quartz-core = { version = "0.3", features = ["CALayer", "CAMetalLayer"] }
 # blit pipeline for surface presentation. `gpu` swaps in direct wgpu
 # rendering through `truce_gpu::WgpuBackend`; opting in via
 # `default-features = false, features = ["gpu"]` keeps truce-cpu
-# (and tiny-skia + fontdue) out of the dep tree.
+# (and tiny-skia + skrifa) out of the dep tree.
 default = ["cpu"]
 # Both features need truce-gpu: `gpu` for `WgpuBackend`, `cpu` for the
 # surface pump (`truce_gpu::pump`) its blit presentation runs through.

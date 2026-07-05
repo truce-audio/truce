@@ -291,7 +291,7 @@ struct StaticInfo {
     params: Vec<StaticParamInfo>,
 }
 
-// Safety: the raw pointers in descriptors point to leaked CStrings
+// SAFETY: the raw pointers in descriptors point to leaked CStrings
 // that live for the process lifetime. They are read-only after init.
 unsafe impl Send for StaticInfo {}
 unsafe impl Sync for StaticInfo {}

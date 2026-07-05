@@ -55,7 +55,8 @@ pub trait RenderBackend {
     /// Draw a line between two points.
     fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, color: Color, width: f32);
 
-    /// Draw text using the embedded TrueType font (fontdue).
+    /// Draw text using the embedded TrueType font (skrifa, via
+    /// `truce_font::raster`).
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color);
 
     /// Measure the width of a text string in logical points, at the
