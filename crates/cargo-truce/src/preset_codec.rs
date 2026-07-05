@@ -300,6 +300,16 @@ mod tests {
     use super::*;
     use truce_utils::state::{hash_plugin_id, serialize_state};
 
+    #[test]
+    fn xml_escape_covers_text_and_attribute_metachars() {
+        // `&` first so its entity isn't re-escaped; `"` / `'` covered so
+        // the result is safe inside a double-quoted attribute too.
+        assert_eq!(
+            xml_escape(r#"Comp & <Limit> "x" 'y'"#),
+            "Comp &amp; &lt;Limit&gt; &quot;x&quot; &apos;y&apos;"
+        );
+    }
+
     fn sample_blob() -> Vec<u8> {
         serialize_state(
             hash_plugin_id("com.acme.x"),

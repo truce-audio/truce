@@ -11,8 +11,8 @@ use super::stage::{
 };
 use crate::commands::build_dylibs::BuildFormat;
 use crate::commands::install::presets;
-use crate::preset_codec::xml_escape;
 use crate::install_scope::PkgScope;
+use crate::preset_codec::xml_escape;
 use crate::{
     CLAP_EXPORTS, Config, MacArch, PluginDef, Res, VST2_EXPORTS, VST3_EXPORTS,
     cargo_build_multi_arch, cargo_build_multi_arch_with_profile, copy_dir_recursive,
