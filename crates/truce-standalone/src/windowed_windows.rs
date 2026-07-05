@@ -143,6 +143,16 @@ struct SizeLimits {
 /// within this window).
 const SIZE_LIMITS_SUBCLASS: usize = 0x7472_6373; // "trcs"
 
+/// Clamp a physical window extent to `[min, max]`, flooring `max` at
+/// `min` first. An editor with inconsistent bounds can report a max
+/// below its min; `i32::clamp` panics when its lo > hi, and a panic
+/// unwinding out of the `extern "system"` subclass proc aborts the
+/// host - so pin a bad editor to its min instead (matches the macOS
+/// window subclass).
+fn clamp_extent(v: i32, min: i32, max: i32) -> i32 {
+    v.clamp(min, max.max(min))
+}
+
 /// Enforce the editor's `min_size` / `max_size` (and `aspect_ratio`,
 /// when set) on the outer standalone window itself.
 ///
@@ -268,11 +278,13 @@ unsafe extern "system" fn size_limits_proc(
                             to_phys(v, dpi) + chrome
                         }
                     };
-                    wp.cx = wp.cx.clamp(
+                    wp.cx = clamp_extent(
+                        wp.cx,
                         to_phys(limits.min_w, dpi) + chrome_w,
                         max_px(limits.max_w, chrome_w),
                     );
-                    wp.cy = wp.cy.clamp(
+                    wp.cy = clamp_extent(
+                        wp.cy,
                         to_phys(limits.min_h, dpi) + chrome_h,
                         max_px(limits.max_h, chrome_h),
                     );
@@ -302,7 +314,10 @@ unsafe extern "system" fn size_limits_proc(
                     } else {
                         to_phys(hi, dpi)
                     };
-                    v.clamp(lo, hi)
+                    // Floors max at min - see `clamp_extent`; inconsistent
+                    // editor bounds must not panic this `extern "system"`
+                    // proc and abort the host.
+                    clamp_extent(v, lo, hi)
                 };
                 // WMSZ_* edge codes are tiny (1..=8); the truncation
                 // is nominal.
@@ -443,4 +458,20 @@ pub fn menu_reserve_logical(hwnd: *mut c_void) -> u32 {
 /// to write the resource we're loading here.
 fn make_int_resource(id: u16) -> *const u16 {
     std::ptr::without_provenance(id as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_extent;
+
+    #[test]
+    fn clamp_extent_floors_max_at_min_instead_of_panicking() {
+        // Inconsistent bounds (max < min): the raw `clamp(min, max)`
+        // would panic and abort the host; we pin to min instead.
+        assert_eq!(clamp_extent(50, 100, 20), 100);
+        // Normal bounds still clamp both ways.
+        assert_eq!(clamp_extent(50, 10, 100), 50);
+        assert_eq!(clamp_extent(5, 10, 100), 10);
+        assert_eq!(clamp_extent(500, 10, 100), 100);
+    }
 }
