@@ -2,8 +2,9 @@
 /// every format today; `Midi2` opts a port into MIDI 2.0 / UMP so the
 /// plugin receives the native 16/32-bit + per-note + group-addressed
 /// variants of [`crate::events::EventBody`] instead of the MIDI 1.0
-/// down-conversion. Only formats with a UMP transport (CLAP's MIDI2
-/// note dialect) honor `Midi2`; others clamp to MIDI 1.0.
+/// down-conversion. Formats with a UMP transport (CLAP, AU v3) honor
+/// `Midi2` both ways; VST3 carries the per-note subset via note
+/// expression; VST2 / AU v2 / AAX / LV2 clamp to MIDI 1.0.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum MidiDialect {
     #[default]
@@ -37,8 +38,9 @@ pub struct PluginInfo {
 
     /// Dialect the (single) MIDI input port speaks. Defaults to
     /// [`MidiDialect::Midi1`]; a plugin opts into MIDI 2.0 with the
-    /// `midi2` key in `truce.toml`. Only honored by formats with a UMP
-    /// transport (CLAP); others deliver MIDI 1.0 regardless.
+    /// `midi2` key in `truce.toml`. Honored by the UMP-transport formats
+    /// (CLAP, AU v3); VST3 maps the per-note subset to note expression;
+    /// the rest deliver MIDI 1.0 regardless.
     pub midi_input_dialect: MidiDialect,
 
     /// Dialect the (single) MIDI output port speaks. See
