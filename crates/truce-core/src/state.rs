@@ -125,15 +125,19 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
     if let Some(extra) = &state.extra
         && let Err(e) = plugin.load_state(extra)
     {
-        // Audio-thread error path: host already received a "yes I
-        // accepted the state" return from the format wrapper's setChunk
-        // by the time we run, so the only thing left is logging.
-        // `eprintln!` is deliberate - `truce-core` is the audio-runtime
-        // crate, no `log` dep, and a state-load failure is a one-shot
-        // event not a per-block hot path. Format wrappers that surface
-        // this to the host (e.g. CLAP's `state_load` returning `false`)
-        // do so synchronously *before* the queue handoff.
+        // Debug-only breadcrumb: this can run on the audio thread (the
+        // deferred load pops off the handoff queue at the top of
+        // `process()`), and `eprintln!` locks stderr and allocates - so
+        // it must never fire in a release / shipped build. By the time
+        // this runs the host already got a success return from the
+        // wrapper's setChunk, so there's no user-facing report left,
+        // only a dev diagnostic. Envelope-level failures the host can
+        // act on are logged synchronously in `parse_or_migrate` before
+        // the queue handoff.
+        #[cfg(debug_assertions)]
         eprintln!("truce: load_state failed: {e}");
+        #[cfg(not(debug_assertions))]
+        let _ = e;
     }
 }
 
