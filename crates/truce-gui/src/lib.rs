@@ -113,9 +113,9 @@ pub use platform::{EditorScale, PaintPacer, to_physical_px};
 /// Most layout-only plugins implement [`truce_plugin::PluginLogic::editor`] as:
 ///
 /// ```ignore
-/// fn editor(&self) -> Box<dyn truce_core::Editor> {
+/// fn editor(params: Arc<MyParams>) -> Box<dyn truce_core::Editor> {
 ///     truce_gui::default_editor(
-///         self.params.clone(),
+///         params,
 ///         GridLayout::build(vec![ /* widgets */ ]),
 ///     )
 /// }
@@ -144,17 +144,17 @@ pub fn default_editor<P: Params + 'static>(params: Arc<P>, layout: GridLayout) -
 }
 
 /// Fluent shorthand for [`default_editor`]. Build a `GridLayout`,
-/// then close the `editor()` impl with `.into_editor(&self.params)`:
+/// then close the `editor()` impl with `.into_editor(&params)`:
 ///
 /// ```ignore
-/// fn editor(&self) -> Box<dyn truce_core::Editor> {
+/// fn editor(params: Arc<MyParams>) -> Box<dyn truce_core::Editor> {
 ///     GridLayout::build(vec![ /* widgets */ ])
 ///         .with_title("GAIN")
-///         .into_editor(&self.params)
+///         .into_editor(&params)
 /// }
 /// ```
 ///
-/// Equivalent to `default_editor(self.params.clone(), layout)` - the
+/// Equivalent to `default_editor(params, layout)` - the
 /// `&Arc<P>` is cloned internally so the call site stays free of an
 /// explicit `.clone()`. Bring it into scope with
 /// `use truce_gui::IntoLayoutEditor;` (it can't ride along on

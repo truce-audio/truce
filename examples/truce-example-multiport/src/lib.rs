@@ -242,6 +242,8 @@ struct Lane {
 }
 
 impl PluginLogic for Multiport {
+    type Params = MultiportParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
@@ -322,31 +324,31 @@ impl PluginLogic for Multiport {
         }
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<MultiportParams>) -> Box<dyn Editor> {
         // Nested-group params are addressed by their flattened id
         // (`base + local`), read off each lane.
         GridLayout::build(vec![
             section(
                 "PORT 0",
                 vec![
-                    dropdown(self.params.port0.wave.id(), "Wave"),
-                    knob(self.params.port0.cutoff.id(), "Cutoff"),
-                    knob(self.params.port0.release.id(), "Release"),
-                    knob(self.params.port0.volume.id(), "Volume"),
+                    dropdown(params.port0.wave.id(), "Wave"),
+                    knob(params.port0.cutoff.id(), "Cutoff"),
+                    knob(params.port0.release.id(), "Release"),
+                    knob(params.port0.volume.id(), "Volume"),
                 ],
             ),
             section(
                 "PORT 1",
                 vec![
-                    dropdown(self.params.port1.wave.id(), "Wave"),
-                    knob(self.params.port1.cutoff.id(), "Cutoff"),
-                    knob(self.params.port1.release.id(), "Release"),
-                    knob(self.params.port1.volume.id(), "Volume"),
+                    dropdown(params.port1.wave.id(), "Wave"),
+                    knob(params.port1.cutoff.id(), "Cutoff"),
+                    knob(params.port1.release.id(), "Release"),
+                    knob(params.port1.volume.id(), "Volume"),
                 ],
             ),
         ])
         .with_title("MULTIPORT")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

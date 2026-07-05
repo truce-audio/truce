@@ -85,6 +85,24 @@ pub fn try_lock_plugin<P>(plugin: &PluginMutex<P>) -> Option<PluginGuard<'_, P>>
     plugin.try_lock()
 }
 
+/// Read the plugin's custom-state blob for a host state save.
+///
+/// Prefers the lock-free [`SnapshotSlot`](crate::snapshot::SnapshotSlot)
+/// the audio thread publishes each block; only when the plugin doesn't
+/// opt into snapshots (nothing published) does it fall back to locking
+/// the plugin and calling `save_state()`. So a snapshot-capable plugin's
+/// host save never touches the plugin lock and never waits on an
+/// in-flight audio block. Params are serialized separately (lock-free),
+/// so this is the only piece of a save that could contend the lock.
+pub fn save_extra<P: crate::plugin::PluginRuntime>(
+    snapshot: &crate::snapshot::SnapshotSlot,
+    plugin: &PluginMutex<P>,
+) -> Vec<u8> {
+    snapshot
+        .read()
+        .unwrap_or_else(|| lock_plugin(plugin).save_state())
+}
+
 /// std-backed [`PluginMutex`]: macOS (`os_unfair_lock` donates the
 /// waiter's priority) and Windows (SRWLOCK; no user-space priority
 /// inheritance exists). Miri also lands here - it has no shim for

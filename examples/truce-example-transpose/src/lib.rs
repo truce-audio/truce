@@ -50,6 +50,8 @@ fn shift_midi(note: u8, shift: i32) -> u8 {
 }
 
 impl PluginLogic for Transpose {
+    type Params = TransposeParams;
+
     /// MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
     /// AAX (which has no audio-less plugin category) auto-adds a
     /// stereo passthrough inside `truce-aax` so the DAW's track
@@ -122,13 +124,13 @@ impl PluginLogic for Transpose {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<TransposeParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Semitones, "Semitones"),
             knob(P::Octave, "Octave"),
         ])])
         .with_title("TRANSPOSE")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

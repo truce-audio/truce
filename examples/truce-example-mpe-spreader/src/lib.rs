@@ -174,6 +174,8 @@ fn lfo_bend(depth: f64, s: f64) -> u32 {
 }
 
 impl PluginLogic for Spreader {
+    type Params = SpreaderParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         // MIDI effect: no audio I/O.
         vec![BusLayout::new()]
@@ -384,7 +386,7 @@ impl PluginLogic for Spreader {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<SpreaderParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![
             widgets(vec![dropdown(P::Algo, "Algorithm").cols(3)]),
             widgets(vec![
@@ -394,7 +396,7 @@ impl PluginLogic for Spreader {
             ]),
         ])
         .with_title("MPE SPREAD")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

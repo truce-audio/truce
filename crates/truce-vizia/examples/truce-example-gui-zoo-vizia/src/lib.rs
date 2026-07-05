@@ -177,6 +177,8 @@ impl ZooVizia {
 }
 
 impl PluginLogic for ZooVizia {
+    type Params = ZooParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -218,12 +220,12 @@ impl PluginLogic for ZooVizia {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<ZooParams>) -> Box<dyn Editor> {
         // `widgets::BASE_CSS` is the truce-vizia compat shim; ZOO_CSS
         // is the zoo's own layout (section bands, gaps). No custom
         // palette - the zoo renders against vizia's default light
         // theme.
-        ViziaEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), zoo_view)
+        ViziaEditor::new(params.clone(), (WINDOW_W, WINDOW_H), zoo_view)
             .with_stylesheet(widgets::BASE_CSS)
             .with_stylesheet(ZOO_CSS)
             .with_font(JETBRAINS_MONO)

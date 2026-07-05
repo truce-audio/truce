@@ -9,20 +9,16 @@
 //! ## Auto mode - zero custom code
 //!
 //! ```rust,ignore
-//! fn editor(&mut self) -> Option<Box<dyn Editor>> {
-//!     let layout = self.layout();
-//!     Some(Box::new(IcedEditor::from_layout(self.params.clone(), layout)))
+//! fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
+//!     IcedEditor::from_layout(params, layout()).into_editor()
 //! }
 //! ```
 //!
 //! ## Custom mode - full iced control
 //!
 //! ```rust,ignore
-//! fn editor(&mut self) -> Option<Box<dyn Editor>> {
-//!     Some(Box::new(IcedEditor::<_, MyIcedUi>::new(
-//!         self.params.clone(),
-//!         (600, 400),
-//!     )))
+//! fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
+//!     IcedEditor::<_, MyIcedUi>::new(params, (600, 400)).into_editor()
 //! }
 //! ```
 

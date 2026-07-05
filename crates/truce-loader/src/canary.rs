@@ -31,7 +31,13 @@ use truce_plugin::PluginLogicCore;
 ///
 /// Epoch 2: `Event` grew `port: u8` in former padding (multi-port
 /// MIDI).
-pub const ABI_EPOCH: u32 = 2;
+/// Epoch 3: `editor` left the `PluginLogicCore` vtable (it moved to the
+/// receiverless `truce_build_editor` export). The slot's removal shifts
+/// every later vtable index, so a stale epoch-2 dylib would bind
+/// `save_state` / `latency` / `tail` to the wrong slots and lacks the
+/// new symbol; this bump rejects it cleanly at the canary instead of
+/// relying on the probe to notice the misalignment.
+pub const ABI_EPOCH: u32 = 3;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
@@ -257,29 +263,6 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
     }
     fn tail(&self) -> u32 {
         0xBBBB
-    }
-
-    fn editor(&self) -> Box<dyn truce_core::editor::Editor> {
-        // The probe is never actually opened in a host; the vtable
-        // slot exists so the canary covers `editor()` ordering. Any
-        // stub Editor would do - panic-on-call keeps the size near
-        // zero and surfaces accidental dispatch.
-        struct UnreachableEditor;
-        impl truce_core::editor::Editor for UnreachableEditor {
-            fn size(&self) -> (u32, u32) {
-                unreachable!("probe editor was opened by accident")
-            }
-            fn open(
-                &mut self,
-                _: truce_core::editor::RawWindowHandle,
-                _: truce_core::editor::PluginContext,
-            ) {
-                unreachable!("probe editor was opened by accident")
-            }
-            fn close(&mut self) {}
-            fn idle(&mut self) {}
-        }
-        Box::new(UnreachableEditor)
     }
 }
 

@@ -282,6 +282,8 @@ impl MidiInspector {
 }
 
 impl PluginLogic for MidiInspector {
+    type Params = InspectorParams;
+
     /// Audio effect with MIDI in/out: a stereo bus passes the track's
     /// audio through untouched while the plugin monitors and forwards
     /// MIDI. The audio I/O is what lets it load as an ordinary insert in
@@ -346,11 +348,11 @@ impl PluginLogic for MidiInspector {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<InspectorParams>) -> Box<dyn Editor> {
         // Hand the editor the live params (like the built-in and egui
         // editors do) so the UI reaches the same `#[skip]` ring the
         // audio thread writes to - no separate plumbing needed.
-        IcedEditor::<InspectorParams, InspectorUi>::new(self.params.clone(), (WINDOW_W, WINDOW_H))
+        IcedEditor::<InspectorParams, InspectorUi>::new(params.clone(), (WINDOW_W, WINDOW_H))
             .with_font(truce_font::JETBRAINS_MONO)
             .resizable(true)
             .min_size((520, 320))

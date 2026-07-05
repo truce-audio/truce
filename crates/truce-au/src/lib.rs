@@ -45,6 +45,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::{MidiDialect, PluginInfo, resolve_name_override};
 // The AU editor (and its meter reads) exist on macOS / iOS only,
 // matching the `meter_store` field's gate.
+use truce_core::editor::EditorBuilder;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use truce_core::meters::MeterStore;
 use truce_core::midi::{
@@ -53,6 +54,7 @@ use truce_core::midi::{
 };
 use truce_core::plugin::PluginRuntime;
 use truce_core::presets::{PresetScope, enumerate_scope, load_preset_file};
+use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::ump::{
     SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_sysex7_packet,
@@ -60,7 +62,8 @@ use truce_core::ump::{
 };
 use truce_core::wrapper::{
     ParamCStrings, SharedPlugin, default_io_channels, lock_plugin, log_midi_ports_clamped,
-    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, shared_plugin,
+    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, save_extra,
+    shared_plugin,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
@@ -179,6 +182,14 @@ struct AuInstance<P: PluginExport> {
     /// AU GUI section), so the field follows it.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     meter_store: Arc<MeterStore>,
+    /// Lock-free custom-state slot the audio thread publishes
+    /// into, read by `save_state` so a snapshot-capable plugin's
+    /// save never takes the plugin lock. Cached outside the lock.
+    snapshot: Arc<SnapshotSlot>,
+    /// Lock-free editor factory, cached at creation - building
+    /// the editor never takes the plugin lock (`--shell` rebuilds
+    /// from the reloaded dylib, so GUI edits hot-reload).
+    editor_builder: EditorBuilder<P::Params>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
@@ -300,6 +311,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         params_arc,
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         meter_store: plugin.meter_store(),
+        snapshot: plugin.snapshot_slot(),
+        editor_builder: plugin.editor_builder(),
         plugin: shared_plugin(plugin),
         latency_cache,
         tail_cache,
@@ -739,7 +752,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // must not appear on either side; mixing allocators is UB.
         // Lock the plugin for the serialization; a block in flight
         // holds the lock, so this waits for the block boundary.
-        let extra = lock_plugin(&inst.plugin).save_state();
+        let extra = save_extra(&inst.snapshot, &inst.plugin);
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let len = blob.len();
@@ -1381,9 +1394,10 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         }
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
-            // Editor construction needs `&mut P`; the lock waits out
-            // at most one in-flight audio block.
-            inst.editor = lock_plugin(&inst.plugin).editor();
+            // Built from the lock-free param store the wrapper already
+            // holds outside the plugin lock, so opening the GUI never
+            // stalls the audio thread.
+            inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
         i32::from(inst.editor.is_some())
     }
@@ -1444,9 +1458,10 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         // reports.
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
-            // Editor construction needs `&mut P`; the lock waits out
-            // at most one in-flight audio block.
-            inst.editor = lock_plugin(&inst.plugin).editor();
+            // Built from the lock-free param store the wrapper already
+            // holds outside the plugin lock, so opening the GUI never
+            // stalls the audio thread.
+            inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
         if let Some(ref editor) = inst.editor {
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
@@ -1482,6 +1497,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         if let Some(ref mut editor) = inst.editor {
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);
+            let snapshot = Arc::clone(&inst.snapshot);
             let plugin_lock = Arc::clone(&inst.plugin);
             let ctx_raw = SendPtr::new(ctx);
             let params_for_set = params.clone();
@@ -1586,7 +1602,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // empty fallback was ambiguous with "no custom
                         // state", so a lost race silently kept stale
                         // editor state.
-                        lock_plugin(&plugin_lock).save_state()
+                        save_extra(&snapshot, &plugin_lock)
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes -

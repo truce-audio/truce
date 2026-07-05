@@ -53,6 +53,10 @@
 /// ```
 ///
 /// Zero code changes. Same `truce::plugin!` macro.
+/// Both `logic:` and `params:` are required. `params:` names the
+/// `#[derive(Params)]` struct; the LV2 TTL renderer is a proc-macro and
+/// can only find that struct's metadata by its literal name at
+/// expansion time, so it must be spelled out here.
 #[macro_export]
 macro_rules! plugin {
     (
@@ -363,10 +367,6 @@ macro_rules! __plugin_hot_reload {
                 self.inner.load_state(data)
             }
 
-            fn editor(&mut self) -> Option<Box<dyn $crate::core::editor::Editor>> {
-                self.inner.editor()
-            }
-
             fn latency(&self) -> u32 {
                 self.inner.latency()
             }
@@ -399,6 +399,18 @@ macro_rules! __plugin_hot_reload {
 
             fn meter_store(&self) -> std::sync::Arc<$crate::core::meters::MeterStore> {
                 self.inner.meter_store()
+            }
+
+            fn snapshot_slot(&self) -> std::sync::Arc<$crate::core::snapshot::SnapshotSlot> {
+                self.inner.snapshot_slot()
+            }
+
+            fn editor_builder(&self) -> $crate::core::editor::EditorBuilder<$params> {
+                // Builds from the *reloaded* dylib (not the shell's
+                // baked-in logic), so GUI edits hot-reload - picked up on
+                // the next editor close+open. Takes the loader lock the
+                // audio thread only `try_lock`s, so it never stalls audio.
+                self.inner.editor_builder()
             }
         }
     };

@@ -266,6 +266,8 @@ fn osc(phase: f64) -> f32 {
 }
 
 impl PluginLogic for Synth {
+    type Params = SynthParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
@@ -338,14 +340,14 @@ impl PluginLogic for Synth {
         }
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<SynthParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::MasterCutoff, "Cutoff"),
             knob(P::Release, "Release"),
             knob(P::Volume, "Volume"),
         ])])
         .with_title("MPE SYNTH")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

@@ -13,6 +13,7 @@ pub mod plugin;
 pub mod presets;
 pub mod process;
 pub mod screenshot;
+pub mod snapshot;
 pub mod state;
 pub mod transport;
 pub mod ump;
@@ -21,13 +22,14 @@ pub mod wrapper;
 
 pub use buffer::{AudioBuffer, RawBufferScratch};
 pub use bus::{BusConfig, BusKind, BusLayout, ChannelConfig};
-pub use editor::{Editor, IntoEditor, PluginContext};
+pub use editor::{Editor, EditorBuilder, IntoEditor, PluginContext};
 pub use events::{Event, EventBody, EventList, PushError, SYSEX_POOL_PREALLOC, TransportInfo};
 pub use export::PluginExport;
 pub use info::{AutomationConfig, MidiDialect, PluginCategory, PluginInfo};
 pub use meters::MeterStore;
 pub use plugin::PluginRuntime;
 pub use process::{ProcessContext, ProcessStatus};
+pub use snapshot::SnapshotSlot;
 pub use transport::TransportSlot;
 
 // `Float` / `Sample` live in `truce-params` (truce-core depends on

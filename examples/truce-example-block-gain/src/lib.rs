@@ -58,6 +58,8 @@ const N: usize = 32;
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for Gain {
+    type Params = GainParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -143,7 +145,7 @@ impl PluginLogic for Gain {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<GainParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Gain, "Gain"),
             knob(P::Pan, "Pan"),
@@ -153,7 +155,7 @@ impl PluginLogic for Gain {
             xy_pad(P::Pan, P::Gain, "XY"),
         ])])
         .with_title("GAIN SIMD")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

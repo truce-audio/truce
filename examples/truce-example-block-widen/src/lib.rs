@@ -50,6 +50,8 @@ impl Widen {
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for Widen {
+    type Params = WidenParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -114,13 +116,13 @@ impl PluginLogic for Widen {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<WidenParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Width, "Width").at(0, 0),
             meter(&[P::MeterLeft, P::MeterRight], "Level").at(1, 0),
         ])])
         .with_title("WIDEN")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

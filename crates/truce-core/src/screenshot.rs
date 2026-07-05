@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::export::PluginExport;
-use crate::plugin::PluginRuntime;
 
 /// Default scale factor used by all screenshot rendering when no
 /// explicit override is supplied. Pinned to a `HiDPI` value so a
@@ -114,7 +113,7 @@ pub fn render_with_state_at_scale<P: PluginExport>(
 ///
 /// # Panics
 ///
-/// Panics if `PluginRuntime::editor()` returns `None` or the editor's
+/// Panics if `PluginExport::editor()` returns `None` or the editor's
 /// `screenshot()` method returns `None`. Both panics name the
 /// concrete `P` and point at the trait method to implement.
 pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
@@ -124,7 +123,7 @@ pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32)
 /// Render the given (already-mutated) plugin's editor at an explicit
 /// scale. The scale is published via [`override_scale`] for the
 /// duration of the call so the editor's `EditorScale` (initialized
-/// from `truce_gui::backing_scale()` during `PluginRuntime::editor()`)
+/// from `truce_gui::backing_scale()` during `PluginExport::editor()`)
 /// picks up the screenshot value rather than the host's main-screen
 /// DPI. The override is cleared on return - including on panic - so
 /// any subsequent live-editor construction sees the regular
@@ -138,7 +137,7 @@ pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32)
 ///
 /// # Panics
 ///
-/// Panics if `PluginRuntime::editor()` returns `None` or the editor's
+/// Panics if `PluginExport::editor()` returns `None` or the editor's
 /// `screenshot()` method returns `None`. Both panics name the
 /// concrete `P` and point at the trait method to implement.
 pub fn render_pixels_for_at_scale<P: PluginExport>(
@@ -146,10 +145,10 @@ pub fn render_pixels_for_at_scale<P: PluginExport>(
     scale: f64,
 ) -> (Vec<u8>, u32, u32) {
     let _scale_guard = ScreenshotScaleGuard::set(scale);
-    let mut editor = <P as PluginRuntime>::editor(plugin).unwrap_or_else(|| {
+    let mut editor = plugin.editor_builder()(plugin.params_arc()).unwrap_or_else(|| {
         panic!(
-            "plugin {} returned no editor: PluginRuntime::editor() returned None. \
-             Implement `fn editor(&mut self)` on your plugin (or one of \
+            "plugin {} returned no editor: PluginExport::editor_builder() returned None. \
+             Implement `fn editor(params)` on your plugin (or one of \
              the built-in editor wrappers - truce-gpu / truce-egui / \
              truce-iced / truce-slint) so screenshot rendering has \
              something to draw.",

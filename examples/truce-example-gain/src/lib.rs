@@ -40,6 +40,8 @@ impl Gain {
 }
 
 impl PluginLogic for Gain {
+    type Params = GainParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -76,7 +78,7 @@ impl PluginLogic for Gain {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<GainParams>) -> Box<dyn Editor> {
         // Knob row at top-left, XY pad below them, meter pinned to
         // column 2 spanning three rows. With `.resizable(true)`,
         // host-driven resize snaps to a whole-cell width and
@@ -110,7 +112,7 @@ impl PluginLogic for Gain {
         // stretch at a size the layout still reads as tight.
         .min_size((3, 3))
         .max_size((8, 6))
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

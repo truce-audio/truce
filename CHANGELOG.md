@@ -2,6 +2,63 @@
 
 Notable changes per release.
 
+## 3.0.0
+
+Refactored `editor` into an associated function: it takes the parameter store as an argument (`Arc<Self::Params>`) instead of borrowing the plugin (`&self`). This turns a runtime convention into a compile-time guarantee - the editor is now, by construction, a function of its parameters, so building it can't take the plugin lock or reach into DSP state at all. Opening the GUI is decoupled from the audio thread structurally rather than by careful bookkeeping. For almost every plugin it's a one-line signature change.
+
+### Breaking
+
+- **`editor` is now an associated function.** It receives `Arc<Self::Params>` instead of `&self`. Because it has no access to the plugin instance, editor construction provably never touches the plugin lock - a guarantee the type system now enforces rather than the framework upholding it at runtime. For a typical plugin this is a one-line signature change; see the migration steps below. Moving `editor` also shifted the hot-reload ABI, so a `--shell` shell and logic dylib must be rebuilt and reinstalled together (GUI edits still hot-reload on the next editor close and reopen; static shipped builds need nothing).
+
+### Migrating from 2.x
+
+1. **Update each editor.** Add `type Params`, take `params` instead of `&self`, and use it in the body. For a typical plugin (editor only reads `self.params`) that's the whole migration:
+
+   ```diff
+    impl PluginLogic for MyPlugin {
+   +    type Params = MyParams;
+   +
+        // reset, process, ...
+   -    fn editor(&self) -> Box<dyn Editor> {
+   -        default_editor(self.params.clone(), layout())
+   +    fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
+   +        default_editor(params, layout())
+        }
+    }
+   ```
+
+   The same `self.params` -> `params` swap covers the other backends: `.into_editor(&params)`, `EguiEditor::new(params, ...)`, `IcedEditor::new(params, ...)`, and so on.
+
+2. **Only if an editor read live DSP state at construction** (an analyzer handing its spectrum to the GUI, say): it no longer has `self`. Route the shared handle through the params struct as a `#[skip]` field (a non-parameter), fill it in `new()`, and read it back in `editor`:
+
+   ```diff
+    #[derive(Params)]
+    pub struct MyParams {
+        #[param(name = "Gain", /* ... */)] pub gain: FloatParam,
+   +    #[skip]
+   +    spectrum: Arc<OnceLock<Arc<Spectrum>>>,
+    }
+
+    fn new(params: Arc<MyParams>) -> Self {
+        let spectrum = Arc::new(Spectrum::new());
+   +    let _ = params.spectrum.set(spectrum.clone());
+        Self { params, spectrum, /* ... */ }
+    }
+
+   -    fn editor(&self) -> Box<dyn Editor> {
+   -        MyEditor::new(self.params.clone(), self.spectrum.clone())
+   +    fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
+   +        let spectrum = params.spectrum.get().expect("set in new()").clone();
+   +        MyEditor::new(params.clone(), spectrum)
+        }
+   ```
+
+3. **Rebuild `--shell` pairs together.** A 3.0 shell won't pair with a 2.x logic dylib; rebuild and reinstall both in one pass. Ordinary (non-`--shell`) builds need nothing beyond step 1.
+
+### Added
+
+- **Lock-free state save, opt-in.** If a plugin has custom state (beyond parameters) that's expensive to serialize, it can override `snapshot_into(&self, buf)` *instead of* `save_state` to take the whole save off the plugin lock: the audio thread serializes the state into a lock-free slot each block and the host reads it back on save without ever locking the plugin. Because it runs on the audio thread every block, keep it cheap and allocation-free (clear and refill `buf`, which keeps its capacity) - it's a win only when a `save_state` stall would otherwise be long. Overriding it is the entire opt-in: which method you implement is the choice, the default `save_state` delegates to it, and plugins that override neither (or stick with `save_state`) are unchanged.
+
 ## 2.0.2
 
 - Audio Unit plugins now report their latency and tail time to the host, so lookahead limiters and linear-phase EQs stay time-aligned in the mix instead of playing early.

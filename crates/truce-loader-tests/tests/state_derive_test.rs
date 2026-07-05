@@ -11,7 +11,7 @@
 use truce_core::custom_state::State;
 use truce_derive::State;
 
-#[derive(State, Default, Debug, PartialEq)]
+#[derive(State, Default, Debug, PartialEq, Clone)]
 struct PrimitiveState {
     flag: bool,
     count: u32,
@@ -70,4 +70,29 @@ fn deserialize_garbage_does_not_panic() {
     let mut bogus = vec![0xFF, 0xFF, 0xFF, 0xFF];
     bogus.extend_from_slice(&[0u8; 16]);
     let _ = PrimitiveState::deserialize(&bogus);
+}
+
+#[test]
+fn serialize_into_matches_serialize_and_reuses_buffer() {
+    let original = PrimitiveState {
+        flag: true,
+        count: 1,
+        rate: 1.0,
+        tag: 2,
+    };
+    let mut buf = Vec::new();
+    original.serialize_into(&mut buf);
+    assert_eq!(buf, original.serialize());
+
+    // A second call clears and refills without growing the allocation:
+    // the audio-thread path must not allocate once the buffer is warm.
+    let cap = buf.capacity();
+    original.serialize_into(&mut buf);
+    assert_eq!(buf.capacity(), cap);
+    assert_eq!(PrimitiveState::deserialize(&buf), Some(original.clone()));
+
+    // Leftover bytes from a larger prior payload are dropped, not appended.
+    buf.extend_from_slice(&[0xAA; 32]);
+    original.serialize_into(&mut buf);
+    assert_eq!(PrimitiveState::deserialize(&buf), Some(original));
 }

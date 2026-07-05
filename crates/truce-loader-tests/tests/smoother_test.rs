@@ -32,6 +32,8 @@ impl SmootherPlugin {
 }
 
 impl PluginLogic for SmootherPlugin {
+    type Params = SmootherParams;
+
     fn reset(&mut self, sr: f64, _bs: usize) {
         self.params.set_sample_rate(sr);
     }
@@ -51,7 +53,7 @@ impl PluginLogic for SmootherPlugin {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn truce::prelude::Editor> {
+    fn editor(_params: Arc<SmootherParams>) -> Box<dyn truce::prelude::Editor> {
         // DSP-only test; the editor slot is never exercised. Return
         // a stub so the trait requirement is satisfied.
         Box::new(NoEditor)

@@ -200,6 +200,8 @@ impl Eq {
 }
 
 impl PluginLogic for Eq {
+    type Params = EqParams;
+
     // A hypothetical pre-truce build of this EQ saved its sessions as
     // `EQS1` + ten little-endian f64s (low/mid/high x freq/gain/q,
     // then output) - translating that here keeps users' old sessions
@@ -348,7 +350,7 @@ impl PluginLogic for Eq {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<EqParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![
             // Reused-group params are addressed by their flattened id
             // (`base + local`), read off each band so the three `low` /
@@ -356,25 +358,25 @@ impl PluginLogic for Eq {
             section(
                 "LOW",
                 vec![
-                    knob(self.params.low.freq.id(), "Freq"),
-                    knob(self.params.low.gain.id(), "Gain"),
-                    knob(self.params.low.q.id(), "Q"),
+                    knob(params.low.freq.id(), "Freq"),
+                    knob(params.low.gain.id(), "Gain"),
+                    knob(params.low.q.id(), "Q"),
                 ],
             ),
             section(
                 "MID",
                 vec![
-                    knob(self.params.mid.freq.id(), "Freq"),
-                    knob(self.params.mid.gain.id(), "Gain"),
-                    knob(self.params.mid.q.id(), "Q"),
+                    knob(params.mid.freq.id(), "Freq"),
+                    knob(params.mid.gain.id(), "Gain"),
+                    knob(params.mid.q.id(), "Q"),
                 ],
             ),
             section(
                 "HIGH",
                 vec![
-                    knob(self.params.high.freq.id(), "Freq"),
-                    knob(self.params.high.gain.id(), "Gain"),
-                    knob(self.params.high.q.id(), "Q"),
+                    knob(params.high.freq.id(), "Freq"),
+                    knob(params.high.gain.id(), "Gain"),
+                    knob(params.high.q.id(), "Q"),
                 ],
             ),
             widgets(vec![knob(P::Output, "Output")]),
@@ -389,7 +391,7 @@ impl PluginLogic for Eq {
         // layout still reads as tight.
         .min_size((3, 3))
         .max_size((9, 8))
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

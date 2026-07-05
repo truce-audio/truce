@@ -128,6 +128,8 @@ impl Zoo {
 }
 
 impl PluginLogic for Zoo {
+    type Params = ZooParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -173,7 +175,7 @@ impl PluginLogic for Zoo {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<ZooParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![
             section(
                 "Knobs",
@@ -254,7 +256,7 @@ impl PluginLogic for Zoo {
         // 12 cols / 24 rows caps the stretch.
         .min_size((4, 6))
         .max_size((12, 24))
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

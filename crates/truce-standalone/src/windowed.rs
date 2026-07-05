@@ -84,17 +84,19 @@ where
     );
 
     let editor: Option<Box<dyn Editor>> = {
-        // Recover from a poisoned plugin mutex (audio thread panicked
-        // while holding the lock) instead of cascading the panic
-        // through the UI thread. The plugin instance itself may be
-        // in a degraded state but the editor handle is just a
-        // factory - recovering is enough to keep the standalone
-        // alive long enough for the user to save state and exit.
-        let mut plugin = audio_handles
-            .plugin
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        plugin.editor()
+        // The editor is built through the lock-free builder, not the
+        // plugin instance, so lock only long enough to grab the builder
+        // and param `Arc` then release before constructing. Recover from
+        // a poisoned plugin mutex (audio thread panicked while holding
+        // the lock) instead of cascading the panic through the UI thread.
+        let (build, params) = {
+            let plugin = audio_handles
+                .plugin
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (plugin.editor_builder(), plugin.params_arc())
+        };
+        build(params)
     };
     let Some(mut editor) = editor else {
         eprintln!("Plugin returned no editor - falling back to headless mode.");

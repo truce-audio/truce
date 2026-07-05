@@ -66,6 +66,8 @@ impl DryWet {
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for DryWet {
+    type Params = DryWetParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -122,7 +124,7 @@ impl PluginLogic for DryWet {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<DryWetParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Drive, "Drive").at(0, 0),
             knob(P::Mix, "Mix").at(0, 1),
@@ -131,7 +133,7 @@ impl PluginLogic for DryWet {
                 .rows(2),
         ])])
         .with_title("DRY/WET")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

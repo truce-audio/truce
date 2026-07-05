@@ -115,6 +115,8 @@ impl ZooEgui {
 }
 
 impl PluginLogic for ZooEgui {
+    type Params = ZooParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -157,8 +159,8 @@ impl PluginLogic for ZooEgui {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
-        EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), zoo_ui)
+    fn editor(params: Arc<ZooParams>) -> Box<dyn Editor> {
+        EguiEditor::new(params.clone(), (WINDOW_W, WINDOW_H), zoo_ui)
             .with_visuals(truce_egui::theme::dark())
             .with_font(JETBRAINS_MONO)
             .into_editor()

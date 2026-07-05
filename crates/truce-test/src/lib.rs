@@ -207,8 +207,8 @@ pub fn assert_state_round_trip<P: PluginExport>() {
 /// Panics if `Plugin::editor()` returns `None` or the editor's
 /// reported size has a zero dimension.
 pub fn assert_has_editor<P: PluginExport>() {
-    let mut plugin = P::create();
-    let editor = plugin.editor();
+    let plugin = P::create();
+    let editor = plugin.editor_builder()(plugin.params_arc());
     assert!(editor.is_some(), "Plugin::editor() returned None");
     let editor = editor.unwrap();
     let (w, h) = editor.size();
@@ -355,17 +355,17 @@ pub fn assert_bus_config_instrument<P: PluginExport>() {
 /// the first editor reports a zero dimension, or the size differs
 /// between consecutive `editor()` calls.
 pub fn assert_editor_lifecycle<P: PluginExport>() {
-    let mut plugin = P::create();
+    let plugin = P::create();
 
     // First creation
-    let editor1 = plugin.editor();
+    let editor1 = plugin.editor_builder()(plugin.params_arc());
     assert!(editor1.is_some(), "First editor() returned None");
     let (w1, h1) = editor1.as_ref().unwrap().size();
     assert!(w1 > 0 && h1 > 0, "First editor size is zero: {w1}x{h1}");
     drop(editor1);
 
     // Second creation after drop
-    let editor2 = plugin.editor();
+    let editor2 = plugin.editor_builder()(plugin.params_arc());
     assert!(
         editor2.is_some(),
         "Second editor() returned None after drop"
@@ -385,8 +385,8 @@ pub fn assert_editor_lifecycle<P: PluginExport>() {
 /// Panics if `editor()` returns `None` or the reported size differs
 /// across three back-to-back `size()` calls.
 pub fn assert_editor_size_consistent<P: PluginExport>() {
-    let mut plugin = P::create();
-    let editor = plugin.editor();
+    let plugin = P::create();
+    let editor = plugin.editor_builder()(plugin.params_arc());
     assert!(editor.is_some(), "editor() returned None");
     let editor = editor.unwrap();
     let (w1, h1) = editor.size();

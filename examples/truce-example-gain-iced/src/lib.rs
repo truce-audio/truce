@@ -135,6 +135,8 @@ impl GainIced {
 }
 
 impl PluginLogic for GainIced {
+    type Params = GainParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -171,8 +173,8 @@ impl PluginLogic for GainIced {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
-        IcedEditor::<GainParams, GainUi>::new(Arc::new(GainParams::new()), (WINDOW_W, WINDOW_H))
+    fn editor(params: Arc<GainParams>) -> Box<dyn Editor> {
+        IcedEditor::<GainParams, GainUi>::new(params, (WINDOW_W, WINDOW_H))
             .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
             .with_font(truce_font::JETBRAINS_MONO)
             // Header strip + content area; iced's existing

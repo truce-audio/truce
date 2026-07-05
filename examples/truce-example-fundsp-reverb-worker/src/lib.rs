@@ -285,6 +285,8 @@ impl Drop for FundspReverbWorker {
 }
 
 impl PluginLogic for FundspReverbWorker {
+    type Params = FundspReverbWorkerParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -358,7 +360,7 @@ impl PluginLogic for FundspReverbWorker {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<FundspReverbWorkerParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::LowCut, "Low Cut").at(0, 0),
             knob(P::HighCut, "High Cut").at(1, 0),
@@ -367,7 +369,7 @@ impl PluginLogic for FundspReverbWorker {
             meter(&[P::MeterL, P::MeterR], "Level").at(2, 0).rows(2),
         ])])
         .with_title("FUNDSP REVERB (WORKER)")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

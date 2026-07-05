@@ -1,4 +1,4 @@
-//! Shell-side integration: `HotShell<P, S>` and `HotEditor<P, S>`.
+//! Shell-side integration: the hot-reloadable `HotShell<P, S>`.
 //!
 //! `HotShell<P, S = f32>` implements truce-core's `Plugin` +
 //! `PluginExport` traits, delegating all logic to a
@@ -22,7 +22,6 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
-use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
@@ -31,13 +30,6 @@ use truce_params::Params;
 use truce_params::sample::Sample;
 
 use crate::loader::NativeLoader;
-
-macro_rules! hot_debug {
-    ($($arg:tt)*) => {
-        #[cfg(feature = "hot-debug")]
-        eprintln!($($arg)*);
-    };
-}
 
 /// How long a GUI / main-thread call into the loader (editor open,
 /// state save / load) waits before giving up and returning the
@@ -69,6 +61,11 @@ pub struct HotShell<P: Params, S: Sample = f32> {
     loader: Arc<Mutex<NativeLoader<S>>>,
     /// Meter values written by DSP, read by GUI.
     meters: Arc<truce_core::meters::MeterStore>,
+    /// Lock-free publish slot for `snapshot_into`-based state save.
+    snapshots: Arc<truce_core::snapshot::SnapshotSlot>,
+    /// Latches off if the loaded logic reports no snapshot before it ever
+    /// publishes one; a logic that has published stays subscribed.
+    try_snapshot: bool,
     sample_rate: f64,
     max_block_size: usize,
     /// Last `load_counter` value the audio path observed. When the
@@ -107,6 +104,8 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
             params,
             loader,
             meters: truce_core::meters::MeterStore::new(),
+            snapshots: truce_core::snapshot::SnapshotSlot::new(),
+            try_snapshot: true,
             sample_rate: 44100.0,
             max_block_size: 1024,
             last_seen_load_counter: initial_counter,
@@ -122,19 +121,28 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
         Arc::clone(&self.meters)
     }
 
-    /// Try to construct the loaded plugin's editor.
-    ///
-    /// Returns `None` if the loader mutex is held by the watcher thread
-    /// for longer than `GUI_LOCK_WAIT` - i.e., a hot-reload is in
-    /// flight. Hosts that retry editor creation across the host's UI
-    /// idle loop (CLAP, VST3, AU) pick up the editor on a later tick;
-    /// the alternative is a UI hang for the full reload window (codesign
-    /// + dlopen + canary verify ≈ a few hundred ms on a 5–20 MB dylib).
+    /// Shared snapshot slot for lock-free state save (see
+    /// `PluginExport::snapshot_slot`).
     #[must_use]
-    pub fn try_editor(&self) -> Option<Box<dyn Editor>> {
-        let loader = self.loader.try_lock_for(GUI_LOCK_WAIT)?;
-        let plugin = loader.plugin()?;
-        Some(plugin.editor())
+    pub fn snapshot_slot(&self) -> Arc<truce_core::snapshot::SnapshotSlot> {
+        Arc::clone(&self.snapshots)
+    }
+
+    /// A lock-free editor builder that constructs from the *currently
+    /// loaded* dylib (via its `truce_build_editor` symbol), so GUI edits
+    /// hot-reload - the host picks up the new editor on the next close+
+    /// open. The closure takes the shared params `Arc`, `try_lock_for`s
+    /// the loader (the audio thread only `try_lock`s it, so this never
+    /// stalls audio), and returns `None` during an in-flight reload -
+    /// the host retries editor creation on a later idle tick.
+    #[must_use]
+    pub fn editor_builder(&self) -> truce_core::editor::EditorBuilder<P> {
+        let loader = Arc::clone(&self.loader);
+        Box::new(move |params: Arc<P>| {
+            let params_ptr = Arc::as_ptr(&params).cast::<()>();
+            let guard = loader.try_lock_for(GUI_LOCK_WAIT)?;
+            guard.build_editor(params_ptr)
+        })
     }
 }
 
@@ -240,6 +248,8 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
 
         let status = plugin.process(buffer, events, &mut ctx);
 
+        crate::static_shell::publish_snapshot(&*plugin, &self.snapshots, &mut self.try_snapshot);
+
         // Refresh latency / tail caches so host-thread queries don't
         // have to take the loader lock (and don't dispatch through
         // `&PluginLogic` while audio holds `&mut PluginLogic`).
@@ -304,11 +314,6 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
              route migrate_state; load will be reported as failed"
         );
         None
-    }
-
-    fn editor(&mut self) -> Option<Box<dyn Editor>> {
-        hot_debug!("[truce-hot] editor() called");
-        self.try_editor()
     }
 
     fn latency(&self) -> u32 {

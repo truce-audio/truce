@@ -70,6 +70,8 @@ fn one_pole_a(cutoff: f64, sr: f64) -> f64 {
 }
 
 impl PluginLogic for CcFilter {
+    type Params = CcFilterParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
     }
@@ -112,13 +114,13 @@ impl PluginLogic for CcFilter {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<CcFilterParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Cutoff, "Cutoff"),
             knob(P::Cc, "CC"),
         ])])
         .with_title("CC FILTER")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

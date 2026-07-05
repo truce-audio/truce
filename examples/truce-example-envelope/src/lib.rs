@@ -72,6 +72,8 @@ fn level_to_cc(level: f32) -> u8 {
 }
 
 impl PluginLogic for Envelope {
+    type Params = EnvelopeParams;
+
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
     }
@@ -137,13 +139,13 @@ impl PluginLogic for Envelope {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<EnvelopeParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![
             knob(P::Cc, "CC"),
             knob(P::Release, "Release"),
         ])])
         .with_title("ENVELOPE")
-        .into_editor(&self.params)
+        .into_editor(&params)
     }
 }
 

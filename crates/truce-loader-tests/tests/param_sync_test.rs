@@ -32,6 +32,8 @@ impl TestPlugin {
 }
 
 impl PluginLogic for TestPlugin {
+    type Params = TestParams;
+
     fn reset(&mut self, sr: f64, _bs: usize) {
         self.params.set_sample_rate(sr);
     }
@@ -47,7 +49,7 @@ impl PluginLogic for TestPlugin {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn truce::prelude::Editor> {
+    fn editor(_params: Arc<TestParams>) -> Box<dyn truce::prelude::Editor> {
         // Param-sync test; the editor slot is never opened.
         Box::new(NoEditor)
     }

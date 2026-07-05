@@ -82,6 +82,14 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     ) -> ProcessStatus;
 
     fn save_state(&self) -> Vec<u8>;
+    /// Lock-free state-save opt-in. See [`PluginLogic::snapshot_into`].
+    /// Called on the audio thread each block when supported; the shell
+    /// publishes the result into a `SnapshotSlot` the host reads without
+    /// the plugin lock. Default `false`; the leaf bridge overrides it.
+    fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+        let _ = buf;
+        false
+    }
     /// Restore plugin-specific state. See [`PluginLogic::load_state`].
     ///
     /// # Errors
@@ -98,12 +106,29 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     fn state_changed(&mut self);
     fn latency(&self) -> u32;
     fn tail(&self) -> u32;
-    /// Construct the editor for this plugin. Required - there is no
-    /// auto-fallback. Layout-only plugins call
-    /// `truce_gui::default_editor(params, layout)` from here; custom-
-    /// renderer plugins construct their `EguiEditor` / `IcedEditor` /
-    /// `SlintEditor` / hand-rolled `Editor` directly.
-    fn editor(&self) -> Box<dyn Editor>;
+}
+
+/// Precision-keyed editor factory, bridged from the leaf traits.
+///
+/// `plugin!` / `export_static!` / `export_plugin!` build the editor from
+/// the concrete logic type without naming which leaf trait
+/// ([`PluginLogic`] vs [`PluginLogic64`]) it implements. Keyed on `S`
+/// only so the two per-leaf blanket impls don't overlap - the editor and
+/// param store are precision-independent.
+///
+/// This lives off [`PluginLogicCore`] on purpose: it carries an
+/// associated `Params` type and a receiverless `editor`, either of which
+/// would make `PluginLogicCore` non-object-safe and break the
+/// hot-reload loader's type-erased `Box<dyn PluginLogicCore<S>>`. Only
+/// concrete code (the shells' macros) ever names it, never `dyn`.
+pub trait PluginEditor<S: Sample> {
+    /// The plugin's parameter struct; mirrors the leaf's `Params`.
+    type Params: truce_params::Params;
+
+    /// Build the editor from the lock-free param store. Receiverless, so
+    /// the wrapper constructs it while the audio thread runs, without the
+    /// plugin lock.
+    fn editor(params: std::sync::Arc<Self::Params>) -> Box<dyn Editor>;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +150,11 @@ macro_rules! plugin_logic_leaf_trait {
     ($(#[$attr:meta])* $vis:vis trait $name:ident<sample = $sample:ty>) => {
         $(#[$attr])*
         $vis trait $name: Send + 'static {
+            /// The plugin's parameter struct (`#[derive(Params)]`). Named
+            /// here so the editor can be built from an `Arc<Self::Params>`
+            /// without borrowing the plugin - see [`Self::editor`].
+            type Params: $crate::__plugin_logic_deps::Params;
+
             /// Opt into zero-copy in-place I/O. When this returns `true`,
             /// the format wrapper skips its safety memcpy on host-aliased
             /// buffers and hands the plugin the raw shared memory through
@@ -168,15 +198,50 @@ macro_rules! plugin_logic_leaf_trait {
             ) -> $crate::__plugin_logic_deps::ProcessStatus;
 
             /// Serialize plugin-specific state (DSP state, not params -
-            /// those are saved automatically). Default: no extra state.
+            /// those are saved automatically). Default: delegates to
+            /// [`Self::snapshot_into`] (empty when neither is
+            /// overridden).
             ///
             /// Runs on a host or GUI thread while the audio thread is
             /// paused at a block boundary (the wrapper's plugin lock),
             /// so reading any field is safe - but an audio block that
             /// arrives mid-save waits for this to return. Keep it
             /// cheap: copy bytes out, don't compute or compress here.
+            /// To take this off the plugin lock entirely, override
+            /// [`Self::snapshot_into`] instead.
             fn save_state(&self) -> Vec<u8> {
-                Vec::new()
+                let mut buf = Vec::new();
+                let _ = self.snapshot_into(&mut buf);
+                buf
+            }
+
+            /// Opt into lock-free state save. Serialize the same bytes
+            /// [`Self::save_state`] would into `buf` (cleared first;
+            /// capacity is retained across calls so a steady state is
+            /// allocation-free).
+            ///
+            /// The return value is a *static capability*, not a
+            /// per-block flag: `true` means "this plugin publishes
+            /// snapshots", `false` means "it never does" (the default).
+            /// Once you return `true` you must return `true` for the
+            /// plugin's whole lifetime - if the custom state empties out,
+            /// clear `buf` and still return `true` (an empty blob), don't
+            /// return `false`. The shell latches the opt-in on the first
+            /// published block; a later `false` is a contract violation
+            /// that would otherwise leave the host reading a stale
+            /// snapshot forever.
+            ///
+            /// Called on the **audio thread** after each process block,
+            /// under the same real-time rules as `process` - bounded, no
+            /// unbounded allocation. The wrapper publishes the result
+            /// into a lock-free slot the host reads without ever taking
+            /// the plugin lock, so saving state while audio runs never
+            /// stalls the audio thread. Overriding this is the
+            /// preferred way to serialize custom state; the default
+            /// [`Self::save_state`] delegates here.
+            fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+                let _ = buf;
+                false
             }
 
             /// Restore plugin-specific state.
@@ -250,7 +315,17 @@ macro_rules! plugin_logic_leaf_trait {
             /// `IcedEditor` / `SlintEditor` / hand-rolled `Editor`
             /// here. The choice of renderer crate the plugin's
             /// `Cargo.toml` pulls IS the choice of editor.
-            fn editor(&self) -> Box<dyn $crate::__plugin_logic_deps::Editor>;
+            ///
+            /// An associated function, not a method: it receives the
+            /// lock-free `Arc<Self::Params>` store the wrapper already
+            /// holds, so the host can open the editor while audio is
+            /// running without ever taking the plugin lock. Editors bind
+            /// only to the param store (plus meters / transport, all
+            /// lock-free); custom DSP state is read at runtime through
+            /// the editor bridge, not at construction.
+            fn editor(
+                params: ::std::sync::Arc<Self::Params>,
+            ) -> Box<dyn $crate::__plugin_logic_deps::Editor>;
         }
     };
 }
@@ -266,6 +341,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
     pub use truce_core::state::{ForeignState, MigratedState, StateLoadError};
+    pub use truce_params::Params;
 }
 
 plugin_logic_leaf_trait! {
@@ -282,9 +358,31 @@ plugin_logic_leaf_trait! {
     /// Required: [`Self::reset`], [`Self::process`], [`Self::editor`].
     /// Everything else has a default. The editor is constructed
     /// explicitly - layout-only plugins typically call
-    /// `truce_gui::default_editor(self.params.clone(), self.layout())`
-    /// (where `layout()` is a plain inherent method on the plugin
-    /// struct, not part of the trait).
+    /// `truce_gui::default_editor(params, layout())` (where `layout()`
+    /// is a plain inherent method on the plugin struct, not part of the
+    /// trait).
+    ///
+    /// ## Params vs. DSP state
+    ///
+    /// The struct you implement this on holds two different kinds of
+    /// data, and the method receivers reflect the split:
+    ///
+    /// - **Params** - the user-facing values in your `#[derive(Params)]`
+    ///   struct, held as `Arc<Self::Params>`. Atomic-backed and `Sync`,
+    ///   shared lock-free with the host and the editor.
+    /// - **DSP state** - everything else on the struct: filter memory,
+    ///   phase accumulators, voice buffers, delay lines. Plain and
+    ///   non-atomic, mutated every sample, exclusive to the audio thread.
+    ///
+    /// `process` / `reset` / `load_state` take `&mut self` because they
+    /// mutate DSP state; `save_state` / `snapshot_into` take `&self`
+    /// because they read it. `editor` takes neither - it is an
+    /// associated function over the param store, because a GUI is a
+    /// *view* that binds only params (plus lock-free meters / transport)
+    /// and never touches DSP state, so it can be built without the
+    /// plugin lock. DSP state can't move into params: making per-sample
+    /// filter memory atomic-shared would put a synchronized access on
+    /// the hottest path, and it isn't a "parameter" anyway.
     pub trait PluginLogic<sample = f32>
 }
 
@@ -348,6 +446,10 @@ macro_rules! plugin_logic_bridge {
                 <Self as $leaf>::save_state(self)
             }
 
+            fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+                <Self as $leaf>::snapshot_into(self, buf)
+            }
+
             fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
                 <Self as $leaf>::load_state(self, data)
             }
@@ -370,9 +472,13 @@ macro_rules! plugin_logic_bridge {
             fn tail(&self) -> u32 {
                 <Self as $leaf>::tail(self)
             }
+        }
 
-            fn editor(&self) -> Box<dyn Editor> {
-                <Self as $leaf>::editor(self)
+        impl<T: $leaf> PluginEditor<$sample> for T {
+            type Params = <T as $leaf>::Params;
+
+            fn editor(params: std::sync::Arc<Self::Params>) -> Box<dyn Editor> {
+                <Self as $leaf>::editor(params)
             }
         }
     };
