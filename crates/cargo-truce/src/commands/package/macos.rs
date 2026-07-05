@@ -11,6 +11,7 @@ use super::stage::{
 };
 use crate::commands::build_dylibs::BuildFormat;
 use crate::commands::install::presets;
+use crate::preset_codec::xml_escape;
 use crate::install_scope::PkgScope;
 use crate::{
     CLAP_EXPORTS, Config, MacArch, PluginDef, Res, VST2_EXPORTS, VST3_EXPORTS,
@@ -513,7 +514,7 @@ fn generate_suite_distribution_xml(
         let _ = writeln!(
             choices,
             "    <choice id=\"{outer_id}\" title=\"{plugin_name}\" description=\"All formats for {plugin_name}.\"/>",
-            plugin_name = plugin.name,
+            plugin_name = xml_escape(&plugin.name),
         );
 
         for fmt in &member_formats {
@@ -594,7 +595,7 @@ fn generate_suite_distribution_xml(
         }
     };
 
-    let title = &suite.def.name;
+    let title = xml_escape(&suite.def.name);
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">

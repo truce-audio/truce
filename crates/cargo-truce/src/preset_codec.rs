@@ -227,10 +227,16 @@ pub(crate) fn aupreset_xml(
     )
 }
 
+/// Escape a string for XML text or a double-quoted attribute value.
+/// `&` must go first so the entities it emits aren't re-escaped.
+/// `"` / `'` are needed only inside attributes but are harmless in
+/// element text, so one helper is safe for both contexts.
 pub(crate) fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 /// Extract name + envelope from an `.aupreset`. Goes through the

@@ -4,6 +4,7 @@
 #[cfg(target_os = "macos")]
 use super::PkgFormat;
 use crate::commands::install::presets;
+use crate::preset_codec::xml_escape;
 #[cfg(target_os = "macos")]
 use crate::install_scope::PkgScope;
 #[cfg(target_os = "macos")]
@@ -227,9 +228,10 @@ pub(crate) fn stage_clap(
     <string>1</string>
 </dict>
 </plist>"#,
-            display_name = p.name,
+            display_name = xml_escape(&p.name),
             bundle_id = p.bundle_id,
-            vendor_id = config.vendor.id,
+            vendor_id = xml_escape(&config.vendor.id),
+            exec_name = xml_escape(&exec_name),
         );
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
         // Presets are part of the bundle's sealed Resources - emit
@@ -316,9 +318,10 @@ pub(crate) fn stage_vst3(
     <string>1</string>
 </dict>
 </plist>"#,
-            display_name = p.name,
+            display_name = xml_escape(&p.name),
             bundle_id = p.bundle_id,
-            vendor_id = config.vendor.id,
+            vendor_id = xml_escape(&config.vendor.id),
+            exec_name = xml_escape(&exec_name),
         );
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
         codesign_bundle(
@@ -431,7 +434,7 @@ pub(crate) fn stage_vst2(
     <key>CFBundleExecutable</key>
     <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.truce.{bundle_id}.vst2</string>
+    <string>{vendor_id}.{bundle_id}.vst2</string>
     <key>CFBundleName</key>
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
@@ -440,8 +443,10 @@ pub(crate) fn stage_vst2(
     <string>1</string>
 </dict>
 </plist>"#,
-            display_name = p.name,
+            display_name = xml_escape(&p.name),
             bundle_id = p.bundle_id,
+            vendor_id = xml_escape(&config.vendor.id),
+            exec_name = xml_escape(&exec_name),
         );
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
         fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
@@ -511,14 +516,15 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     </array>
 </dict>
 </plist>"#,
-        display_name = p.name,
+        display_name = xml_escape(&p.name),
         bundle_id = p.bundle_id,
-        vendor_id = config.vendor.id,
-        vendor = config.vendor.name,
-        au_type = p.resolved_au_type(),
-        au_subtype = p.resolved_fourcc(),
-        au_mfr = config.vendor.au_manufacturer,
-        au_tag = p.au_tag,
+        vendor_id = xml_escape(&config.vendor.id),
+        vendor = xml_escape(&config.vendor.name),
+        au_type = xml_escape(p.resolved_au_type()),
+        au_subtype = xml_escape(p.resolved_fourcc()),
+        au_mfr = xml_escape(&config.vendor.au_manufacturer),
+        au_tag = xml_escape(&p.au_tag),
+        exec_name = xml_escape(&exec_name),
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     // The shim's kAudioUnitProperty_FactoryPresets handler enumerates
@@ -764,10 +770,11 @@ pub(crate) fn write_standalone_info_plist(
 </dict>
 </plist>
 "#,
-        name = plugin.name,
-        vendor_id = vendor.id,
+        name = xml_escape(&plugin.name),
+        vendor_id = xml_escape(&vendor.id),
         bundle_id = plugin.bundle_id,
-        exe = bin_stem,
+        exe = xml_escape(bin_stem),
+        mic_usage = xml_escape(&mic_usage),
     );
     fs::write(bundle_root.join("Contents/Info.plist"), plist)?;
     Ok(())
@@ -917,6 +924,9 @@ pub(crate) fn generate_distribution_xml(
         }
     };
 
+    // Escape only now: the loop above used the raw name for `.pkg`
+    // component filenames; the `<title>` needs it XML-safe.
+    let plugin_name = xml_escape(plugin_name);
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
