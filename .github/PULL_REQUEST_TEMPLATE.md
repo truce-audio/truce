@@ -4,23 +4,22 @@
 
 ## Userspace impact
 
-<!-- "We do not break userspace." Does this touch the state
-envelope, id derivation (bundle_id / clap_id / vst3_id / envelope
-hash), preset containers, the truce.toml schema, parameter ids, or
-the MIDI wire? CI only catches the compile-time slice, so declare
-wire-format and behavioral changes loudly. Breaking changes wait
-for a major version and need a migration path in the changelog. -->
+<!-- Does this touch the state envelope, id derivation (bundle_id /
+clap_id / vst3_id / envelope hash), preset containers, the
+truce.toml schema, parameter ids, or the MIDI wire? CI only catches
+the compile-time slice, so declare wire-format and behavioral
+changes loudly. Breaking changes wait for a major version and need
+a migration path in the changelog. -->
 
 - [ ] No userspace impact
 - [ ] Userspace impact, described below (with migration path if breaking)
 
 ## Format coverage
 
-<!-- "All or nothing." A new capability lands in every format that
-can carry it, in the same change: same scaling, ranges, and edge
-cases, shared semantics in truce-core helpers. For real format
-gaps, note whether each is bridged or documented + logged as a
-skip. -->
+<!-- A new capability lands in every format that can carry it, in
+the same change: same scaling, ranges, and edge cases, shared
+semantics in truce-core helpers. For real format gaps, note whether
+each is bridged or documented + logged as a skip. -->
 
 | Format | Carried / bridged / skipped (why) |
 |--------|-----------------------------------|
@@ -37,8 +36,8 @@ a design smell: raise it here. Not applicable for pure fixes. -->
 
 <!-- Required on every PR. Specs define correct behavior, but
 host-specific behavior is unknown and hostile - list what you
-loaded in which hosts and what you verified. "No host-facing
-changes" is a valid entry when true.
+loaded in which hosts and what you verified. No host-facing
+changes is a valid entry when true.
 
 Host-dependent changes (window embedding, resize, focus, DPI,
 editor lifecycle, MIDI routing, state/preset recall, transport)
