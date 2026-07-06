@@ -28,6 +28,9 @@ pub mod __reexport {
     #[cfg(feature = "shell")]
     pub use truce_loader::shell::HotShell;
 
+    #[cfg(feature = "rt-paranoid")]
+    pub use truce_core::rt::RtCheckAlloc;
+
     /// Hot-reload sidecar path resolver. Routed through
     /// `truce_core::shell_sidecar` so plugin crates that expand
     /// `truce::plugin!` only need `truce` in their dependency set;
@@ -37,6 +40,45 @@ pub mod __reexport {
     pub fn shell_sidecar_path(crate_name: &str) -> Option<std::path::PathBuf> {
         truce_core::shell_sidecar::sidecar_path(crate_name)
     }
+}
+
+/// Install the paranoid real-time allocation checker's global allocator.
+///
+/// Call once at your crate (or test binary) root:
+///
+/// ```ignore
+/// truce::enable_rt_paranoid!();
+/// ```
+///
+/// The call is unconditional; the `truce/rt-paranoid` feature does the
+/// gating. With the feature off this expands to nothing (no allocator is
+/// installed, so it never collides with a custom `#[global_allocator]`),
+/// and the check in `process` compiles away. With it on, allocations the
+/// audio thread makes inside `process` are flagged. `TRUCE_RT_PARANOID`
+/// selects the reaction: `count` (default, log after the block), `panic`
+/// (fail the block - use in tests), `trap` (abort at the allocation).
+///
+/// A global allocator must be declared in the final artifact, which a
+/// library cannot do for you - hence a macro you place, rather than
+/// automatic emission from `truce::plugin!` (which would also clash with
+/// any allocator you set yourself).
+#[cfg(feature = "rt-paranoid")]
+#[macro_export]
+macro_rules! enable_rt_paranoid {
+    () => {
+        #[global_allocator]
+        static __TRUCE_RT_ALLOC: $crate::__reexport::RtCheckAlloc =
+            $crate::__reexport::RtCheckAlloc::new();
+    };
+}
+
+/// No-op form: the `rt-paranoid` feature is off, so installing the
+/// checking allocator would be wrong (it must not replace a plugin's own
+/// `#[global_allocator]`). See the feature-on variant for docs.
+#[cfg(not(feature = "rt-paranoid"))]
+#[macro_export]
+macro_rules! enable_rt_paranoid {
+    () => {};
 }
 
 // Single implementation module; the four preludes are wafer-thin
