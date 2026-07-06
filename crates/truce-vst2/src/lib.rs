@@ -558,8 +558,10 @@ pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
         let ctx = cb_create::<P>();
         cb_reset::<P>(ctx, 48_000.0, FRAMES);
 
-        let in_left = vec![0f32; frames];
-        let in_right = vec![0f32; frames];
+        // Non-zero input so the sanity check below can confirm the block
+        // actually processed (a no-op harness would leave zeros).
+        let in_left = vec![0.5f32; frames];
+        let in_right = vec![0.5f32; frames];
         let mut out_left = vec![0f32; frames];
         let mut out_right = vec![0f32; frames];
         let in_ptrs: [*const f32; 2] = [in_left.as_ptr(), in_right.as_ptr()];
@@ -584,6 +586,10 @@ pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
             count = n;
         }
 
+        assert!(
+            out_left.iter().any(|s| s.abs() > 0.0),
+            "vst2 smoke: process did not run (output stayed zero)"
+        );
         cb_destroy::<P>(ctx);
         count
     }

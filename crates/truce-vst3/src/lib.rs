@@ -28,7 +28,7 @@ use truce_core::midi::{
     per_note_bend_from_semitones, per_note_bend_semitones, pitch_bend_to_bytes,
 };
 use truce_core::plugin::PluginRuntime;
-use truce_core::rt::RtSection;
+use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::wrapper::{
@@ -756,6 +756,64 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 }
             }
         }
+    }
+}
+
+/// Test-only smoke helper for the `rt-paranoid` CI gate: drives a few
+/// real process blocks through this wrapper's per-block glue via the
+/// shared `process_block` body (with null events / transport / param
+/// changes and small stereo buffers), returning the steady-state
+/// audio-thread allocation count (0 = clean). Vacuously 0 unless the
+/// `rt-paranoid` feature installs the checking allocator. Not public API.
+#[doc(hidden)]
+#[must_use]
+pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
+    const FRAMES: u32 = 512;
+    const CH: u32 = 2;
+    let frames = FRAMES as usize;
+    // SAFETY: constructs, drives, and destroys its own instance; all
+    // pointers below outlive each `process_block` call, buffers sized to
+    // `FRAMES`, and the event / transport / param pointers are null
+    // (which `process_block` tolerates).
+    unsafe {
+        let ctx = cb_create::<P>();
+        cb_reset::<P>(ctx, 48_000.0, FRAMES);
+
+        // Non-zero input so the sanity check below can confirm the block
+        // actually processed (a no-op harness would leave zeros).
+        let in_left = vec![0.5f32; frames];
+        let in_right = vec![0.5f32; frames];
+        let mut out_left = vec![0f32; frames];
+        let mut out_right = vec![0f32; frames];
+        let in_ptrs: [*const f32; 2] = [in_left.as_ptr(), in_right.as_ptr()];
+        let mut out_ptrs: [*mut f32; 2] = [out_left.as_mut_ptr(), out_right.as_mut_ptr()];
+
+        let mut count = 0;
+        for _ in 0..3 {
+            let ((), n) = audit(|| {
+                process_block::<P, f32>(
+                    ctx,
+                    in_ptrs.as_ptr(),
+                    out_ptrs.as_mut_ptr(),
+                    CH,
+                    CH,
+                    FRAMES,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                );
+            });
+            count = n;
+        }
+
+        assert!(
+            out_left.iter().any(|s| s.abs() > 0.0),
+            "vst3 smoke: process did not run (output stayed zero)"
+        );
+        cb_destroy::<P>(ctx);
+        count
     }
 }
 

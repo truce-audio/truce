@@ -31,6 +31,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use clap_sys::audio_buffer::clap_audio_buffer;
 use clap_sys::events::{
     CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_MIDI_SYSEX,
     CLAP_EVENT_MIDI2, CLAP_EVENT_NOTE_CHOKE, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF,
@@ -106,7 +107,7 @@ use truce_core::midi::{
 use truce_core::plugin::PluginRuntime;
 use truce_core::presets::parse_preset_file;
 use truce_core::process::ProcessStatus;
-use truce_core::rt::RtSection;
+use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::state::PluginFormat;
@@ -1970,6 +1971,145 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             ProcessStatus::KeepAlive => CLAP_PROCESS_CONTINUE_IF_NOT_QUIET,
         }
     })
+}
+
+/// Test-only smoke helper for the `rt-paranoid` CI gate: drives a few
+/// real CLAP `process` callbacks through this wrapper's per-block glue
+/// (event conversion, transport, `process_chunked`, output narrow,
+/// snapshot publish) via the full plugin vtable, and returns the
+/// audio-thread allocation count of a steady-state block (0 = clean).
+/// Small stereo buffers, no input events. Vacuously 0 unless the
+/// `rt-paranoid` feature installs the checking allocator. Not public API.
+#[doc(hidden)]
+#[must_use]
+pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
+    const FRAMES: u32 = 512;
+    const CHANNELS: u32 = 2;
+
+    // `clap_plugin_init` queries the params extension through the host's
+    // `get_extension`, so that pointer must be a live stub; the rest of
+    // the host callbacks go unused on this path.
+    unsafe extern "C" fn no_extension(
+        _host: *const clap_host,
+        _id: *const c_char,
+    ) -> *const c_void {
+        ptr::null()
+    }
+    // No-op output-event sink. The wrapper null-checks `out_events` and
+    // only calls `try_push` when the plugin emits events (this passthrough
+    // does not), but a live sink keeps the harness honest if that changes.
+    unsafe extern "C" fn no_push(
+        _list: *const clap_output_events,
+        _event: *const clap_event_header,
+    ) -> bool {
+        true
+    }
+
+    let frames = FRAMES as usize;
+    // Leaked so their addresses outlive the plugin instance below.
+    let descriptor: &'static clap_plugin_descriptor = Box::leak(Box::new(clap_plugin_descriptor {
+        clap_version: CLAP_VERSION,
+        id: ptr::null(),
+        name: ptr::null(),
+        vendor: ptr::null(),
+        url: ptr::null(),
+        manual_url: ptr::null(),
+        support_url: ptr::null(),
+        version: ptr::null(),
+        description: ptr::null(),
+        features: ptr::null(),
+    }));
+    let host: &'static clap_host = Box::leak(Box::new(clap_host {
+        clap_version: CLAP_VERSION,
+        host_data: ptr::null_mut(),
+        name: ptr::null(),
+        vendor: ptr::null(),
+        url: ptr::null(),
+        version: ptr::null(),
+        get_extension: Some(no_extension),
+        request_restart: None,
+        request_process: None,
+        request_callback: None,
+    }));
+
+    // SAFETY: constructs, drives, and destroys its own instance through
+    // the plugin vtable. Every pointer handed to `process` (audio
+    // buffers, the channel-pointer arrays, the output-event sink)
+    // outlives each call, and the buffers are sized to `FRAMES`.
+    unsafe {
+        let plugin = create_plugin_instance::<P>(descriptor, host);
+        let vtable = &*plugin;
+        (vtable.init.unwrap())(plugin);
+        (vtable.activate.unwrap())(plugin, 48_000.0, 1, FRAMES);
+        (vtable.start_processing.unwrap())(plugin);
+
+        // Non-zero constant input so a working passthrough-times-gain
+        // renders non-zero output; the assert below fails loudly if a
+        // regressed harness never actually ran `process`. CLAP's
+        // `clap_audio_buffer::data32` is `*mut *mut f32`, so the input
+        // storage is mutable too even though the wrapper only reads it.
+        let mut in_left = vec![0.5f32; frames];
+        let mut in_right = vec![0.5f32; frames];
+        let mut out_left = vec![0f32; frames];
+        let mut out_right = vec![0f32; frames];
+        let mut in_ptrs: [*mut f32; 2] = [in_left.as_mut_ptr(), in_right.as_mut_ptr()];
+        let mut out_ptrs: [*mut f32; 2] = [out_left.as_mut_ptr(), out_right.as_mut_ptr()];
+
+        let input_bus = clap_audio_buffer {
+            data32: in_ptrs.as_mut_ptr(),
+            data64: ptr::null_mut(),
+            channel_count: CHANNELS,
+            latency: 0,
+            constant_mask: 0,
+        };
+        let mut output_bus = clap_audio_buffer {
+            data32: out_ptrs.as_mut_ptr(),
+            data64: ptr::null_mut(),
+            channel_count: CHANNELS,
+            latency: 0,
+            constant_mask: 0,
+        };
+        let sink = clap_output_events {
+            ctx: ptr::null_mut(),
+            try_push: Some(no_push),
+        };
+        let process = clap_process {
+            steady_time: 0,
+            frames_count: FRAMES,
+            transport: ptr::null(),
+            audio_inputs: &raw const input_bus,
+            audio_outputs: &raw mut output_bus,
+            audio_inputs_count: 1,
+            audio_outputs_count: 1,
+            in_events: ptr::null(),
+            out_events: &raw const sink,
+        };
+
+        let mut count = 0;
+        // A few blocks so any legitimate first-block warmup is behind us;
+        // the last block is the steady-state measurement.
+        for _ in 0..3 {
+            let ((), n) = audit(|| {
+                (vtable.process.unwrap())(plugin, &raw const process);
+            });
+            count = n;
+        }
+
+        (vtable.stop_processing.unwrap())(plugin);
+        (vtable.deactivate.unwrap())(plugin);
+        (vtable.destroy.unwrap())(plugin);
+
+        // A no-op harness (process never ran) leaves the output silent;
+        // a working passthrough-times-gain does not.
+        debug_assert!(
+            out_left
+                .iter()
+                .chain(out_right.iter())
+                .any(|s| s.abs() > 0.0),
+            "CLAP smoke harness produced silent output - process did not run"
+        );
+        count
+    }
 }
 
 // ---------------------------------------------------------------------------

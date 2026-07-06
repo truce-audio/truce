@@ -27,7 +27,7 @@ aax = ["dep:truce-aax"]
 au = ["dep:truce-au"]
 standalone = ["dep:truce-standalone"]
 shell = ["truce/shell"]
-rt-paranoid = ["truce/rt-paranoid"]
+rt-paranoid = ["truce/rt-paranoid", "lv2"]
 
 [dependencies]
 truce = { workspace = true }

@@ -160,6 +160,51 @@ mod tests {
         );
     }
 
+    /// The CLAP wrapper's per-block glue (host-event conversion,
+    /// transport, `process`, output narrow, snapshot publish) is
+    /// allocation-free on the audio thread. Drives the real `process`
+    /// vtable callback under the checker, not just the plugin.
+    /// Compiled only with `clap` on (a default feature).
+    #[cfg(feature = "clap")]
+    #[test]
+    fn clap_wrapper_glue_is_allocation_free() {
+        assert_eq!(
+            truce_clap::rt_paranoid_smoke::<Plugin>(),
+            0,
+            "the CLAP wrapper's per-block glue must not allocate on the audio thread"
+        );
+    }
+
+    #[cfg(feature = "vst3")]
+    #[test]
+    fn vst3_wrapper_glue_is_allocation_free() {
+        assert_eq!(
+            truce_vst3::rt_paranoid_smoke::<Plugin>(),
+            0,
+            "the VST3 wrapper's per-block glue must not allocate on the audio thread"
+        );
+    }
+
+    #[cfg(feature = "au")]
+    #[test]
+    fn au_wrapper_glue_is_allocation_free() {
+        assert_eq!(
+            truce_au::rt_paranoid_smoke::<Plugin>(),
+            0,
+            "the AU wrapper's per-block glue must not allocate on the audio thread"
+        );
+    }
+
+    #[cfg(feature = "aax")]
+    #[test]
+    fn aax_wrapper_glue_is_allocation_free() {
+        assert_eq!(
+            truce_aax::rt_paranoid_smoke::<Plugin>(),
+            0,
+            "the AAX wrapper's per-block glue must not allocate on the audio thread"
+        );
+    }
+
     #[test]
     fn info_is_valid() {
         truce_test::assert_valid_info::<Plugin>();

@@ -32,6 +32,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 use std::sync::Arc;
 
+use truce_core::Float;
 use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::len_u32;
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
@@ -39,14 +40,14 @@ use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, Trans
 use truce_core::export::PluginExport;
 use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
-use truce_core::rt::RtSection;
+use truce_core::rt::{RtSection, audit};
 use truce_core::state::shared_plugin_state_hash;
 use truce_core::wrapper::{
     first_bus_layout, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
 };
 use truce_params::{ParamInfo, Params};
 
-use crate::atom::AtomSequenceReader;
+use crate::atom::{Atom, AtomSequenceBody, AtomSequenceReader};
 use crate::urid::{Urid, UridMap};
 
 // ---------------------------------------------------------------------------
@@ -683,6 +684,183 @@ pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) {
         if !handle.is_null() {
             drop(Box::from_raw(handle));
         }
+    }
+}
+
+/// A zero-event `LV2_Atom_Sequence`: just the two fixed headers, with
+/// `atom.size` set to the body-header length so a reader walks zero
+/// events. Used to wire an inert atom input port in the smoke helper.
+///
+/// The host hands LV2 plugins byte buffers that are always at least
+/// atom-aligned; the global allocator's 8-byte minimum covers the
+/// `AtomSequence` header written here.
+#[allow(clippy::cast_ptr_alignment)]
+fn new_empty_atom_sequence() -> Vec<u8> {
+    let mut buf = vec![0u8; std::mem::size_of::<AtomSequence>()];
+    // SAFETY: `buf` is exactly one `AtomSequence` wide and allocator-aligned.
+    unsafe {
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+        (*seq).atom.size = len_u32(std::mem::size_of::<AtomSequenceBody>());
+        (*seq).atom.type_ = 0;
+        (*seq).body.unit = 0;
+        (*seq).body.pad = 0;
+    }
+    buf
+}
+
+/// An output atom buffer whose outer `atom.size` advertises the writable
+/// capacity - the convention an LV2 host uses when handing a plugin an
+/// output sequence port.
+///
+/// The global allocator's 8-byte minimum covers the `AtomSequence`
+/// header written here.
+#[allow(clippy::cast_ptr_alignment)]
+fn new_output_atom_buffer(bytes: usize) -> Vec<u8> {
+    let mut buf = vec![0u8; bytes];
+    // SAFETY: every caller passes `bytes >= size_of::<AtomSequence>()`.
+    unsafe {
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+        (*seq).atom.size = len_u32(bytes - std::mem::size_of::<Atom>());
+    }
+    buf
+}
+
+/// Test-only smoke helper for the `rt-paranoid` CI gate: drives a few
+/// real `run()` blocks through this wrapper's per-block glue (control-port
+/// change detection, atom decode, `process_chunked`, meter copy-out, MIDI
+/// + notify atom writes) and returns the audio-thread allocation count of
+/// a steady-state block (0 = clean). Wires stereo audio in/out, an empty
+/// atom input sequence, and every control port at its default value.
+/// Vacuously 0 unless the `rt-paranoid` feature installs the checking
+/// allocator. Not public API.
+#[doc(hidden)]
+#[must_use]
+pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
+    const FRAMES: u32 = 512;
+    const ATOM_BUF_BYTES: usize = 4096;
+    const PROBE_INPUT: f32 = 0.5;
+    let frames = FRAMES as usize;
+    // SAFETY: constructs, wires, drives, and destroys its own instance.
+    // Every buffer below outlives the `run()` calls and is sized to
+    // `FRAMES` (audio) or `ATOM_BUF_BYTES` (atom ports).
+    unsafe {
+        let handle = instantiate::<P>(48_000.0, ptr::null(), ptr::null());
+        assert!(!handle.is_null(), "LV2 instantiate returned null");
+        let layout = (*handle).layout.clone();
+
+        // Audio: distinct input / output buffers per channel (never
+        // aliased, so no in-place copy path). Inputs carry a non-zero
+        // constant so the pass-through sanity check below can prove
+        // `run()` actually processed the block.
+        let audio_in_count = layout.num_audio_in as usize;
+        let audio_out_count = layout.num_audio_out as usize;
+        let mut input_chans: Vec<Vec<f32>> = (0..audio_in_count)
+            .map(|_| vec![PROBE_INPUT; frames])
+            .collect();
+        let mut output_chans: Vec<Vec<f32>> =
+            (0..audio_out_count).map(|_| vec![0.0f32; frames]).collect();
+
+        // One finite control value per parameter (its default plain
+        // value). A stable value means only the first block emits a
+        // ParamChange, so the measured block is steady-state.
+        let mut control_values: Vec<f32> = (*handle)
+            .param_infos
+            .iter()
+            .map(|pi| f32::from_f64(pi.default_plain))
+            .collect();
+
+        // One output slot per meter port.
+        let mut meter_values: Vec<f32> = vec![0.0f32; layout.num_meters as usize];
+
+        // Empty atom input sequences (header sized for zero events).
+        let mut atom_inputs: Vec<Vec<u8>> = (0..layout.num_atom_in() as usize)
+            .map(|_| new_empty_atom_sequence())
+            .collect();
+
+        // MIDI-output + notify-output sequence buffers, capacity declared
+        // in the outer atom header the way an LV2 host hands them over.
+        let mut midi_outputs: Vec<Vec<u8>> = (0..layout.midi_out_ports as usize)
+            .map(|_| new_output_atom_buffer(ATOM_BUF_BYTES))
+            .collect();
+        let mut notify_output = new_output_atom_buffer(ATOM_BUF_BYTES);
+
+        // Wire every port. The index arithmetic mirrors `connect_port`'s
+        // range dispatch, walking the layout front to back.
+        for (i, chan) in input_chans.iter_mut().enumerate() {
+            connect_port::<P>(
+                handle,
+                layout.audio_in_start() + len_u32(i),
+                chan.as_mut_ptr().cast(),
+            );
+        }
+        for (i, chan) in output_chans.iter_mut().enumerate() {
+            connect_port::<P>(
+                handle,
+                layout.audio_out_start() + len_u32(i),
+                chan.as_mut_ptr().cast(),
+            );
+        }
+        for (i, value) in control_values.iter_mut().enumerate() {
+            connect_port::<P>(
+                handle,
+                layout.control_start() + len_u32(i),
+                ptr::from_mut(value).cast(),
+            );
+        }
+        for (i, value) in meter_values.iter_mut().enumerate() {
+            connect_port::<P>(
+                handle,
+                layout.meter_start() + len_u32(i),
+                ptr::from_mut(value).cast(),
+            );
+        }
+        for (i, seq) in atom_inputs.iter_mut().enumerate() {
+            connect_port::<P>(
+                handle,
+                layout.atom_in_start() + len_u32(i),
+                seq.as_mut_ptr().cast(),
+            );
+        }
+        for (i, seq) in midi_outputs.iter_mut().enumerate() {
+            connect_port::<P>(
+                handle,
+                layout.midi_out_start() + len_u32(i),
+                seq.as_mut_ptr().cast(),
+            );
+        }
+        connect_port::<P>(
+            handle,
+            layout.notify_out_port(),
+            notify_output.as_mut_ptr().cast(),
+        );
+
+        activate::<P>(handle);
+
+        let mut count = 0;
+        // A few blocks so the first-block control-port change emission is
+        // behind us; the last block is the steady-state measurement.
+        for _ in 0..3 {
+            let ((), n) = audit(|| {
+                run::<P>(handle, FRAMES);
+            });
+            count = n;
+        }
+
+        // Pass-through sanity: an effect carries non-zero input to
+        // non-zero output, so a harness that never actually ran
+        // `process` would leave the outputs silent and trip this - a
+        // guard against a false "0 allocations" pass.
+        let processed = output_chans
+            .iter()
+            .any(|chan| chan.iter().any(|&s| s != 0.0));
+        assert!(
+            processed,
+            "LV2 run() produced only silence - the harness never processed audio"
+        );
+
+        deactivate::<P>(handle);
+        cleanup::<P>(handle);
+        count
     }
 }
 
