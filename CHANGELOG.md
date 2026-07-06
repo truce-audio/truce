@@ -2,9 +2,10 @@
 
 Notable changes per release.
 
-## 3.0.1
+## 3.1.0
 
 - New opt-in `rt-paranoid` feature: a development-time checker that flags any allocation your DSP makes on the audio thread inside `process`, with `truce_test::assert_no_audio_alloc` helpers to gate it in tests. Off and zero-cost by default, and `cargo truce new` wires it into fresh plugins.
+- Bug fixes surfaced by the checker: every plugin's first audio block is now allocation-free on macOS (the lock-free state-save slot initializes its lock at load, not on the first `process`); a snapshot-publishing plugin can no longer be frozen on a stale save by a stray "no snapshot" block; `#[derive(State)]` gained an allocation-free `serialize_into` for `snapshot_into` bodies; and the arpeggio example no longer rebuilds its note sequence with a fresh allocation every block.
 
 ## 3.0.0
 
