@@ -23,7 +23,7 @@ use truce_core::info::{PluginInfo, resolve_name_override};
 use truce_core::meters::MeterStore;
 use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
 use truce_core::plugin::PluginRuntime;
-use truce_core::rt::RtSection;
+use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::wrapper::{
@@ -535,6 +535,57 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 }
             }
         }
+    }
+}
+
+/// Test-only smoke helper for the `rt-paranoid` CI gate: drives a few
+/// real process blocks through this wrapper's per-block glue (event
+/// conversion, transport, `process_chunked`, output encode, snapshot
+/// publish) via the shared `process_block` body, and returns the
+/// audio-thread allocation count of a steady-state block (0 = clean).
+/// Empty events, small stereo buffers. Vacuously 0 unless the
+/// `rt-paranoid` feature installs the checking allocator. Not public API.
+#[doc(hidden)]
+#[must_use]
+pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
+    const FRAMES: u32 = 512;
+    const CH: u32 = 2;
+    let frames = FRAMES as usize;
+    // SAFETY: constructs, drives, and destroys its own instance; all
+    // pointers below outlive each `process_block` call, and the buffers
+    // are sized to `FRAMES`.
+    unsafe {
+        let ctx = cb_create::<P>();
+        cb_reset::<P>(ctx, 48_000.0, FRAMES);
+
+        let in_left = vec![0f32; frames];
+        let in_right = vec![0f32; frames];
+        let mut out_left = vec![0f32; frames];
+        let mut out_right = vec![0f32; frames];
+        let in_ptrs: [*const f32; 2] = [in_left.as_ptr(), in_right.as_ptr()];
+        let mut out_ptrs: [*mut f32; 2] = [out_left.as_mut_ptr(), out_right.as_mut_ptr()];
+
+        let mut count = 0;
+        // A few blocks so any legitimate first-block warmup is behind us;
+        // the last block is the steady-state measurement.
+        for _ in 0..3 {
+            let ((), n) = audit(|| {
+                process_block::<P, f32>(
+                    ctx,
+                    in_ptrs.as_ptr(),
+                    out_ptrs.as_mut_ptr(),
+                    CH,
+                    CH,
+                    FRAMES,
+                    std::ptr::null(),
+                    0,
+                );
+            });
+            count = n;
+        }
+
+        cb_destroy::<P>(ctx);
+        count
     }
 }
 
