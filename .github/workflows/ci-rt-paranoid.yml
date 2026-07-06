@@ -20,12 +20,19 @@ concurrency:
 # and runs their tests under `TRUCE_RT_PARANOID=panic`, so any allocation
 # the audio thread makes inside `process` fails the build. Also proves a
 # freshly `cargo truce new`-scaffolded plugin is allocation-free and that
-# its scaffolded rt-paranoid wiring works. Linux only - the check is
-# platform-independent DSP, cheapest here.
+# its scaffolded rt-paranoid wiring works.
+#
+# Runs on all three OSes: an audio-thread allocation can be platform-
+# specific (a std primitive that boxes lazily on one OS but not another),
+# so the check only catches it where it happens.
 jobs:
   examples:
-    name: examples
-    runs-on: ubuntu-24.04
+    name: examples (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,9 +40,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ci-rt-paranoid-examples
+          key: ci-rt-paranoid-examples-${{ matrix.os }}
 
       - name: Linux system deps
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -47,11 +55,16 @@ jobs:
             libfontconfig1-dev libfreetype-dev
 
       - name: rt-paranoid check on example plugins
+        shell: bash
         run: ./scripts/ci/rt-paranoid.sh
 
   scaffold:
-    name: scaffolded plugin
-    runs-on: ubuntu-24.04
+    name: scaffolded plugin (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,9 +72,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ci-rt-paranoid-scaffold
+          key: ci-rt-paranoid-scaffold-${{ matrix.os }}
 
       - name: Linux system deps
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -72,28 +86,50 @@ jobs:
             libasound2-dev libjack-jackd2-dev \
             libfontconfig1-dev libfreetype-dev
 
-      - name: Scaffold a plugin and run its rt-paranoid check
-        run: |
-          # Build THIS checkout's cargo-truce, whose scaffold template
-          # wires in the rt-paranoid feature + `enable_rt_paranoid!()`.
-          cargo build -p cargo-truce
-          BIN="$PWD/target/debug/cargo-truce"
+      - name: Build cargo-truce (its template wires in rt-paranoid)
+        run: cargo build -p cargo-truce
 
+      # Windows needs the `.exe` suffix; store the resolved path so every
+      # later bash step uses the same string.
+      - name: Resolve cargo-truce path
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            echo "CARGO_TRUCE=$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" >> "$GITHUB_ENV"
+          else
+            echo "CARGO_TRUCE=$GITHUB_WORKSPACE/target/debug/cargo-truce" >> "$GITHUB_ENV"
+          fi
+
+      - name: Scaffold a plugin
+        shell: bash
+        run: |
+          set -e
           mkdir -p "$RUNNER_TEMP/scaffold"
           cd "$RUNNER_TEMP/scaffold"
-          "$BIN" new probe-fx --vendor Probe --vendor-id com.probe.test
-          cd probe-fx
+          "$CARGO_TRUCE" new probe-fx --vendor Probe --vendor-id com.probe.test
 
-          # Point the scaffolded git/registry truce deps at this checkout.
-          SCAFFOLD_DIR="$PWD" python3 "$GITHUB_WORKSPACE/scripts/ci/rewrite-scaffold-deps.py"
+      # Point the scaffolded git/registry truce deps at this checkout.
+      # Shared with cli-scaffold.yml / cli-backcompat.yml; runs in the
+      # default shell so `python3` + pathlib handle Windows paths.
+      - name: Rewrite git deps to local paths
+        env:
+          SCAFFOLD_DIR: ${{ runner.temp }}/scaffold/probe-fx
+        run: python3 scripts/ci/rewrite-scaffold-deps.py
 
+      - name: Add a test dependency and the alloc check, then run it
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/probe-fx
+        run: |
+          set -e
+          # Forward-slash the workspace path so the value is a valid Cargo
+          # path on Windows too (backslashes would break the TOML string).
+          ws="${GITHUB_WORKSPACE//\\//}"
           # The scaffold ships neither tests nor a test dependency by
-          # design; add both to exercise the wiring it does ship.
+          # design; add both to exercise the rt-paranoid wiring it ships.
           {
             echo ""
             echo "[dev-dependencies]"
-            echo "truce-test = { path = \"$GITHUB_WORKSPACE/crates/truce-test\" }"
+            echo "truce-test = { path = \"$ws/crates/truce-test\" }"
           } >> Cargo.toml
-          cat "$GITHUB_WORKSPACE/scripts/ci/rt-paranoid-scaffold-test.rs" >> src/lib.rs
-
+          cat "$ws/scripts/ci/rt-paranoid-scaffold-test.rs" >> src/lib.rs
           TRUCE_RT_PARANOID=panic cargo test --features rt-paranoid --lib
