@@ -442,6 +442,21 @@ mod tests {
     }
 
     #[test]
+    fn shared_plugin_warms_the_mediation_lock() {
+        use super::imp::count_allocs;
+        use crate::wrapper::{lock_plugin, shared_plugin};
+
+        // `shared_plugin` locks once at construction so the first lock on
+        // the audio thread doesn't allocate (macOS std `Mutex` boxes its
+        // `pthread_mutex_t` lazily). Taking the lock here must be clean.
+        let shared = shared_plugin(vec![0u8; 16]);
+        let n = count_allocs(|| {
+            drop(lock_plugin(&shared));
+        });
+        assert_eq!(n, 0, "the mediation lock's first lock must be warmed");
+    }
+
+    #[test]
     fn set_mode_overrides_the_default() {
         use super::imp::current_mode;
         use super::{Mode, set_mode};

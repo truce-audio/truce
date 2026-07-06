@@ -106,6 +106,7 @@ use truce_core::midi::{
 use truce_core::plugin::PluginRuntime;
 use truce_core::presets::parse_preset_file;
 use truce_core::process::ProcessStatus;
+use truce_core::rt::RtSection;
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::state::PluginFormat;
@@ -1436,6 +1437,13 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             state::apply_state(&mut *instance, &state);
             true
         });
+
+        // Paranoid allocation check (the `rt-paranoid` feature): guard the
+        // wrapper's per-block glue - event conversion, transport, process,
+        // output encode, snapshot publish - as well as the plugin. Placed
+        // after the state-load apply above, since `load_state` legitimately
+        // allocates. No-op and zero-sized when the feature is off.
+        let _rt = RtSection::enter();
 
         // Convert CLAP input events to our EventList - sort by
         // sample offset so the plugin sees them in time order.

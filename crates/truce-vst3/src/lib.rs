@@ -28,6 +28,7 @@ use truce_core::midi::{
     per_note_bend_from_semitones, per_note_bend_semitones, pitch_bend_to_bytes,
 };
 use truce_core::plugin::PluginRuntime;
+use truce_core::rt::RtSection;
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::wrapper::{
@@ -514,6 +515,13 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         if let Some(state) = inst.pending_state.pop() {
             state::apply_state(&mut *plugin, &state);
         }
+
+        // Paranoid allocation check (the `rt-paranoid` feature): guard the
+        // wrapper's per-block glue - event conversion, transport, process,
+        // output encode, snapshot publish - as well as the plugin. Placed
+        // after the state-load apply above, since `load_state` legitimately
+        // allocates. No-op and zero-sized when the feature is off.
+        let _rt = RtSection::enter();
 
         // Convert MIDI events. SysEx input arrives through a separate
         // callback before this process callback, so preserve the
