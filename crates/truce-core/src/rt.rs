@@ -20,7 +20,7 @@
 mod imp {
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
-    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU8, Ordering};
 
     const MAX_FRAMES: usize = 32;
 
@@ -50,23 +50,79 @@ mod imp {
         static AUDIT: Cell<Option<u32>> = const { Cell::new(None) };
     }
 
-    #[derive(Clone, Copy, PartialEq)]
-    enum Mode {
+    /// What the checker does when the audio thread allocates inside a
+    /// `process` section.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Mode {
+        /// Log the count and a backtrace after the block; keep running.
         Count,
+        /// Panic - fails the block, gating a whole test suite.
         Panic,
+        /// Abort at the offending allocation (catch the live stack in a
+        /// debugger).
         Trap,
     }
 
-    /// Read `TRUCE_RT_PARANOID` once. `count` (default) reports after the
-    /// block, `panic` fails the block (tests), `trap` aborts at the
-    /// offending allocation (catch the live stack in a debugger).
+    impl Mode {
+        const fn to_u8(self) -> u8 {
+            match self {
+                Mode::Count => 0,
+                Mode::Panic => 1,
+                Mode::Trap => 2,
+            }
+        }
+        fn from_u8(v: u8) -> Self {
+            match v {
+                1 => Mode::Panic,
+                2 => Mode::Trap,
+                _ => Mode::Count,
+            }
+        }
+    }
+
+    // `MODE_UNINIT` until first read or `set_mode`, so the env var is
+    // consulted at most once and only when nothing set the mode
+    // programmatically. Backing it with an atomic (not a `OnceLock<Mode>`
+    // seeded from `env::var`) means the read on the audio thread is a
+    // plain load with no `String` allocation once a `set_mode` has run.
+    const MODE_UNINIT: u8 = u8::MAX;
+    static MODE: AtomicU8 = AtomicU8::new(MODE_UNINIT);
+
+    /// Set the reaction the checker takes on a violation, overriding
+    /// `TRUCE_RT_PARANOID`. Call before the first audio block (a test
+    /// harness, `main`, or a `#[ctor]`); the last call wins. Setting the
+    /// mode this way skips the one-time env read the default path does on
+    /// the audio thread.
+    pub fn set_mode(mode: Mode) {
+        MODE.store(mode.to_u8(), Ordering::Relaxed);
+    }
+
     fn mode() -> Mode {
-        static M: OnceLock<Mode> = OnceLock::new();
-        *M.get_or_init(|| match std::env::var("TRUCE_RT_PARANOID").as_deref() {
+        let v = MODE.load(Ordering::Relaxed);
+        if v != MODE_UNINIT {
+            return Mode::from_u8(v);
+        }
+        // No explicit `set_mode`: seed from `TRUCE_RT_PARANOID` once.
+        // `env::var` allocates, but this runs at most once (guarded by
+        // the compare-exchange) and never after a `set_mode`.
+        let seeded = mode_from_env().to_u8();
+        match MODE.compare_exchange(MODE_UNINIT, seeded, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => Mode::from_u8(seeded),
+            Err(actual) => Mode::from_u8(actual),
+        }
+    }
+
+    fn mode_from_env() -> Mode {
+        match std::env::var("TRUCE_RT_PARANOID").as_deref() {
             Ok("panic") => Mode::Panic,
             Ok("trap" | "abort") => Mode::Trap,
             _ => Mode::Count,
-        })
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_mode() -> Mode {
+        mode()
     }
 
     /// Guard around a real-time section (one `plugin.process()` call).
@@ -322,9 +378,23 @@ mod imp {
     pub fn is_active() -> bool {
         false
     }
+
+    /// What the checker does on a violation. Present with the feature off
+    /// so `set_mode` call sites compile unconditionally; the checker is
+    /// inert, so it has no effect.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Mode {
+        Count,
+        Panic,
+        Trap,
+    }
+
+    /// No-op with `rt-paranoid` off.
+    #[inline]
+    pub fn set_mode(_mode: Mode) {}
 }
 
-pub use imp::{RtSection, allow_alloc, audit, is_active};
+pub use imp::{Mode, RtSection, allow_alloc, audit, is_active, set_mode};
 
 #[cfg(feature = "rt-paranoid")]
 pub use imp::RtCheckAlloc;
@@ -369,5 +439,20 @@ mod tests {
             });
         });
         assert_eq!(n, 0, "allow_alloc should suspend checking for its scope");
+    }
+
+    #[test]
+    fn set_mode_overrides_the_default() {
+        use super::imp::current_mode;
+        use super::{Mode, set_mode};
+
+        // `Panic` is safe to leave briefly: `count_allocs` (the other
+        // tests) never routes through the report path. Restore `Count`
+        // so nothing else in the binary is affected. Never set `Trap` -
+        // it aborts the process.
+        set_mode(Mode::Panic);
+        assert_eq!(current_mode(), Mode::Panic);
+        set_mode(Mode::Count);
+        assert_eq!(current_mode(), Mode::Count);
     }
 }
