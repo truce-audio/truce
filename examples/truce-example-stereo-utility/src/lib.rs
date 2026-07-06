@@ -171,9 +171,29 @@ truce::plugin! {
     params: StereoUtilityParams,
 }
 
+truce::enable_rt_paranoid!();
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_is_allocation_free() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assert_no_audio_alloc, driver};
+        assert_no_audio_alloc(|| {
+            driver!(Plugin)
+                .duration(Duration::from_millis(40))
+                .input(InputSource::Constant(0.25))
+                .script(|s| {
+                    s.set_param(ChannelStripParamId::Gain, 0.9);
+                    s.wait_ms(15);
+                    s.set_param(ChannelStripParamId::Gain, 0.1);
+                    s.wait_ms(15);
+                })
+                .run()
+        });
+    }
 
     #[test]
     fn info_is_valid() {

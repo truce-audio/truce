@@ -366,10 +366,30 @@ truce::plugin! {
     params: InspectorParams,
 }
 
+truce::enable_rt_paranoid!();
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use truce_core::events::EventBody;
+
+    #[test]
+    fn process_is_allocation_free() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assert_no_audio_alloc, driver};
+        assert_no_audio_alloc(|| {
+            driver!(Plugin)
+                .duration(Duration::from_millis(40))
+                .input(InputSource::Constant(0.25))
+                .script(|s| {
+                    s.note_on(60, 0.8);
+                    s.cc(74, 0.5);
+                    s.wait_ms(20);
+                    s.note_off(60);
+                })
+                .run()
+        });
+    }
 
     // -- interpret() unit tests (pure, no GUI / driver) --
 
