@@ -66,7 +66,15 @@ pub type SharedPlugin<P> = Arc<PluginMutex<P>>;
 /// Wrap a freshly created plugin in the wrapper-standard mediation
 /// lock. See [`SharedPlugin`].
 pub fn shared_plugin<P>(plugin: P) -> SharedPlugin<P> {
-    Arc::new(PluginMutex::new(plugin))
+    let shared = Arc::new(PluginMutex::new(plugin));
+    // Warm the lock off the audio thread: the std-backed variant (macOS
+    // boxes a `pthread_mutex_t`) lazily allocates the OS mutex on first
+    // lock, which would otherwise land on the first audio callback that
+    // takes the mediation lock. Locking here forces that one-time init at
+    // creation. No-op on the Linux pthread variant (its mutex is built in
+    // `new`) and on Windows (SRWLOCK is inline).
+    drop(shared.lock());
+    shared
 }
 
 /// Lock the mediation lock, forgiving poison. A poisoned lock means a

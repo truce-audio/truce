@@ -39,6 +39,7 @@ use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, Trans
 use truce_core::export::PluginExport;
 use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
+use truce_core::rt::RtSection;
 use truce_core::state::shared_plugin_state_hash;
 use truce_core::wrapper::{
     first_bus_layout, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
@@ -424,6 +425,13 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 .ensure_capacity(inst.audio_inputs.len(), inst.audio_outputs.len(), n);
             inst.max_block_size = n;
         }
+
+        // Paranoid allocation check (the `rt-paranoid` feature): guard the
+        // wrapper's per-block glue - event conversion, transport, process,
+        // output encode, snapshot publish - as well as the plugin. Placed
+        // after the block-size grow above, since that path legitimately
+        // reallocs the scratch. No-op and zero-sized when the feature is off.
+        let _rt = RtSection::enter();
 
         inst.event_list.clear();
         inst.output_events.clear();
