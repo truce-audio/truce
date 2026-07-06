@@ -51,15 +51,20 @@ impl SnapshotSlot {
         Arc::new(slot)
     }
 
-    /// Audio thread: publish the current snapshot. `write` receives the
-    /// reusable buffer (it should `clear()` then fill it) and returns
-    /// whether a snapshot exists. Never blocks - on lock contention with
-    /// a reader the publish is skipped and the previous snapshot stands.
+    /// Audio thread: publish the current snapshot. The buffer is
+    /// **cleared before `write` runs** (its capacity is retained, so a
+    /// steady state stays allocation-free), so `write` just fills it and
+    /// returns whether a snapshot exists - matching the
+    /// `PluginLogic::snapshot_into` contract, where a writer that only
+    /// `extend`s must not accumulate across blocks. Never blocks - on
+    /// lock contention with a reader the publish is skipped and the
+    /// previous snapshot stands.
     pub fn publish(&self, write: impl FnOnce(&mut Vec<u8>) -> bool) {
-        if let Ok(mut guard) = self.bytes.try_lock()
-            && write(&mut guard)
-        {
-            self.supported.store(true, Ordering::Release);
+        if let Ok(mut guard) = self.bytes.try_lock() {
+            guard.clear();
+            if write(&mut guard) {
+                self.supported.store(true, Ordering::Release);
+            }
         }
     }
 
@@ -100,7 +105,6 @@ mod tests {
         // not grow the buffer - that is the whole point of warming it
         // off the audio thread.
         slot.publish(|buf| {
-            buf.clear();
             buf.extend_from_slice(&[0xAB; SNAPSHOT_PREALLOC]);
             true
         });
@@ -113,7 +117,6 @@ mod tests {
         let slot = SnapshotSlot::new();
         assert!(slot.read().is_none());
         slot.publish(|buf| {
-            buf.clear();
             buf.extend_from_slice(&[1, 2, 3]);
             true
         });
@@ -134,33 +137,39 @@ mod tests {
         slot.publish(|_| false);
         assert!(!slot.is_supported());
         slot.publish(|buf| {
-            buf.clear();
             buf.push(1);
             true
         });
         assert!(slot.is_supported());
-        // A later empty (but true) publish keeps it supported.
-        slot.publish(|buf| {
-            buf.clear();
-            true
-        });
+        // A later empty (but true) publish keeps it supported. `buf`
+        // arrives cleared, so returning true without writing publishes an
+        // empty blob.
+        slot.publish(|_| true);
         assert!(slot.is_supported());
         assert_eq!(slot.read(), Some(vec![]));
     }
 
     #[test]
-    fn publish_overwrites_and_reuses_capacity() {
+    fn writer_that_only_appends_does_not_accumulate_across_publishes() {
+        // Regression: the framework clears the buffer before each writer
+        // runs, so a plugin `snapshot_into` that only `extend`s (per the
+        // `PluginLogic::snapshot_into` "cleared first" contract) must not
+        // append the new snapshot onto the previous one.
         let slot = SnapshotSlot::new();
         slot.publish(|buf| {
-            buf.clear();
             buf.extend_from_slice(&[9; 64]);
             true
         });
+        assert_eq!(slot.read(), Some(vec![9; 64]));
+
         slot.publish(|buf| {
-            buf.clear();
             buf.extend_from_slice(&[7, 7]);
             true
         });
-        assert_eq!(slot.read(), Some(vec![7, 7]));
+        assert_eq!(
+            slot.read(),
+            Some(vec![7, 7]),
+            "second publish must replace, not append onto, the first"
+        );
     }
 }

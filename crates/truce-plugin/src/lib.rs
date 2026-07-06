@@ -215,17 +215,18 @@ macro_rules! plugin_logic_leaf_trait {
                 buf
             }
 
-            /// Opt into lock-free state save. Serialize the same bytes
-            /// [`Self::save_state`] would into `buf` (cleared first;
-            /// capacity is retained across calls so a steady state is
-            /// allocation-free).
+            /// Opt into lock-free state save. `buf` arrives **cleared**,
+            /// with its capacity retained across calls so a steady state
+            /// is allocation-free; fill it with the same bytes
+            /// [`Self::save_state`] would produce (append freely - it is
+            /// never carried over from the previous block).
             ///
             /// The return value is a *static capability*, not a
             /// per-block flag: `true` means "this plugin publishes
             /// snapshots", `false` means "it never does" (the default).
             /// Once you return `true` you must return `true` for the
             /// plugin's whole lifetime - if the custom state empties out,
-            /// clear `buf` and still return `true` (an empty blob), don't
+            /// return `true` with `buf` left empty (an empty blob), don't
             /// return `false`. The shell latches the opt-in on the first
             /// published block; a later `false` is a contract violation
             /// that would otherwise leave the host reading a stale
