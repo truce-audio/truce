@@ -110,7 +110,7 @@ table with screenshots.
 
 <p align="center">
   <a href="examples/truce-example-eq"><img src="examples/truce-example-eq/screenshots/eq_default_macos.png" height="200" alt="EQ" /></a>
-  <a href="examples/truce-example-arpeggio-paranoid"><img src="examples/truce-example-arpeggio-paranoid/screenshots/arpeggio_default_macos.png" height="200" alt="Arpeggiator" /></a>
+  <a href="examples/truce-example-arpeggio"><img src="examples/truce-example-arpeggio/screenshots/arpeggio_default_macos.png" height="200" alt="Arpeggiator" /></a>
   <a href="examples/truce-example-gain"><img src="examples/truce-example-gain/screenshots/gain_default_macos.png" height="200" alt="Gain" /></a>
   <a href="examples/truce-example-synth"><img src="examples/truce-example-synth/screenshots/synth_default_macos.png" height="200" alt="Synth" /></a>
   <a href="examples/truce-example-transpose"><img src="examples/truce-example-transpose/screenshots/transpose_default_macos.png" height="200" alt="Transpose" /></a>
