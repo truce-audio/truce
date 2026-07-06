@@ -145,6 +145,21 @@ mod tests {
         });
     }
 
+    /// The VST2 wrapper's per-block glue (host-event conversion,
+    /// transport, `process`, output encode, snapshot publish) is
+    /// allocation-free on the audio thread. Drives the real
+    /// `process_block` callback under the checker, not just the plugin.
+    /// Compiled only with `vst2` on, which `rt-paranoid` pulls in.
+    #[cfg(feature = "vst2")]
+    #[test]
+    fn vst2_wrapper_glue_is_allocation_free() {
+        assert_eq!(
+            truce_vst2::rt_paranoid_smoke::<Plugin>(),
+            0,
+            "the VST2 wrapper's per-block glue must not allocate on the audio thread"
+        );
+    }
+
     #[test]
     fn info_is_valid() {
         truce_test::assert_valid_info::<Plugin>();

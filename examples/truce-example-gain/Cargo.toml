@@ -28,7 +28,9 @@ au = ["dep:truce-au"]
 standalone = ["dep:truce-standalone"]
 standalone-playback = ["standalone", "truce-standalone/playback"]
 shell = ["truce/shell"]
-rt-paranoid = ["truce/rt-paranoid"]
+# Pulls `vst2` so the wrapper-glue smoke test (below) can drive the VST2
+# process callback under the checker. Only active with rt-paranoid on.
+rt-paranoid = ["truce/rt-paranoid", "vst2"]
 
 [dependencies]
 # Workspace declares `truce` with `default-features = false`; this
