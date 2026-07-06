@@ -113,8 +113,8 @@ pub fn render_with_state_at_scale<P: PluginExport>(
 ///
 /// # Panics
 ///
-/// Panics if `PluginExport::editor()` returns `None` or the editor's
-/// `screenshot()` method returns `None`. Both panics name the
+/// Panics if `PluginExport::editor_builder()` returns `None` or the
+/// editor's `screenshot()` method returns `None`. Both panics name the
 /// concrete `P` and point at the trait method to implement.
 pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
     render_pixels_for_at_scale::<P>(plugin, DEFAULT_SCREENSHOT_SCALE)
@@ -123,7 +123,7 @@ pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32)
 /// Render the given (already-mutated) plugin's editor at an explicit
 /// scale. The scale is published via [`override_scale`] for the
 /// duration of the call so the editor's `EditorScale` (initialized
-/// from `truce_gui::backing_scale()` during `PluginExport::editor()`)
+/// from `truce_gui::backing_scale()` during `PluginExport::editor_builder()`)
 /// picks up the screenshot value rather than the host's main-screen
 /// DPI. The override is cleared on return - including on panic - so
 /// any subsequent live-editor construction sees the regular
@@ -137,8 +137,8 @@ pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32)
 ///
 /// # Panics
 ///
-/// Panics if `PluginExport::editor()` returns `None` or the editor's
-/// `screenshot()` method returns `None`. Both panics name the
+/// Panics if `PluginExport::editor_builder()` returns `None` or the
+/// editor's `screenshot()` method returns `None`. Both panics name the
 /// concrete `P` and point at the trait method to implement.
 pub fn render_pixels_for_at_scale<P: PluginExport>(
     plugin: &mut P,

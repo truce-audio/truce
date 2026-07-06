@@ -36,11 +36,11 @@ editor through `WgpuBackend`. No direct dependency and no per-editor
 code: the same `editor()` impl works for both renderers.
 
 ```rust
-fn editor(&self) -> Box<dyn Editor> {
+fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
     GridLayout::build(vec![widgets(vec![
         knob(P::Gain, "Gain"),
     ])])
-    .into_editor(&self.params)
+    .into_editor(&params)
 }
 ```
 

@@ -37,9 +37,9 @@ too: `Editor::screenshot` drives Vizia against a CPU-backed Skia surface, so
 use truce_vizia::widgets::param_knob;
 use truce_vizia::{ParamLens, ViziaEditor};
 
-fn editor(&self) -> Option<Box<dyn Editor>> {
+fn editor(params: Arc<MyParams>) -> Option<Box<dyn Editor>> {
     Some(Box::new(ViziaEditor::new(
-        self.params.clone(),
+        params,
         (WIDTH, HEIGHT),
         |cx, lens: ParamLens<MyParams>| {
             param_knob(cx, lens.clone(), MyParams::Gain, "Gain");
