@@ -57,7 +57,7 @@ Refactored `editor` into an associated function: it takes the parameter store as
 
 ### Added
 
-- **Lock-free state save, opt-in.** If a plugin has custom state (beyond parameters) that's expensive to serialize, it can override `snapshot_into(&self, buf)` *instead of* `save_state` to take the whole save off the plugin lock: the audio thread serializes the state into a lock-free slot each block and the host reads it back on save without ever locking the plugin. Because it runs on the audio thread every block, keep it cheap and allocation-free (clear and refill `buf`, which keeps its capacity) - it's a win only when a `save_state` stall would otherwise be long. Overriding it is the entire opt-in: which method you implement is the choice, the default `save_state` delegates to it, and plugins that override neither (or stick with `save_state`) are unchanged.
+- **Lock-free state save, opt-in.** If a plugin has custom state (beyond parameters) that's expensive to serialize, it can override `snapshot_into(&self, buf)` *instead of* `save_state` to take the whole save off the plugin lock: the audio thread serializes the state into a lock-free slot each block and the host reads it back on save without ever locking the plugin. Because it runs on the audio thread every block, keep it cheap and allocation-free (`buf` arrives cleared with its capacity kept, so just refill it) - it's a win only when a `save_state` stall would otherwise be long. Overriding it is the entire opt-in: which method you implement is the choice, the default `save_state` delegates to it, and plugins that override neither (or stick with `save_state`) are unchanged.
 
 ## 2.0.2
 
