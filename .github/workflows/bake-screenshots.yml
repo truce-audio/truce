@@ -77,7 +77,8 @@ env:
     truce-example-block-surround-meter
     truce-example-gain-egui
     truce-example-gain-egui-aspect
-    truce-example-arpeggio
+    truce-example-arpeggio-simple
+    truce-example-arpeggio-paranoid
     truce-example-gain-iced
     truce-example-tremolo
     truce-example-state
@@ -527,7 +528,8 @@ jobs:
             # ci-ios.yml loop, then re-bake. (gain-iced / gui-zoo-iced
             # bake + check.)
             case "$crate" in
-              truce-example-eq|truce-example-tremolo|truce-example-arpeggio) continue ;;
+              truce-example-eq|truce-example-tremolo) continue ;;
+              truce-example-arpeggio-simple|truce-example-arpeggio-paranoid) continue ;;
               truce-example-state|truce-example-gain-egui) continue ;;
               truce-example-fundsp-reverb-worker|truce-example-fundsp-reverb-simple) continue ;;
               truce-example-dasp-bitcrusher) continue ;;

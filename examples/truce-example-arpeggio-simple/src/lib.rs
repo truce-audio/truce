@@ -1,3 +1,11 @@
+//! MIDI arpeggiator - the "simple" version.
+//!
+//! Rebuilds the arp note sequence into a fresh `Vec` every block: clear
+//! and easy to read, but it allocates on the audio thread while notes are
+//! held. The `rt-paranoid` test asserts exactly that. See
+//! `truce-example-arpeggio-paranoid` for the allocation-free counterpart
+//! that reuses pre-sized buffers.
+
 use truce::prelude::*;
 use truce_core::cast::len_u32;
 use truce_gui::IntoLayoutEditor;
@@ -110,13 +118,6 @@ fn step_to_seq_idx(step: i64, seq_len: usize) -> usize {
 pub struct Arpeggio {
     pub params: Arc<ArpParams>,
     held_notes: Vec<u8>,
-    /// Reusable arp sequence, rebuilt in place each block (never
-    /// reallocated on the audio thread). Sized for the worst case: 4
-    /// octaves of full 128-note polyphony, doubled for the up-down
-    /// pattern.
-    sequence: Vec<u8>,
-    /// Scratch for the up-down pattern's reversed middle section.
-    scratch_down: Vec<u8>,
     sample_rate: f64,
     /// Global step index of the currently-sounding arp note.
     /// `None` after a gate-off or when no note is active.
@@ -137,12 +138,7 @@ impl Arpeggio {
     pub fn new(params: Arc<ArpParams>) -> Self {
         Self {
             params,
-            // Pre-size so the audio thread never reallocates: at most 128
-            // distinct held notes, and a worst-case 4-octave up-down
-            // sequence.
-            held_notes: Vec::with_capacity(128),
-            sequence: Vec::with_capacity(1024),
-            scratch_down: Vec::with_capacity(512),
+            held_notes: Vec::new(),
             sample_rate: 44100.0,
             last_step: None,
             active_note: None,
@@ -151,42 +147,43 @@ impl Arpeggio {
         }
     }
 
-    /// Rebuild `self.sequence` in place from the held notes - no audio-
-    /// thread allocation, since every buffer is pre-sized in `new`.
-    fn rebuild_sequence(&mut self) {
-        self.sequence.clear();
+    /// The "simple" version: rebuilds the arp sequence into a fresh
+    /// `Vec` every block. Clear and readable, but it allocates on the
+    /// audio thread - which the `rt-paranoid` test below catches. See
+    /// `truce-example-arpeggio-paranoid` for the allocation-free shape.
+    fn build_sequence(&self) -> Vec<u8> {
         if self.held_notes.is_empty() {
-            return;
+            return Vec::new();
         }
 
-        // Sort in place: `held_notes` is a set, so its order is
-        // irrelevant, and this avoids cloning it every block.
-        self.held_notes.sort_unstable();
+        let mut base_notes = self.held_notes.clone();
+        base_notes.sort_unstable();
 
         let octaves = self.params.octaves.value_u8();
+        let mut seq = Vec::new();
         for oct in 0..octaves {
-            for &note in &self.held_notes {
+            for &note in &base_notes {
                 if let Some(n) = note.checked_add(oct.saturating_mul(12))
                     && n <= 127
                 {
-                    self.sequence.push(n);
+                    seq.push(n);
                 }
             }
         }
 
         match self.params.pattern.value() {
             ArpPattern::Down => {
-                self.sequence.reverse();
+                seq.reverse();
             }
-            ArpPattern::UpDown if self.sequence.len() > 2 => {
-                let last = self.sequence.len() - 1;
-                self.scratch_down.clear();
-                self.scratch_down.extend_from_slice(&self.sequence[1..last]);
-                self.scratch_down.reverse();
-                self.sequence.extend_from_slice(&self.scratch_down);
+            ArpPattern::UpDown if seq.len() > 2 => {
+                let mut down = seq[1..seq.len() - 1].to_vec();
+                down.reverse();
+                seq.extend(down);
             }
             _ => {} // Up and Random use the sequence as-is
         }
+
+        seq
     }
 
     fn next_random(&mut self) -> u32 {
@@ -259,15 +256,10 @@ impl PluginLogic for Arpeggio {
             return ProcessStatus::Normal;
         }
 
-        self.rebuild_sequence();
-        if self.sequence.is_empty() {
+        let seq = self.build_sequence();
+        if seq.is_empty() {
             return ProcessStatus::Normal;
         }
-        // Move the sequence out for the sample loop so it can call
-        // `&mut self` (`next_random`) without holding a borrow of
-        // `self.sequence`. Put back below - the swap reuses the buffer's
-        // capacity, so no allocation.
-        let seq = std::mem::take(&mut self.sequence);
 
         let beats_per_step = self.params.rate.value().beats_per_step();
         let gate_frac = f64::from(self.params.gate.value());
@@ -350,9 +342,6 @@ impl PluginLogic for Arpeggio {
             beat += beats_per_sample;
         }
 
-        // Restore the sequence buffer (keeps its capacity for next block).
-        self.sequence = seq;
-
         // Keep the free-running counter aligned so dropping out of host
         // mode mid-session doesn't cause a phase jump.
         self.free_beat = beat;
@@ -384,21 +373,26 @@ truce::enable_rt_paranoid!();
 mod tests {
     use super::*;
 
+    /// This "simple" arp rebuilds its sequence into a fresh `Vec` every
+    /// block, so holding notes allocates on the audio thread - the
+    /// intentional real-time violation this example exists to show, and
+    /// the reason `truce-example-arpeggio-paranoid` reuses a pre-sized
+    /// buffer. Under `--features rt-paranoid` the checker must trip once
+    /// a note is held.
     #[test]
-    fn process_is_allocation_free() {
+    fn sequence_rebuild_allocates() {
         use std::time::Duration;
-        use truce_test::{InputSource, assert_no_audio_alloc, driver};
-        assert_no_audio_alloc(|| {
+        use truce_test::{InputSource, assert_audio_alloc, driver};
+        assert_audio_alloc(|| {
             driver!(Plugin)
                 .duration(Duration::from_millis(40))
                 .input(InputSource::Constant(0.25))
                 .script(|s| {
                     s.note_on(60, 0.8);
-                    s.set_param(P::Rate, 0.9);
-                    s.wait_ms(15);
-                    s.set_param(P::Rate, 0.1);
-                    s.wait_ms(15);
+                    s.note_on(64, 0.8);
+                    s.wait_ms(30);
                     s.note_off(60);
+                    s.note_off(64);
                 })
                 .run()
         });
