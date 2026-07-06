@@ -229,8 +229,7 @@ platform contract; every other format is unviable there.
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units, sample-accurate automation by default
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — scaffold, build, install, validate, and package; `doctor` reports environment health, and `package` produces signed distributable installers (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
-- **Real-time safe** — no locks or allocations in `process()`; meters, state loads, and editor edits reach the audio thread through lock-free handoffs (priority donation on macOS), and state save can go fully lock-free with an opt-in `snapshot_into`
-- **Thread-safe params** — atomic storage, lock-free access from any thread
+- **Real-time safe** — no locks or allocations in `process()`; params use atomic storage with lock-free access from any thread, meters, state loads, and editor edits reach the audio thread through lock-free handoffs, and state save can go fully lock-free with an opt-in `snapshot_into`
 - **State migration** — a `migrate_state` hook accepts pre-truce or other-framework state blobs, so a ported plugin keeps loading its old sessions and presets
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Automated tests** — audio, render, state, params, GUI screenshots
