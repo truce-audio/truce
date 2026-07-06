@@ -27,6 +27,8 @@ aax = ["dep:truce-aax"]
 au = ["dep:truce-au"]
 standalone = ["dep:truce-standalone"]
 shell = ["truce/shell"]
+# Real-time allocation checking for the tests (dev/test only).
+rt-paranoid = ["truce/rt-paranoid"]
 
 [dependencies]
 truce = { workspace = true }
