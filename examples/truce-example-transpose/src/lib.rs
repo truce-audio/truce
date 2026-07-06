@@ -139,11 +139,33 @@ truce::plugin! {
     params: TransposeParams,
 }
 
+truce::enable_rt_paranoid!();
+
 // --- Tests ---
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_is_allocation_free() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assert_no_audio_alloc, driver};
+        assert_no_audio_alloc(|| {
+            driver!(Plugin)
+                .duration(Duration::from_millis(40))
+                .input(InputSource::Constant(0.25))
+                .script(|s| {
+                    s.note_on(60, 0.8);
+                    s.set_param(P::Semitones, 0.9);
+                    s.wait_ms(15);
+                    s.set_param(P::Semitones, 0.1);
+                    s.wait_ms(15);
+                    s.note_off(60);
+                })
+                .run()
+        });
+    }
 
     #[test]
     fn transpose_up_octave() {
