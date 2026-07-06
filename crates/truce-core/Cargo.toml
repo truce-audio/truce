@@ -8,8 +8,18 @@ license.workspace = true
 rust-version.workspace = true
 description = "Core types for the truce audio plugin framework"
 
+[features]
+# Paranoid real-time allocation checking: a wrapping global allocator
+# flags any allocation the audio thread makes inside `process`. Dev/test
+# only - off by default, zero-cost when off.
+rt-paranoid = ["dep:backtrace"]
+
 [dependencies]
 truce-params = { workspace = true }
+# Alloc-free stack capture for the `rt-paranoid` allocation checker: the
+# split `trace` (raw walk, no alloc) + `resolve` (symbols, deferred) API
+# std's `Backtrace` doesn't expose.
+backtrace = { version = "0.3", optional = true }
 # `cast` + `slugify` live in `truce-utils` (dependency-free) so
 # `cargo-truce` and other build-time consumers can use them without
 # inheriting `truce-core`'s `truce-params` + `png` publish chain.

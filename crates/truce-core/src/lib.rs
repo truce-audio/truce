@@ -12,6 +12,7 @@ pub mod midi;
 pub mod plugin;
 pub mod presets;
 pub mod process;
+pub mod rt;
 pub mod screenshot;
 pub mod snapshot;
 pub mod state;
@@ -29,7 +30,11 @@ pub use info::{AutomationConfig, MidiDialect, PluginCategory, PluginInfo};
 pub use meters::MeterStore;
 pub use plugin::PluginRuntime;
 pub use process::{ProcessContext, ProcessStatus};
+pub use rt::{RtSection, allow_alloc};
 pub use snapshot::SnapshotSlot;
+
+#[cfg(feature = "rt-paranoid")]
+pub use rt::RtCheckAlloc;
 pub use transport::TransportSlot;
 
 // `Float` / `Sample` live in `truce-params` (truce-core depends on

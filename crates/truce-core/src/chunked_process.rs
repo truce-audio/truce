@@ -159,7 +159,14 @@ where
             ctx = ctx.with_meters(f);
         }
 
-        last_status = plugin.process(&mut sub_buffer, sub_event_scratch, &mut ctx);
+        last_status = {
+            // Paranoid allocation check (the `rt-paranoid` feature): flag
+            // any allocation the plugin makes in `process`. No-op and
+            // zero-sized when the feature is off. This is the single site
+            // every format wrapper and the test driver route through.
+            let _rt = crate::rt::RtSection::enter();
+            plugin.process(&mut sub_buffer, sub_event_scratch, &mut ctx)
+        };
 
         // Re-base any events the plugin pushed during this sub-block
         // back into block-relative coordinates so the wrapper's
