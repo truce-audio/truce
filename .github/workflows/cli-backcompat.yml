@@ -45,7 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.latest.outputs.tag }}
+      skip: ${{ steps.bump.outputs.skip }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
 
       # Latest non-prerelease tag on the truce repo, e.g. `v0.43.0`.
@@ -67,6 +70,30 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Latest released tag: $tag"
 
+      # A major version bump is a deliberate break of the public
+      # surface, so scaffolds from the last release are *expected* not
+      # to compile against HEAD - running backcompat would only produce
+      # a red X for a break we intended. On a push (the release lands on
+      # main) we skip in that case. Pull requests always run, so the
+      # breakage is still visible while the major is in review.
+      - name: Detect major version bump
+        id: bump
+        shell: bash
+        run: |
+          released_major=$(echo "${{ steps.latest.outputs.tag }}" \
+                             | sed -E 's/^v([0-9]+)\..*/\1/')
+          current=$(grep -m1 -E '^version = ' Cargo.toml \
+                     | sed -E 's/^version = "([^"]+)".*/\1/')
+          current_major=${current%%.*}
+          echo "released major: $released_major, current major: $current_major"
+          if [ "${{ github.event_name }}" = "push" ] \
+             && [ "$current_major" -gt "$released_major" ]; then
+            echo "Major version bump ($released_major -> $current_major) on push; skipping backcompat."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Cache released cargo-truce
         id: cache-old-cargo-truce
         uses: actions/cache@v4
@@ -85,6 +112,10 @@ jobs:
 
   backcompat:
     needs: setup
+    # Always run on pull requests; on push, skip when the setup job
+    # detected a major version bump (an intended break of the surface
+    # this workflow guards).
+    if: needs.setup.outputs.skip != 'true'
     name: ${{ matrix.shape.id }} (scaffold w/ ${{ needs.setup.outputs.tag }})
     runs-on: ubuntu-latest
     strategy:
