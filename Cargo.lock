@@ -3811,7 +3811,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-arpeggio"
+name = "truce-example-arpeggio-paranoid"
+version = "3.0.1"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-arpeggio-simple"
 version = "3.0.1"
 dependencies = [
  "clap-sys",

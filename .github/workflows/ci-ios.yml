@@ -89,7 +89,8 @@ jobs:
             -p truce-example-eq \
             -p truce-example-gain-egui \
             -p truce-example-gain-egui-aspect \
-            -p truce-example-arpeggio \
+            -p truce-example-arpeggio-simple \
+            -p truce-example-arpeggio-paranoid \
             -p truce-example-tremolo \
             -p truce-example-state \
             -p truce-example-fundsp-reverb-worker \
