@@ -110,6 +110,13 @@ fn step_to_seq_idx(step: i64, seq_len: usize) -> usize {
 pub struct Arpeggio {
     pub params: Arc<ArpParams>,
     held_notes: Vec<u8>,
+    /// Reusable arp sequence, rebuilt in place each block (never
+    /// reallocated on the audio thread). Sized for the worst case: 4
+    /// octaves of full 128-note polyphony, doubled for the up-down
+    /// pattern.
+    sequence: Vec<u8>,
+    /// Scratch for the up-down pattern's reversed middle section.
+    scratch_down: Vec<u8>,
     sample_rate: f64,
     /// Global step index of the currently-sounding arp note.
     /// `None` after a gate-off or when no note is active.
@@ -130,7 +137,12 @@ impl Arpeggio {
     pub fn new(params: Arc<ArpParams>) -> Self {
         Self {
             params,
-            held_notes: Vec::new(),
+            // Pre-size so the audio thread never reallocates: at most 128
+            // distinct held notes, and a worst-case 4-octave up-down
+            // sequence.
+            held_notes: Vec::with_capacity(128),
+            sequence: Vec::with_capacity(1024),
+            scratch_down: Vec::with_capacity(512),
             sample_rate: 44100.0,
             last_step: None,
             active_note: None,
@@ -139,40 +151,42 @@ impl Arpeggio {
         }
     }
 
-    fn build_sequence(&self) -> Vec<u8> {
+    /// Rebuild `self.sequence` in place from the held notes - no audio-
+    /// thread allocation, since every buffer is pre-sized in `new`.
+    fn rebuild_sequence(&mut self) {
+        self.sequence.clear();
         if self.held_notes.is_empty() {
-            return Vec::new();
+            return;
         }
 
-        let mut base_notes = self.held_notes.clone();
-        base_notes.sort_unstable();
+        // Sort in place: `held_notes` is a set, so its order is
+        // irrelevant, and this avoids cloning it every block.
+        self.held_notes.sort_unstable();
 
         let octaves = self.params.octaves.value_u8();
-        let mut seq = Vec::new();
         for oct in 0..octaves {
-            for &note in &base_notes {
+            for &note in &self.held_notes {
                 if let Some(n) = note.checked_add(oct.saturating_mul(12))
                     && n <= 127
                 {
-                    seq.push(n);
+                    self.sequence.push(n);
                 }
             }
         }
 
-        let pattern = self.params.pattern.value();
-        match pattern {
+        match self.params.pattern.value() {
             ArpPattern::Down => {
-                seq.reverse();
+                self.sequence.reverse();
             }
-            ArpPattern::UpDown if seq.len() > 2 => {
-                let mut down = seq[1..seq.len() - 1].to_vec();
-                down.reverse();
-                seq.extend(down);
+            ArpPattern::UpDown if self.sequence.len() > 2 => {
+                let last = self.sequence.len() - 1;
+                self.scratch_down.clear();
+                self.scratch_down.extend_from_slice(&self.sequence[1..last]);
+                self.scratch_down.reverse();
+                self.sequence.extend_from_slice(&self.scratch_down);
             }
             _ => {} // Up and Random use the sequence as-is
         }
-
-        seq
     }
 
     fn next_random(&mut self) -> u32 {
@@ -245,10 +259,15 @@ impl PluginLogic for Arpeggio {
             return ProcessStatus::Normal;
         }
 
-        let seq = self.build_sequence();
-        if seq.is_empty() {
+        self.rebuild_sequence();
+        if self.sequence.is_empty() {
             return ProcessStatus::Normal;
         }
+        // Move the sequence out for the sample loop so it can call
+        // `&mut self` (`next_random`) without holding a borrow of
+        // `self.sequence`. Put back below - the swap reuses the buffer's
+        // capacity, so no allocation.
+        let seq = std::mem::take(&mut self.sequence);
 
         let beats_per_step = self.params.rate.value().beats_per_step();
         let gate_frac = f64::from(self.params.gate.value());
@@ -330,6 +349,9 @@ impl PluginLogic for Arpeggio {
 
             beat += beats_per_sample;
         }
+
+        // Restore the sequence buffer (keeps its capacity for next block).
+        self.sequence = seq;
 
         // Keep the free-running counter aligned so dropping out of host
         // mode mid-session doesn't cause a phase jump.
