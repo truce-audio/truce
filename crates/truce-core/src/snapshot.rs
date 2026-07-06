@@ -38,10 +38,17 @@ impl SnapshotSlot {
     /// returns `None` until the first [`Self::publish`].
     #[must_use]
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
+        let slot = Self {
             bytes: Mutex::new(Vec::with_capacity(SNAPSHOT_PREALLOC)),
             supported: AtomicBool::new(false),
-        })
+        };
+        // Warm the lock off the audio thread: some platforms' std `Mutex`
+        // (macOS boxes a `pthread_mutex_t`) lazily allocate the OS mutex
+        // on first lock, which would otherwise land on the first
+        // `publish` from the audio thread. Locking here forces that
+        // one-time init at construction instead.
+        drop(slot.bytes.lock().unwrap_or_else(PoisonError::into_inner));
+        Arc::new(slot)
     }
 
     /// Audio thread: publish the current snapshot. `write` receives the
