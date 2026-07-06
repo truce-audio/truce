@@ -444,6 +444,21 @@ mod tests {
         blob
     }
 
+    /// The LV2 wrapper's per-block glue (control-port change detection,
+    /// atom decode, `process`, meter copy-out, MIDI + notify atom writes)
+    /// is allocation-free on the audio thread. Drives the real `run`
+    /// callback under the checker, not just the plugin. Compiled only
+    /// with `lv2` on, which `rt-paranoid` pulls in.
+    #[cfg(feature = "lv2")]
+    #[test]
+    fn lv2_wrapper_glue_is_allocation_free() {
+        assert_eq!(
+            truce_lv2::rt_paranoid_smoke::<Plugin>(),
+            0,
+            "the LV2 wrapper's per-block glue must not allocate on the audio thread"
+        );
+    }
+
     #[test]
     fn legacy_state_migrates() {
         let migrated =

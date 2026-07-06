@@ -54,7 +54,7 @@ use truce_core::midi::{
 };
 use truce_core::plugin::PluginRuntime;
 use truce_core::presets::{PresetScope, enumerate_scope, load_preset_file};
-use truce_core::rt::RtSection;
+use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::ump::{
@@ -668,6 +668,64 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 }
             }
         }
+    }
+}
+
+/// Test-only smoke helper for the `rt-paranoid` CI gate: drives a few
+/// real process blocks through this wrapper's per-block glue via the
+/// shared `cb_process` body (null events / param events / transport,
+/// small stereo buffers), returning the steady-state audio-thread
+/// allocation count (0 = clean). Vacuously 0 unless the `rt-paranoid`
+/// feature installs the checking allocator. Not public API.
+#[doc(hidden)]
+#[must_use]
+pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
+    const FRAMES: u32 = 512;
+    const CH: u32 = 2;
+    let frames = FRAMES as usize;
+    // SAFETY: constructs, drives, and destroys its own instance; all
+    // pointers below outlive each `cb_process` call, buffers sized to
+    // `FRAMES`, and the event / param / transport pointers are null
+    // (which `cb_process` tolerates).
+    unsafe {
+        let ctx = cb_create::<P>();
+        cb_reset::<P>(ctx, 48_000.0, FRAMES);
+
+        let in_left = vec![0.5f32; frames];
+        let in_right = vec![0.5f32; frames];
+        let mut out_left = vec![0f32; frames];
+        let mut out_right = vec![0f32; frames];
+        let in_ptrs: [*const f32; 2] = [in_left.as_ptr(), in_right.as_ptr()];
+        let mut out_ptrs: [*mut f32; 2] = [out_left.as_mut_ptr(), out_right.as_mut_ptr()];
+
+        let mut count = 0;
+        for _ in 0..3 {
+            let ((), n) = audit(|| {
+                cb_process::<P>(
+                    ctx,
+                    in_ptrs.as_ptr(),
+                    out_ptrs.as_mut_ptr(),
+                    CH,
+                    CH,
+                    FRAMES,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                );
+            });
+            count = n;
+        }
+
+        assert!(
+            out_left.iter().any(|s| s.abs() > 0.0),
+            "au smoke: process did not run (output stayed zero)"
+        );
+        cb_destroy::<P>(ctx);
+        count
     }
 }
 
