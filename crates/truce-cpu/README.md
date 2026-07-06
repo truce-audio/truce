@@ -31,11 +31,11 @@ feature.
 `truce-gui` enables it, and `editor()` renders through it:
 
 ```rust
-fn editor(&self) -> Box<dyn Editor> {
+fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
     GridLayout::build(vec![widgets(vec![
         knob(P::Gain, "Gain"),
     ])])
-    .into_editor(&self.params)
+    .into_editor(&params)
 }
 ```
 

@@ -87,6 +87,8 @@ pub struct MyPlugin {
 }
 
 impl PluginLogic for MyPlugin {
+    type Params = MyParams;
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
     }
@@ -101,11 +103,11 @@ impl PluginLogic for MyPlugin {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<MyParams>) -> Box<dyn Editor> {
         // Built-in widgets from a GridLayout. See the GUI guide for
         // framework backends (egui / iced / slint) and custom editors.
         GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
-            .into_editor(&self.params)
+            .into_editor(&params)
     }
 }
 
