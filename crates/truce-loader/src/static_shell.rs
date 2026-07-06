@@ -206,12 +206,23 @@ where
     S: Sample,
     L: PluginLogicCore<S> + ?Sized,
 {
+    publish_snapshot_with(slot, try_snapshot, |buf| logic.snapshot_into(buf));
+}
+
+/// Latch logic behind [`publish_snapshot`], parameterized over the raw
+/// `snapshot_into` closure so it can be unit-tested without a full
+/// `PluginLogicCore` mock.
+fn publish_snapshot_with(
+    slot: &SnapshotSlot,
+    try_snapshot: &mut bool,
+    snapshot_into: impl FnOnce(&mut Vec<u8>) -> bool,
+) {
     if !*try_snapshot {
         return;
     }
     let ran_unsupported = std::cell::Cell::new(false);
     slot.publish(|buf| {
-        let wrote = logic.snapshot_into(buf);
+        let wrote = snapshot_into(buf);
         ran_unsupported.set(!wrote);
         wrote
     });
@@ -388,4 +399,59 @@ macro_rules! export_static {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::publish_snapshot_with;
+    use truce_core::snapshot::SnapshotSlot;
+
+    #[test]
+    fn non_opt_in_latches_off_on_first_block() {
+        let slot = SnapshotSlot::new();
+        let mut try_snapshot = true;
+
+        // Default `snapshot_into` (returns false) before any publish:
+        // latch off so we stop paying every block.
+        publish_snapshot_with(&slot, &mut try_snapshot, |_| false);
+        assert!(!try_snapshot, "first false must latch off");
+        assert!(!slot.is_supported());
+
+        // Subsequent blocks short-circuit and never call the closure.
+        let mut called = false;
+        publish_snapshot_with(&slot, &mut try_snapshot, |_| {
+            called = true;
+            false
+        });
+        assert!(!called, "latched-off slot must not call snapshot_into");
+    }
+
+    #[test]
+    fn opt_in_then_contract_violation_stays_subscribed() {
+        let slot = SnapshotSlot::new();
+        let mut try_snapshot = true;
+
+        // Block 1: plugin publishes - it has opted in for its lifetime.
+        publish_snapshot_with(&slot, &mut try_snapshot, |buf| {
+            buf.clear();
+            buf.extend_from_slice(&[1, 2, 3]);
+            true
+        });
+        assert!(try_snapshot);
+        assert!(slot.is_supported());
+        assert_eq!(slot.read(), Some(vec![1, 2, 3]));
+
+        // Block 2: a contract-violating false must NOT latch us off - we
+        // keep calling the plugin rather than silently going dark.
+        publish_snapshot_with(&slot, &mut try_snapshot, |_| false);
+        assert!(try_snapshot, "a post-opt-in false must not latch off");
+
+        // Block 3: still subscribed, so a fresh publish still lands.
+        publish_snapshot_with(&slot, &mut try_snapshot, |buf| {
+            buf.clear();
+            buf.extend_from_slice(&[4]);
+            true
+        });
+        assert_eq!(slot.read(), Some(vec![4]));
+    }
 }
