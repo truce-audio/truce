@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 3.0.1
+
+- New opt-in `rt-paranoid` feature: a development-time checker that flags any allocation your DSP makes on the audio thread inside `process`, with `truce_test::assert_no_audio_alloc` helpers to gate it in tests. Off and zero-cost by default.
+
 ## 3.0.0
 
 Refactored `editor` into an associated function: it takes the parameter store as an argument (`Arc<Self::Params>`) instead of borrowing the plugin (`&self`). This turns a runtime convention into a compile-time guarantee - the editor is now, by construction, a function of its parameters, so building it can't take the plugin lock or reach into DSP state at all. An editor that genuinely needs shared DSP-derived state (an analyzer's spectrum, say) routes it through a `#[skip]` field on the params struct, keeping the store the single thing the editor sees.
