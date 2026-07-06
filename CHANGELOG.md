@@ -4,7 +4,7 @@ Notable changes per release.
 
 ## 3.0.0
 
-Refactored `editor` into an associated function: it takes the parameter store as an argument (`Arc<Self::Params>`) instead of borrowing the plugin (`&self`). This turns a runtime convention into a compile-time guarantee - the editor is now, by construction, a function of its parameters, so building it can't take the plugin lock or reach into DSP state at all. Opening the GUI is decoupled from the audio thread structurally rather than by careful bookkeeping. For almost every plugin it's a one-line signature change.
+Refactored `editor` into an associated function: it takes the parameter store as an argument (`Arc<Self::Params>`) instead of borrowing the plugin (`&self`). This turns a runtime convention into a compile-time guarantee - the editor is now, by construction, a function of its parameters, so building it can't take the plugin lock or reach into DSP state at all. An editor that genuinely needs shared DSP-derived state (an analyzer's spectrum, say) routes it through a `#[skip]` field on the params struct, keeping the store the single thing the editor sees.
 
 ### Breaking
 
