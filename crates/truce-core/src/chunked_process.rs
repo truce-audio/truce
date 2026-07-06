@@ -120,6 +120,15 @@ where
     // < total` loop that never advances - hanging the audio thread.
     let min_sub = (min_subblock_samples as usize).max(1);
 
+    // Paranoid allocation check (the `rt-paranoid` feature): one section
+    // spanning the whole per-host-block run, so it covers not just the
+    // plugin's `process` but the framework glue around it - event
+    // dispatch / rebasing, sub-block slicing, output re-basing - which
+    // all run on the audio thread and must be allocation-free too. No-op
+    // and zero-sized when the feature is off. This is the single site
+    // every format wrapper and the test driver route through.
+    let _rt = crate::rt::RtSection::enter();
+
     while block_start < total {
         // Find the next split-eligible event at or past
         // `block_start + min_sub`. Anything before that coalesces
@@ -159,14 +168,7 @@ where
             ctx = ctx.with_meters(f);
         }
 
-        last_status = {
-            // Paranoid allocation check (the `rt-paranoid` feature): flag
-            // any allocation the plugin makes in `process`. No-op and
-            // zero-sized when the feature is off. This is the single site
-            // every format wrapper and the test driver route through.
-            let _rt = crate::rt::RtSection::enter();
-            plugin.process(&mut sub_buffer, sub_event_scratch, &mut ctx)
-        };
+        last_status = plugin.process(&mut sub_buffer, sub_event_scratch, &mut ctx);
 
         // Re-base any events the plugin pushed during this sub-block
         // back into block-relative coordinates so the wrapper's
