@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-arpeggio-simple"
+name = "truce-example-arpeggio"
 # Internal-only - workspace demonstrations not for crates.io.
 publish = false
 version.workspace = true
@@ -13,7 +13,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "truce-example-arpeggio-simple-standalone"
+name = "truce-example-arpeggio-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 
