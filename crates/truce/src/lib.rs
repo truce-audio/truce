@@ -1,6 +1,10 @@
 #![forbid(unsafe_code)]
 
 pub use truce_core as core;
+/// Real-time allocation checking helpers (`allow_alloc`, `audit`). The
+/// checker itself is the opt-in `rt-paranoid` feature; install it with
+/// [`enable_rt_paranoid!`]. See the audio-testing guide.
+pub use truce_core::rt;
 pub use truce_derive::{ParamEnum, Params, State};
 // `truce` is renderer-agnostic - it no longer re-exports `truce-gui`.
 // Plugins pick a renderer crate (truce-gui, truce-egui, truce-iced,
