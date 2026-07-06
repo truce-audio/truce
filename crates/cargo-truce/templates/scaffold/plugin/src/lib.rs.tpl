@@ -34,3 +34,8 @@ impl PluginLogic for {struct_name} \{
 }
 
 {plugin_macro | unescaped}
+
+// Installs the real-time allocation checker under `--features rt-paranoid`
+// (a no-op otherwise). Wrap a driver run in `assert_no_audio_alloc` to
+// fail a test if `process` ever allocates. See the audio-testing guide.
+truce::enable_rt_paranoid!();

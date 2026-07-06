@@ -42,6 +42,10 @@ vst3 = ["dep:truce-vst3"]
 standalone = ["dep:truce-standalone"]
 {{ endif -}}
 shell = ["truce/shell"]
+# Flags any allocation your DSP makes on the audio thread in `process`.
+# Dev/test only: `cargo test --features rt-paranoid`. Off, zero-cost by
+# default.
+rt-paranoid = ["truce/rt-paranoid"]
 
 [dependencies]
 truce = \{ {dep_args | unescaped} }
