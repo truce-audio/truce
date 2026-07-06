@@ -161,6 +161,8 @@ impl Gain {
 }
 
 impl PluginLogic for Gain {
+    type Params = GainParams;
+
     fn reset(&mut self, sr: f64, _bs: usize) {
         self.params.set_sample_rate(sr);
     }
@@ -177,9 +179,9 @@ impl PluginLogic for Gain {
         ProcessStatus::Normal
     }
 
-    fn editor(&self) -> Box<dyn Editor> {
+    fn editor(params: Arc<GainParams>) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
-            .into_editor(&self.params)
+            .into_editor(&params)
     }
 }
 
@@ -219,13 +221,17 @@ platform contract; every other format is unviable there.
 
 - **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
 - **Cross-platform** — macOS, Windows, Linux, plus iOS via AU v3 with the same Rust DSP, params, and editor
+- **MIDI 2.0 & multi-port** — opt-in MIDI 2.0 / UMP and multiple MIDI in/out ports, with per-note expression (MPE) mapped across CLAP, VST3, and AU v3; MIDI 1.0 single-port plugins are unchanged
+- **f32 or f64 DSP** — write 64-bit DSP with `prelude64`; the host's native 64-bit audio wire is taken directly on VST3, VST2, and CLAP, widen/narrow elsewhere
 - **Presets** — factory presets from a directory of TOML files, shipped to every format's native preset system at install; `cargo truce preset` converts between formats and pulls presets saved in your DAW back into the library
 - **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, vizia, or raw window handle
 - **Resizable editors** — `.resizable(true).min_size(_).max_size(_)` on any backend, round-tripped through CLAP `gui_set_size`, VST3 `IPlugView::onSize`, AU view-frame change, and LV2 `ui:resize`
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units, sample-accurate automation by default
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — scaffold, build, install, validate, and package; `doctor` reports environment health, and `package` produces signed distributable installers (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
+- **Real-time safe** — no locks or allocations in `process()`; meters, state loads, and editor edits reach the audio thread through lock-free handoffs (priority donation on macOS), and state save can go fully lock-free with an opt-in `snapshot_into`
 - **Thread-safe params** — atomic storage, lock-free access from any thread
+- **State migration** — a `migrate_state` hook accepts pre-truce or other-framework state blobs, so a ported plugin keeps loading its old sessions and presets
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Automated tests** — audio, render, state, params, GUI screenshots
 - **Automated validation** — `cargo truce validate` runs auval, pluginval, and clap-validator in one command
