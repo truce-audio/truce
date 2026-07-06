@@ -1,6 +1,6 @@
 //! Paranoid real-time allocation checking (the `rt-paranoid` feature).
 //!
-//! A wrapping global allocator ([`RtCheckAlloc`]) plus a thread-local
+//! A wrapping global allocator (`RtCheckAlloc`) plus a thread-local
 //! "audio section" guard ([`RtSection`]). While the audio thread is
 //! inside a section, any allocation it makes is a real-time contract
 //! violation and gets recorded and reported.
@@ -9,8 +9,8 @@
 //! `chunked_process`, which every format wrapper and the test driver
 //! route through, so one guard covers all of them. The allocator is
 //! installed by the artifact (a plugin cdylib via `truce::plugin!`, or a
-//! test binary) with [`enable_rt_paranoid!`](crate::enable_rt_paranoid);
-//! a library cannot set a downstream binary's global allocator.
+//! test binary) with `truce::enable_rt_paranoid!`; a library cannot set
+//! a downstream binary's global allocator.
 //!
 //! Everything here is inert unless the `rt-paranoid` feature is on:
 //! [`RtSection::enter`] is a zero-sized no-op and [`allow_alloc`] just
@@ -246,8 +246,7 @@ mod imp {
     /// inside an [`RtSection`]. Delegates to [`System`] for the actual
     /// allocation so the program keeps running (in `count` mode).
     ///
-    /// Install it in the artifact with
-    /// [`enable_rt_paranoid!`](crate::enable_rt_paranoid).
+    /// Install it in the artifact with `truce::enable_rt_paranoid!`.
     pub struct RtCheckAlloc;
 
     impl RtCheckAlloc {
