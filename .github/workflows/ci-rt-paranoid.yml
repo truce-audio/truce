@@ -1,0 +1,99 @@
+name: rt-paranoid (audio-thread allocation check)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Builds the DSP-distinct example plugins with the `rt-paranoid` feature
+# and runs their tests under `TRUCE_RT_PARANOID=panic`, so any allocation
+# the audio thread makes inside `process` fails the build. Also proves a
+# freshly `cargo truce new`-scaffolded plugin is allocation-free and that
+# its scaffolded rt-paranoid wiring works. Linux only - the check is
+# platform-independent DSP, cheapest here.
+jobs:
+  examples:
+    name: examples
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-rt-paranoid-examples
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev
+
+      - name: rt-paranoid check on example plugins
+        run: ./scripts/ci/rt-paranoid.sh
+
+  scaffold:
+    name: scaffolded plugin
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-rt-paranoid-scaffold
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev
+
+      - name: Scaffold a plugin and run its rt-paranoid check
+        run: |
+          # Build THIS checkout's cargo-truce, whose scaffold template
+          # wires in the rt-paranoid feature + `enable_rt_paranoid!()`.
+          cargo build -p cargo-truce
+          BIN="$PWD/target/debug/cargo-truce"
+
+          mkdir -p "$RUNNER_TEMP/scaffold"
+          cd "$RUNNER_TEMP/scaffold"
+          "$BIN" new probe-fx --vendor Probe --vendor-id com.probe.test
+          cd probe-fx
+
+          # Point the scaffolded git/registry truce deps at this checkout.
+          SCAFFOLD_DIR="$PWD" python3 "$GITHUB_WORKSPACE/scripts/ci/rewrite-scaffold-deps.py"
+
+          # The scaffold ships neither tests nor a test dependency by
+          # design; add both to exercise the wiring it does ship.
+          {
+            echo ""
+            echo "[dev-dependencies]"
+            echo "truce-test = { path = \"$GITHUB_WORKSPACE/crates/truce-test\" }"
+          } >> Cargo.toml
+          cat "$GITHUB_WORKSPACE/scripts/ci/rt-paranoid-scaffold-test.rs" >> src/lib.rs
+
+          TRUCE_RT_PARANOID=panic cargo test --features rt-paranoid --lib
