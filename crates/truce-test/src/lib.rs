@@ -236,9 +236,12 @@ pub fn assert_no_audio_alloc<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
-/// Assert that running `f` *does* allocate on the audio thread inside
-/// `process` - for examples that intentionally demonstrate a real-time
-/// violation (e.g. rebuilding a DSP graph on a parameter change).
+/// **Internal use only.** Assert that running `f` *does* allocate on the
+/// audio thread inside `process`. There is no reason for a plugin to want
+/// this - it exists to pin the behavior of truce's own examples that
+/// intentionally demonstrate a real-time violation (the fundsp reverb
+/// rebuilding its graph on a parameter change). Real plugins want
+/// [`assert_no_audio_alloc`].
 ///
 /// Skips the assertion when the checker isn't compiled in, so it doesn't
 /// fail an ordinary `cargo test`; run with `--features rt-paranoid` for it
@@ -248,6 +251,7 @@ pub fn assert_no_audio_alloc<R>(f: impl FnOnce() -> R) -> R {
 ///
 /// With the checker active, panics if no audio-thread allocation was
 /// observed inside `process`.
+#[doc(hidden)]
 pub fn assert_audio_alloc<R>(f: impl FnOnce() -> R) -> R {
     let (r, n) = rt::audit(f);
     if rt::is_active() {
