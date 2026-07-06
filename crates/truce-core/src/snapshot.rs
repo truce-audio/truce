@@ -16,6 +16,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+/// Capacity the publish buffer is pre-warmed to at construction, off the
+/// audio thread, so the first per-block publish doesn't allocate. Small
+/// state (a label, a few flags, a file path) fits without ever growing;
+/// larger state reallocates once on the first publish, then stays warm.
+const SNAPSHOT_PREALLOC: usize = 256;
+
 /// Shared handle to the published custom-state bytes. Held by the shell
 /// (producer, audio thread) and the format wrapper (consumer, host /
 /// GUI thread), both cloned from one `Arc`.
@@ -27,12 +33,13 @@ pub struct SnapshotSlot {
 }
 
 impl SnapshotSlot {
-    /// A fresh, empty slot. Nothing is published yet, so [`Self::read`]
+    /// A fresh slot with its publish buffer pre-warmed to
+    /// `SNAPSHOT_PREALLOC`. Nothing is published yet, so [`Self::read`]
     /// returns `None` until the first [`Self::publish`].
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            bytes: Mutex::new(Vec::new()),
+            bytes: Mutex::new(Vec::with_capacity(SNAPSHOT_PREALLOC)),
             supported: AtomicBool::new(false),
         })
     }
@@ -77,7 +84,22 @@ impl SnapshotSlot {
 
 #[cfg(test)]
 mod tests {
-    use super::SnapshotSlot;
+    use super::{SNAPSHOT_PREALLOC, SnapshotSlot};
+
+    #[test]
+    fn buffer_is_prewarmed_so_first_publish_does_not_allocate() {
+        let slot = SnapshotSlot::new();
+        // A first publish that fits inside the pre-warmed capacity must
+        // not grow the buffer - that is the whole point of warming it
+        // off the audio thread.
+        slot.publish(|buf| {
+            buf.clear();
+            buf.extend_from_slice(&[0xAB; SNAPSHOT_PREALLOC]);
+            true
+        });
+        let published = slot.read().expect("published");
+        assert_eq!(published.len(), SNAPSHOT_PREALLOC);
+    }
 
     #[test]
     fn read_is_none_until_first_publish() {
