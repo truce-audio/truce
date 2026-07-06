@@ -4,7 +4,7 @@ Notable changes per release.
 
 ## 3.0.1
 
-- New opt-in `rt-paranoid` feature: a development-time checker that flags any allocation your DSP makes on the audio thread inside `process`, with `truce_test::assert_no_audio_alloc` helpers to gate it in tests. Off and zero-cost by default.
+- New opt-in `rt-paranoid` feature: a development-time checker that flags any allocation your DSP makes on the audio thread inside `process`, with `truce_test::assert_no_audio_alloc` helpers to gate it in tests. Off and zero-cost by default, and `cargo truce new` wires it into fresh plugins.
 
 ## 3.0.0
 
