@@ -44,6 +44,10 @@ mod imp {
         static RECORDING: Cell<bool> = const { Cell::new(false) };
         static VIOLATIONS: Cell<u32> = const { Cell::new(0) };
         static FIRST: Cell<FrameBuf> = const { Cell::new(FrameBuf::EMPTY) };
+        // `Some(n)` while inside `audit`: section violations accumulate
+        // here and the normal report/panic is suppressed, so a test can
+        // assert on the count instead.
+        static AUDIT: Cell<Option<u32>> = const { Cell::new(None) };
     }
 
     #[derive(Clone, Copy, PartialEq)]
@@ -93,10 +97,38 @@ mod imp {
             if depth == 0 {
                 let count = VIOLATIONS.with(|v| v.replace(0));
                 if count > 0 {
-                    report(count);
+                    // Inside `audit`, accumulate and stay quiet so the
+                    // test decides what the count means. Otherwise report
+                    // per the global mode.
+                    if AUDIT.with(Cell::get).is_some() {
+                        AUDIT.with(|a| a.set(a.get().map(|n| n.saturating_add(count))));
+                    } else {
+                        report(count);
+                    }
                 }
             }
         }
+    }
+
+    /// Run `f` and return `(result, allocations)` where `allocations` is
+    /// the number of audio-thread allocations made inside `process`
+    /// sections during `f`, with the normal per-section report/panic
+    /// suppressed. Same-thread only (the test driver runs `process` on
+    /// the calling thread). Underpins the `truce-test` audio-alloc
+    /// assertions.
+    pub fn audit<R>(f: impl FnOnce() -> R) -> (R, u32) {
+        let prev = AUDIT.with(|a| a.replace(Some(0)));
+        let r = f();
+        let count = AUDIT.with(|a| a.replace(prev)).unwrap_or(0);
+        (r, count)
+    }
+
+    /// Whether the checker is compiled in (the `rt-paranoid` feature).
+    /// A test asserting that code *does* allocate skips its assertion
+    /// when this is false, so it doesn't fail an ordinary build.
+    #[must_use]
+    pub fn is_active() -> bool {
+        true
     }
 
     /// Enter a section, run `f`, and return how many allocations it made,
@@ -278,9 +310,22 @@ mod imp {
     pub fn allow_alloc<R>(f: impl FnOnce() -> R) -> R {
         f()
     }
+
+    /// No-op with `rt-paranoid` off: runs `f`, reports zero allocations.
+    #[inline]
+    pub fn audit<R>(f: impl FnOnce() -> R) -> (R, u32) {
+        (f(), 0)
+    }
+
+    /// The checker is not compiled in.
+    #[must_use]
+    #[inline]
+    pub fn is_active() -> bool {
+        false
+    }
 }
 
-pub use imp::{RtSection, allow_alloc};
+pub use imp::{RtSection, allow_alloc, audit, is_active};
 
 #[cfg(feature = "rt-paranoid")]
 pub use imp::RtCheckAlloc;

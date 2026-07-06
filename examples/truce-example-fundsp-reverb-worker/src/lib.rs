@@ -378,6 +378,10 @@ truce::plugin! {
     params: FundspReverbWorkerParams,
 }
 
+// Install the real-time allocation checker under `--features rt-paranoid`
+// (no-op otherwise), so the test below can gate on audio-thread allocs.
+truce::enable_rt_paranoid!();
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,6 +389,32 @@ mod tests {
     #[test]
     fn info_is_valid() {
         truce_test::assert_valid_info::<Plugin>();
+    }
+
+    /// The point of the worker variant: a Time change hands the graph
+    /// rebuild to a worker thread over lock-free queues, so `process`
+    /// itself never allocates - the exact contrast with
+    /// `truce-example-fundsp-reverb-simple`, whose `process` rebuilds
+    /// inline and trips the checker. The worker thread's own allocations
+    /// happen off the audio thread, so the checker (audio-thread only)
+    /// correctly ignores them. Only checks under `--features rt-paranoid`.
+    #[test]
+    fn time_change_stays_alloc_free() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assert_no_audio_alloc, driver};
+
+        assert_no_audio_alloc(|| {
+            driver!(Plugin)
+                .duration(Duration::from_millis(40))
+                .input(InputSource::Constant(0.5))
+                .script(|sc| {
+                    sc.set_param(P::Time, 0.1);
+                    sc.wait_ms(15);
+                    sc.set_param(P::Time, 0.95);
+                    sc.wait_ms(15);
+                })
+                .run()
+        });
     }
 
     #[test]

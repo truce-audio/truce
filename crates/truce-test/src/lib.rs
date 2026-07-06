@@ -38,6 +38,7 @@
 //! ```
 
 use truce_core::export::PluginExport;
+use truce_core::rt;
 use truce_core::state;
 use truce_params::Params;
 
@@ -213,6 +214,49 @@ pub fn assert_has_editor<P: PluginExport>() {
     let editor = editor.unwrap();
     let (w, h) = editor.size();
     assert!(w > 0 && h > 0, "Editor size is zero: {w}x{h}");
+}
+
+/// Assert that running `f` (typically `driver!(Plugin)...run()`) makes
+/// no allocation on the audio thread inside `process`.
+///
+/// Meaningful only when the plugin crate installs the checker
+/// (`truce::enable_rt_paranoid!()` plus the `rt-paranoid` feature); without
+/// it the count can't be observed and this passes vacuously. Run the
+/// alloc-check suite with `--features rt-paranoid`.
+///
+/// # Panics
+///
+/// Panics if any audio-thread allocation was observed inside `process`.
+pub fn assert_no_audio_alloc<R>(f: impl FnOnce() -> R) -> R {
+    let (r, n) = rt::audit(f);
+    assert_eq!(
+        n, 0,
+        "expected no audio-thread allocation in process(), saw {n}"
+    );
+    r
+}
+
+/// Assert that running `f` *does* allocate on the audio thread inside
+/// `process` - for examples that intentionally demonstrate a real-time
+/// violation (e.g. rebuilding a DSP graph on a parameter change).
+///
+/// Skips the assertion when the checker isn't compiled in, so it doesn't
+/// fail an ordinary `cargo test`; run with `--features rt-paranoid` for it
+/// to check.
+///
+/// # Panics
+///
+/// With the checker active, panics if no audio-thread allocation was
+/// observed inside `process`.
+pub fn assert_audio_alloc<R>(f: impl FnOnce() -> R) -> R {
+    let (r, n) = rt::audit(f);
+    if rt::is_active() {
+        assert!(
+            n > 0,
+            "expected an audio-thread allocation in process(), saw none"
+        );
+    }
+    r
 }
 
 /// Assert `plugin_info`!() returns valid metadata.

@@ -220,6 +220,10 @@ truce::plugin! {
     params: FundspReverbSimpleParams,
 }
 
+// Install the real-time allocation checker under `--features rt-paranoid`
+// (no-op otherwise), so the tests below can gate on audio-thread allocs.
+truce::enable_rt_paranoid!();
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,6 +259,48 @@ mod tests {
             .run();
         assertions::assert_no_nans(&result);
         assertions::assert_peak_below(&result, 2.0);
+    }
+
+    /// With Time held constant the graph is never rebuilt, so `process`
+    /// is allocation-free. Only checks under `--features rt-paranoid`.
+    #[test]
+    fn constant_time_process_is_alloc_free() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assert_no_audio_alloc, driver};
+
+        assert_no_audio_alloc(|| {
+            driver!(Plugin)
+                .duration(Duration::from_millis(40))
+                .input(InputSource::Constant(0.5))
+                .run()
+        });
+    }
+
+    /// Changing the Time knob rebuilds the fundsp graph *on the audio
+    /// thread* (`Box::new` + `allocate()`) - the intentional real-time
+    /// violation this teaching example exists to show, and the reason
+    /// `truce-example-fundsp-reverb-worker` offloads the rebuild. This
+    /// test pins that behavior: under `--features rt-paranoid` the Time
+    /// change must trip the allocation checker.
+    #[test]
+    fn time_change_rebuild_trips_rt_check() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assert_audio_alloc, driver};
+
+        assert_audio_alloc(|| {
+            driver!(Plugin)
+                .duration(Duration::from_millis(40))
+                .input(InputSource::Constant(0.5))
+                .script(|sc| {
+                    sc.set_param(P::Time, 0.1);
+                    sc.wait_ms(15);
+                    // A large jump crosses the rebuild hysteresis
+                    // threshold, forcing a graph rebuild mid-render.
+                    sc.set_param(P::Time, 0.95);
+                    sc.wait_ms(15);
+                })
+                .run()
+        });
     }
 
     /// Regression: SVF filter input order is positional + unchecked.
