@@ -2,6 +2,11 @@
 
 Notable changes per release.
 
+## 3.1.3
+
+- AU v3 editors resize to the host pane on iOS across all GUI backends (built-in, egui, iced, slint), honoring `resizable` / `min_size` / `max_size` / `aspect_ratio`.
+- A stereo-output AAX instrument now advertises only its stereo configuration.
+
 ## 3.1.2
 
 - rt-paranoid's checker mode is now set only with `truce::rt::set_mode`; the `TRUCE_RT_PARANOID` environment variable is removed.

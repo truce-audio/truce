@@ -47,6 +47,22 @@ use crate::render_core::{build_snapshot_closures, render_widgets};
 pub struct BuiltinEditor<P: Params + 'static> {
     params: Arc<P>,
     layout: Layout,
+    /// Reported editor size in logical points. Seeded from the
+    /// layout's natural dimensions at construction; `set_size`
+    /// overwrites it when the host drives a resize.
+    size: (u32, u32),
+    /// Resize-capability flag exposed via `Editor::can_resize`. The
+    /// AU v3 view controller only fits the editor to the host's
+    /// safe-area frame when this is `true`; the default keeps a
+    /// fixed-size GUI pinned to its built size.
+    can_resize: bool,
+    /// `Editor::min_size` / `max_size` bounds. The AU shim clamps
+    /// host-driven resizes against these before calling `set_size`.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    /// `Editor::aspect_ratio` lock (numerator, denominator). The AU
+    /// shim's `fit_logical_size` clamps host-driven resizes to it.
+    aspect_ratio: Option<(u32, u32)>,
     theme: Theme,
     backend: Option<CpuBackend>,
     interaction: InteractionState,
@@ -124,9 +140,18 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     fn new_with(params: Arc<P>, layout: Layout) -> Self {
+        let size = match &layout {
+            Layout::Rows(p) => (p.width, p.height),
+            Layout::Grid(g) => (g.width, g.height),
+        };
         Self {
             params,
             layout,
+            size,
+            can_resize: false,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
             theme: Theme::dark(),
             backend: None,
             interaction: InteractionState::default(),
@@ -136,14 +161,49 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             scale: EditorScale::new(crate::platform::main_screen_scale()),
         }
     }
+
+    /// Opt into host-driven resizing. When `true`, the AU v3 view
+    /// controller fits the editor to the host plug-in pane's
+    /// safe-area frame (driving `set_size` through the AU shim), so
+    /// the editor stretches to the real device viewport instead of
+    /// sitting at its built size. The default (`false`) keeps a
+    /// deliberately fixed-size GUI pinned. Mirrors the desktop
+    /// builder so the same call works on every target.
+    #[must_use]
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.can_resize = resizable;
+        self
+    }
+
+    /// Minimum logical-point size the editor accepts. The AU shim
+    /// consults this before driving `set_size`. See [`Self::resizable`].
+    #[must_use]
+    pub fn min_size(mut self, min: (u32, u32)) -> Self {
+        self.min_size = min;
+        self
+    }
+
+    /// Maximum logical-point size the editor accepts. See
+    /// [`Self::min_size`].
+    #[must_use]
+    pub fn max_size(mut self, max: (u32, u32)) -> Self {
+        self.max_size = max;
+        self
+    }
+
+    /// Lock the editor's aspect ratio as `(numerator, denominator)`.
+    /// Host-driven resizes are clamped to it by the AU shim's
+    /// `fit_logical_size`. See [`Self::resizable`].
+    #[must_use]
+    pub fn aspect_ratio(mut self, ratio: Option<(u32, u32)>) -> Self {
+        self.aspect_ratio = ratio;
+        self
+    }
 }
 
 impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     fn size(&self) -> (u32, u32) {
-        match &self.layout {
-            Layout::Rows(p) => (p.width, p.height),
-            Layout::Grid(g) => (g.width, g.height),
-        }
+        self.size
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
@@ -232,6 +292,42 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         self.interaction = inner.interaction;
         self.backend = inner.backend;
         self.context = None;
+    }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
+        self.size = (width, height);
+        // The AU v3 view controller calls `set_size` on the main
+        // thread from `viewDidLayoutSubviews`, the same thread the
+        // `CADisplayLink` runs `tick` on, so resizing the live view +
+        // pixmap inline here is safe. `try_borrow_mut` mirrors the
+        // tick / touch paths: a resize racing an in-flight tick skips
+        // the live update rather than panicking (the new size is
+        // already cached, so the next tick still picks it up).
+        if let Ok(mut guard) = self.inner.try_borrow_mut()
+            && let Some(inner) = guard.as_mut()
+        {
+            resize_inner(inner, width, height);
+        }
+        true
+    }
+
+    fn can_resize(&self) -> bool {
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        self.aspect_ratio
     }
 }
 
@@ -619,6 +715,56 @@ fn tick<P: Params + 'static>(inner: &mut Inner<P>) {
             backend.data(),
         );
     }
+}
+
+/// Re-size the live editor to `logical_w` x `logical_h` logical
+/// points. Updates the cached logical size, the child `UIView`
+/// frame, and the CPU render backend's pixmap (physical pixels =
+/// logical x backing scale). The next `tick` rasterizes the layout
+/// into the resized pixmap and blits it through a fresh `CGImage`.
+/// No-op when the size is unchanged so redundant resizes stay cheap.
+///
+/// Unlike the GPU backends there is no drawable / render surface to
+/// reconfigure: `blit_pixmap_to_layer` builds a `CGImage` sized to
+/// the pixmap every frame, so resizing the pixmap is the whole job.
+fn resize_inner<P: Params + 'static>(inner: &mut Inner<P>, logical_w: u32, logical_h: u32) {
+    if logical_w == 0 || logical_h == 0 {
+        return;
+    }
+    if inner.logical_w == logical_w && inner.logical_h == logical_h {
+        return;
+    }
+
+    inner.logical_w = logical_w;
+    inner.logical_h = logical_h;
+
+    // SAFETY: `child_view` is the pinned `UIView` created in
+    // `install_editor_view`; it outlives `inner`. `setFrame:` is a
+    // main-thread UIKit call, which is where `set_size` runs.
+    if !inner.child_view.is_null() {
+        let frame = NSRect {
+            origin: NSPoint { x: 0.0, y: 0.0 },
+            size: NSSize {
+                width: f64::from(logical_w),
+                height: f64::from(logical_h),
+            },
+        };
+        unsafe {
+            let _: () = msg_send![inner.child_view, setFrame: frame];
+        }
+    }
+
+    // Reallocate the pixmap at the new logical size so the next tick
+    // rasterizes into a correctly sized buffer. A `None` backend
+    // hasn't been built yet - the next tick creates it at the current
+    // logical size directly.
+    if let Some(backend) = inner.backend.as_mut() {
+        backend.resize(logical_w, logical_h, inner.scale.get_f32());
+    }
+
+    // Wake the repaint gate so a quiescent editor still redraws at the
+    // new size on the next tick.
+    inner.needs_repaint.store(true, Ordering::Release);
 }
 
 // ---------------------------------------------------------------------------

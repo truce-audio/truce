@@ -588,6 +588,33 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         self.finish_init(&adapter, device, queue, surface_config, Some(surface))
     }
 
+    /// Resize the runtime to a new logical size (iOS host-driven
+    /// resize). Updates the cached logical size, reconfigures the inline
+    /// wgpu surface to the new physical pixel count, and rebuilds the
+    /// iced viewport so the next frame lays out against the new size.
+    /// No-op until the render pipeline is live.
+    #[cfg(target_os = "ios")]
+    pub(crate) fn resize(&mut self, logical_w: u32, logical_h: u32) {
+        self.size = (logical_w, logical_h);
+        let render_scale = self.scale.get();
+        let pw = truce_gui::to_physical_px(logical_w, render_scale).max(1);
+        let ph = truce_gui::to_physical_px(logical_h, render_scale).max(1);
+        let Some(render) = self.render.as_mut() else {
+            return;
+        };
+        render.surface_config.width = pw;
+        render.surface_config.height = ph;
+        if let Some(surface) = &render.surface {
+            surface.configure(&render.device, &render.surface_config);
+        }
+        #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
+        let scale_f32 = render_scale as f32;
+        render.viewport = iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale_f32);
+        // The idle gate is exempt on iOS (every tick renders), but flag a
+        // forced paint so the reflow lands even if that ever changes.
+        self.force_render = true;
+    }
+
     /// Build the iced `Engine` / renderer / [`RenderState`] around an
     /// initialized device. `surface` is `Some` on iOS (inline
     /// swapchain) and `None` on desktop, where the pump owns it.

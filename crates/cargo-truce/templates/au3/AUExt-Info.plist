@@ -51,7 +51,7 @@
                     <true/>
                     <key>tags</key>
                     <array>
-                        <string>AUTAG</string>
+                        <string>AUTAG</string>EXTRATAGS
                     </array>
                 </dict>
             </array>

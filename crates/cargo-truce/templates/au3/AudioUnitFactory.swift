@@ -210,6 +210,27 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     override var inputBusses: AUAudioUnitBusArray { _inputBusArray }
     override var outputBusses: AUAudioUnitBusArray { _outputBusArray }
+
+    // MARK: - AU v3 view resizing
+
+    /// Accept every view configuration the host proposes. This is what
+    /// surfaces the resize / expand affordance in hosts like GarageBand -
+    /// without it the host treats the AU v3 view as a single fixed size and
+    /// never offers to enlarge it, regardless of the `resizable`
+    /// AudioComponents tag. Returning all indices says "we can render at any
+    /// size the host offers"; the embedded editor reflows to the host bounds
+    /// in the view controller's layout pass (`fitGUIToSafeArea`).
+    override func supportedViewConfigurations(
+        _ availableViewConfigurations: [AUAudioUnitViewConfiguration]
+    ) -> IndexSet {
+        IndexSet(integersIn: availableViewConfigurations.indices)
+    }
+
+    /// Host picked one of the configurations reported above. The hosted view
+    /// tracks its parent's bounds and refits on the next layout pass, so this
+    /// only needs to exist for the host's `select` call to succeed.
+    override func select(_ viewConfiguration: AUAudioUnitViewConfiguration) {}
+
     override var parameterTree: AUParameterTree? {
         get { _parameterTree }
         set { _parameterTree = newValue }
@@ -925,9 +946,15 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         self.view.addSubview(container)
         guiContainer = container
         self.preferredContentSize = guiPtSize
-        // Center the GUI in the host's view (which may be oversized)
-        centerGUI()
         guiSetUp = true
+        #if os(iOS)
+        // Fit the editor to the host's safe-area frame so its responsive
+        // layout reflows to the real device viewport.
+        fitGUIToSafeArea()
+        #else
+        // Center the GUI in the host's view (which may be oversized).
+        centerGUI()
+        #endif
 
         // Sync Rust param values → AUParameterTree at ~30fps.
         // This ensures the host sees GUI-initiated param changes (KVO).
@@ -957,12 +984,12 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if didInitialLayout {
-            propagateHostResize()
-        } else {
-            didInitialLayout = true
-        }
-        centerGUI()
+        // iOS always fits to the host's safe-area frame - unlike the macOS
+        // `didInitialLayout` skip (which avoids Logic stretching the desktop
+        // editor on first layout), fitting on the very first layout is the
+        // whole point on iOS: the host hands us a pane sized to the device
+        // and we reflow into it immediately.
+        fitGUIToSafeArea()
     }
     #endif
 
@@ -1000,6 +1027,59 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
                            height: CGFloat(max(1, actH)))
         guiContainer?.frame = NSRect(origin: .zero, size: guiPtSize)
     }
+
+    #if os(iOS)
+    /// Fit the editor to the host plug-in pane's safe-area frame. AU v3
+    /// hosts (GarageBand, AUM, Logic for iPad) hand us a UIView whose
+    /// bounds track their pane; we drive the Rust editor to the safe-area
+    /// size via `gui_set_size` and pin the container inside the safe-area
+    /// insets so the editor's responsive layout reflows to the real device
+    /// viewport instead of sitting at its built portrait size. When the
+    /// editor opted out of resize (`gui_can_resize == 0`) we only position
+    /// the natural-size container, matching the desktop `centerGUI`.
+    private func fitGUIToSafeArea() {
+        guard guiSetUp, let container = guiContainer, guiPtSize.width > 0 else { return }
+        // `safeAreaLayoutGuide.layoutFrame` excludes the notch /
+        // home-indicator insets; fall back to raw bounds before the safe
+        // area resolves (it is zero until the view is in a window
+        // hierarchy).
+        let safeFrame = self.view.safeAreaLayoutGuide.layoutFrame
+        let layoutFrame = (safeFrame.width > 0 && safeFrame.height > 0) ? safeFrame : self.view.bounds
+        let hostW = layoutFrame.width
+        let hostH = layoutFrame.height
+        guard hostW > 0, hostH > 0 else { return }
+
+        if let ctx = myCtx, let cb = g_callbacks,
+           cb.pointee.gui_can_resize(ctx) != 0,
+           (hostW, hostH) != (guiPtSize.width, guiPtSize.height) {
+            let reqW = UInt32(max(1, hostW.rounded()))
+            let reqH = UInt32(max(1, hostH.rounded()))
+            cb.pointee.gui_set_size(ctx, reqW, reqH)
+            // Re-query: the Rust side clamps the request against the
+            // editor's min / max, so the size it actually adopted may
+            // differ from what we asked for. Position the container to the
+            // clamped size, not the request.
+            var actW: UInt32 = 0, actH: UInt32 = 0
+            cb.pointee.gui_get_size(ctx, &actW, &actH)
+            guiPtSize = NSSize(width: CGFloat(max(1, actW)),
+                               height: CGFloat(max(1, actH)))
+            self.preferredContentSize = guiPtSize
+        }
+
+        // Center the editor within the safe-area frame (UIKit origin is
+        // top-left). A resizable editor that filled the safe area has zero
+        // offset; a fixed-size (or min-clamped) editor smaller than the
+        // pane sits centered instead of pinned to a corner. `max(0, ...)`
+        // keeps the top-left visible when the editor is larger than the
+        // pane (better to clip the far edge than the labels).
+        let offsetX = max(0, (hostW - guiPtSize.width) / 2)
+        let offsetY = max(0, (hostH - guiPtSize.height) / 2)
+        container.frame = NSRect(x: layoutFrame.minX + offsetX,
+                                 y: layoutFrame.minY + offsetY,
+                                 width: guiPtSize.width,
+                                 height: guiPtSize.height)
+    }
+    #endif
 
     private func teardownGUI() {
         // Close the GUI when the host hides the plugin window.
