@@ -20,7 +20,7 @@
 mod imp {
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
-    use std::sync::atomic::{AtomicU8, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
     const MAX_FRAMES: usize = 32;
 
@@ -93,6 +93,19 @@ mod imp {
 
     fn mode() -> Mode {
         Mode::from_u8(MODE.load(Ordering::Relaxed))
+    }
+
+    // Opt-in: also flag frees the audio thread makes inside a section, not
+    // just allocations. Off by default - a value allocated in a prior block
+    // and dropped inside `process` frees here, so always-on would flag that
+    // common shape; enabling it catches that class deliberately.
+    static CHECK_DEALLOC: AtomicBool = AtomicBool::new(false);
+
+    /// Also flag deallocations (frees), not only allocations, that the audio
+    /// thread makes inside `process`. Off by default; call before the first
+    /// audio block, like [`set_mode`].
+    pub fn set_check_dealloc(enabled: bool) {
+        CHECK_DEALLOC.store(enabled, Ordering::Relaxed);
     }
 
     #[cfg(test)]
@@ -194,7 +207,7 @@ mod imp {
     /// `RECORDING` re-entrancy flag makes any allocation triggered by
     /// the recording path itself a no-op instead of infinite recursion.
     #[inline]
-    fn note_alloc() {
+    fn note_violation() {
         if DEPTH.with(Cell::get) == 0 || RECORDING.with(Cell::get) {
             return;
         }
@@ -294,26 +307,29 @@ mod imp {
     }
 
     // SAFETY: every method forwards to the global `System` allocator
-    // with the same arguments; `note_alloc` only reads/writes thread-
+    // with the same arguments; `note_violation` only reads/writes thread-
     // local `Cell`s and never itself allocates (guarded by `RECORDING`),
     // so it cannot violate the `GlobalAlloc` contract.
     unsafe impl GlobalAlloc for RtCheckAlloc {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            note_alloc();
+            note_violation();
             unsafe { System.alloc(layout) }
         }
         unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            note_alloc();
+            note_violation();
             unsafe { System.alloc_zeroed(layout) }
         }
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            note_alloc();
+            note_violation();
             unsafe { System.realloc(ptr, layout, new_size) }
         }
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            // Freeing on the audio thread is also non-RT, but flagging
-            // every drop is noisy (a value moved in from a prior block),
-            // so `dealloc` forwards silently - a future opt-in sub-mode.
+            // Freeing on the audio thread is also non-RT, but flagging every
+            // drop of a value moved in from a prior block is noisy, so it is
+            // opt-in via `set_check_dealloc`.
+            if CHECK_DEALLOC.load(Ordering::Relaxed) {
+                note_violation();
+            }
             unsafe { System.dealloc(ptr, layout) }
         }
     }
@@ -367,9 +383,13 @@ mod imp {
     /// No-op with `rt-paranoid` off.
     #[inline]
     pub fn set_mode(_mode: Mode) {}
+
+    /// No-op with `rt-paranoid` off.
+    #[inline]
+    pub fn set_check_dealloc(_enabled: bool) {}
 }
 
-pub use imp::{Mode, RtSection, allow_alloc, audit, is_active, set_mode};
+pub use imp::{Mode, RtSection, allow_alloc, audit, is_active, set_check_dealloc, set_mode};
 
 #[cfg(feature = "rt-paranoid")]
 pub use imp::RtCheckAlloc;
@@ -403,6 +423,27 @@ mod tests {
             black_box(x);
         });
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn dealloc_flagged_only_when_enabled() {
+        use super::set_check_dealloc;
+
+        // A buffer allocated outside the section, freed inside it. The alloc
+        // happens before `count_allocs`, so only the in-section free counts.
+        // One test, not two, so the on/off windows never race each other.
+        let outside = Vec::<u8>::with_capacity(4096);
+        let off = count_allocs(|| drop(black_box(outside)));
+        assert_eq!(
+            off, 0,
+            "a free must not be flagged with dealloc checking off"
+        );
+
+        set_check_dealloc(true);
+        let outside = Vec::<u8>::with_capacity(4096);
+        let on = count_allocs(|| drop(black_box(outside)));
+        set_check_dealloc(false);
+        assert!(on >= 1, "a free must be flagged with dealloc checking on");
     }
 
     #[test]
