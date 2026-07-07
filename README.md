@@ -229,7 +229,7 @@ platform contract; every other format is unviable there.
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units, sample-accurate automation by default
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — scaffold, build, install, validate, and package; `doctor` reports environment health, and `package` produces signed distributable installers (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
-- **Real-time safe** — no locks or allocations in `process()`; params use atomic storage with lock-free access from any thread, meters, state loads, and editor edits reach the audio thread through lock-free handoffs, and state save can go fully lock-free with an opt-in `snapshot_into`
+- **Real-time safe** — your DSP never allocates or locks in `process()`; the framework's own per-block plugin mutex is a single uncontended atomic in the common case, contending only briefly when a host save runs on another thread. Params use atomic storage with lock-free access from any thread; meters, state loads, and editor edits reach the audio thread through lock-free handoffs; state save can go fully lock-free with an opt-in `snapshot_into`
 - **State migration** — a `migrate_state` hook accepts pre-truce or other-framework state blobs, so a ported plugin keeps loading its old sessions and presets
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Automated tests** — audio, render, state, params, GUI screenshots
@@ -297,4 +297,25 @@ exemption criteria, and the request procedure.
   [mahae@truce.audio](mailto:mahae@truce.audio)
 - Commercial Framework License requests:
   [framework-licensing@truce.audio](mailto:framework-licensing@truce.audio)
+
+## Badges
+
+Built a plugin with truce? You are welcome to add a "Built with Truce"
+badge to your project's README or site. It is optional - nothing requires
+it - but it helps others find the framework, and we appreciate it. Grab
+light, stacked, and mini variants plus copy-paste snippets at
+[truce.audio/docs/reference/badges](https://truce.audio/docs/reference/badges).
+
+<p>
+  <a href="https://truce.audio/"><img src="https://truce.audio/branding/built-with-truce-dark.svg" alt="Built with Truce" height="42"></a>
+</p>
+<p>
+  <a href="https://truce.audio/"><img src="https://truce.audio/branding/built-with-truce-light.svg" alt="Built with Truce" height="42"></a>
+</p>
+<p>
+  <a href="https://truce.audio/"><img src="https://truce.audio/branding/built-with-truce-stacked.svg" alt="Built with Truce" height="86"></a>
+</p>
+<p>
+  <a href="https://truce.audio/"><img src="https://truce.audio/branding/truce-mini.svg" alt="Truce" height="34"></a>
+</p>
 
