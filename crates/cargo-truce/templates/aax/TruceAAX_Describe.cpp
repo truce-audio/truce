@@ -260,18 +260,31 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         setupInfo.mInputMIDIChannelMask = 0xFFFF; // all channels
     }
 
+    // A stereo-output instrument (a synth) renders a fixed stereo image and
+    // has no meaningful mono form. Offering the mono config lets Pro Tools
+    // run it mono / multi-mono, where the plugin's second output channel is
+    // dropped - silence, or a collapsed pan. Register only the stereo config
+    // for it. Effects stay channel-generic, so they keep the mono config.
+    const bool stereo_instrument =
+        g_descriptor.category == static_cast<uint32_t>(AAX_ePlugInCategory_SWGenerators) &&
+        g_descriptor.num_outputs >= 2;
+
+    AAX_Result err = AAX_SUCCESS;
+
     // Register mono configuration. The Rust wrapper synthesizes
     // dummy stereo I/O for plugins that declare no audio buses
     // (pure MIDI effects, instruments) - see the layout match in
     // `truce-aax/src/lib.rs::register_aax` - so `num_inputs > 0`
     // always holds at this point and `Mono` is the right choice.
-    setupInfo.mInputStemFormat = AAX_eStemFormat_Mono;
-    setupInfo.mOutputStemFormat = AAX_eStemFormat_Mono;
-    setupInfo.mPluginID = g_descriptor.plugin_id;
-    AAX_Result err = TruceDescribeOneConfig(desc, setupInfo,
-                                             /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
-                                             g_descriptor.name);
-    if (err != AAX_SUCCESS) return err;
+    if (!stereo_instrument) {
+        setupInfo.mInputStemFormat = AAX_eStemFormat_Mono;
+        setupInfo.mOutputStemFormat = AAX_eStemFormat_Mono;
+        setupInfo.mPluginID = g_descriptor.plugin_id;
+        err = TruceDescribeOneConfig(desc, setupInfo,
+                                     /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
+                                     g_descriptor.name);
+        if (err != AAX_SUCCESS) return err;
+    }
 
     // Register stereo configuration (different plugin ID required)
     if (g_descriptor.num_outputs >= 2) {

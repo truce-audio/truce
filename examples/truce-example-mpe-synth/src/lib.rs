@@ -297,6 +297,9 @@ impl PluginLogic for Synth {
         let rel_step = (1.0 / (rel_s * self.sample_rate)) as f32;
 
         let mut next = 0;
+        // A mono or multi-mono host instance hands us a single output
+        // channel; fold the stereo pan down instead of writing out of bounds.
+        let out_channels = buffer.num_output_channels();
         for i in 0..n {
             while let Some(event) = events.get(next) {
                 if event.sample_offset as usize > i {
@@ -329,8 +332,12 @@ impl PluginLogic for Synth {
                 right += s * v.pan_r;
             }
 
-            buffer.output(0)[i] = (left * volume).clamp(-1.0, 1.0);
-            buffer.output(1)[i] = (right * volume).clamp(-1.0, 1.0);
+            if out_channels > 1 {
+                buffer.output(0)[i] = (left * volume).clamp(-1.0, 1.0);
+                buffer.output(1)[i] = (right * volume).clamp(-1.0, 1.0);
+            } else {
+                buffer.output(0)[i] = ((left + right) * volume).clamp(-1.0, 1.0);
+            }
         }
 
         if self.voices.iter().any(|v| v.active) {
