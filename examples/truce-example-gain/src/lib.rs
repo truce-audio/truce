@@ -127,11 +127,21 @@ truce::enable_rt_paranoid!();
 mod tests {
     use super::*;
 
+    /// Enable dealloc flagging around a wrapper-glue smoke check so its
+    /// count covers frees as well as allocations, then restore the setting.
+    fn wrapper_glue_violations(smoke: impl FnOnce() -> u32) -> u32 {
+        let prev = truce::rt::check_dealloc();
+        truce::rt::set_check_dealloc(true);
+        let n = smoke();
+        truce::rt::set_check_dealloc(prev);
+        n
+    }
+
     #[test]
-    fn process_is_allocation_free() {
+    fn process_is_realtime_clean() {
         use std::time::Duration;
-        use truce_test::{InputSource, assert_no_audio_alloc, driver};
-        assert_no_audio_alloc(|| {
+        use truce_test::{InputSource, assert_realtime_clean, driver};
+        assert_realtime_clean(|| {
             driver!(Plugin)
                 .duration(Duration::from_millis(40))
                 .input(InputSource::Constant(0.25))
@@ -154,9 +164,9 @@ mod tests {
     #[test]
     fn vst2_wrapper_glue_is_allocation_free() {
         assert_eq!(
-            truce_vst2::rt_paranoid_smoke::<Plugin>(),
+            wrapper_glue_violations(truce_vst2::rt_paranoid_smoke::<Plugin>),
             0,
-            "the VST2 wrapper's per-block glue must not allocate on the audio thread"
+            "the VST2 wrapper's per-block glue must not allocate or free on the audio thread"
         );
     }
 
@@ -169,9 +179,9 @@ mod tests {
     #[test]
     fn clap_wrapper_glue_is_allocation_free() {
         assert_eq!(
-            truce_clap::rt_paranoid_smoke::<Plugin>(),
+            wrapper_glue_violations(truce_clap::rt_paranoid_smoke::<Plugin>),
             0,
-            "the CLAP wrapper's per-block glue must not allocate on the audio thread"
+            "the CLAP wrapper's per-block glue must not allocate or free on the audio thread"
         );
     }
 
@@ -179,9 +189,9 @@ mod tests {
     #[test]
     fn vst3_wrapper_glue_is_allocation_free() {
         assert_eq!(
-            truce_vst3::rt_paranoid_smoke::<Plugin>(),
+            wrapper_glue_violations(truce_vst3::rt_paranoid_smoke::<Plugin>),
             0,
-            "the VST3 wrapper's per-block glue must not allocate on the audio thread"
+            "the VST3 wrapper's per-block glue must not allocate or free on the audio thread"
         );
     }
 
@@ -189,9 +199,9 @@ mod tests {
     #[test]
     fn au_wrapper_glue_is_allocation_free() {
         assert_eq!(
-            truce_au::rt_paranoid_smoke::<Plugin>(),
+            wrapper_glue_violations(truce_au::rt_paranoid_smoke::<Plugin>),
             0,
-            "the AU wrapper's per-block glue must not allocate on the audio thread"
+            "the AU wrapper's per-block glue must not allocate or free on the audio thread"
         );
     }
 
@@ -199,9 +209,9 @@ mod tests {
     #[test]
     fn aax_wrapper_glue_is_allocation_free() {
         assert_eq!(
-            truce_aax::rt_paranoid_smoke::<Plugin>(),
+            wrapper_glue_violations(truce_aax::rt_paranoid_smoke::<Plugin>),
             0,
-            "the AAX wrapper's per-block glue must not allocate on the audio thread"
+            "the AAX wrapper's per-block glue must not allocate or free on the audio thread"
         );
     }
 
