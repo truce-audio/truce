@@ -121,6 +121,12 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
 /// Pixels reserved at the bottom of the canvas for the label.
 const LABEL_H: f32 = 16.0;
 
+/// Radius of the draggable dot. The pad is inset from the canvas by this
+/// on the left/top/right so the dot, sitting on the pad edge at the value
+/// extremes, spills into the reserved margin and draws fully instead of
+/// being clipped at the canvas bounds.
+const DOT_RADIUS: f32 = 5.0;
+
 impl<'a, M: Clone + Debug + 'static> From<XYPadWidget<'a, M>> for Element<'a, Message<M>> {
     fn from(xy: XYPadWidget<'a, M>) -> Self {
         xy.into_element()
@@ -155,24 +161,26 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
-        // Reserve the bottom strip of the canvas for the label;
-        // the pad rectangle sits above it. When the parent makes
-        // us tiny, the floor of 1.0 keeps the math sane.
+        // The canvas clips geometry to its bounds, so reserve a
+        // dot-radius margin on the left/top/right (and the label strip
+        // plus a radius on the bottom) and draw the pad inset into it.
+        // The dot then reaches the pad's true edge and spills into the
+        // margin fully drawn instead of being cut at the bounds. The
+        // floor of 1.0 keeps the math sane when the parent makes us tiny.
         let label_h = if self.label.is_empty() { 0.0 } else { LABEL_H };
-        let pad_w = bounds.width;
-        let pad_h = (bounds.height - label_h).max(1.0);
+        let pad_left = DOT_RADIUS;
+        let pad_top = DOT_RADIUS;
+        let pad_w = (bounds.width - DOT_RADIUS * 2.0).max(1.0);
+        let pad_h = (bounds.height - DOT_RADIUS * 2.0 - label_h).max(1.0);
 
         // Background
-        let bg = Path::rectangle(Point::ORIGIN, Size::new(pad_w, pad_h));
+        let bg = Path::rectangle(Point::new(pad_left, pad_top), Size::new(pad_w, pad_h));
         frame.fill(&bg, theme::SURFACE);
 
-        // Border. Inset by half the 1px stroke width: a stroke is
-        // centered on its path, so stroking the full-bounds rect would
-        // draw the top/left/right edges half outside the canvas where
-        // they get clipped - dropping the top border. Insetting keeps
-        // the whole 1px line inside the bounds.
+        // Border, inset half the 1px stroke width so the whole line lands
+        // on-pixel (a stroke is centered on its path).
         let border = Path::rectangle(
-            Point::new(0.5, 0.5),
+            Point::new(pad_left + 0.5, pad_top + 0.5),
             Size::new((pad_w - 1.0).max(0.0), (pad_h - 1.0).max(0.0)),
         );
         frame.stroke(
@@ -180,13 +188,15 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
             Stroke::default().with_color(theme::ACCENT).with_width(1.0),
         );
 
-        // Crosshair position (Y inverted: 0 = bottom, 1 = top)
-        let px = self.x_value * pad_w;
-        let py = (1.0 - self.y_value) * pad_h;
+        // Crosshair position (Y inverted: 0 = bottom, 1 = top). The dot
+        // sits on the pad edge at the value extremes and spills into the
+        // reserved margin, drawn fully because it stays within the bounds.
+        let px = pad_left + self.x_value * pad_w;
+        let py = pad_top + (1.0 - self.y_value) * pad_h;
 
         // Crosshair lines
-        let h_line = Path::line(Point::new(0.0, py), Point::new(pad_w, py));
-        let v_line = Path::line(Point::new(px, 0.0), Point::new(px, pad_h));
+        let h_line = Path::line(Point::new(pad_left, py), Point::new(pad_left + pad_w, py));
+        let v_line = Path::line(Point::new(px, pad_top), Point::new(px, pad_top + pad_h));
         let crosshair_stroke = Stroke::default()
             .with_color(Color {
                 a: 0.3,
@@ -197,14 +207,14 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
         frame.stroke(&v_line, crosshair_stroke);
 
         // Dot at intersection
-        let dot = Path::circle(Point::new(px, py), 5.0);
+        let dot = Path::circle(Point::new(px, py), DOT_RADIUS);
         frame.fill(&dot, theme::KNOB_FILL);
 
         // Label below the pad rect.
         if !self.label.is_empty() {
             frame.fill_text(crate::iced::widget::canvas::Text {
                 content: self.label.clone(),
-                position: Point::new(pad_w / 2.0, pad_h + 2.0),
+                position: Point::new(pad_left + pad_w / 2.0, pad_top + pad_h + 2.0),
                 color: theme::TEXT_DIM,
                 size: crate::iced::Pixels(10.0),
                 align_x: crate::iced::alignment::Horizontal::Center.into(),
@@ -228,8 +238,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
         // click-through and drag math agree even when the parent
         // layout sized us non-square.
         let label_h = if self.label.is_empty() { 0.0 } else { LABEL_H };
-        let pad_w = bounds.width.max(1.0);
-        let pad_h = (bounds.height - label_h).max(1.0);
+        let pad_w = (bounds.width - DOT_RADIUS * 2.0).max(1.0);
+        let pad_h = (bounds.height - DOT_RADIUS * 2.0 - label_h).max(1.0);
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
@@ -251,8 +261,11 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                 // window-space position and clamp into the pad rect
                 // ourselves (mirrors `KnobProgram::update`).
                 if let Some(pos) = cursor.position() {
-                    let x_norm = f64::from(((pos.x - bounds.x) / pad_w).clamp(0.0, 1.0));
-                    let y_norm = f64::from((1.0 - (pos.y - bounds.y) / pad_h).clamp(0.0, 1.0));
+                    // Match `draw`'s pad offset (the reserved dot-radius margin).
+                    let x_norm =
+                        f64::from(((pos.x - bounds.x - DOT_RADIUS) / pad_w).clamp(0.0, 1.0));
+                    let y_norm =
+                        f64::from((1.0 - (pos.y - bounds.y - DOT_RADIUS) / pad_h).clamp(0.0, 1.0));
                     return Some(
                         canvas::Action::publish(Message::Param(ParamMessage::Batch(vec![
                             ParamMessage::SetNormalized(self.x_id, x_norm),
