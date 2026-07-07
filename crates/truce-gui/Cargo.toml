@@ -40,7 +40,10 @@ objc = "0.2"
 wgpu = { workspace = true, features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { workspace = true, features = ["dx12"] }
+# gles = GL fallback for adapters with no DX12 (old GPUs/drivers) - see
+# `editor_wgpu_backends()` in `platform.rs`, which is the runtime piece
+# that actually enables the fallback (compiling the feature alone doesn't).
+wgpu = { workspace = true, features = ["dx12", "gles"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wgpu = { workspace = true, features = ["vulkan", "gles"] }
