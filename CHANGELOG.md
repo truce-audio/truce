@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 3.1.2
+
+- rt-paranoid's checker mode is now set only with `truce::rt::set_mode`; the `TRUCE_RT_PARANOID` environment variable is removed.
+
 ## 3.1.0
 
 - New `rt-paranoid` feature: a development-time checker that flags any allocation your DSP makes on the audio thread inside `process`, with `truce_test::assert_no_audio_alloc` helpers to gate it in tests. Off and zero-cost by default.

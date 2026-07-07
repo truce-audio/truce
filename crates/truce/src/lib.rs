@@ -58,9 +58,10 @@ pub mod __reexport {
 /// gating. With the feature off this expands to nothing (no allocator is
 /// installed, so it never collides with a custom `#[global_allocator]`),
 /// and the check in `process` compiles away. With it on, allocations the
-/// audio thread makes inside `process` are flagged. `TRUCE_RT_PARANOID`
-/// selects the reaction: `count` (default, log after the block), `panic`
-/// (fail the block - use in tests), `trap` (abort at the allocation).
+/// audio thread makes inside `process` are flagged. `truce::rt::set_mode`
+/// selects the reaction: `Count` (default, log after the block), `Panic`
+/// (fail the block), `Trap` (abort at the allocation). The `truce-test`
+/// `assert_no_audio_alloc` helper gates a test regardless of the mode.
 ///
 /// A global allocator must be declared in the final artifact, which a
 /// library cannot do for you - hence a macro you place, rather than
