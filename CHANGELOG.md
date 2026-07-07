@@ -5,6 +5,7 @@ Notable changes per release.
 ## 3.1.2
 
 - rt-paranoid's checker mode is now set only with `truce::rt::set_mode`; the `TRUCE_RT_PARANOID` environment variable is removed.
+- rt-paranoid can also flag frees on the audio thread, not just allocations, via `truce::rt::set_check_dealloc(true)` (off by default).
 
 ## 3.1.0
 
