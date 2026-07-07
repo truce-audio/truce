@@ -357,15 +357,6 @@ pub fn level_meter<P: Params + 'static>(
     .alignment(Alignment::BottomCenter);
 }
 
-/// Diameter of the XY pad's draggable dot.
-const XY_DOT_SIZE: f32 = 8.0;
-/// Margin reserved between the widget's outer bounds and the visible
-/// pad surface, on every side. Equal to the dot's radius so the dot,
-/// centered on the pad edge at a value extreme, spills exactly into the
-/// reserved margin and stays inside the outer bounds - drawn fully
-/// instead of clipped, without pulling its travel off the edge.
-const XY_DOT_MARGIN: f32 = XY_DOT_SIZE / 2.0;
-
 /// XY pad: two-axis pad whose dot position tracks two truce params.
 /// Click/drag inside the pad to set both x and y simultaneously; the
 /// dot follows the cursor and the params are written through the
@@ -416,19 +407,20 @@ pub fn param_xy_pad<P: Params + 'static>(
     let y_norm = lens.value_signal(y_id);
     let is_dragging = Signal::new(false);
 
-    // Dot position via percentage of the outer bounds so it follows live
-    // `Stretch(_)` resizing. The `.left` / `.top` modifiers anchor the
-    // dot's top-left at the value percentage; a reactive `.translate`
-    // shifts it left / up by `value * dot_size` so the dot's *center*
-    // travels from `dot_radius` at value=0 to `bounds - dot_radius` at
-    // value=1 - exactly the edges of the surface, which is inset by that
-    // same radius. So the center sits on the visible edge at the extremes
-    // and the dot's outer half spills into the reserved margin.
+    // Dot position via percentage of the pad's runtime bounds so the
+    // dot follows live `Stretch(_)` resizing. The `.left` /
+    // `.top` modifiers anchor the dot's top-left corner at the
+    // computed percentage; a reactive `.translate` shifts the dot
+    // left / up by `value * 8 px` so its right / bottom edge stays
+    // inside the pad at value=1 (rather than spilling 8 px past).
+    // Net effect: dot's left edge sits at `0` for value=0 and at
+    // `100% - 8 px` for value=1, matching the previous fixed-pixel
+    // math but expressed in runtime-bounds terms.
     let dot_left = Memo::new(move |_| Percentage(x_norm.get() * 100.0));
     let dot_top = Memo::new(move |_| Percentage((1.0 - y_norm.get()) * 100.0));
     let dot_translate = Memo::new(move |_| Translate {
-        x: LengthOrPercentage::Length(Length::px(-x_norm.get() * XY_DOT_SIZE)),
-        y: LengthOrPercentage::Length(Length::px(-(1.0 - y_norm.get()) * XY_DOT_SIZE)),
+        x: LengthOrPercentage::Length(Length::px(-x_norm.get() * 8.0)),
+        y: LengthOrPercentage::Length(Length::px(-(1.0 - y_norm.get()) * 8.0)),
     });
 
     let lens_for_down = lens.clone();
@@ -437,20 +429,10 @@ pub fn param_xy_pad<P: Params + 'static>(
 
     VStack::new(cx, move |cx| {
         ZStack::new(cx, move |cx| {
-            // Visible pad surface (background + border), inset from the
-            // outer bounds by the dot radius on every side so the dot has
-            // reserved room to spill into at the value extremes.
-            Element::new(cx)
-                .class("truce-xy-pad-surface")
-                .position_type(PositionType::Absolute)
-                .left(Pixels(XY_DOT_MARGIN))
-                .right(Pixels(XY_DOT_MARGIN))
-                .top(Pixels(XY_DOT_MARGIN))
-                .bottom(Pixels(XY_DOT_MARGIN));
             Element::new(cx)
                 .class("truce-xy-pad-dot")
-                .width(Pixels(XY_DOT_SIZE))
-                .height(Pixels(XY_DOT_SIZE))
+                .width(Pixels(8.0))
+                .height(Pixels(8.0))
                 .corner_radius(Percentage(50.0))
                 .position_type(PositionType::Absolute)
                 .left(dot_left)
@@ -518,18 +500,13 @@ pub fn param_xy_pad<P: Params + 'static>(
 fn cursor_to_normalized(cx: &EventContext) -> (f32, f32) {
     let bounds = cx.bounds();
     let mouse = cx.mouse();
-    // Map over the inset surface (outer bounds minus the reserved margin
-    // on each side), matching the dot's center travel so the dot stays
-    // exactly under the cursor at every position.
-    let inner_w = bounds.w - XY_DOT_SIZE;
-    let inner_h = bounds.h - XY_DOT_SIZE;
-    if inner_w <= 0.0 || inner_h <= 0.0 {
+    if bounds.w <= 0.0 || bounds.h <= 0.0 {
         return (0.0, 0.0);
     }
-    let lx = (mouse.cursor_x - bounds.x - XY_DOT_MARGIN).clamp(0.0, inner_w);
-    let ly = (mouse.cursor_y - bounds.y - XY_DOT_MARGIN).clamp(0.0, inner_h);
-    let nx = (lx / inner_w).clamp(0.0, 1.0);
-    let ny = 1.0 - (ly / inner_h).clamp(0.0, 1.0);
+    let lx = (mouse.cursor_x - bounds.x).clamp(0.0, bounds.w);
+    let ly = (mouse.cursor_y - bounds.y).clamp(0.0, bounds.h);
+    let nx = (lx / bounds.w).clamp(0.0, 1.0);
+    let ny = 1.0 - (ly / bounds.h).clamp(0.0, 1.0);
     (nx, ny)
 }
 
