@@ -80,44 +80,19 @@ mod imp {
         }
     }
 
-    // `MODE_UNINIT` until first read or `set_mode`, so the env var is
-    // consulted at most once and only when nothing set the mode
-    // programmatically. Backing it with an atomic (not a `OnceLock<Mode>`
-    // seeded from `env::var`) means the read on the audio thread is a
-    // plain load with no `String` allocation once a `set_mode` has run.
-    const MODE_UNINIT: u8 = u8::MAX;
-    static MODE: AtomicU8 = AtomicU8::new(MODE_UNINIT);
+    // Defaults to `Count`; `set_mode` overrides it. Reading it on the audio
+    // thread is a plain atomic load with no allocation.
+    static MODE: AtomicU8 = AtomicU8::new(Mode::Count.to_u8());
 
-    /// Set the reaction the checker takes on a violation, overriding
-    /// `TRUCE_RT_PARANOID`. Call before the first audio block (a test
-    /// harness, `main`, or a `#[ctor]`); the last call wins. Setting the
-    /// mode this way skips the one-time env read the default path does on
-    /// the audio thread.
+    /// Set the reaction the checker takes on a violation. Call before the
+    /// first audio block (a test harness, `main`, or a `#[ctor]`); the last
+    /// call wins. Defaults to [`Mode::Count`].
     pub fn set_mode(mode: Mode) {
         MODE.store(mode.to_u8(), Ordering::Relaxed);
     }
 
     fn mode() -> Mode {
-        let v = MODE.load(Ordering::Relaxed);
-        if v != MODE_UNINIT {
-            return Mode::from_u8(v);
-        }
-        // No explicit `set_mode`: seed from `TRUCE_RT_PARANOID` once.
-        // `env::var` allocates, but this runs at most once (guarded by
-        // the compare-exchange) and never after a `set_mode`.
-        let seeded = mode_from_env().to_u8();
-        match MODE.compare_exchange(MODE_UNINIT, seeded, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => Mode::from_u8(seeded),
-            Err(actual) => Mode::from_u8(actual),
-        }
-    }
-
-    fn mode_from_env() -> Mode {
-        match std::env::var("TRUCE_RT_PARANOID").as_deref() {
-            Ok("panic") => Mode::Panic,
-            Ok("trap" | "abort") => Mode::Trap,
-            _ => Mode::Count,
-        }
+        Mode::from_u8(MODE.load(Ordering::Relaxed))
     }
 
     #[cfg(test)]

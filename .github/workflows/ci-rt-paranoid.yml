@@ -17,10 +17,10 @@ concurrency:
   cancel-in-progress: true
 
 # Builds the DSP-distinct example plugins with the `rt-paranoid` feature
-# and runs their tests under `TRUCE_RT_PARANOID=panic`, so any allocation
-# the audio thread makes inside `process` fails the build. Also proves a
-# freshly `cargo truce new`-scaffolded plugin is allocation-free and that
-# its scaffolded rt-paranoid wiring works.
+# and runs their `assert_no_audio_alloc` tests, so any allocation the audio
+# thread makes inside `process` fails the build. Also proves a freshly
+# `cargo truce new`-scaffolded plugin is allocation-free and that its
+# scaffolded rt-paranoid wiring works.
 #
 # Runs on all three OSes: an audio-thread allocation can be platform-
 # specific (a std primitive that boxes lazily on one OS but not another),
@@ -132,4 +132,4 @@ jobs:
             echo "truce-test = { path = \"$ws/crates/truce-test\" }"
           } >> Cargo.toml
           cat "$ws/scripts/ci/rt-paranoid-scaffold-test.rs" >> src/lib.rs
-          TRUCE_RT_PARANOID=panic cargo test --features rt-paranoid --lib
+          cargo test --features rt-paranoid --lib

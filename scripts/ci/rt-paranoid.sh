@@ -6,10 +6,8 @@
 # Each such crate has an `rt-paranoid` feature, `truce::enable_rt_paranoid!()`
 # at its root, and at least one `assert_no_audio_alloc` test. Building the
 # crate with `--features rt-paranoid` installs the checking global
-# allocator; `TRUCE_RT_PARANOID=panic` makes any allocation the audio
-# thread does inside `process` fail the test (the scoped
-# `assert_no_audio_alloc` / `assert_audio_alloc` helpers decide for
-# themselves and are unaffected).
+# allocator; the `assert_no_audio_alloc` / `assert_audio_alloc` helpers
+# gate each test on the allocation count directly, so no mode needs setting.
 #
 # Only the DSP-distinct examples carry the check. The GUI-backend variants
 # (gain-egui / -iced / -vizia / -gpu, gui-zoo-*) share their `process`
@@ -47,7 +45,7 @@ echo "rt-paranoid: checking ${#pkgs[@]} example crates"
 fail=0
 for pkg in "${pkgs[@]}"; do
     echo "::group::rt-paranoid $pkg"
-    if ! TRUCE_RT_PARANOID=panic "$CARGO" test -p "$pkg" --features rt-paranoid --lib; then
+    if ! "$CARGO" test -p "$pkg" --features rt-paranoid --lib; then
         echo "::error::$pkg allocates on the audio thread in process()"
         fail=1
     fi
