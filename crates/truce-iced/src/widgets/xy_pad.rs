@@ -3,15 +3,27 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use crate::iced::widget::Canvas;
-use crate::iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke};
-use crate::iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
+use iced_core::renderer::Quad;
+use iced_core::widget::{Tree, tree};
+use iced_core::{
+    Border, Clipboard, Event, Layout, Length, Renderer as _, Shadow, Shell, Widget, layout, mouse,
+    renderer,
+};
 
+use crate::iced::widget::{column, text};
+use crate::iced::{Alignment, Color, Element, Rectangle, Renderer, Size, Theme};
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 use crate::theme;
 use truce_core::Float;
 use truce_params::Params;
+
+/// Radius of the draggable dot (the dot is `2 * radius` px). The dot is
+/// painted in the editor's shared coordinate space, so at a value
+/// extreme its center sits on the pad edge and its outer half spills
+/// past the border - drawn unclipped over the neighboring gap rather
+/// than shrinking the pad or growing its footprint.
+const DOT_RADIUS: f32 = 5.0;
 
 /// Builder for an XY pad controlling two parameters.
 pub struct XYPadWidget<'a, M> {
@@ -20,12 +32,10 @@ pub struct XYPadWidget<'a, M> {
     x_value: f64,
     y_value: f64,
     label: Option<&'a str>,
-    /// Width / height passed to `Canvas` via iced `Length`. Default
-    /// to `Length::Fixed(120)` for a square pad; `.fill()` swaps
-    /// both to `Length::Fill` so the pad stretches with its
-    /// parent container. The draw + update programs read the
-    /// runtime `bounds` so the pad's coordinate math follows
-    /// whatever size iced computes.
+    /// The pad's size. Defaults to `Length::Fixed(120)` square; `.fill()`
+    /// swaps both to `Length::Fill` so the pad stretches with its parent
+    /// container. The label (when set) is a sibling below the pad, so
+    /// this is the pad rect alone, not the pad-plus-label.
     width: Length,
     height: Length,
     font: crate::iced::Font,
@@ -47,7 +57,7 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
             y_value: params.get(y_id),
             label: None,
             width: Length::Fixed(120.0),
-            height: Length::Fixed(120.0 + LABEL_H),
+            height: Length::Fixed(120.0),
             font: params.font(),
             _phantom: PhantomData,
         }
@@ -59,18 +69,15 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
         self
     }
 
-    /// Set a fixed square size. Equivalent to
-    /// `.width(Length::Fixed(s)).height(Length::Fixed(s + label))`.
+    /// Set a fixed square pad size.
     #[must_use]
     pub fn size(mut self, size: f32) -> Self {
         self.width = Length::Fixed(size);
-        self.height = Length::Fixed(size + LABEL_H);
+        self.height = Length::Fixed(size);
         self
     }
 
-    /// Make the pad stretch to fill its parent container in both
-    /// axes. The pad's coordinate math reads the runtime bounds
-    /// so dragging works at whatever size iced lays out.
+    /// Make the pad stretch to fill its parent container in both axes.
     #[must_use]
     pub fn fill(mut self) -> Self {
         self.width = Length::Fill;
@@ -102,30 +109,27 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
 
     #[must_use]
     pub fn into_element(self) -> Element<'a, Message<M>> {
-        let program = XYPadProgram {
+        let pad: Element<'a, Message<M>> = Element::new(XYPad {
             x_id: self.x_id,
             y_id: self.y_id,
             x_value: f32::from_f64(self.x_value),
             y_value: f32::from_f64(self.y_value),
-            label: self.label.unwrap_or("").to_string(),
-            font: self.font,
-        };
+            width: self.width,
+            height: self.height,
+            _phantom: PhantomData,
+        });
 
-        Canvas::new(program)
-            .width(self.width)
-            .height(self.height)
-            .into()
+        match self.label {
+            Some(label) if !label.is_empty() => column![pad]
+                .push(text(label).size(10).color(theme::TEXT_DIM).font(self.font))
+                .width(self.width)
+                .spacing(2)
+                .align_x(Alignment::Center)
+                .into(),
+            _ => pad,
+        }
     }
 }
-
-/// Pixels reserved at the bottom of the canvas for the label.
-const LABEL_H: f32 = 16.0;
-
-/// Radius of the draggable dot. The pad is inset from the canvas by this
-/// on the left/top/right so the dot, sitting on the pad edge at the value
-/// extremes, spills into the reserved margin and draws fully instead of
-/// being clipped at the canvas bounds.
-const DOT_RADIUS: f32 = 5.0;
 
 impl<'a, M: Clone + Debug + 'static> From<XYPadWidget<'a, M>> for Element<'a, Message<M>> {
     fn from(xy: XYPadWidget<'a, M>) -> Self {
@@ -133,15 +137,19 @@ impl<'a, M: Clone + Debug + 'static> From<XYPadWidget<'a, M>> for Element<'a, Me
     }
 }
 
-// Canvas program
-
-struct XYPadProgram {
+/// The pad itself: a custom widget so the dot can paint past the pad's
+/// bounds. A `canvas` draws into a frame anchored at its bounds and so
+/// can't render left of / above its origin; painting via `fill_quad`
+/// puts the dot in the editor's shared coordinate space instead, where
+/// it spills over the border unclipped in every direction.
+struct XYPad<M> {
     x_id: u32,
     y_id: u32,
     x_value: f32,
     y_value: f32,
-    label: String,
-    font: crate::iced::Font,
+    width: Length,
+    height: Length,
+    _phantom: PhantomData<M>,
 }
 
 #[derive(Default)]
@@ -149,160 +157,182 @@ struct XYPadState {
     dragging: bool,
 }
 
-impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
-    type State = XYPadState;
+impl<M: Clone + Debug + 'static> Widget<Message<M>, Theme, Renderer> for XYPad<M> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<XYPadState>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(XYPadState::default())
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size::new(self.width, self.height)
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut Tree,
+        _renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::atomic(limits, self.width, self.height)
+    }
 
     fn draw(
         &self,
-        _state: &Self::State,
-        renderer: &Renderer,
+        _tree: &Tree,
+        renderer: &mut Renderer,
         _theme: &Theme,
-        bounds: Rectangle,
+        _style: &renderer::Style,
+        layout: Layout<'_>,
         _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        // The canvas clips geometry to its bounds, so reserve a
-        // dot-radius margin on the left/top/right (and the label strip
-        // plus a radius on the bottom) and draw the pad inset into it.
-        // The dot then reaches the pad's true edge and spills into the
-        // margin fully drawn instead of being cut at the bounds. The
-        // floor of 1.0 keeps the math sane when the parent makes us tiny.
-        let label_h = if self.label.is_empty() { 0.0 } else { LABEL_H };
-        let pad_left = DOT_RADIUS;
-        let pad_top = DOT_RADIUS;
-        let pad_w = (bounds.width - DOT_RADIUS * 2.0).max(1.0);
-        let pad_h = (bounds.height - DOT_RADIUS * 2.0 - label_h).max(1.0);
+        _viewport: &Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let pad_w = bounds.width;
+        let pad_h = bounds.height;
 
-        // Background
-        let bg = Path::rectangle(Point::new(pad_left, pad_top), Size::new(pad_w, pad_h));
-        frame.fill(&bg, theme::SURFACE);
-
-        // Border, inset half the 1px stroke width so the whole line lands
-        // on-pixel (a stroke is centered on its path).
-        let border = Path::rectangle(
-            Point::new(pad_left + 0.5, pad_top + 0.5),
-            Size::new((pad_w - 1.0).max(0.0), (pad_h - 1.0).max(0.0)),
-        );
-        frame.stroke(
-            &border,
-            Stroke::default().with_color(theme::ACCENT).with_width(1.0),
+        // Background + 1px border in a single quad.
+        renderer.fill_quad(
+            Quad {
+                bounds,
+                border: Border {
+                    color: theme::ACCENT,
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                shadow: Shadow::default(),
+                snap: true,
+            },
+            theme::SURFACE,
         );
 
-        // Crosshair position (Y inverted: 0 = bottom, 1 = top). The dot
-        // sits on the pad edge at the value extremes and spills into the
-        // reserved margin, drawn fully because it stays within the bounds.
-        let px = pad_left + self.x_value * pad_w;
-        let py = pad_top + (1.0 - self.y_value) * pad_h;
+        // Crosshair at the value point (Y inverted: 0 = bottom, 1 = top).
+        let px = bounds.x + self.x_value.clamp(0.0, 1.0) * pad_w;
+        let py = bounds.y + (1.0 - self.y_value.clamp(0.0, 1.0)) * pad_h;
+        let crosshair = Color {
+            a: 0.3,
+            ..theme::KNOB_FILL
+        };
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle {
+                    x: bounds.x,
+                    y: py - 0.5,
+                    width: pad_w,
+                    height: 1.0,
+                },
+                border: Border::default(),
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            crosshair,
+        );
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle {
+                    x: px - 0.5,
+                    y: bounds.y,
+                    width: 1.0,
+                    height: pad_h,
+                },
+                border: Border::default(),
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            crosshair,
+        );
 
-        // Crosshair lines
-        let h_line = Path::line(Point::new(pad_left, py), Point::new(pad_left + pad_w, py));
-        let v_line = Path::line(Point::new(px, pad_top), Point::new(px, pad_top + pad_h));
-        let crosshair_stroke = Stroke::default()
-            .with_color(Color {
-                a: 0.3,
-                ..theme::KNOB_FILL
-            })
-            .with_width(1.0);
-        frame.stroke(&h_line, crosshair_stroke);
-        frame.stroke(&v_line, crosshair_stroke);
-
-        // Dot at intersection
-        let dot = Path::circle(Point::new(px, py), DOT_RADIUS);
-        frame.fill(&dot, theme::KNOB_FILL);
-
-        // Label below the pad rect.
-        if !self.label.is_empty() {
-            frame.fill_text(crate::iced::widget::canvas::Text {
-                content: self.label.clone(),
-                position: Point::new(pad_left + pad_w / 2.0, pad_top + pad_h + 2.0),
-                color: theme::TEXT_DIM,
-                size: crate::iced::Pixels(10.0),
-                align_x: crate::iced::alignment::Horizontal::Center.into(),
-                align_y: crate::iced::alignment::Vertical::Top,
-                font: self.font,
-                ..Default::default()
-            });
-        }
-
-        vec![frame.into_geometry()]
+        // Dot: a quad with a half-side corner radius renders as a circle.
+        // Its bounds can fall outside `bounds` at the value extremes; iced
+        // doesn't clip a widget's quads to its layout, so it draws in full.
+        renderer.fill_quad(
+            Quad {
+                bounds: Rectangle {
+                    x: px - DOT_RADIUS,
+                    y: py - DOT_RADIUS,
+                    width: DOT_RADIUS * 2.0,
+                    height: DOT_RADIUS * 2.0,
+                },
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: DOT_RADIUS.into(),
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            },
+            theme::KNOB_FILL,
+        );
     }
 
     fn update(
-        &self,
-        state: &mut Self::State,
+        &mut self,
+        tree: &mut Tree,
         event: &Event,
-        bounds: Rectangle,
+        layout: Layout<'_>,
         cursor: mouse::Cursor,
-    ) -> Option<canvas::Action<Message<M>>> {
-        // Match the pad rect carved out by `draw` so the
-        // click-through and drag math agree even when the parent
-        // layout sized us non-square.
-        let label_h = if self.label.is_empty() { 0.0 } else { LABEL_H };
-        let pad_w = (bounds.width - DOT_RADIUS * 2.0).max(1.0);
-        let pad_h = (bounds.height - DOT_RADIUS * 2.0 - label_h).max(1.0);
+        _renderer: &Renderer,
+        _clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message<M>>,
+        _viewport: &Rectangle,
+    ) {
+        let state = tree.state.downcast_mut::<XYPadState>();
+        let bounds = layout.bounds();
+        let pad_w = bounds.width.max(1.0);
+        let pad_h = bounds.height.max(1.0);
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if cursor.position_in(bounds).is_some() =>
             {
                 state.dragging = true;
-                return Some(
-                    canvas::Action::publish(Message::Param(ParamMessage::Batch(vec![
-                        ParamMessage::BeginEdit(self.x_id),
-                        ParamMessage::BeginEdit(self.y_id),
-                    ])))
-                    .and_capture(),
-                );
+                shell.publish(Message::Param(ParamMessage::Batch(vec![
+                    ParamMessage::BeginEdit(self.x_id),
+                    ParamMessage::BeginEdit(self.y_id),
+                ])));
+                shell.capture_event();
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
-                // While dragging we want updates even when the cursor
-                // leaves the pad - `cursor.position_in(bounds)` returns
-                // `None` outside, freezing the indicator. Use the
-                // window-space position and clamp into the pad rect
-                // ourselves (mirrors `KnobProgram::update`).
+                // Track the cursor even outside the pad while dragging, so
+                // the dot follows to the edge rather than freezing.
                 if let Some(pos) = cursor.position() {
-                    // Match `draw`'s pad offset (the reserved dot-radius margin).
-                    let x_norm =
-                        f64::from(((pos.x - bounds.x - DOT_RADIUS) / pad_w).clamp(0.0, 1.0));
-                    let y_norm =
-                        f64::from((1.0 - (pos.y - bounds.y - DOT_RADIUS) / pad_h).clamp(0.0, 1.0));
-                    return Some(
-                        canvas::Action::publish(Message::Param(ParamMessage::Batch(vec![
-                            ParamMessage::SetNormalized(self.x_id, x_norm),
-                            ParamMessage::SetNormalized(self.y_id, y_norm),
-                        ])))
-                        .and_capture(),
-                    );
+                    let x_norm = f64::from(((pos.x - bounds.x) / pad_w).clamp(0.0, 1.0));
+                    let y_norm = f64::from((1.0 - (pos.y - bounds.y) / pad_h).clamp(0.0, 1.0));
+                    shell.publish(Message::Param(ParamMessage::Batch(vec![
+                        ParamMessage::SetNormalized(self.x_id, x_norm),
+                        ParamMessage::SetNormalized(self.y_id, y_norm),
+                    ])));
+                    shell.capture_event();
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.dragging => {
                 state.dragging = false;
-                return Some(
-                    canvas::Action::publish(Message::Param(ParamMessage::Batch(vec![
-                        ParamMessage::EndEdit(self.x_id),
-                        ParamMessage::EndEdit(self.y_id),
-                    ])))
-                    .and_capture(),
-                );
+                shell.publish(Message::Param(ParamMessage::Batch(vec![
+                    ParamMessage::EndEdit(self.x_id),
+                    ParamMessage::EndEdit(self.y_id),
+                ])));
+                shell.capture_event();
             }
             _ => {}
         }
-
-        None
     }
 
     fn mouse_interaction(
         &self,
-        state: &Self::State,
-        bounds: Rectangle,
+        tree: &Tree,
+        layout: Layout<'_>,
         cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &Renderer,
     ) -> mouse::Interaction {
-        if state.dragging {
-            return mouse::Interaction::Grabbing;
+        if tree.state.downcast_ref::<XYPadState>().dragging {
+            mouse::Interaction::Grabbing
+        } else if cursor.position_in(layout.bounds()).is_some() {
+            mouse::Interaction::Crosshair
+        } else {
+            mouse::Interaction::None
         }
-        if cursor.position_in(bounds).is_some() {
-            return mouse::Interaction::Crosshair;
-        }
-        mouse::Interaction::default()
     }
 }
