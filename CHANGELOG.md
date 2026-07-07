@@ -6,6 +6,7 @@ Notable changes per release.
 
 - rt-paranoid's checker mode is now set only with `truce::rt::set_mode`; the `TRUCE_RT_PARANOID` environment variable is removed.
 - rt-paranoid can also flag frees on the audio thread, not just allocations, via `truce::rt::set_check_dealloc(true)` (off by default).
+- rt-paranoid gained lock detection: `truce::rt::Mutex` / `RwLock` flag a lock taken in `process`, and `truce_test::assert_realtime_clean` gates a test on allocations, frees, and locks together.
 
 ## 3.1.0
 
