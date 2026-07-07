@@ -47,7 +47,10 @@ pub fn param_xy_pad<P: ?Sized>(
     }
 
     if ui.is_rect_visible(rect) {
-        let painter = ui.painter_at(rect);
+        // Expand the clip by the dot radius so the dot draws fully past the
+        // pad edge at the value extremes. `painter_at(rect)` would cut its
+        // left/top/right halves (the bottom sits in the label reserve).
+        let painter = ui.painter_at(rect.expand(DOT_RADIUS));
 
         // Background (matches iced SURFACE)
         painter.rect_filled(pad_rect, 0.0, crate::theme::SURFACE);
@@ -68,7 +71,9 @@ pub fn param_xy_pad<P: ?Sized>(
         painter.line_segment([b.right_bottom(), b.left_bottom()], bs);
         painter.line_segment([b.left_bottom(), b.left_top()], bs);
 
-        // Crosshair position
+        // Crosshair position. The dot sits on the pad edge at the value
+        // extremes; the painter clip is expanded by the radius (below) so
+        // its outer half draws past the border instead of being cut.
         let dot_x = pad_rect.left() + pad_rect.width() * vx;
         let dot_y = pad_rect.top() + pad_rect.height() * (1.0 - vy);
 

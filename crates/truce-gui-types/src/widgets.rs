@@ -540,7 +540,9 @@ pub fn draw_xy_pad(
     // Background
     ctx.fill_rect(pad_x, pad_y, pad_w, pad_h, theme.knob_track);
 
-    // Crosshair lines
+    // Crosshair lines. The dot's center sits on the pad edge at the value
+    // extremes; its outer half spills into the pad margin (radius < margin)
+    // and draws unclipped there - the layout has no per-widget scissor.
     let dot_x = pad_x + value_x.clamp(0.0, 1.0) * pad_w;
     let dot_y = pad_y + (1.0 - value_y.clamp(0.0, 1.0)) * pad_h; // invert Y
     let line_color = theme.text_dim;
