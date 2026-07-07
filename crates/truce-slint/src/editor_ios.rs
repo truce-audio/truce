@@ -36,6 +36,18 @@ pub type SetupFn<P> = Arc<dyn Fn(PluginContext<P>) -> SyncFn<P> + Send + Sync>;
 pub struct SlintEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
+    /// Resize-capability flag exposed via `Editor::can_resize`. The
+    /// AU v3 view controller only fits the editor to the host's
+    /// safe-area frame when this is `true`; the default keeps a
+    /// fixed-size GUI pinned to its built size.
+    can_resize: bool,
+    /// `Editor::min_size` / `max_size` bounds. The AU shim clamps
+    /// host-driven resizes against these before calling `set_size`.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    /// `Editor::aspect_ratio` lock (numerator, denominator). The AU
+    /// shim's `fit_logical_size` clamps host-driven resizes to it.
+    aspect_ratio: Option<(u32, u32)>,
     setup: SetupFn<P>,
     inner: Arc<Mutex<Option<Inner<P>>>>,
 }
@@ -78,30 +90,50 @@ impl<P: Params + 'static> SlintEditor<P> {
         Self {
             params,
             size,
+            can_resize: false,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
             setup: Arc::new(setup),
             inner: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// No-op on iOS: the AU v3 / `UIView` container owns sizing,
-    /// and the plugin's `gui_get_size` is queried once at present
-    /// time. Kept for source compatibility with the desktop
-    /// `SlintEditor::resizable` so plugin authors don't need a
-    /// `#[cfg(not(target_os = "ios"))]` on every call.
+    /// Opt into host-driven resizing. When `true`, the AU v3 view
+    /// controller fits the editor to the host plug-in pane's safe-area
+    /// frame (driving `set_size` through the AU shim), so the editor
+    /// reflows to the real device viewport instead of sitting at its
+    /// built size. The default (`false`) keeps a fixed-size GUI pinned.
+    /// Mirrors the desktop `SlintEditor::resizable` so the same builder
+    /// call works on every target.
     #[must_use]
-    pub fn resizable(self, _resizable: bool) -> Self {
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.can_resize = resizable;
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Minimum logical-point size the editor accepts. The AU shim
+    /// consults this before driving `set_size`. See [`Self::resizable`].
     #[must_use]
-    pub fn min_size(self, _min: (u32, u32)) -> Self {
+    pub fn min_size(mut self, min: (u32, u32)) -> Self {
+        self.min_size = min;
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Maximum logical-point size the editor accepts. See
+    /// [`Self::min_size`].
     #[must_use]
-    pub fn max_size(self, _max: (u32, u32)) -> Self {
+    pub fn max_size(mut self, max: (u32, u32)) -> Self {
+        self.max_size = max;
+        self
+    }
+
+    /// Lock the editor's aspect ratio as `(numerator, denominator)`.
+    /// Host-driven resizes are clamped to it by the AU shim's
+    /// `fit_logical_size`. See [`Self::resizable`].
+    #[must_use]
+    pub fn aspect_ratio(mut self, ratio: Option<(u32, u32)>) -> Self {
+        self.aspect_ratio = ratio;
         self
     }
 }
@@ -227,6 +259,100 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         }
         drop(inner);
     }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
+        self.size = (width, height);
+        // The AUv3 view controller calls `gui_set_size` on the main
+        // thread from `viewDidLayoutSubviews`, the same thread the
+        // `CADisplayLink` runs `tick` on, so resizing the live view +
+        // window inline here is safe (the tick and this never nest -
+        // they take the same `inner` mutex on the same thread).
+        if let Some(inner) = self.inner.lock().expect("inner mutex").as_mut() {
+            resize_inner(inner, width, height);
+        }
+        true
+    }
+
+    fn can_resize(&self) -> bool {
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        self.aspect_ratio
+    }
+}
+
+/// Resize the live editor surface to `logical_w` x `logical_h` logical
+/// points. Updates the cached logical size, the `UIView` frame, the
+/// Slint window's physical size, and the pixel buffers so the next tick
+/// renders at the new size. No-op when the size is unchanged so
+/// redundant layout passes are cheap.
+fn resize_inner<P: Params + ?Sized>(inner: &mut Inner<P>, logical_w: u32, logical_h: u32) {
+    if logical_w == 0 || logical_h == 0 {
+        return;
+    }
+    if inner.logical_w == logical_w && inner.logical_h == logical_h {
+        return;
+    }
+
+    inner.logical_w = logical_w;
+    inner.logical_h = logical_h;
+
+    // Same physical-pixel cast rationale as `SlintEditor::open`.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    let phys_w = (logical_w as f32 * inner.scale).round() as u32;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    let phys_h = (logical_h as f32 * inner.scale).round() as u32;
+
+    let frame = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize {
+            width: f64::from(logical_w),
+            height: f64::from(logical_h),
+        },
+    };
+
+    // SAFETY: `child_view` is the pinned UIView; it outlives `inner`.
+    // Frame updates are main-thread UIKit calls, which is where
+    // `set_size` runs.
+    unsafe {
+        let _: () = msg_send![inner.child_view, setFrame: frame];
+    }
+
+    // Drive Slint's layout at the new physical size; the software
+    // renderer reads this when it lays out the next frame.
+    inner
+        .slint_window
+        .set_size(slint::PhysicalSize::new(phys_w, phys_h));
+
+    // Grow the buffers to the new physical count so the first
+    // post-resize render is allocation-free. `render_to_rgba` resizes
+    // `px_buf` and rebuilds `rgba_buf` itself, so this only pre-sizes.
+    let pixel_count = (phys_w * phys_h) as usize;
+    inner
+        .px_buf
+        .resize(pixel_count, PremultipliedRgbaColor::default());
+    inner.rgba_buf.clear();
+    inner.rgba_buf.reserve(pixel_count * 4);
 }
 
 // UIView subclass + CADisplayLink + touch handling

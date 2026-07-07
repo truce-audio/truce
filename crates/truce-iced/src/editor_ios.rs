@@ -49,6 +49,18 @@ where
 {
     params: Arc<P>,
     size: (u32, u32),
+    /// Resize-capability flag exposed via `Editor::can_resize`. The
+    /// AU v3 view controller only fits the editor to the host's
+    /// safe-area frame when this is `true`; the default keeps a
+    /// fixed-size GUI pinned to its built size.
+    can_resize: bool,
+    /// `Editor::min_size` / `max_size` bounds. The AU shim clamps
+    /// host-driven resizes against these before calling `set_size`.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    /// `Editor::aspect_ratio` lock (numerator, denominator). The AU
+    /// shim's `fit_logical_size` clamps host-driven resizes to it.
+    aspect_ratio: Option<(u32, u32)>,
     font: Option<&'static [u8]>,
     make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
@@ -90,6 +102,10 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
         Self {
             params,
             size,
+            can_resize: false,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
             font: None,
             make_plugin,
             meter_ids,
@@ -104,6 +120,10 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
         Self {
             params,
             size,
+            can_resize: false,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
             font: None,
             make_plugin: Box::new(|p| M::new(p)),
             meter_ids: Vec::new(),
@@ -125,11 +145,16 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
         self
     }
 
-    /// No-op on iOS: the `AUv3` / `UIView` container owns sizing. Kept for
-    /// source compatibility with the desktop builder so plugin authors
-    /// don't need a `#[cfg]` on every call.
+    /// Opt into host-driven resizing. When `true`, the AU v3 view
+    /// controller fits the editor to the host plug-in pane's safe-area
+    /// frame (driving `set_size` through the AU shim), so the editor
+    /// reflows to the real device viewport instead of sitting at its
+    /// built size. The default (`false`) keeps a fixed-size GUI pinned.
+    /// Mirrors the desktop `IcedEditor::resizable` so the same builder
+    /// call works on every target.
     #[must_use]
-    pub fn resizable(self, _resizable: bool) -> Self {
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.can_resize = resizable;
         self
     }
 
@@ -139,21 +164,28 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Minimum logical-point size the editor accepts. The AU shim
+    /// consults this before driving `set_size`. See [`Self::resizable`].
     #[must_use]
-    pub fn min_size(self, _min: (u32, u32)) -> Self {
+    pub fn min_size(mut self, min: (u32, u32)) -> Self {
+        self.min_size = min;
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Maximum logical-point size the editor accepts. See
+    /// [`Self::min_size`].
     #[must_use]
-    pub fn max_size(self, _max: (u32, u32)) -> Self {
+    pub fn max_size(mut self, max: (u32, u32)) -> Self {
+        self.max_size = max;
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Lock the editor's aspect ratio as `(numerator, denominator)`.
+    /// Host-driven resizes are clamped to it by the AU shim's
+    /// `fit_logical_size`. See [`Self::resizable`].
     #[must_use]
-    pub fn aspect_ratio(self, _ratio: Option<(u32, u32)>) -> Self {
+    pub fn aspect_ratio(mut self, ratio: Option<(u32, u32)>) -> Self {
+        self.aspect_ratio = ratio;
         self
     }
 
@@ -278,6 +310,87 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> Editor for IcedEditor<P, M
     fn idle(&mut self) {
         // CADisplayLink drives the frame loop via tick:.
     }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
+        self.size = (width, height);
+        // The AUv3 view controller calls `gui_set_size` on the main
+        // thread from `viewDidLayoutSubviews`, the same thread the
+        // `CADisplayLink` runs `tick` on, so resizing the live view +
+        // surface inline here is safe (the tick and this never nest -
+        // they take the same `inner` mutex on the same thread).
+        if let Some(inner) = self.inner.lock().expect("inner mutex").as_mut() {
+            resize_inner(inner, width, height);
+        }
+        true
+    }
+
+    fn can_resize(&self) -> bool {
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        self.aspect_ratio
+    }
+}
+
+/// Resize the live editor surface to `logical_w` x `logical_h` logical
+/// points. Updates the `UIView` frame, the `CAMetalLayer` drawable (in
+/// physical pixels), and the runtime's cached logical size + wgpu
+/// surface + iced viewport. The next tick reflows iced against the new
+/// viewport. No-op when the size is unchanged so redundant layout passes
+/// are cheap.
+fn resize_inner<P: Params + 'static, M: IcedPlugin<P> + 'static>(
+    inner: &mut Inner<P, M>,
+    logical_w: u32,
+    logical_h: u32,
+) {
+    if logical_w == 0 || logical_h == 0 {
+        return;
+    }
+    if inner.runtime.size == (logical_w, logical_h) {
+        return;
+    }
+
+    let render_scale = inner.runtime.scale.get();
+    let phys_w = truce_gui::to_physical_px(logical_w, render_scale).max(1);
+    let phys_h = truce_gui::to_physical_px(logical_h, render_scale).max(1);
+
+    let frame = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize {
+            width: f64::from(logical_w),
+            height: f64::from(logical_h),
+        },
+    };
+
+    // SAFETY: `child_view` is the pinned UIView (its `layer` is the
+    // CAMetalLayer wgpu draws into); both outlive `inner`. Frame /
+    // drawable updates are main-thread UIKit calls, which is where
+    // `set_size` runs.
+    unsafe {
+        let _: () = msg_send![inner.child_view, setFrame: frame];
+        let layer: *mut AnyObject = msg_send![inner.child_view, layer];
+        let drawable_size = NSSize {
+            width: f64::from(phys_w),
+            height: f64::from(phys_h),
+        };
+        let _: () = msg_send![layer, setDrawableSize: drawable_size];
+    }
+
+    // Reconfigure the wgpu surface + rebuild the iced viewport against
+    // the new logical size.
+    inner.runtime.resize(logical_w, logical_h);
 }
 
 // UIView subclass with CAMetalLayer + CADisplayLink + touch handlers

@@ -32,6 +32,13 @@ pub mod au3 {
         pub au_sub: &'a str,
         pub au_mfr: &'a str,
         pub au_tag: &'a str,
+        /// Extra `AudioComponents` `tags` entries appended after the
+        /// category `au_tag`. The iOS path passes `"resizable"` (so
+        /// `GarageBand` shows its expand affordance) and a `"size:{w,h}"`
+        /// first-open hint (read by AUM); the macOS path passes `&[]`.
+        /// Each entry renders as its own `<string>...</string>` line
+        /// inside the `tags` array.
+        pub extra_au_tags: &'a [&'a str],
         pub au_ver: &'a str,
         pub min_os: &'a str,
         pub supported_platform: &'a str,
@@ -56,12 +63,23 @@ pub mod au3 {
     /// was renamed to `MIN_OS` (or vice versa) before they ship as a
     /// literal token in the bundle.
     pub fn render_appex_info_plist(values: &AppexPlistValues<'_>) -> String {
+        // Each extra tag becomes its own `<string>...</string>` line,
+        // indented to match the category `<string>AUTAG</string>` line
+        // in the template (24 spaces). Empty when no extras, leaving the
+        // `tags` array with just the category entry.
+        let mut extra_tags_block = String::new();
+        for tag in values.extra_au_tags {
+            extra_tags_block.push_str("\n                        <string>");
+            extra_tags_block.push_str(tag);
+            extra_tags_block.push_str("</string>");
+        }
         let mut subs: Vec<(&str, &str)> = vec![
             ("AUNAME", values.au_name),
             ("AUTYPE", values.au_type),
             ("AUSUB", values.au_sub),
             ("AUMFR", values.au_mfr),
             ("AUTAG", values.au_tag),
+            ("EXTRATAGS", extra_tags_block.as_str()),
             ("AUVER", values.au_ver),
             ("MINIOS", values.min_os),
             ("SUPPORTEDPLAT", values.supported_platform),
@@ -99,6 +117,7 @@ pub mod au3 {
                 au_sub: "Trem",
                 au_mfr: "Acme",
                 au_tag: "Effect",
+                extra_au_tags: &[],
                 au_ver: "1",
                 min_os: "13.0",
                 supported_platform: "MacOSX",
@@ -113,6 +132,7 @@ pub mod au3 {
                 au_sub: "Trem",
                 au_mfr: "Acme",
                 au_tag: "Effect",
+                extra_au_tags: &["resizable"],
                 au_ver: "1",
                 min_os: "15.0",
                 supported_platform: "iPhoneOS",
@@ -123,6 +143,26 @@ pub mod au3 {
                     module_name: "AUExt",
                 }),
             }
+        }
+
+        #[test]
+        fn ios_render_emits_resizable_tag() {
+            // The `resizable` tag is what makes GarageBand show its
+            // expand affordance; it lands as its own entry in the
+            // AudioComponents `tags` array, alongside the category tag.
+            let plist = render_appex_info_plist(&ios_values());
+            assert!(plist.contains("<string>Effect</string>"));
+            assert!(plist.contains("<string>resizable</string>"));
+            assert!(!plist.contains("EXTRATAGS"));
+        }
+
+        #[test]
+        fn macos_render_omits_extra_tags() {
+            // macOS passes no extra tags - the `tags` array carries only
+            // the category, and the placeholder is fully consumed.
+            let plist = render_appex_info_plist(&macos_values());
+            assert!(!plist.contains("<string>resizable</string>"));
+            assert!(!plist.contains("EXTRATAGS"));
         }
 
         #[test]

@@ -425,6 +425,9 @@ fn write_xcode_project_files(
         au_sub: p.au3_sub(),
         au_mfr: &config.vendor.au_manufacturer,
         au_tag: &p.au_tag,
+        // macOS AU resize is wrapper-driven (no host expand tag); the
+        // `resizable` / `size:` tags are an iOS-only affordance.
+        extra_au_tags: &[],
         au_ver: &ver,
         min_os: "13.0",
         supported_platform: "MacOSX",

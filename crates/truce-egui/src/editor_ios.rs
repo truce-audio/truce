@@ -41,6 +41,18 @@ impl<P: Params + ?Sized, F: FnMut(&mut egui::Ui, &PluginContext<P>) + Send> Edit
 pub struct EguiEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
+    /// Resize-capability flag exposed via `Editor::can_resize`. The
+    /// AU v3 view controller only fits the editor to the host's
+    /// safe-area frame when this is `true`; the default keeps a
+    /// fixed-size GUI pinned to its built size.
+    can_resize: bool,
+    /// `Editor::min_size` / `max_size` bounds. The AU shim clamps
+    /// host-driven resizes against these before calling `set_size`.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    /// `Editor::aspect_ratio` lock (numerator, denominator). The AU
+    /// shim's `fit_logical_size` clamps host-driven resizes to it.
+    aspect_ratio: Option<(u32, u32)>,
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
     font: Option<&'static [u8]>,
@@ -80,6 +92,10 @@ impl<P: Params + 'static> EguiEditor<P> {
         Self {
             params,
             size,
+            can_resize: false,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
             ui: Arc::new(Mutex::new(ui)),
             visuals: None,
             font: None,
@@ -103,31 +119,42 @@ impl<P: Params + 'static> EguiEditor<P> {
         self
     }
 
-    /// No-op on iOS: the AU v3 / `UIView` container owns sizing,
-    /// and the plugin's `gui_get_size` is queried once at present
-    /// time. Kept for source compatibility with the desktop
-    /// `EguiEditor::resizable` so plugin authors don't need a
-    /// `#[cfg(not(target_os = "ios"))]` on every call.
+    /// Opt into host-driven resizing. When `true`, the AU v3 view
+    /// controller fits the editor to the host plug-in pane's
+    /// safe-area frame (driving `set_size` through the AU shim), so
+    /// the editor reflows to the real device viewport instead of
+    /// sitting at its built portrait size. The default (`false`)
+    /// keeps a deliberately fixed-size GUI pinned. Mirrors the
+    /// desktop `EguiEditor::resizable` so the same builder call works
+    /// on every target.
     #[must_use]
-    pub fn resizable(self, _resizable: bool) -> Self {
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.can_resize = resizable;
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Minimum logical-point size the editor accepts. The AU shim
+    /// consults this before driving `set_size`. See [`Self::resizable`].
     #[must_use]
-    pub fn min_size(self, _min: (u32, u32)) -> Self {
+    pub fn min_size(mut self, min: (u32, u32)) -> Self {
+        self.min_size = min;
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Maximum logical-point size the editor accepts. See
+    /// [`Self::min_size`].
     #[must_use]
-    pub fn max_size(self, _max: (u32, u32)) -> Self {
+    pub fn max_size(mut self, max: (u32, u32)) -> Self {
+        self.max_size = max;
         self
     }
 
-    /// No-op on iOS. See [`Self::resizable`].
+    /// Lock the editor's aspect ratio as `(numerator, denominator)`.
+    /// Host-driven resizes are clamped to it by the AU shim's
+    /// `fit_logical_size`. See [`Self::resizable`].
     #[must_use]
-    pub fn aspect_ratio(self, _ratio: Option<(u32, u32)>) -> Self {
+    pub fn aspect_ratio(mut self, ratio: Option<(u32, u32)>) -> Self {
+        self.aspect_ratio = ratio;
         self
     }
 
@@ -160,8 +187,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // `UIScreen.mainScreen.scale` and returns 3.0 on iPhone
         // Retina regardless of the view hierarchy state. Without
         // this, egui paints into a 1x wgpu surface that
-        // CoreAnimation upscales 3x with visibly grainy edges.
-        let scale = truce_gui::platform::main_screen_scale();
+        // CoreAnimation upscales 3x with visibly grainy edges. Cap
+        // high-density iPhones at 2x: native 3x is sharp but expensive
+        // for a continuously animated Metal editor.
+        let native_scale = truce_gui::platform::main_screen_scale();
+        let scale = native_scale.clamp(1.0, IOS_MAX_RENDER_SCALE);
         // Physical-pixel math bounded by editor size × backing
         // scale (max ~4000 px in practice); the cast loss is
         // irrelevant. `scale` won't exceed 4.0 on any Apple device.
@@ -191,6 +221,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             unsafe { install_editor_view::<P>(parent_ptr.cast(), lw, lh, scalef, &self.inner) };
         if view.is_null() || layer.is_null() {
             log::warn!("egui iOS: install_editor_view returned null");
+            // A non-null `view` here means the ivar Arc + display link
+            // were already set up before this null check tripped; tear
+            // them down so the partial open doesn't leak.
+            // SAFETY: `view`/`link` come straight from `install_editor_view`.
+            unsafe { teardown_editor_view::<P>(view, link) };
             return;
         }
 
@@ -201,9 +236,12 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             (unsafe { EguiRenderer::from_metal_layer(layer.cast(), phys_w, phys_h) })
         else {
             log::warn!("egui iOS: failed to create EguiRenderer from metal layer");
-            unsafe {
-                let _: () = msg_send![view, removeFromSuperview];
-            }
+            // `install_editor_view` already pinned the ivar Arc, retained
+            // the display link and scheduled it on the run loop; tear it
+            // all down so a failed open doesn't leave a zombie display
+            // link firing `tick:` with the view/layer/Arc graph leaked.
+            // SAFETY: `view`/`link` come straight from `install_editor_view`.
+            unsafe { teardown_editor_view::<P>(view, link) };
             return;
         };
 
@@ -263,35 +301,78 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         let Some(inner) = self.inner.lock().expect("inner mutex").take() else {
             return;
         };
-        unsafe {
-            if !inner.display_link.is_null() {
-                let _: () = msg_send![inner.display_link, invalidate];
-                let _: () = msg_send![inner.display_link, release];
-            }
-            if !inner.child_view.is_null() {
-                // Reclaim the Arc the view's ivar holds.
-                let cls: &AnyClass = msg_send![inner.child_view, class];
-                let base: *const u8 = inner.child_view.cast();
-                let ivar_ptr: *const *mut std::ffi::c_void =
-                    base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
-                let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
-                if !leaked.is_null() {
-                    let _ = Arc::from_raw(leaked);
-                }
-                let _: () = msg_send![inner.child_view, removeFromSuperview];
-            }
-        }
+        // SAFETY: `child_view`/`display_link` were built by
+        // `install_editor_view` for this `P`; `take()` above guarantees
+        // no other path touches them.
+        unsafe { teardown_editor_view::<P>(inner.child_view, inner.display_link) };
         // EguiRenderer drops here, releasing wgpu surface / device / queue.
         drop(inner);
+    }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
+        self.size = (width, height);
+        // The AUv3 view controller calls `gui_set_size` on the main
+        // thread from `viewDidLayoutSubviews`, the same thread the
+        // `CADisplayLink` runs `run_frame` on, so resizing the live
+        // view + surface inline here is safe (the tick and this never
+        // nest - they take the same `inner` mutex on the same thread).
+        if let Some(inner) = self.inner.lock().expect("inner mutex").as_mut() {
+            resize_inner(inner, width, height);
+        }
+        true
+    }
+
+    fn can_resize(&self) -> bool {
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        self.aspect_ratio
     }
 }
 
 // UIView subclass with CAMetalLayer + CADisplayLink + touch handlers
 
 const INNER_PTR_IVAR: &std::ffi::CStr = c"_truce_egui_inner_ptr";
+/// Cap the `CADisplayLink` at 30 fps: a plugin editor doesn't need
+/// the display's native 60/120 Hz, and the halved wake-up rate is a
+/// meaningful battery / thermal win inside an AU v3 host.
+const IOS_DISPLAY_LINK_FPS: isize = 30;
+/// Cap the Metal backing scale. Native 3x on modern iPhones is sharp
+/// but expensive for a continuously animated editor; 2x is the
+/// quality/perf sweet spot.
+const IOS_MAX_RENDER_SCALE: f64 = 2.0;
 
 unsafe extern "C" {
     static NSRunLoopCommonModes: *const AnyObject;
+    // AUv3 extension-host lifecycle (Foundation).
+    static NSExtensionHostDidBecomeActiveNotification: *const AnyObject;
+    static NSExtensionHostDidEnterBackgroundNotification: *const AnyObject;
+    static NSExtensionHostWillEnterForegroundNotification: *const AnyObject;
+    static NSExtensionHostWillResignActiveNotification: *const AnyObject;
+}
+
+#[link(name = "UIKit", kind = "framework")]
+unsafe extern "C" {
+    static UIApplicationDidBecomeActiveNotification: *const AnyObject;
+    static UIApplicationDidEnterBackgroundNotification: *const AnyObject;
+    static UIApplicationWillEnterForegroundNotification: *const AnyObject;
+    static UIApplicationWillResignActiveNotification: *const AnyObject;
+    static UISceneDidActivateNotification: *const AnyObject;
+    static UISceneDidEnterBackgroundNotification: *const AnyObject;
+    static UISceneWillDeactivateNotification: *const AnyObject;
+    static UISceneWillEnterForegroundNotification: *const AnyObject;
 }
 
 /// `+[Class layerClass]` override that returns `CAMetalLayer`. Class
@@ -340,6 +421,14 @@ unsafe fn install_editor_view<P: Params + 'static>(
             builder.add_method(
                 sel!(tick:),
                 tick_thunk::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(trucePauseDisplayLink:),
+                pause_display_link_notification::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(truceResumeDisplayLink:),
+                resume_display_link_notification::<P> as unsafe extern "C" fn(_, _, _),
             );
             builder.add_method(
                 sel!(touchesBegan:withEvent:),
@@ -446,13 +535,82 @@ unsafe fn install_editor_view<P: Params + 'static>(
         if link.is_null() {
             return (view, layer, std::ptr::null_mut(), leaked);
         }
-        let _: () = msg_send![link, retain];
+        retain_obj(link);
+        set_display_link_preferred_fps(link, IOS_DISPLAY_LINK_FPS);
+        register_display_link_lifecycle_observers(view);
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         let mode: *const AnyObject = NSRunLoopCommonModes;
         let _: () = msg_send![link, addToRunLoop: main, forMode: mode];
 
         (view, layer, link, leaked)
+    }
+}
+
+unsafe fn retain_obj(obj: *mut AnyObject) {
+    unsafe {
+        if !obj.is_null() {
+            let _: *mut AnyObject = msg_send![obj, retain];
+        }
+    }
+}
+
+unsafe fn release_obj(obj: *mut AnyObject) {
+    unsafe {
+        if !obj.is_null() {
+            let _: () = msg_send![obj, release];
+        }
+    }
+}
+
+unsafe fn set_display_link_preferred_fps(link: *mut AnyObject, fps: isize) {
+    unsafe {
+        if link.is_null() || fps <= 0 {
+            return;
+        }
+        let _: () = msg_send![link, setPreferredFramesPerSecond: fps];
+    }
+}
+
+/// Tear down the editor's `UIView` + `CADisplayLink`: unregister the
+/// lifecycle observers, invalidate and release the display link,
+/// reclaim the `Arc` pinned in the view's ivar, then detach the view.
+/// Shared by `close()` and the early-return error paths in `open()`.
+/// `install_editor_view` pins the ivar `Arc`, retains the link and
+/// schedules it on the run loop *before* `open()` has a chance to fail,
+/// so without this a failed open leaves a zombie display link firing
+/// `tick:` forever with the view/layer/`Arc` graph leaked.
+///
+/// SAFETY: `child_view` (if non-null) must be a view built by
+/// `install_editor_view` for the same `P` (so the ivar holds an
+/// `Arc<Mutex<Option<Inner<P>>>>`), and `display_link` (if non-null)
+/// the link returned alongside it. Both pointers are consumed - the
+/// link is released and the ivar `Arc` reclaimed - so callers must not
+/// reuse them afterwards. Must run on the main thread.
+unsafe fn teardown_editor_view<P: Params + 'static>(
+    child_view: *mut AnyObject,
+    display_link: *mut AnyObject,
+) {
+    unsafe {
+        if !display_link.is_null() {
+            if !child_view.is_null() {
+                unregister_display_link_lifecycle_observers(child_view);
+            }
+            let _: () = msg_send![display_link, invalidate];
+            release_obj(display_link);
+        }
+        if !child_view.is_null() {
+            // Reclaim the Arc the view's ivar holds.
+            let cls: &AnyClass = msg_send![child_view, class];
+            let base: *const u8 = child_view.cast();
+            let ivar_ptr: *const *mut std::ffi::c_void =
+                base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
+            let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
+            if !leaked.is_null() {
+                let _ = Arc::from_raw(leaked);
+            }
+            let _: () = msg_send![child_view, removeFromSuperview];
+        }
     }
 }
 
@@ -473,6 +631,141 @@ unsafe fn borrow_inner_arc<P: Params + 'static>(
         let _ = Arc::into_raw(arc);
         Some(cloned)
     }
+}
+
+unsafe fn notification_center() -> *mut AnyObject {
+    unsafe {
+        let center_cls =
+            AnyClass::get(c"NSNotificationCenter").expect("NSNotificationCenter missing");
+        msg_send![center_cls, defaultCenter]
+    }
+}
+
+unsafe fn add_notification_observer(
+    center: *mut AnyObject,
+    observer: *mut AnyObject,
+    selector: Sel,
+    name: *const AnyObject,
+) {
+    unsafe {
+        if center.is_null() || observer.is_null() || name.is_null() {
+            return;
+        }
+        let _: () = msg_send![
+            center,
+            addObserver: observer,
+            selector: selector,
+            name: name,
+            object: std::ptr::null_mut::<AnyObject>(),
+        ];
+    }
+}
+
+/// Register the view for the app / scene / AUv3-extension lifecycle
+/// notifications that pause and resume the `CADisplayLink`, so it stops
+/// firing `tick:` (and the wgpu present that goes with it) whenever the
+/// editor is hidden or the host is backgrounded.
+unsafe fn register_display_link_lifecycle_observers(view: *mut AnyObject) {
+    unsafe {
+        let center = notification_center();
+        let pause = sel!(trucePauseDisplayLink:);
+        let resume = sel!(truceResumeDisplayLink:);
+
+        // Standalone app / scene lifecycle.
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            UIApplicationWillResignActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            UIApplicationDidEnterBackgroundNotification,
+        );
+        add_notification_observer(center, view, pause, UISceneWillDeactivateNotification);
+        add_notification_observer(center, view, pause, UISceneDidEnterBackgroundNotification);
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            UIApplicationDidBecomeActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            UIApplicationWillEnterForegroundNotification,
+        );
+        add_notification_observer(center, view, resume, UISceneDidActivateNotification);
+        add_notification_observer(center, view, resume, UISceneWillEnterForegroundNotification);
+
+        // AUv3 extension host lifecycle.
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            NSExtensionHostWillResignActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            pause,
+            NSExtensionHostDidEnterBackgroundNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            NSExtensionHostDidBecomeActiveNotification,
+        );
+        add_notification_observer(
+            center,
+            view,
+            resume,
+            NSExtensionHostWillEnterForegroundNotification,
+        );
+    }
+}
+
+unsafe fn unregister_display_link_lifecycle_observers(view: *mut AnyObject) {
+    unsafe {
+        let center = notification_center();
+        if !center.is_null() && !view.is_null() {
+            let _: () = msg_send![center, removeObserver: view];
+        }
+    }
+}
+
+unsafe fn set_display_link_paused<P: Params + 'static>(view: &AnyObject, paused: bool) {
+    unsafe {
+        let Some(arc) = borrow_inner_arc::<P>(view) else {
+            return;
+        };
+        let Ok(guard) = arc.lock() else { return };
+        let Some(inner) = guard.as_ref() else { return };
+        if inner.display_link.is_null() {
+            return;
+        }
+        let _: () = msg_send![inner.display_link, setPaused: Bool::new(paused)];
+    }
+}
+
+unsafe extern "C" fn pause_display_link_notification<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    _notification: *mut AnyObject,
+) {
+    unsafe { set_display_link_paused::<P>(self_, true) };
+}
+
+unsafe extern "C" fn resume_display_link_notification<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    _notification: *mut AnyObject,
+) {
+    unsafe { set_display_link_paused::<P>(self_, false) };
 }
 
 unsafe extern "C" fn tick_thunk<P: Params + 'static>(
@@ -553,6 +846,55 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         }
     }
     let _ = inner.params;
+}
+
+/// Re-size the live editor surface to `logical_w` x `logical_h` logical
+/// points. Updates the cached logical size, the `UIView` frame, the
+/// `CAMetalLayer` drawable (in physical pixels), and the wgpu surface.
+/// The next `run_frame` reflows egui because its `screen_rect` reads
+/// `inner.logical_w/h`. No-op when the size is unchanged so redundant
+/// layout passes are cheap.
+fn resize_inner<P: Params + ?Sized>(inner: &mut Inner<P>, logical_w: u32, logical_h: u32) {
+    if logical_w == 0 || logical_h == 0 {
+        return;
+    }
+    if inner.logical_w == logical_w && inner.logical_h == logical_h {
+        return;
+    }
+
+    inner.logical_w = logical_w;
+    inner.logical_h = logical_h;
+
+    let frame = NSRect {
+        origin: NSPoint { x: 0.0, y: 0.0 },
+        size: NSSize {
+            width: f64::from(logical_w),
+            height: f64::from(logical_h),
+        },
+    };
+
+    // Physical-pixel math bounded by editor size x backing scale; the
+    // cast loss is irrelevant (`scale` <= 2.0, dims < 2^23).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let phys_w = (f64::from(logical_w) * f64::from(inner.scale)).round() as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let phys_h = (f64::from(logical_h) * f64::from(inner.scale)).round() as u32;
+
+    // SAFETY: `child_view` is the pinned UIView (its `layer` is the
+    // CAMetalLayer wgpu draws into); both outlive `inner`. Frame /
+    // drawable updates are main-thread UIKit calls, which is where
+    // `set_size` runs.
+    unsafe {
+        let _: () = msg_send![inner.child_view, setFrame: frame];
+        let layer: *mut AnyObject = msg_send![inner.child_view, layer];
+        let drawable_size = NSSize {
+            width: f64::from(phys_w),
+            height: f64::from(phys_h),
+        };
+        let _: () = msg_send![layer, setDrawableSize: drawable_size];
+    }
+
+    inner.renderer.resize(phys_w, phys_h);
 }
 
 fn timestamp_seconds() -> f64 {
