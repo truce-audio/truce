@@ -357,6 +357,9 @@ pub fn level_meter<P: Params + 'static>(
     .alignment(Alignment::BottomCenter);
 }
 
+/// Radius of the XY pad's draggable dot (the dot is `2 * radius` px).
+const XY_DOT_RADIUS: f32 = 4.0;
+
 /// XY pad: two-axis pad whose dot position tracks two truce params.
 /// Click/drag inside the pad to set both x and y simultaneously; the
 /// dot follows the cursor and the params are written through the
@@ -408,20 +411,18 @@ pub fn param_xy_pad<P: Params + 'static>(
     let is_dragging = Signal::new(false);
 
     // Dot position via percentage of the pad's runtime bounds so the
-    // dot follows live `Stretch(_)` resizing. The `.left` /
-    // `.top` modifiers anchor the dot's top-left corner at the
-    // computed percentage; a reactive `.translate` shifts the dot
-    // left / up by `value * 8 px` so its right / bottom edge stays
-    // inside the pad at value=1 (rather than spilling 8 px past).
-    // Net effect: dot's left edge sits at `0` for value=0 and at
-    // `100% - 8 px` for value=1, matching the previous fixed-pixel
-    // math but expressed in runtime-bounds terms.
+    // dot follows live `Stretch(_)` resizing. The `.left` / `.top`
+    // modifiers anchor the dot's top-left corner at the value
+    // percentage; a constant `.translate` of minus one radius re-centers
+    // the dot on that point. So the dot's *center* sits on the true pad
+    // edge at a value extreme and its outer half spills past the border,
+    // drawn unclipped (vizia doesn't clip the dot to the pad).
     let dot_left = Memo::new(move |_| Percentage(x_norm.get() * 100.0));
     let dot_top = Memo::new(move |_| Percentage((1.0 - y_norm.get()) * 100.0));
-    let dot_translate = Memo::new(move |_| Translate {
-        x: LengthOrPercentage::Length(Length::px(-x_norm.get() * 8.0)),
-        y: LengthOrPercentage::Length(Length::px(-(1.0 - y_norm.get()) * 8.0)),
-    });
+    let dot_translate = Translate {
+        x: LengthOrPercentage::Length(Length::px(-XY_DOT_RADIUS)),
+        y: LengthOrPercentage::Length(Length::px(-XY_DOT_RADIUS)),
+    };
 
     let lens_for_down = lens.clone();
     let lens_for_move = lens.clone();
@@ -431,8 +432,8 @@ pub fn param_xy_pad<P: Params + 'static>(
         ZStack::new(cx, move |cx| {
             Element::new(cx)
                 .class("truce-xy-pad-dot")
-                .width(Pixels(8.0))
-                .height(Pixels(8.0))
+                .width(Pixels(XY_DOT_RADIUS * 2.0))
+                .height(Pixels(XY_DOT_RADIUS * 2.0))
                 .corner_radius(Percentage(50.0))
                 .position_type(PositionType::Absolute)
                 .left(dot_left)
