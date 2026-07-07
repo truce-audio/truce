@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 3.1.4
+
+- AU v2 host automation now drives the editor during playback (matching VST3 / AU v3). Based on a fix by [@fpbrault](https://github.com/fpbrault).
+
 ## 3.1.3
 
 - AU v3 editors resize to the host pane on iOS across all GUI backends (built-in, egui, iced, slint), honoring `resizable` / `min_size` / `max_size` / `aspect_ratio`. Ported from a fork by [@tothepoweroftom](https://github.com/tothepoweroftom).
