@@ -54,7 +54,7 @@
 .truce-meter-fill-clip {
     background-color: var(--destructive);
 }
-.truce-xy-pad {
+.truce-xy-pad-surface {
     background-color: var(--muted);
     border-color: var(--border);
     border-width: 1px;
