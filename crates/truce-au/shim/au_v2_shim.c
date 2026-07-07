@@ -12,8 +12,14 @@
 #include <string.h>
 #include <stdlib.h>
 #include <dlfcn.h>
+#include <pthread.h>
 
 #include "au_shim_types.h"
+
+// Capacity of the per-instance host-automation event queue drained
+// each render block. One block's worth of automation - generous even
+// under dense per-block automation.
+#define AU_PARAM_EVENT_CAP 512
 
 // ---------------------------------------------------------------------------
 // Per-instance state
@@ -62,6 +68,21 @@ typedef struct {
     // MIDI buffer (for instruments)
     AuMidiEvent midiBuffer[256];
     uint32_t midiCount;
+
+    // Host parameter-automation events, drained each render block into
+    // cb_process as EventBody::ParamChange rows so the editor follows
+    // host automation (matching VST3 / AU v3). Touched only on the
+    // audio thread: au_v2_schedule_parameters and au_v2_render run
+    // there, and au_v2_set_parameter enqueues only when it does too
+    // (see audioThreadId), so the queue needs no lock.
+    AuParamEvent paramEvents[AU_PARAM_EVENT_CAP];
+    uint32_t paramEventCount;
+    // Kernel id of the audio (render) thread, captured at the top of
+    // every render / schedule call. Lets au_v2_set_parameter - which
+    // the host may call from any thread - tell whether it is on the
+    // audio thread and so may touch paramEvents. Read/written relaxed:
+    // a stale read only ever skips one enqueue, never corrupts state.
+    uint64_t audioThreadId;
 
     // Plugin → host MIDI output callback (set via
     // kAudioUnitProperty_MIDIOutputCallback). Hosts that want to
@@ -1149,13 +1170,61 @@ static OSStatus au_v2_get_parameter(void *self_, AudioUnitParameterID id,
     return noErr;
 }
 
+/* Current thread's kernel id. AU is macOS-only, so pthread_threadid_np
+ * is always available. */
+static uint64_t au_current_tid(void) {
+    uint64_t tid = 0;
+    pthread_threadid_np(pthread_self(), &tid);
+    return tid;
+}
+
+/* True when the caller runs on the instance's audio (render) thread and
+ * so may touch the lock-free paramEvents queue. */
+static int au_on_audio_thread(const TruceAUv2 *inst) {
+    return au_current_tid() ==
+           __atomic_load_n(&inst->audioThreadId, __ATOMIC_RELAXED);
+}
+
+/* Append a host parameter-automation event to the render-block queue.
+ * MUST be called on the audio thread (callers gate on
+ * au_on_audio_thread). When the queue is full, coalesce onto the most
+ * recent event for the same parameter (latest-value-wins) so dense
+ * automation stays responsive rather than dropping the newest value. */
+static void enqueue_param_event(TruceAUv2 *inst, AudioUnitParameterID id,
+                                AudioUnitParameterValue value,
+                                UInt32 sampleOffset) {
+    if (inst->paramEventCount >= AU_PARAM_EVENT_CAP) {
+        for (uint32_t i = inst->paramEventCount; i > 0; i--) {
+            if (inst->paramEvents[i - 1].param_id == id) {
+                inst->paramEvents[i - 1].sample_offset = sampleOffset;
+                inst->paramEvents[i - 1].value = (float)value;
+                return;
+            }
+        }
+        return;
+    }
+    AuParamEvent *ev = &inst->paramEvents[inst->paramEventCount++];
+    ev->sample_offset = sampleOffset;
+    ev->param_id = id;
+    ev->value = (float)value;
+}
+
 static OSStatus au_v2_set_parameter(void *self_, AudioUnitParameterID id,
                                      AudioUnitScope scope, AudioUnitElement elem,
                                      AudioUnitParameterValue value, UInt32 bufferOffset) {
-    (void)scope; (void)elem; (void)bufferOffset;
+    (void)scope; (void)elem;
     TruceAUv2 *inst = (TruceAUv2 *)self_;
     if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
     g_callbacks->param_set_value(inst->rustCtx, id, (double)value);
+    /* Also surface the change to cb_process as a ParamChange so the
+     * editor follows host automation - but only when the host called us
+     * on the audio thread (automation playback). A main-thread call
+     * (generic view, preset apply) races the render-thread drain, and
+     * the value it just set through param_set_value is already live for
+     * the DSP; the editor reads that value directly. */
+    if (au_on_audio_thread(inst)) {
+        enqueue_param_event(inst, id, value, bufferOffset);
+    }
     return noErr;
 }
 
@@ -1164,10 +1233,29 @@ static OSStatus au_v2_schedule_parameters(void *self_,
                                            UInt32 numEvents) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
     if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
+    /* The host calls this on the audio thread as part of the render
+     * pull, immediately before au_v2_render. Record the thread so
+     * set_parameter can recognize audio-thread automation, then enqueue
+     * directly - same thread as the drain, no lock. */
+    __atomic_store_n(&inst->audioThreadId, au_current_tid(), __ATOMIC_RELAXED);
     for (UInt32 i = 0; i < numEvents; i++) {
         if (events[i].eventType == kParameterEvent_Immediate) {
             g_callbacks->param_set_value(inst->rustCtx,
                 events[i].parameter, (double)events[i].eventValues.immediate.value);
+            enqueue_param_event(inst, events[i].parameter,
+                events[i].eventValues.immediate.value,
+                events[i].eventValues.immediate.bufferOffset);
+        } else if (events[i].eventType == kParameterEvent_Ramped) {
+            /* Deliver the ramp's end value at its start offset. Truce's
+             * per-param smoother interpolates from the current value
+             * toward the target; this isn't sample-accurate AU ramp
+             * reproduction but matches how truce-vst3 treats VST3
+             * parameter ramps (target value at the queue point). */
+            AudioUnitParameterValue value = events[i].eventValues.ramp.endValue;
+            UInt32 offset = events[i].eventValues.ramp.startBufferOffset;
+            g_callbacks->param_set_value(inst->rustCtx,
+                events[i].parameter, (double)value);
+            enqueue_param_event(inst, events[i].parameter, value, offset);
         }
     }
     return noErr;
@@ -1257,6 +1345,11 @@ static OSStatus au_v2_render(void *self_,
     if (!inst->initialized || !g_callbacks || !inst->rustCtx)
         return kAudioUnitErr_Uninitialized;
 
+    // Record the audio thread so au_v2_set_parameter can tell whether a
+    // host param call is audio-thread automation (safe to queue) or a
+    // main-thread set (must not touch paramEvents).
+    __atomic_store_n(&inst->audioThreadId, au_current_tid(), __ATOMIC_RELAXED);
+
     // Clear the output-is-silence flag - we produce audio
     if (ioFlags) *ioFlags &= ~kAudioUnitRenderAction_OutputIsSilence;
 
@@ -1328,21 +1421,34 @@ static OSStatus au_v2_render(void *self_,
     AuTransportSnapshot transport;
     fill_transport_snapshot(inst, inTimeStamp, &transport);
 
+    /* Clamp queued param-event offsets to this block. ScheduleParameters
+     * offsets are block-relative, but SetParameter carries none (we pass
+     * its bufferOffset, which some hosts leave at a stale value); an
+     * out-of-range offset confuses the Rust chunker, so pin it to the
+     * last frame - the event still lands in this block. */
+    for (uint32_t i = 0; i < inst->paramEventCount; i++) {
+        if (inst->paramEvents[i].sample_offset >= inFrameCount) {
+            inst->paramEvents[i].sample_offset =
+                inFrameCount > 0 ? (inFrameCount - 1) : 0;
+        }
+    }
+
     /* AU v2 hosts deliver MIDI exclusively through the legacy
      * `MusicDeviceMIDIEvent` path (3-byte MIDI 1.0); they don't have a
-     * MIDIEventList equivalent. Forward NULL / 0 for the MIDI 2.0
-     * UMP array so the Rust event-decoder skips it. Same story for
-     * the parameter-automation array - AU v2's `AudioUnitSetParameter`
-     * has no sample-offset slot, so per-sample ramps don't exist at
-     * the v2 format boundary; param changes land synchronously
-     * through `param_set_value` instead. */
+     * MIDIEventList equivalent. Forward NULL / 0 for the MIDI 2.0 UMP
+     * array so the Rust event-decoder skips it. The parameter-event
+     * array carries host automation collected this block (through
+     * ScheduleParameters, or audio-thread SetParameter) so it enters
+     * cb_process as EventBody::ParamChange rows, matching VST3 / AU v3
+     * and driving the editor's automation follow. */
     g_callbacks->process(inst->rustCtx, inPtrs, outPtrs,
                          numIn, numOut, inFrameCount,
                          inst->midiBuffer, inst->midiCount,
                          NULL, 0,
-                         NULL, 0,
+                         inst->paramEvents, inst->paramEventCount,
                          &transport);
     inst->midiCount = 0;
+    inst->paramEventCount = 0;
 
     /* Drain plugin → host MIDI. Channel-voice events go through
      * `output_event_at` (filtered to fit in 3-byte MIDI 1.0
