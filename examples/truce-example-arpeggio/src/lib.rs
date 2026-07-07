@@ -391,10 +391,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn process_is_allocation_free() {
+    fn process_is_realtime_clean() {
         use std::time::Duration;
-        use truce_test::{InputSource, assert_no_audio_alloc, driver};
-        assert_no_audio_alloc(|| {
+        use truce_test::{InputSource, assert_realtime_clean, driver};
+        assert_realtime_clean(|| {
             driver!(Plugin)
                 .duration(Duration::from_millis(40))
                 .input(InputSource::Constant(0.25))

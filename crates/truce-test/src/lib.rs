@@ -236,6 +236,32 @@ pub fn assert_no_audio_alloc<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
+/// Assert that running `f` makes no real-time contract violation on the
+/// audio thread inside `process`: no allocation, no deallocation (free), and
+/// no lock taken through `truce::rt::Mutex` / `truce::rt::RwLock`. The
+/// superset of [`assert_no_audio_alloc`] - use it when a plugin should be
+/// provably real-time-clean on every axis the checker covers. It enables
+/// dealloc flagging for the duration and restores the prior setting.
+///
+/// Meaningful only when the plugin crate installs the checker
+/// (`truce::enable_rt_paranoid!()` plus the `rt-paranoid` feature); without
+/// it the count can't be observed and this passes vacuously.
+///
+/// # Panics
+///
+/// Panics if any such violation was observed inside `process`.
+pub fn assert_realtime_clean<R>(f: impl FnOnce() -> R) -> R {
+    let prev = rt::check_dealloc();
+    rt::set_check_dealloc(true);
+    let (r, n) = rt::audit(f);
+    rt::set_check_dealloc(prev);
+    assert_eq!(
+        n, 0,
+        "expected no real-time violation (alloc / free / lock) in process(), saw {n}"
+    );
+    r
+}
+
 /// **Internal use only.** Assert that running `f` *does* allocate on the
 /// audio thread inside `process`. There is no reason for a plugin to want
 /// this - it exists to pin the behavior of truce's own examples that
