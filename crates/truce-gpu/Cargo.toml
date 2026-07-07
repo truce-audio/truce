@@ -46,7 +46,9 @@ wgpu = { workspace = true, features = ["metal"] }
 wgpu = { workspace = true, features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { workspace = true, features = ["dx12"] }
+# gles = GL fallback for adapters with no DX12 (old GPUs/drivers) - see
+# `editor_wgpu_backends()` in `truce-gui/src/platform.rs`.
+wgpu = { workspace = true, features = ["dx12", "gles"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wgpu = { workspace = true, features = ["vulkan", "gles"] }

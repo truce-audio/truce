@@ -522,14 +522,20 @@ fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
 }
 
 /// wgpu backends to use for an editor that presents into a
-/// host-owned child window. macOS is Metal-only; Windows is DX12
-/// (the only backend feature truce-gui/truce-gpu compile in on
-/// Windows - see their `Cargo.toml`); Linux keeps `PRIMARY`.
+/// host-owned child window. macOS is Metal-only (universal on any Mac
+/// that can run this toolchain, no fallback needed). Windows tries
+/// DX12 first, falling back to GL (native WGL) when the host has no
+/// DX12 adapter at all - old GPUs/drivers, or a DX12 init failure for
+/// any other reason. `Backends` is a bitflag `request_adapter` picks
+/// an adapter from; with zero DX12 adapters enumerated, it silently
+/// returns the GL one instead of leaving the editor blank/dead. DX12
+/// stays preferred (`HighPerformance` in the adapter request). Linux
+/// keeps `PRIMARY`.
 #[must_use]
 pub fn editor_wgpu_backends() -> wgpu::Backends {
     #[cfg(target_os = "windows")]
     {
-        wgpu::Backends::DX12
+        wgpu::Backends::DX12 | wgpu::Backends::GL
     }
     #[cfg(target_os = "macos")]
     {
