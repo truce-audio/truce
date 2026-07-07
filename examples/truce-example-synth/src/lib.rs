@@ -238,6 +238,9 @@ impl PluginLogic for Synth {
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         let mut next_event = 0;
+        // A mono or multi-mono host instance hands us a single output
+        // channel; writing a second would be out of bounds.
+        let out_channels = buffer.num_output_channels();
 
         for i in 0..buffer.num_samples() {
             while let Some(event) = events.get(next_event) {
@@ -289,7 +292,9 @@ impl PluginLogic for Synth {
 
             let out = sample.clamp(-1.0, 1.0);
             buffer.output(0)[i] = out;
-            buffer.output(1)[i] = out;
+            if out_channels > 1 {
+                buffer.output(1)[i] = out;
+            }
         }
 
         self.voices.retain(|v| !v.is_done());
