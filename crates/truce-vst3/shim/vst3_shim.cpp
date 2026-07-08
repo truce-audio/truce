@@ -14,6 +14,13 @@
 #include <cmath>
 #include <atomic>
 #include <new>
+#if __APPLE__
+// libdispatch: an event-driven bridge that marshals a pending
+// restartComponent onto the host's main run loop, so a latency change
+// notifies the host even with no editor open and no host param polling
+// (the one case the main-thread callback hooks below can't reach).
+#include <dispatch/dispatch.h>
+#endif
 
 #define I(x) static_cast<int8_t>(x)
 
@@ -432,6 +439,15 @@ static constexpr int kMaxInstances = 64;
 static void* g_ctx_map_key[kMaxInstances] = {};
 static TruceComponent* g_ctx_map_comp[kMaxInstances] = {};
 
+#if __APPLE__
+// Resolves the shim's opaque ctx key to its live component, or null once
+// the component's destructor has unregistered it. Both defined below,
+// once TruceComponent is complete; declared here so the constructor can
+// wire the dispatch source's event handler.
+static TruceComponent* ctx_lookup(void* ctx);
+static void truce_vst3_restart_source_event(void* key);
+#endif
+
 class TruceComponent {
     std::atomic<int32> refCount{1};
     void* ctx;
@@ -446,6 +462,20 @@ class TruceComponent {
     int32 procMode = 0;
 public:
     void* componentHandler;  // IComponentHandler*, stored with addRef
+    // Pending IComponentHandler::restartComponent flags (RestartFlags
+    // bitmask, e.g. kLatencyChanged = 8). The audio thread sets bits via
+    // truce_vst3_mark_restart; flushPendingRestart() drains them on a
+    // host main-thread callback (getParamNormalized / perform / endEdit),
+    // so restartComponent - which VST3 wants off the audio thread and on
+    // the UI thread - never fires from the render or a truce-owned thread.
+    std::atomic<int32_t> pendingRestart{0};
+#if __APPLE__
+    // Main-queue dispatch source. The audio thread signals it (lock-free,
+    // alloc-free) on a latency change; its handler drains pendingRestart
+    // on the host main thread - the editor-closed / no-param-poll path
+    // the callback hooks below can't cover. Null if creation failed.
+    dispatch_source_t restartSource = nullptr;
+#endif
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
     bool stateLoaded;         // true after setState() has run (or on first process if no state chunk)
     void* deferredParent;     // stashed parent view if editor attached before state loaded
@@ -471,6 +501,20 @@ public:
                         break;
                     }
                 }
+#if __APPLE__
+                // Instances are created on the main thread, so setting up
+                // a main-queue source here is safe. Context is the stable
+                // ctx key, so the handler resolves the component safely
+                // even if it is mid-teardown.
+                restartSource = dispatch_source_create(
+                    DISPATCH_SOURCE_TYPE_DATA_OR, 0, 0, dispatch_get_main_queue());
+                if (restartSource) {
+                    dispatch_set_context(restartSource, ctx);
+                    dispatch_source_set_event_handler_f(
+                        restartSource, truce_vst3_restart_source_event);
+                    dispatch_resume(restartSource);
+                }
+#endif
             }
         }
     }
@@ -489,6 +533,17 @@ public:
                 }
             }
         }
+#if __APPLE__
+        // Unregister above happens first, so any in-flight handler
+        // resolves null and never touches this freed instance. cancel()
+        // stops further invocations; release() is safe mid-handler
+        // (libdispatch retains the source across a running handler).
+        if (restartSource) {
+            dispatch_source_cancel(restartSource);
+            dispatch_release(restartSource);
+            restartSource = nullptr;
+        }
+#endif
         if (g_cb && ctx) g_cb->destroy(ctx);
     }
 
@@ -1301,6 +1356,9 @@ public:
     }
 
     double getParamNormalized(uint32 id) {
+        // Host UI polls this on the main thread; a good place to hand off
+        // a pending latency restart the audio thread flagged.
+        flushPendingRestart();
         if (!g_cb || !ctx) return 0;
         double plain = g_cb->param_get_value(ctx, id);
         return g_cb->param_normalize(ctx, id, plain);
@@ -1326,6 +1384,19 @@ public:
         }
         return kResultOk;
     }
+
+    // Drain any restart bits the audio thread flagged, calling
+    // IComponentHandler::restartComponent. Only ever invoked from host
+    // main-thread callbacks (param reads, edit gestures), so the call
+    // lands on the UI thread as VST3 wants. IComponentHandler vtable:
+    //   [3] beginEdit [4] performEdit [5] endEdit [6] restartComponent
+    void flushPendingRestart() {
+        int32 flags = pendingRestart.exchange(0, std::memory_order_acq_rel);
+        if (!flags || !componentHandler) return;
+        auto restart = (tresult (*)(void*, int32))(*(void***)componentHandler)[6];
+        restart(componentHandler, flags);
+    }
+
     void* createView(FIDString /*name*/);
 };
 
@@ -2275,6 +2346,9 @@ void truce_vst3_perform_edit(void* ctx, uint32_t id, double normalized) {
     auto performEdit = (tresult (*)(void*, uint32, double))(*(void***)comp->componentHandler)[4];
     performEdit(comp->componentHandler, id, normalized);
     comp->inPerformEdit = false;
+    // Editor edits run on the UI thread - drain any latency restart the
+    // audio thread flagged for a latency-affecting parameter here too.
+    comp->flushPendingRestart();
 }
 
 void truce_vst3_end_edit(void* ctx, uint32_t id) {
@@ -2282,18 +2356,35 @@ void truce_vst3_end_edit(void* ctx, uint32_t id) {
     if (!comp || !comp->componentHandler) return;
     auto endEdit = (tresult (*)(void*, uint32))(*(void***)comp->componentHandler)[5];
     endEdit(comp->componentHandler, id);
+    comp->flushPendingRestart();
 }
 
-// Plugin -> host restart notification. IComponentHandler vtable:
-//   [3] beginEdit  [4] performEdit  [5] endEdit  [6] restartComponent
-// Driven off the audio thread (VST3 requires it) by the Rust latency
-// notifier; `flags` is a RestartFlags bitmask (kLatencyChanged = 8).
-void truce_vst3_restart_component(void* ctx, int32_t flags) {
+// Plugin -> host restart request. The audio thread calls this to flag a
+// pending IComponentHandler::restartComponent (e.g. kLatencyChanged = 8)
+// without touching the host: it only sets bits on an atomic. The bits
+// are drained by flushPendingRestart() on the next host main-thread
+// callback, so restartComponent never fires from the render thread or a
+// truce-owned thread. `flags` is a RestartFlags bitmask.
+void truce_vst3_mark_restart(void* ctx, int32_t flags) {
     auto* comp = ctx_lookup(ctx);
-    if (!comp || !comp->componentHandler) return;
-    auto restart = (tresult (*)(void*, int32))(*(void***)comp->componentHandler)[6];
-    restart(comp->componentHandler, flags);
+    if (!comp) return;
+    comp->pendingRestart.fetch_or(flags, std::memory_order_release);
+#if __APPLE__
+    // Wake the main-queue source so the flush happens promptly without
+    // waiting on a host param read or edit gesture. merge_data is
+    // lock-free and alloc-free, so this stays RT-safe on the audio thread.
+    if (comp->restartSource) dispatch_source_merge_data(comp->restartSource, 1);
+#endif
 }
+
+#if __APPLE__
+// Main-queue handler for the restart dispatch source (declared up top).
+// Resolves the component from its stable ctx key so a torn-down instance
+// is a safe no-op, then drains any pending restartComponent.
+static void truce_vst3_restart_source_event(void* key) {
+    if (TruceComponent* comp = ctx_lookup(key)) comp->flushPendingRestart();
+}
+#endif
 
 // Plugin -> host resize request. Walk ctx -> TruceComponent ->
 // TrucePlugView -> IPlugFrame*, then call IPlugFrame::resizeView.
