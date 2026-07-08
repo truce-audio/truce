@@ -13,6 +13,8 @@ typedef void  (*fn_get_param_info)(uint32_t, TruceAaxParamInfo*);
 typedef void* (*fn_create)(void);
 typedef void  (*fn_destroy)(void*);
 typedef void  (*fn_reset)(void*, double, uint32_t);
+typedef void  (*fn_set_render_mode)(void*, uint32_t);
+typedef uint32_t (*fn_latency)(void*);
 typedef void  (*fn_process)(void*, const float**, float**, uint32_t, uint32_t, uint32_t,
                             const TruceAaxMidiEvent*, uint32_t,
                             const TruceAaxTransportSnapshot*);
@@ -44,6 +46,8 @@ struct TruceBridge {
     fn_create              create;
     fn_destroy             destroy;
     fn_reset               reset;
+    fn_set_render_mode     set_render_mode;
+    fn_latency             latency;
     fn_process             process;
     fn_output_event_count  output_event_count;
     fn_output_event_at     output_event_at;

@@ -9,6 +9,7 @@
 #include "AAX_IMIDINode.h"
 #include "AAX_IController.h"
 #include "AAX_ITransport.h"
+#include "AAX_Enums.h"
 
 #include <cstring>
 #include <cstdio>
@@ -62,6 +63,10 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
     mMaxBlockSize = 8192;
     g_bridge.reset(mRustCtx, (double)sr, mMaxBlockSize);
     mSampleRate = (double)sr;
+
+    // Report the plugin's initial latency to the host up front (the
+    // idle TimerWakeup then tracks any later changes).
+    PushLatencyIfChanged();
 
     // Register parameters with AAX
     for (uint32_t i = 0; i < g_descriptor.num_params; i++) {
@@ -125,6 +130,54 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
     }
 
     return AAX_SUCCESS;
+}
+
+// ---------------------------------------------------------------------------
+// NotificationReceived - host events (offline-bounce render mode)
+// ---------------------------------------------------------------------------
+
+AAX_Result TruceAAX_Parameters::NotificationReceived(
+    AAX_CTypeID inNotificationType,
+    const void* inNotificationData,
+    uint32_t inNotificationDataSize) {
+    // Pro Tools brackets an offline bounce with these two events even on
+    // a real-time (Native) insert - the AAX analogue of AU's
+    // OfflineRender flag. Forward the mode; Rust reads it in reset /
+    // process. 2 = ProcessMode::Offline, 0 = ProcessMode::Realtime.
+    if (inNotificationType == AAX_eNotificationEvent_EnteringOfflineMode ||
+        inNotificationType == AAX_eNotificationEvent_ExitingOfflineMode) {
+        if (mRustCtx && g_bridge_loaded && g_bridge.set_render_mode) {
+            uint32_t mode =
+                (inNotificationType == AAX_eNotificationEvent_EnteringOfflineMode) ? 2u : 0u;
+            g_bridge.set_render_mode(mRustCtx, mode);
+        }
+    }
+    // Always defer to the base so its own notification bookkeeping runs.
+    return AAX_CMonolithicParameters::NotificationReceived(
+        inNotificationType, inNotificationData, inNotificationDataSize);
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic latency - push plugin.latency() changes to the host
+// ---------------------------------------------------------------------------
+
+void TruceAAX_Parameters::PushLatencyIfChanged() {
+    if (!mRustCtx || !g_bridge_loaded || !g_bridge.latency) return;
+    int32_t latency = (int32_t)g_bridge.latency(mRustCtx);
+    if (latency == mLastReportedLatency) return;
+    // Controller() is valid off the audio thread (EffectInit + the idle
+    // TimerWakeup). SetSignalLatency asks the host to recompute delay
+    // compensation; it confirms with an AAX_eNotificationEvent_
+    // SignalLatencyChanged. Only advance our cache on a clean accept so
+    // a rejected push retries on the next tick.
+    AAX_IController* controller = Controller();
+    if (controller && controller->SetSignalLatency(latency) == AAX_SUCCESS)
+        mLastReportedLatency = latency;
+}
+
+AAX_Result TruceAAX_Parameters::TimerWakeup() {
+    PushLatencyIfChanged();
+    return AAX_CMonolithicParameters::TimerWakeup();
 }
 
 // ---------------------------------------------------------------------------
