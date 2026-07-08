@@ -256,15 +256,17 @@ class TruceAUAudioUnit: AUAudioUnit {
         return (1...n).map { "MIDI Out \($0)" }
     }
 
-    /// MIDI protocol the host delivers input in. Declaring 2.0 makes the
-    /// host send native UMP MIDI 2.0 (NoteOn2 / PerNoteCC / ...) through
-    /// the render-event MIDI list, which the Rust side decodes; declaring
-    /// 1.0 makes the host down-convert first. Gated on the plugin's
-    /// `midi2` opt-in so a plugin that didn't ask for MIDI 2.0 never sees
-    /// the 2.0 variants - the same contract as CLAP (which only
-    /// advertises `CLAP_NOTE_DIALECT_MIDI2` when opted in). Without this
-    /// override the default is 1.0, so the Rust 2.0 decode path would
-    /// stay dormant.
+    /// MIDI protocol the host delivers *input* in. Declaring 2.0 makes the
+    /// host send native UMP MIDI 2.0 (NoteOn2 / PerNoteCC / ...) through the
+    /// render-event MIDI list, which the Rust side decodes; declaring 1.0
+    /// makes the host down-convert first. Gated on `midi2_input` only - a
+    /// 1.0->2.0 promoter (`midi2_output` without `midi2_input`) wants 1.0
+    /// input it can read, and emits 2.0 on its own *output* stream, which is
+    /// negotiated separately (see the output drain below). A plugin that
+    /// didn't ask for MIDI 2.0 input never sees the 2.0 variants - the same
+    /// contract as CLAP (which only advertises `CLAP_NOTE_DIALECT_MIDI2`
+    /// when opted in). Without this override the default is 1.0, so the Rust
+    /// 2.0 decode path would stay dormant.
     @available(macOS 12.0, iOS 15.0, *)
     override var audioUnitMIDIProtocol: MIDIProtocolID {
         if let d = g_descriptor?.pointee, d.midi2_input != 0 {
@@ -500,13 +502,19 @@ class TruceAUAudioUnit: AUAudioUnit {
 
         // Preferred path: the UMP `MIDIEventList` block (macOS 12+ /
         // iOS 15+), used for every output dialect so a host that only
-        // supplies the list block hears MIDI 1.0 plugins too. The list
-        // is declared in the host's `hostMIDIProtocol` (default 2.0)
-        // and the Rust side encodes a *pure* stream in it - all MT 0x2
-        // channel voice for 1.0, all MT 0x4 for 2.0, SysEx as MT 0x3
-        // SysEx-7 chains (legal in both) - because the UMP spec
-        // forbids mixing the two channel-voice types in one protocol
-        // stream.
+        // supplies the list block hears MIDI 1.0 plugins too. The Rust
+        // side encodes a *pure* stream in the chosen protocol - all MT
+        // 0x2 channel voice for 1.0, all MT 0x4 for 2.0, SysEx as MT 0x3
+        // SysEx-7 chains (legal in both) - because the UMP spec forbids
+        // mixing the two channel-voice types in one protocol stream.
+        //
+        // A `midi2_output` plugin's stream stays 2.0 even when the host's
+        // *input* protocol (`hostMIDIProtocol`) is 1.0: its per-note UMP
+        // (PerNotePitchBend / PerNoteCC) has no 1.0 form, so a 1.0 stream
+        // would fold shared-channel per-note messages onto one channel.
+        // Input and output are separate self-describing MIDIEventList
+        // streams, so 1.0-in / 2.0-out is spec-clean per stream. A
+        // 1.0-output plugin follows the host protocol.
         // The protocol-taking `output_ump_*` shape is AU ABI version
         // 2; this appex may be newer than the plugin binary, so gate
         // on the (magic-validated) reported version before draining
@@ -515,8 +523,12 @@ class TruceAUAudioUnit: AUAudioUnit {
         if truceAbiTailVersion(cb) >= 2, #available(macOS 12.0, iOS 15.0, *),
            let listBlock = midiOutputListBlock as? AUMIDIEventListBlock {
             drainedViaUMP = true
-            let proto: UInt32 = hostWantsMidi1 ? 1 : 2
-            let listProto: MIDIProtocolID = hostWantsMidi1 ? ._1_0 : ._2_0
+            // Force 2.0 for a `midi2_output` plugin; otherwise follow the
+            // host's protocol (up-converting a 1.0 plugin to a 2.0 host so
+            // the stream stays pure).
+            let wantMidi2Out = (g_descriptor?.pointee.midi2_output ?? 0) != 0 || !hostWantsMidi1
+            let proto: UInt32 = wantMidi2Out ? 2 : 1
+            let listProto: MIDIProtocolID = wantMidi2Out ? ._2_0 : ._1_0
             let umpCount = cb.pointee.output_ump_count(ctx, proto)
             for i in 0..<umpCount {
                 var ue = AuUmpEvent()
