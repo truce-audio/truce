@@ -5,6 +5,8 @@ Notable changes per release.
 ## 3.1.4
 
 - AU v2 host automation now drives the editor during playback (matching VST3 / AU v3). Based on a fix by [@fpbrault](https://github.com/fpbrault).
+- `cargo truce install` regenerates a missing param-manifest sidecar instead of failing on presets that name params.
+- An AU v3 plugin with MIDI 2.0 output keeps a native 2.0 output stream even when the host negotiates 1.0 input, so per-note UMP (per-note pitch bend / CC) isn't down-converted.
 
 ## 3.1.3
 
