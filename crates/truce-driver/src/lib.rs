@@ -395,7 +395,7 @@ type SetupFn<P> = Box<dyn FnOnce(&mut P, &SetupContext)>;
 /// PluginDriver::<MyPlugin>::new()
 ///     .setup(|plugin, ctx| {
 ///         assert_eq!(ctx.channels, 2, "stereo run expected");
-///         plugin.scratch = vec![0.0; ctx.block_size * ctx.channels];
+///         plugin.state_ref_mut().scratch = vec![0.0; ctx.block_size * ctx.channels];
 ///     })
 ///     .run();
 /// ```
