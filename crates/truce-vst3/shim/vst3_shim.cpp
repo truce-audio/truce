@@ -21,6 +21,13 @@
 // (the one case the main-thread callback hooks below can't reach).
 #include <dispatch/dispatch.h>
 #endif
+// Linux uses the host's Steinberg::Linux::IRunLoop (queried off the plug
+// frame) with a periodic ITimerHandler to drain a pending restart on the
+// host UI thread - see the run-loop bridge below. It deliberately makes
+// no eventfd / self-pipe syscall: Bitwig instantiates plugins in a
+// seccomp-sandboxed process where a stray syscall is fatal, and a timer
+// needs none. Linux has no process-global main queue, so the no-editor
+// path falls back to the param-poll / edit-gesture flush, same as Windows.
 
 #define I(x) static_cast<int8_t>(x)
 
@@ -81,6 +88,13 @@ static const TUID INoteExpressionController_iid =
     MAKE_IID(0xB7F8F859, 0x41234872, 0x91169581, 0x4F3721A3);
 static const TUID IPlugViewContentScaleSupport_iid =
     MAKE_IID(0x65ED9690, 0x8AC44525, 0x8AADEF7A, 0x72EA703F);
+#if defined(__linux__)
+// Steinberg::Linux run-loop interfaces: IRunLoop is the host's UI-thread
+// event loop (queried off the plug frame); ITimerHandler is the periodic
+// callback we register with it. Only needed on Linux.
+static const TUID IRunLoop_iid      = MAKE_IID(0x18C35366, 0x97764F1A, 0x9C5B8385, 0x7A871389);
+static const TUID ITimerHandler_iid = MAKE_IID(0x10BDD94F, 0x41424774, 0x821FAD8F, 0xECA72CA9);
+#endif
 
 // Only one of these matches the current build target; the others
 // stay defined so `pv_isPlatformTypeSupported` reads uniformly.
@@ -448,6 +462,46 @@ static TruceComponent* ctx_lookup(void* ctx);
 static void truce_vst3_restart_source_event(void* key);
 #endif
 
+#if defined(__linux__)
+// Steinberg::Linux::ITimerHandler embedded in each component so
+// `&component.restartTimer` is a valid ITimerHandler* to hand the host's
+// run loop. It is not independently reference counted: the component owns
+// it and unregisters it from the run loop before its own teardown, so
+// addRef / release are inert. `onTimer` (defined below, once
+// TruceComponent is complete) drains the pending restart on the host UI
+// thread - the run loop calls it there. A timer, not an fd handler, so
+// nothing here or in the audio-thread path makes a syscall the host's
+// sandbox could reject; the flush just polls the pending-restart bit.
+struct ITimerHandlerVtbl {
+    tresult (*queryInterface)(void*, const TUID, void**);
+    uint32  (*addRef)(void*);
+    uint32  (*release)(void*);
+    void    (*onTimer)(void*);
+};
+struct RestartTimerHandler {
+    ITimerHandlerVtbl* vtbl;
+    TruceComponent* comp;
+};
+// Bodies live below TruceComponent (they call flushPendingRestart); the
+// vtable can take their addresses here since they're forward-declared.
+static tresult th_queryInterface(void*, const TUID, void**);
+static uint32  th_addRef(void*);
+static uint32  th_release(void*);
+static void    th_onTimer(void*);
+static ITimerHandlerVtbl g_restart_timer_handler_vtbl = {
+    th_queryInterface, th_addRef, th_release, th_onTimer,
+};
+// IRunLoop vtable (FUnknown + 4): [5] registerTimer(handler, ms),
+// [6] unregisterTimer(handler). Named constants keep the vtable
+// arithmetic self-documenting, matching kPlugFrameResizeViewIndex.
+static constexpr int32_t kRunLoopRegisterTimerIndex = 5;
+static constexpr int32_t kRunLoopUnregisterTimerIndex = 6;
+// Poll interval for the restart timer. A latency re-report only needs to
+// reach the host "soon"; 30 ms is imperceptible and keeps the idle cost
+// of an open editor negligible.
+static constexpr uint64_t kRestartTimerIntervalMs = 30;
+#endif
+
 class TruceComponent {
     std::atomic<int32> refCount{1};
     void* ctx;
@@ -475,6 +529,17 @@ public:
     // on the host main thread - the editor-closed / no-param-poll path
     // the callback hooks below can't cover. Null if creation failed.
     dispatch_source_t restartSource = nullptr;
+#endif
+#if defined(__linux__)
+    // Linux run-loop bridge. `restartTimer` is the ITimerHandler we
+    // register with the host's `runLoop` (queried off the plug frame in
+    // `updateRunLoopRegistration`); while an editor is attached the run
+    // loop calls onTimer on its UI thread, which flushes pendingRestart
+    // there. `runLoop` is the host IRunLoop*, held with an addRef only
+    // while the timer is registered; null when no editor is attached
+    // (fall back to the param-poll flush, same as Windows).
+    RestartTimerHandler restartTimer{&g_restart_timer_handler_vtbl, nullptr};
+    void* runLoop = nullptr;
 #endif
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
     bool stateLoaded;         // true after setState() has run (or on first process if no state chunk)
@@ -515,6 +580,14 @@ public:
                     dispatch_resume(restartSource);
                 }
 #endif
+#if defined(__linux__)
+                // No syscall here - just wire the timer handler's
+                // back-pointer. Registration with the host run loop waits
+                // until a plug frame arrives (`updateRunLoopRegistration`),
+                // so instantiation in the host's sandboxed scan/host
+                // process makes no run-loop or kernel calls at all.
+                restartTimer.comp = this;
+#endif
             }
         }
     }
@@ -543,6 +616,14 @@ public:
             dispatch_release(restartSource);
             restartSource = nullptr;
         }
+#endif
+#if defined(__linux__)
+        // Unregister the timer (releases the held IRunLoop) so the host
+        // never calls onTimer on a freed component. A well-behaved host
+        // has already dropped the frame via setFrame(nullptr) / view
+        // release, making this a no-op; the call covers hosts that
+        // release the component without doing so.
+        updateRunLoopRegistration(nullptr);
 #endif
         if (g_cb && ctx) g_cb->destroy(ctx);
     }
@@ -577,7 +658,16 @@ public:
     int32 getBusCount(int32 type, int32 dir) {
         if (!g_desc) return 0;
         if (type == kAudio) {
-            return (dir == kInput) ? (g_desc->num_inputs > 0 ? 1 : 0) : 1;
+            // Advertise an audio bus only when that side actually has
+            // channels. A pure-MIDI note effect (num_inputs ==
+            // num_outputs == 0) carries event buses only; a phantom
+            // audio output bus with channelCount 0 is an invalid VST3
+            // arrangement that strict hosts reject - Bitwig throws an
+            // NPE reading the empty channel array during device load and
+            // crashes. Symmetric with the input side, which already
+            // guards on num_inputs.
+            return (dir == kInput) ? (g_desc->num_inputs > 0 ? 1 : 0)
+                                   : (g_desc->num_outputs > 0 ? 1 : 0);
         }
         if (type == kEvent && dir == kInput) {
             return g_desc->midi_input_ports;
@@ -622,7 +712,7 @@ public:
             bus->busType = kMain; bus->flags = 1;
             return kResultOk;
         }
-        if (dir == kOutput && index == 0) {
+        if (dir == kOutput && index == 0 && g_desc->num_outputs > 0) {
             bus->mediaType = kAudio; bus->direction = kOutput;
             bus->channelCount = g_desc->num_outputs;
             str_to_char16(bus->name, "Output", 128);
@@ -1397,8 +1487,69 @@ public:
         restart(componentHandler, flags);
     }
 
+#if defined(__linux__)
+    // (Re)bind the restart timer to the host's run loop for the given
+    // plug frame. Called from pv_setFrame / view release (frame or
+    // nullptr) and the destructor (nullptr). Idempotent: it always drops
+    // any prior registration first, so a host handing us a fresh frame
+    // (Cubase theme change, Live dock/undock) or a null frame (view
+    // detached) rebinds cleanly. Runs on the host UI thread, same as
+    // onTimer, so there's no race with the handler.
+    void updateRunLoopRegistration(void* frame) {
+        if (runLoop) {
+            auto unreg = (tresult (*)(void*, void*))
+                (*(void***)runLoop)[kRunLoopUnregisterTimerIndex];
+            unreg(runLoop, &restartTimer);
+            auto rel = (uint32 (*)(void*))(*(void***)runLoop)[2];
+            rel(runLoop);
+            runLoop = nullptr;
+        }
+        if (!frame) return;
+        // The host exposes its UI-thread run loop through the plug frame.
+        // Not every host implements it (then the query fails and we keep
+        // relying on the param-poll / edit-gesture flush, same as
+        // Windows). queryInterface hands back an addRef'd pointer we keep
+        // until unregister.
+        void* rl = nullptr;
+        auto qi = (tresult (*)(void*, const TUID, void**))(*(void***)frame)[0];
+        if (qi(frame, IRunLoop_iid, &rl) != kResultOk || !rl) return;
+        auto reg = (tresult (*)(void*, void*, uint64_t))
+            (*(void***)rl)[kRunLoopRegisterTimerIndex];
+        if (reg(rl, &restartTimer, kRestartTimerIntervalMs) == kResultOk) {
+            runLoop = rl;
+        } else {
+            auto rel = (uint32 (*)(void*))(*(void***)rl)[2];
+            rel(rl);
+        }
+    }
+#endif
+
     void* createView(FIDString /*name*/);
 };
+
+#if defined(__linux__)
+// ITimerHandler method bodies - defined here, now that TruceComponent is
+// complete. The handler is embedded in the component and not
+// independently owned, so addRef / release are inert and queryInterface
+// hands back the same pointer for FUnknown / ITimerHandler.
+static tresult th_queryInterface(void* self, const TUID iid, void** obj) {
+    if (iid_equal(iid, FUnknown_iid) || iid_equal(iid, ITimerHandler_iid)) {
+        *obj = self;
+        return kResultOk;
+    }
+    *obj = nullptr;
+    return kResultFalse;
+}
+static uint32 th_addRef(void*) { return 1; }
+static uint32 th_release(void*) { return 1; }
+static void th_onTimer(void* self) {
+    // Runs on the host UI thread every kRestartTimerIntervalMs while an
+    // editor is open. Cheap when idle: flushPendingRestart exchanges the
+    // atomic and returns immediately when no bits are set.
+    auto* h = (RestartTimerHandler*)self;
+    if (h->comp) h->comp->flushPendingRestart();
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // IPlugView - minimal COM object for GUI embedding
@@ -1477,6 +1628,13 @@ static uint32 pv_release(void* s) {
     if (--pv->refCount <= 0) {
         if (pv->comp) {
             pv->comp->deferredParent = nullptr;
+#if defined(__linux__)
+            // The frame goes away with the view: drop the run-loop
+            // registration so the host doesn't hold a handler tied to a
+            // freed view. A spec-compliant host already called
+            // setFrame(nullptr); this covers those that don't.
+            pv->comp->updateRunLoopRegistration(nullptr);
+#endif
             // Null the component's pointer to this view so
             // `truce_vst3_request_resize` doesn't dereference a
             // freed plug-view between the host releasing the
@@ -1578,6 +1736,12 @@ static tresult pv_onSize(void* s, void* rect) {
 static tresult pv_setFrame(void* s, void* frame) {
     auto* pv = (TrucePlugView*)s;
     pv->frame = frame;
+#if defined(__linux__)
+    // Bind (or, on a null frame, unbind) the restart timer to the frame's
+    // run loop so a latency change flagged by the audio thread reaches the
+    // host UI thread even without param polling.
+    if (pv->comp) pv->comp->updateRunLoopRegistration(frame);
+#endif
     return kResultOk;
 }
 
@@ -2375,6 +2539,11 @@ void truce_vst3_mark_restart(void* ctx, int32_t flags) {
     // lock-free and alloc-free, so this stays RT-safe on the audio thread.
     if (comp->restartSource) dispatch_source_merge_data(comp->restartSource, 1);
 #endif
+    // Linux does nothing more here: the audio thread only sets the atomic
+    // bit above (no syscall, unquestionably RT-safe). While an editor is
+    // open the host run-loop timer polls the bit on the UI thread within
+    // kRestartTimerIntervalMs; with no editor the param-poll / edit-gesture
+    // flush drains it, same as Windows.
 }
 
 #if __APPLE__
