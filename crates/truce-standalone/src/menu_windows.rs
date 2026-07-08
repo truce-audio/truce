@@ -45,6 +45,8 @@
 #![cfg(all(target_os = "windows", feature = "gui"))]
 
 use std::ffi::c_void;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
@@ -65,6 +67,8 @@ use crate::vlog;
 const MENU_CMD_MIC: u16 = 0xC001;
 /// Command ID for the output (mute) toggle.
 const MENU_CMD_OUTPUT: u16 = 0xC002;
+/// Command ID for the computer-keyboard-to-MIDI toggle.
+const MENU_CMD_KEYBOARD: u16 = 0xC003;
 
 /// Reserved command-ID ranges for dynamically-built device items.
 /// 256 slots per side is more than any sane system would expose.
@@ -118,6 +122,9 @@ const SUBCLASS_ID: usize = 0x7472_7563; // 'truc'
 struct MenuState {
     input: InputController,
     output: OutputController,
+    /// QWERTY-keyboard-to-MIDI flag, shared with the key handler and
+    /// the Ctrl+K shortcut. The menu item toggles it.
+    keyboard: Arc<AtomicBool>,
     /// The Plugin popup itself - needed for `CheckMenuItem` on the
     /// toggles (whose commands live in the Plugin popup).
     hmenu_plugin: HMENU,
@@ -158,7 +165,7 @@ struct MenuState {
 /// `is_effect` controls whether mic-input and input-device items
 /// appear - input-side controls are useless for instruments and
 /// analyzers since the runner feeds them silence.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn install(
     hwnd: *mut c_void,
     _app_name: &str,
@@ -168,6 +175,7 @@ pub fn install(
     output: OutputController,
     midi: MidiController,
     presets: PresetController,
+    qwerty: Arc<AtomicBool>,
 ) {
     if hwnd.is_null() {
         return;
@@ -215,6 +223,16 @@ pub fn install(
             MF_STRING,
             MENU_CMD_OUTPUT as usize,
             output_text.as_ptr(),
+        );
+
+        // Computer-keyboard-to-MIDI toggle. Off by default; the
+        // checkmark is set from the shared flag on WM_INITMENUPOPUP.
+        let keyboard_text = wide("Computer Keyboard\tCtrl+K");
+        AppendMenuW(
+            plugin_menu,
+            MF_STRING,
+            MENU_CMD_KEYBOARD as usize,
+            keyboard_text.as_ptr(),
         );
 
         // Separator before the device pickers.
@@ -335,6 +353,7 @@ pub fn install(
         let state = Box::into_raw(Box::new(MenuState {
             input,
             output,
+            keyboard: qwerty,
             hmenu_plugin: plugin_menu,
             has_mic_item: is_effect,
             hmenu_input_devices: input_dev_menu,
@@ -529,6 +548,22 @@ unsafe extern "system" fn subclass_proc(
                     CheckMenuItem(
                         state.hmenu_plugin,
                         u32::from(MENU_CMD_OUTPUT),
+                        MF_BYCOMMAND | flag,
+                    );
+                    return 0;
+                }
+
+                if cmd_id == MENU_CMD_KEYBOARD {
+                    let want = !state.keyboard.load(Ordering::Relaxed);
+                    state.keyboard.store(want, Ordering::Relaxed);
+                    vlog!(
+                        "computer keyboard: {} (request, via menu)",
+                        if want { "ON" } else { "OFF" }
+                    );
+                    let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
+                    CheckMenuItem(
+                        state.hmenu_plugin,
+                        u32::from(MENU_CMD_KEYBOARD),
                         MF_BYCOMMAND | flag,
                     );
                     return 0;
@@ -729,6 +764,13 @@ unsafe extern "system" fn subclass_proc(
                         state.hmenu_plugin,
                         u32::from(MENU_CMD_OUTPUT),
                         MF_BYCOMMAND | out_flag,
+                    );
+                    let kbd_on = state.keyboard.load(Ordering::Relaxed);
+                    let kbd_flag = if kbd_on { MF_CHECKED } else { MF_UNCHECKED };
+                    CheckMenuItem(
+                        state.hmenu_plugin,
+                        u32::from(MENU_CMD_KEYBOARD),
+                        MF_BYCOMMAND | kbd_flag,
                     );
                 }
             }

@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crossbeam_queue::ArrayQueue;
 
@@ -145,6 +145,10 @@ where
     // wrap live on dedicated worker threads, not on `audio_handles`.
     let input_ctrl = audio_handles.input.clone();
     let output_ctrl = audio_handles.output.clone();
+    // QWERTY-keyboard-to-MIDI is opt-in (off by default). One shared flag
+    // backs the key handler's gate, the Cmd/Ctrl+K toggle, and the
+    // Settings-menu item, so all three read and write the same state.
+    let qwerty_enabled = Arc::new(AtomicBool::new(opts.qwerty_midi));
     let is_effect = audio_handles.is_effect;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let channels = audio_handles.channels;
@@ -199,6 +203,7 @@ where
                 &output_ctrl,
                 &midi_ctrl,
                 &preset_ctrl,
+                &qwerty_enabled,
             );
         }
 
@@ -218,6 +223,7 @@ where
                 output_ctrl.clone(),
                 midi_ctrl.clone(),
                 preset_ctrl.clone(),
+                qwerty_enabled.clone(),
             );
             // Fixed-size editors get the window locked to a
             // close-only frame so maximizing / dragging doesn't
@@ -380,6 +386,7 @@ where
             input_ctrl,
             output_ctrl,
             is_effect,
+            qwerty_enabled: qwerty_enabled.clone(),
             octave_offset: 0,
             presets: preset_ctrl,
             _midi_thread: midi_thread,
@@ -449,6 +456,10 @@ where
     /// True only for effect plugins; gates the `I` keyboard
     /// shortcut.
     is_effect: bool,
+    /// QWERTY-keyboard-to-MIDI, off by default. Shared with the
+    /// Settings menu item and flipped by Cmd/Ctrl+K; the note handler
+    /// only plays keys when this is set.
+    qwerty_enabled: Arc<AtomicBool>,
     octave_offset: i8,
     /// Preset library handle - Save / Save As keyboard shortcuts.
     presets: crate::presets::PresetController,
@@ -842,6 +853,30 @@ where
                 vlog!("output: {} (request)", if want { "ON" } else { "OFF" });
             }
             return EventStatus::Captured;
+        }
+
+        // Cmd+K (macOS) / Ctrl+K (Linux / Windows) → toggle the QWERTY
+        // note keyboard. Bare `K` plays a note, so a modifier is required.
+        // On macOS the NSMenuItem accelerator usually dispatches first;
+        // on Windows / Linux this is the only path. Both Down and Up are
+        // captured so a stray modifier+K Up never reaches the note handler.
+        if kb.code == Code::KeyK && is_mod_pressed(kb.modifiers) {
+            if kb.state == KeyState::Down {
+                let want = !self.qwerty_enabled.load(Ordering::Relaxed);
+                self.qwerty_enabled.store(want, Ordering::Relaxed);
+                vlog!(
+                    "computer keyboard: {} (request)",
+                    if want { "ON" } else { "OFF" }
+                );
+            }
+            return EventStatus::Captured;
+        }
+
+        // The QWERTY note keyboard (octave shifts + note keys) is opt-in;
+        // when off, typing falls through untouched so it never surprises
+        // the user with notes.
+        if !self.qwerty_enabled.load(Ordering::Relaxed) {
+            return EventStatus::Ignored;
         }
 
         if kb.state == KeyState::Down

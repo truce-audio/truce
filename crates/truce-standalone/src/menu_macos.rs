@@ -34,7 +34,9 @@
 #![cfg(all(target_os = "macos", feature = "gui"))]
 
 use std::ffi::c_void;
+use std::sync::Arc;
 use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use objc::declare::ClassDecl;
 use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
@@ -57,6 +59,11 @@ struct MenuState {
     /// Output mute-toggle item - checkmark refreshed on
     /// Plugin-menu open.
     output_item: *mut Object,
+    /// QWERTY-keyboard-to-MIDI flag, shared with the key handler and
+    /// the Cmd+K shortcut. The toggle action flips it.
+    keyboard: Arc<AtomicBool>,
+    /// "Computer Keyboard" toggle item - checkmark refreshed on open.
+    keyboard_item: *mut Object,
     /// Input device submenu - repopulated on open from cpal.
     /// Null for instrument plugins (submenu not added).
     input_device_menu: *mut Object,
@@ -92,6 +99,7 @@ struct MenuState {
 /// `is_effect` controls whether mic-input and input-device items
 /// appear - input-side controls are useless for instruments and
 /// analyzers since the runner feeds them silence.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn install(
     app_name: &str,
     is_effect: bool,
@@ -100,6 +108,7 @@ pub fn install(
     output: &OutputController,
     midi: &MidiController,
     presets: &PresetController,
+    qwerty: &Arc<AtomicBool>,
 ) {
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
@@ -113,7 +122,13 @@ pub fn install(
         // Settings menu (audio + MIDI) and its action target.
         let plugin_menu_item = make_menu_item("Settings");
         let plugin_menu = make_menu("Settings");
-        let target = make_menu_target(input.clone(), output.clone(), midi.clone(), presets.clone());
+        let target = make_menu_target(
+            input.clone(),
+            output.clone(),
+            midi.clone(),
+            presets.clone(),
+            qwerty.clone(),
+        );
 
         // Mic toggle (⌘I) - only meaningful for effects.
         let mic_item = if is_effect {
@@ -127,6 +142,17 @@ pub fn install(
         // Output toggle (⌘O) - applies to every plugin category.
         let output_item = make_toggle_item("Audio Output", "o", sel!(toggleOutputAction:), target);
         let _: () = msg_send![plugin_menu, addItem: output_item];
+
+        // Computer-keyboard-to-MIDI toggle (⌘K) - off by default. Added
+        // for every plugin, like the MIDI section below (any can receive
+        // notes; effects that ignore them simply see no-ops).
+        let keyboard_item = make_toggle_item(
+            "Computer Keyboard",
+            "k",
+            sel!(toggleKeyboardAction:),
+            target,
+        );
+        let _: () = msg_send![plugin_menu, addItem: keyboard_item];
 
         // Separator before device pickers.
         let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
@@ -254,6 +280,7 @@ pub fn install(
             target,
             mic_item,
             output_item,
+            keyboard_item,
             input_dev_menu,
             output_dev_menu,
             midi_input_menus.clone(),
@@ -795,6 +822,27 @@ fn ensure_class() -> &'static Class {
             toggle_output_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
+        // Computer-keyboard-to-MIDI toggled from the menu (⌘K).
+        extern "C" fn toggle_keyboard_action(this: &Object, _: Sel, sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let want = !state.keyboard.load(Ordering::Relaxed);
+                state.keyboard.store(want, Ordering::Relaxed);
+                vlog!(
+                    "computer keyboard: {} (request, via menu)",
+                    if want { "ON" } else { "OFF" }
+                );
+                let new_state: BOOL = if want { YES } else { NO };
+                let _: () = msg_send![sender, setState: i64::from(new_state)];
+            }
+        }
+        decl.add_method(
+            sel!(toggleKeyboardAction:),
+            toggle_keyboard_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
         // Input device chosen.
         extern "C" fn select_input_device_action(this: &Object, _: Sel, sender: *mut Object) {
             unsafe {
@@ -1004,6 +1052,11 @@ fn ensure_class() -> &'static Class {
                     let new_state: BOOL = if on { YES } else { NO };
                     let _: () = msg_send![state.output_item, setState: i64::from(new_state)];
                 }
+                if !state.keyboard_item.is_null() {
+                    let on = state.keyboard.load(Ordering::Relaxed);
+                    let new_state: BOOL = if on { YES } else { NO };
+                    let _: () = msg_send![state.keyboard_item, setState: i64::from(new_state)];
+                }
             }
         }
         decl.add_method(
@@ -1111,6 +1164,7 @@ unsafe fn make_menu_target(
     output: OutputController,
     midi: MidiController,
     presets: PresetController,
+    keyboard: Arc<AtomicBool>,
 ) -> *mut Object {
     let cls = ensure_class();
     let target: *mut Object = msg_send![cls, alloc];
@@ -1121,6 +1175,8 @@ unsafe fn make_menu_target(
         presets,
         mic_item: std::ptr::null_mut(),
         output_item: std::ptr::null_mut(),
+        keyboard,
+        keyboard_item: std::ptr::null_mut(),
         input_device_menu: std::ptr::null_mut(),
         output_device_menu: std::ptr::null_mut(),
         target: std::ptr::null_mut(),
@@ -1142,6 +1198,7 @@ unsafe fn update_menu_state(
     target: *mut Object,
     mic_item: *mut Object,
     output_item: *mut Object,
+    keyboard_item: *mut Object,
     input_device_menu: *mut Object,
     output_device_menu: *mut Object,
     midi_input_menus: Vec<*mut Object>,
@@ -1155,6 +1212,7 @@ unsafe fn update_menu_state(
         let state = &mut *state_ptr.cast::<MenuState>();
         state.mic_item = mic_item;
         state.output_item = output_item;
+        state.keyboard_item = keyboard_item;
         state.input_device_menu = input_device_menu;
         state.output_device_menu = output_device_menu;
         state.midi_input_menus = midi_input_menus;
