@@ -118,7 +118,8 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
         let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let (ids, values) = inst.plugin.params().collect_values();
         let extra = inst.plugin.save_state();
-        let blob = serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
+        let persist = inst.plugin.params().serialize_persist();
+        let blob = serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);
 
         let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
         let chunk_urid = inst.urid_map.atom_chunk;
@@ -272,7 +273,7 @@ mod tests {
         let hash = 0x1234_5678_9abc_def0_u64;
         let ids = [1_u32, 2, 3];
         let values = [0.25_f64, -6.0, 8000.0];
-        let blob = serialize_state(hash, &ids, &values, &[]);
+        let blob = serialize_state(hash, &ids, &values, &[], &[]);
 
         // Mimic REAPER: base64 text of the blob, NUL-padded.
         let mut text = BASE64.encode(&blob).into_bytes();
@@ -288,7 +289,7 @@ mod tests {
     #[test]
     fn base64_fallback_rejects_foreign_plugin_hash() {
         let hash = 0xAAAA_BBBB_CCCC_DDDD_u64;
-        let blob = serialize_state(hash, &[7_u32], &[1.0_f64], &[]);
+        let blob = serialize_state(hash, &[7_u32], &[1.0_f64], &[], &[]);
         let text = BASE64.encode(&blob).into_bytes();
         assert!(decode_base64_envelope(&text, hash ^ 1).is_none());
     }

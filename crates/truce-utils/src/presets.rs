@@ -649,7 +649,7 @@ impl PresetStore {
 
         let ids: Vec<u32> = params.iter().map(|(id, _)| *id).collect();
         let values: Vec<f64> = params.iter().map(|(_, v)| *v).collect();
-        let blob = serialize_state(self.plugin_id_hash, &ids, &values, extra);
+        let blob = serialize_state(self.plugin_id_hash, &ids, &values, extra, &[]);
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -765,7 +765,7 @@ mod tests {
     fn write_sample(dir: &Path, rel: &str, meta: &PresetMeta, hash: u64) {
         let path = dir.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let blob = serialize_state(hash, &[0], &[0.5], b"");
+        let blob = serialize_state(hash, &[0], &[0.5], b"", &[]);
         std::fs::write(path, write_preset_file(meta, &blob)).unwrap();
     }
 
@@ -847,7 +847,7 @@ mod tests {
     fn load_validates_plugin_hash() {
         let tmp = temp_dir("load");
         let hash = crate::state::hash_plugin_id("com.acme.synth");
-        let blob = serialize_state(hash, &[0, 1], &[0.25, 8200.0], b"xs");
+        let blob = serialize_state(hash, &[0, 1], &[0.25, 8200.0], b"xs", &[]);
         let path = tmp.join("loadable.trucepreset");
         std::fs::write(&path, write_preset_file(&meta("u9", "Loadable", ""), &blob)).unwrap();
 

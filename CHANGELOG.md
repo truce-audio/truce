@@ -8,7 +8,7 @@ Notable changes per release.
 - Dynamic latency reporting: a plugin that changes its `latency()` return now notifies the host. Wired on CLAP, VST3, AU v2, AU v3, VST2 (best-effort), LV2's new `reportsLatency` port, and AAX (`SetSignalLatency` pushed from the host idle thread).
 - `PluginLogic` splits code from data: the trait is now a stateless descriptor, and its methods (`process`, `reset`, `latency`, `save_state`, ...) are associated functions - no `&self` - that take exactly the data they touch. That makes the three kinds of per-plugin data distinct, so a method's signature spells out which it may read or mutate:
     - **Parameters** - `type Params`, a `#[derive(Params)]` struct of host-automatable values. Passed read-only to the audio methods as `&Self::Params`, and to the editor as `Arc<Self::Params>`.
-    - **Saved state** - the opaque bytes the host persists in a project or preset, through `save_state` / `load_state` (with `#[derive(State)]` doing the serialization). For anything that must outlive the session but isn't a parameter.
+    - **Saved state** - the non-parameter values the host persists in a project or preset. Two routes: `save_state` / `load_state` for opaque plugin-owned bytes (with `#[derive(State)]` serializing them), or `#[persist = "key"]` on a `#[derive(Params)]` field for editor-facing config saved alongside the param values without a manual `save_state`. A `Copy` field (a persisted `f32`, small enum, or index) uses a lock-free `AtomicCell`; a `String`, `Vec`, or `#[derive(State)]` struct is wrapped in `RwLock` / `Mutex`.
     - **DSP state** - `type DspState`, a plain struct of instance-local audio memory (filter buffers, oscillator phase, a voice pool). Neither a parameter nor saved to disk. It lives in the shell rather than the descriptor, so a hot-reload keeps it alive across a code-only swap - reverb tails and oscillator phases survive an edit-and-reload. A stateless effect writes `type DspState = ()`.
 
 ### Breaking
@@ -18,9 +18,15 @@ Notable changes per release.
 
 ### Migrating from 3.x
 
-Whatever used to live on `self` splits by kind: parameters were already a separate `#[derive(Params)]` struct; the DSP fields (filter memory, phase, voices) become `type DspState`; and there's no stored `params` `Arc` anymore - `params` arrives as an argument. `reset` also takes `&AudioConfig` (read `config.sample_rate` / `config.max_block_size`, and branch on `config.process_mode` for offline). Pick the shape that fits, simplest first.
+Every plugin makes the same three moves, whatever its state:
 
-**No DSP state (`type DspState = ()`).** A pure parameter-driven effect keeps nothing between blocks - the state slot is `()`:
+- Move the non-params fields (filter memory, phase, voices) off the plugin - now a stateless descriptor - into `type DspState`. Parameters were already a separate `#[derive(Params)]` struct and don't move.
+- Replace `fn new(params: Arc<..>) -> Self` with `fn init(params: &Self::Params) -> Self::DspState`, which builds that state. There's no stored `params` `Arc` anymore.
+- Give each method `state` / `params` instead of `&self`, and `reset` an `&AudioConfig` (read `config.sample_rate` / `config.max_block_size`, branch on `config.process_mode` for offline).
+
+The only choice is where the DSP state lives.
+
+**`type DspState = ()`** - no DSP state; a pure parameter-driven effect. Step one is empty:
 
 ```rust
 pub struct Gain;
@@ -38,7 +44,7 @@ impl PluginLogic for Gain {
 }
 ```
 
-**`type DspState = Self`.** The plugin struct holds its DSP fields and is its own state - one type instead of two, the clean choice for a small self-contained effect:
+**`type DspState = Self`** - a small self-contained effect keeps its DSP fields on the plugin struct, which becomes its own state. One type instead of two:
 
 ```rust
 pub struct Tremolo {                   // holds the DSP fields directly...
@@ -59,54 +65,46 @@ impl PluginLogic for Tremolo {
 }
 ```
 
-**A separate `DspState` type.** A stateless descriptor plus a struct for the audio memory. Clearest when the descriptor is a genuine marker (a synth, an effect with a voice pool). Migrating a stateful 3.x plugin here is three steps:
+**`type DspState = MyDspState`** - a separate struct, clearest once the state grows or you want the plugin type to stay a bare marker (a synth, a voice pool). Here the three moves show as a before/after on a 3.x plugin:
 
-1. **Split out the DSP state.** Move every non-params field into a plain struct and point `type DspState` at it.
+```diff
+-struct MyPlugin {
+-    params: Arc<MyParams>,
+-    filter: Filter,
+-    phase: f32,
+-}
++struct MyPlugin;                 // stateless descriptor
++
++struct MyDspState {              // the former non-params fields
++    filter: Filter,
++    phase: f32,
++}
 
-   ```diff
-   -struct MyPlugin {
-   -    params: Arc<MyParams>,
-   -    filter: Filter,
-   -    phase: f32,
-   -}
-   +struct MyPlugin;                 // stateless descriptor
-   +
-   +struct MyDspState {              // instance-local DSP state; a plain struct
-   +    filter: Filter,
-   +    phase: f32,
-   +}
+ impl PluginLogic for MyPlugin {
+     type Params = MyParams;
++    type DspState = MyDspState;
 
-    impl PluginLogic for MyPlugin {
-        type Params = MyParams;
-   +    type DspState = MyDspState;
-   ```
+-    fn new(params: Arc<MyParams>) -> Self {
+-        Self { params, filter: Filter::default(), phase: 0.0 }
++    fn init(_params: &MyParams) -> MyDspState {
++        MyDspState { filter: Filter::default(), phase: 0.0 }
+     }
 
-2. **Replace `new` with `init`.** It takes `&Self::Params` and returns the DSP state instead of `Self`.
+-    fn reset(&mut self, sample_rate: f32, max_block_size: usize) {
+-        self.filter.set_rate(sample_rate);
++    fn reset(state: &mut MyDspState, params: &MyParams, config: &AudioConfig) {
++        state.filter.set_rate(config.sample_rate);
+     }
 
-   ```diff
-   -    fn new(params: Arc<MyParams>) -> Self {
-   -        Self { params, filter: Filter::default(), phase: 0.0 }
-   +    fn init(_params: &MyParams) -> MyDspState {
-   +        MyDspState { filter: Filter::default(), phase: 0.0 }
-        }
-   ```
+-    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList, ctx: &mut ProcessContext) -> ProcessStatus {
++    fn process(state: &mut MyDspState, params: &MyParams, buffer: &mut AudioBuffer, events: &EventList, ctx: &mut ProcessContext) -> ProcessStatus {
+         // self.filter -> state.filter, self.params -> params
+     }
+     // editor is unchanged - still fn editor(params: Arc<Self::Params>) (see 3.0.0)
+ }
+```
 
-3. **Take `state` / `params` explicitly.** Swap `&mut self` for the arguments, and rewrite the body's `self.<field>` as `state.<field>` and `self.params` as `params`.
-
-   ```diff
-   -    fn reset(&mut self, sample_rate: f32, max_block_size: usize) {
-   -        self.filter.set_rate(sample_rate);
-   +    fn reset(state: &mut MyDspState, params: &MyParams, config: &AudioConfig) {
-   +        state.filter.set_rate(config.sample_rate);
-        }
-
-   -    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList, ctx: &mut ProcessContext) -> ProcessStatus {
-   +    fn process(state: &mut MyDspState, params: &MyParams, buffer: &mut AudioBuffer, events: &EventList, ctx: &mut ProcessContext) -> ProcessStatus {
-   ```
-
-   `editor` is unchanged - it already takes `Arc<Self::Params>` (see 3.0.0).
-
-Nothing requires the descriptor and the DSP state to be distinct types; the separate-type shape keeps the stateless-descriptor reading explicit and scales better as state grows. Either way `params` (read-only) and the host-saved state stay separate from `DspState` - the method signatures make it unambiguous which a call touches.
+`params` (read-only) and the host-saved state stay separate from `DspState` throughout - the method signatures make it unambiguous which a call may touch.
 
 ## 3.1.4
 

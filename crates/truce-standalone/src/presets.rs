@@ -434,7 +434,7 @@ fn snapshot<P: PluginExport>(plugin: &Arc<Mutex<P>>, hash: u64) -> Option<Vec<u8
     let guard = plugin.lock().ok()?;
     let (ids, values) = guard.params().collect_values();
     let extra = guard.save_state();
-    Some(serialize_state(hash, &ids, &values, &extra))
+    Some(serialize_state(hash, &ids, &values, &extra, &[]))
 }
 
 /// Write `blob` as a `.trucepreset` named after `path`'s stem.

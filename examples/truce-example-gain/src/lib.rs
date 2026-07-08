@@ -253,7 +253,7 @@ mod tests {
         };
         let hash = shared_plugin_state_hash(&Plugin::info());
 
-        let envelope = serialize_state(hash, &[0], &[-6.0], &[]);
+        let envelope = serialize_state(hash, &[0], &[-6.0], &[], &[]);
         let loaded = parse_or_migrate::<Plugin>(&envelope, hash, PluginFormat::Clap, None)
             .expect("own envelope must load");
         assert_eq!(loaded.params, vec![(0, -6.0)]);
@@ -266,12 +266,12 @@ mod tests {
         );
 
         // A future envelope version must fail, never reach the hook.
-        let mut future = serialize_state(hash, &[], &[], &[]);
+        let mut future = serialize_state(hash, &[], &[], &[], &[]);
         future[4..8].copy_from_slice(&2u32.to_le_bytes());
         truce_test::assert_state_migration_rejected::<Plugin>(PluginFormat::Clap, None, &future);
 
         // A wrong-plugin envelope must fail without a hook.
-        let renamed = serialize_state(hash ^ 1, &[0], &[-6.0], &[]);
+        let renamed = serialize_state(hash ^ 1, &[0], &[-6.0], &[], &[]);
         truce_test::assert_state_migration_rejected::<Plugin>(PluginFormat::Clap, None, &renamed);
     }
 

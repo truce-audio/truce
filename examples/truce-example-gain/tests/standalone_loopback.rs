@@ -182,7 +182,7 @@ fn write_gain_state(path: &Path, gain_db: f64) {
     let hash = shared_plugin_state_hash(&info);
     let ids = [GainParamsParamId::Gain.as_u32()];
     let values = [gain_db];
-    let bytes = serialize_state(hash, &ids, &values, &[]);
+    let bytes = serialize_state(hash, &ids, &values, &[], &[]);
     fs::write(path, bytes).expect("write state file");
 }
 

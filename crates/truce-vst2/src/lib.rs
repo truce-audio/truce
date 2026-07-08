@@ -859,7 +859,8 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // Lock the plugin for the serialization; a block in flight
         // holds the lock, so this waits for the block boundary.
         let extra = save_extra(&inst.snapshot, &inst.plugin);
-        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
+        let persist = inst.params_arc.serialize_persist();
+        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);
 
         let len = blob.len();
         // Hand the C shim a heap-allocated buffer it'll later return
@@ -1121,6 +1122,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         let _ = pending_state_for_set.force_push(state::DeserializedState {
                             params: Vec::new(),
                             extra: Some(bytes),
+                            persist: Vec::new(),
                         });
                     }),
                     transport: Box::new(move || transport_slot.read()),

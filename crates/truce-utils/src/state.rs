@@ -22,6 +22,7 @@ pub fn serialize_state(
     param_ids: &[u32],
     param_values: &[f64],
     extra: &[u8],
+    persist: &[u8],
 ) -> Vec<u8> {
     let mut data = Vec::new();
 
@@ -39,9 +40,15 @@ pub fn serialize_state(
     }
 
     // Extra state block: length-prefixed, may be zero-length.
-    let len = extra.len() as u64;
-    data.extend_from_slice(&len.to_le_bytes());
+    data.extend_from_slice(&(extra.len() as u64).to_le_bytes());
     data.extend_from_slice(extra);
+
+    // `#[persist]` block: length-prefixed, appended after `extra`. A
+    // trailing block so envelopes written before persistence existed
+    // (which stop after `extra`) still parse - `parse_state` reads it
+    // only when bytes remain, defaulting to empty.
+    data.extend_from_slice(&(persist.len() as u64).to_le_bytes());
+    data.extend_from_slice(persist);
 
     data
 }
@@ -50,6 +57,10 @@ pub fn serialize_state(
 pub struct DeserializedState {
     pub params: Vec<(u32, f64)>,
     pub extra: Option<Vec<u8>>,
+    /// `#[persist]`-field bytes (a keyed blob the `Params` derive
+    /// produces). Empty when the plugin has no persist fields, or the
+    /// envelope predates persistence.
+    pub persist: Vec<u8>,
 }
 
 /// Outcome of [`parse_state`]: what the bytes turned out to be.
@@ -179,8 +190,30 @@ pub fn parse_state(data: &[u8], expected_plugin_id: u64) -> StateParse {
     } else {
         None
     };
+    offset += extra_len;
 
-    let state = DeserializedState { params, extra };
+    // `#[persist]` block: trailing and optional. Absent (older envelope,
+    // or no persist fields) when no bytes remain - then it's empty.
+    let persist = if offset + 8 <= data.len() {
+        let Ok(len_bytes) = data[offset..offset + 8].try_into() else {
+            return StateParse::Corrupt;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let persist_len = u64::from_le_bytes(len_bytes) as usize;
+        offset += 8;
+        match offset.checked_add(persist_len) {
+            Some(end) if end <= data.len() => data[offset..end].to_vec(),
+            _ => return StateParse::Corrupt,
+        }
+    } else {
+        Vec::new()
+    };
+
+    let state = DeserializedState {
+        params,
+        extra,
+        persist,
+    };
     if plugin_id == expected_plugin_id {
         StateParse::Ok(state)
     } else {
@@ -241,7 +274,7 @@ mod tests {
         let values = [0.5f64, 1.0, -12.0];
         let extra = b"hello extra state";
 
-        let data = serialize_state(plugin_id, &ids, &values, extra);
+        let data = serialize_state(plugin_id, &ids, &values, extra, &[]);
         let state = deserialize_state(&data, plugin_id).unwrap();
 
         assert_eq!(state.params.len(), 3);
@@ -254,7 +287,7 @@ mod tests {
     #[test]
     fn wrong_plugin_id_fails() {
         let plugin_id = hash_plugin_id("com.test.plugin");
-        let data = serialize_state(plugin_id, &[], &[], &[]);
+        let data = serialize_state(plugin_id, &[], &[], &[], &[]);
         assert!(deserialize_state(&data, 12345).is_none());
     }
 
@@ -270,7 +303,7 @@ mod tests {
 
     #[test]
     fn parse_distinguishes_future_version() {
-        let mut data = serialize_state(1, &[], &[], &[]);
+        let mut data = serialize_state(1, &[], &[], &[], &[]);
         data[4..8].copy_from_slice(&2u32.to_le_bytes());
         assert!(matches!(
             parse_state(&data, 1),
@@ -280,7 +313,7 @@ mod tests {
 
     #[test]
     fn parse_decodes_wrong_plugin_envelope() {
-        let data = serialize_state(99, &[7], &[0.25], b"extra");
+        let data = serialize_state(99, &[7], &[0.25], b"extra", &[]);
         match parse_state(&data, 1) {
             StateParse::WrongPlugin { found, state } => {
                 assert_eq!(found, 99);
@@ -293,7 +326,7 @@ mod tests {
 
     #[test]
     fn parse_flags_truncated_envelope_as_corrupt() {
-        let data = serialize_state(1, &[7, 8], &[0.25, 0.5], b"extra");
+        let data = serialize_state(1, &[7, 8], &[0.25, 0.5], b"extra", &[]);
         // Cut inside the param block: valid header, broken body.
         assert!(matches!(parse_state(&data[..22], 1), StateParse::Corrupt));
     }
