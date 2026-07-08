@@ -23,6 +23,7 @@ use truce_core::buffer::RawBufferScratch;
 use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
@@ -868,7 +869,10 @@ pub unsafe fn _reset<P: PluginExport>(
         .ensure_capacity(num_in as usize, num_out as usize, max_frames);
     {
         let mut plugin = lock_plugin(&inst.plugin);
-        plugin.reset(sample_rate, max_frames);
+        // AAX's offline signal is AudioSuite instantiation, not a
+        // per-block flag, and its exact SDK identifier needs verifying
+        // against the headers - so AAX prepares for realtime for now.
+        plugin.reset(&AudioConfig::new(sample_rate, max_frames));
         plugin.params().set_sample_rate(sample_rate);
         plugin.params().snap_smoothers();
         inst.latency_cache
@@ -1007,6 +1011,8 @@ pub unsafe fn _process<P: PluginExport>(
                 sub_event_scratch: &mut inst.sub_event_scratch,
                 transport: &mut transport_snap,
                 sample_rate: inst.sample_rate,
+                // AAX AudioSuite detection not wired; runs as realtime.
+                process_mode: ProcessMode::Realtime,
                 output_events: &mut inst.output_events,
                 params_fn: None,
                 meters_fn: None,

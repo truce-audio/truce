@@ -343,8 +343,8 @@ macro_rules! __plugin_hot_reload {
                 self.inner.init();
             }
 
-            fn reset(&mut self, sample_rate: f64, max_block_size: usize) {
-                self.inner.reset(sample_rate, max_block_size);
+            fn reset(&mut self, config: &$crate::core::config::AudioConfig) {
+                self.inner.reset(config);
             }
 
             fn process(

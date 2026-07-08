@@ -36,6 +36,7 @@ use truce_core::Float;
 use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::len_u32;
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginInfo;
@@ -112,9 +113,15 @@ impl PortLayout {
     pub fn notify_out_port(&self) -> u32 {
         self.midi_out_start() + self.midi_out_ports
     }
+    /// `lv2:freeWheeling` control input, last so it never shifts any
+    /// other port index. Mirrors `truce_build::lv2::Layout` exactly.
+    #[must_use]
+    pub fn freewheel_port(&self) -> u32 {
+        self.notify_out_port() + 1
+    }
     #[must_use]
     pub fn total(&self) -> u32 {
-        self.notify_out_port() + 1
+        self.freewheel_port() + 1
     }
 }
 
@@ -149,6 +156,10 @@ pub struct Lv2Instance<P: PluginExport> {
     /// output event routes to the port its `Event::port` names.
     midi_out_ports: Vec<*mut AtomSequence>,
     notify_out_port: *mut AtomSequence,
+    /// `lv2:freeWheeling` control input. Non-null once the host connects
+    /// it; a value >= 0.5 means the host is freewheeling (offline
+    /// export), which `run()` maps to [`ProcessMode::Offline`].
+    freewheel_port: *const f32,
 
     /// Last observed value on each control port; used to emit
     /// `ParamChange` events only when the host actually moved a knob.
@@ -308,6 +319,7 @@ pub unsafe fn instantiate<P: PluginExport>(
                 atom_in_ports: vec![ptr::null(); num_atom_in],
                 midi_out_ports: vec![ptr::null_mut(); midi_out_count],
                 notify_out_port: ptr::null_mut(),
+                freewheel_port: ptr::null(),
 
                 last_control: vec![None; control_port_count],
 
@@ -353,6 +365,7 @@ pub unsafe fn connect_port<P: PluginExport>(
         let atom_in_start = inst.layout.atom_in_start();
         let midi_out_start = inst.layout.midi_out_start();
         let notify_out_port = inst.layout.notify_out_port();
+        let freewheel_port = inst.layout.freewheel_port();
 
         if port < audio_out_start {
             inst.audio_inputs[(port - audio_in_start) as usize] = data as *const f32;
@@ -368,6 +381,8 @@ pub unsafe fn connect_port<P: PluginExport>(
             inst.midi_out_ports[(port - midi_out_start) as usize] = data.cast::<AtomSequence>();
         } else if port == notify_out_port {
             inst.notify_out_port = data.cast::<AtomSequence>();
+        } else if port == freewheel_port {
+            inst.freewheel_port = data.cast::<f32>();
         }
     }
 }
@@ -391,7 +406,11 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
             inst.audio_outputs.len(),
             LV2_MAX_PREALLOC_BLOCK,
         );
-        inst.plugin.reset(inst.sample_rate, LV2_MAX_PREALLOC_BLOCK);
+        // LV2 freewheel is a per-block signal (read from the
+        // `lv2:freeWheeling` port in `run`), not a re-activation, so
+        // prepare always assumes realtime; `run` carries the live mode.
+        inst.plugin
+            .reset(&AudioConfig::new(inst.sample_rate, LV2_MAX_PREALLOC_BLOCK));
         inst.plugin.params().set_sample_rate(inst.sample_rate);
         inst.plugin.params().snap_smoothers();
     }
@@ -592,12 +611,21 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 P::supports_in_place(),
             );
             inst.transport_slot.write(&transport);
+            // Read the `lv2:freeWheeling` port: >= 0.5 means the host is
+            // exporting offline. Null (host never connected it) or 0 is
+            // realtime.
+            let process_mode = if !inst.freewheel_port.is_null() && *inst.freewheel_port >= 0.5 {
+                ProcessMode::Offline
+            } else {
+                ProcessMode::Realtime
+            };
             let mut transport_snap = transport;
             let chunk_args = ChunkedProcess {
                 events: &inst.event_list,
                 sub_event_scratch: &mut inst.sub_event_scratch,
                 transport: &mut transport_snap,
                 sample_rate: inst.sample_rate,
+                process_mode,
                 output_events: &mut inst.output_events,
                 params_fn: None,
                 meters_fn: None,

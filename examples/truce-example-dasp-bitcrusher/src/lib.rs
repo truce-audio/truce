@@ -61,7 +61,8 @@ fn quantize(s: f32, bits: u8) -> f32 {
 impl PluginLogic for Bitcrusher {
     type Params = BitcrusherParams;
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
         self.held = [0.0; 2];

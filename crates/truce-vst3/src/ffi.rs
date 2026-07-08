@@ -107,7 +107,14 @@ pub struct Vst3ParamChange {
 pub struct Vst3Callbacks {
     pub create: unsafe extern "C" fn() -> *mut c_void,
     pub destroy: unsafe extern "C" fn(ctx: *mut c_void),
-    pub reset: unsafe extern "C" fn(ctx: *mut c_void, sample_rate: f64, max_frames: u32),
+    /// `process_mode` is the VST3 `ProcessSetup::processMode`
+    /// (`kRealtime` / `kPrefetch` / `kOffline`).
+    pub reset: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        sample_rate: f64,
+        max_frames: u32,
+        process_mode: i32,
+    ),
     pub process: unsafe extern "C" fn(
         ctx: *mut c_void,
         inputs: *const *const f32,
@@ -120,6 +127,8 @@ pub struct Vst3Callbacks {
         transport: *const Vst3Transport,
         param_changes: *const Vst3ParamChange,
         num_param_changes: u32,
+        // VST3 `ProcessData::processMode` for this block.
+        process_mode: i32,
     ),
     /// 64-bit twin of `process`. The shim calls exactly one of the
     /// two per block, chosen by the sample size the host negotiated
@@ -137,6 +146,7 @@ pub struct Vst3Callbacks {
         transport: *const Vst3Transport,
         param_changes: *const Vst3ParamChange,
         num_param_changes: u32,
+        process_mode: i32,
     ),
     pub param_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     pub param_get_value: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> f64,

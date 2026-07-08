@@ -33,6 +33,7 @@ use truce_core::editor::Editor;
 // from a non-apple module would also trigger the unused-import lint
 // there.
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr};
 // Used by `cb_gui_set_size`, which the platform-agnostic `AuCallbacks` FFI
@@ -394,7 +395,10 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
             let mut plugin = lock_plugin(&inst.plugin);
-            plugin.reset(sample_rate, max_frames);
+            // AU offline (`kAudioUnitProperty_OfflineRender` /
+            // `renderingOffline`) isn't threaded through the shim yet, so
+            // AU always prepares for realtime.
+            plugin.reset(&AudioConfig::new(sample_rate, max_frames));
             plugin.params().set_sample_rate(sample_rate);
             plugin.params().snap_smoothers();
             inst.latency_cache
@@ -611,6 +615,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             sub_event_scratch: &mut inst.sub_event_scratch,
             transport: &mut transport_snap,
             sample_rate: inst.sample_rate,
+            // AU offline signal not threaded through the shim yet.
+            process_mode: ProcessMode::Realtime,
             output_events: &mut inst.output_events,
             params_fn: None,
             meters_fn: None,

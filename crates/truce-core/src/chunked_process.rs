@@ -17,6 +17,7 @@
 use truce_params::{ParamFlags, ParamInfo, Params};
 
 use crate::buffer::AudioBuffer;
+use crate::config::ProcessMode;
 use crate::events::{Event, EventBody, EventList, TransportInfo};
 use crate::plugin::PluginRuntime;
 use crate::process::{ProcessContext, ProcessStatus};
@@ -47,6 +48,11 @@ pub struct ChunkedProcess<'a> {
     /// Host sample rate, plumbed through to each per-sub-block
     /// `ProcessContext`.
     pub sample_rate: f64,
+    /// Live processing mode for this block, stamped onto every
+    /// per-sub-block `ProcessContext`. Wrappers read it from the host
+    /// each block (VST3 `processMode`, LV2 freewheel port) or cache it
+    /// from a set-once callback (CLAP / AU).
+    pub process_mode: ProcessMode,
     /// Plugin's outbound event queue. The chunker re-bases outbound
     /// events back to block-relative coordinates before the wrapper
     /// hands them to the host: the plugin pushes events with
@@ -101,6 +107,7 @@ where
         sub_event_scratch,
         transport,
         sample_rate,
+        process_mode,
         output_events,
         params_fn,
         meters_fn,
@@ -160,7 +167,8 @@ where
             sample_rate,
             block_end - block_start,
             output_events,
-        );
+        )
+        .with_process_mode(process_mode);
         if let Some(f) = params_fn {
             ctx = ctx.with_params(f);
         }

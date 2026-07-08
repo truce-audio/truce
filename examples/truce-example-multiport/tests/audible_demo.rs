@@ -47,7 +47,7 @@ struct Note {
 fn render_port(port: u8, notes: &[Note], total: usize) -> Vec<f32> {
     let params = Arc::new(MultiportParams::new());
     let mut plugin = Multiport::new(Arc::clone(&params));
-    plugin.reset(SR, BLOCK);
+    plugin.reset(&AudioConfig::new(SR, BLOCK));
 
     let mut out = Vec::with_capacity(total);
     let transport = TransportInfo::default();

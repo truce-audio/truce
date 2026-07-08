@@ -108,9 +108,9 @@ mod prelude_impl {
     // name collision with the new user-facing `Plugin` trait and
     // signals it as an internal contract.
     pub use truce_core::{
-        BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody, EventList,
-        IntoEditor, PluginCategory, PluginContext, PluginExport, PluginInfo, ProcessContext,
-        ProcessStatus, TransportInfo,
+        AudioConfig, BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody,
+        EventList, IntoEditor, PluginCategory, PluginContext, PluginExport, PluginInfo,
+        ProcessContext, ProcessMode, ProcessStatus, TransportInfo,
     };
     pub use truce_derive::{ParamEnum, Params, State, plugin_info};
     // `PluginLogic` itself is *not* re-exported here - each prelude

@@ -22,6 +22,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
@@ -68,6 +69,10 @@ pub struct HotShell<P: Params, S: Sample = f32> {
     try_snapshot: bool,
     sample_rate: f64,
     max_block_size: usize,
+    /// Processing mode from the last `reset`. Replayed when the audio
+    /// thread re-resets a freshly hot-swapped dylib so the new instance
+    /// prepares for the same render mode.
+    process_mode: ProcessMode,
     /// Last `load_counter` value the audio path observed. When the
     /// file watcher drives a reload, this lags behind
     /// `loader.load_counter()` until `process()` runs `plugin.reset()`
@@ -108,6 +113,7 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
             try_snapshot: true,
             sample_rate: 44100.0,
             max_block_size: 1024,
+            process_mode: ProcessMode::Realtime,
             last_seen_load_counter: initial_counter,
             latency_cache: AtomicU32::new(0),
             tail_cache: AtomicU32::new(0),
@@ -165,10 +171,11 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
 
     fn init(&mut self) {}
 
-    fn reset(&mut self, sample_rate: f64, max_block_size: usize) {
-        self.sample_rate = sample_rate;
-        self.max_block_size = max_block_size;
-        self.params.set_sample_rate(sample_rate);
+    fn reset(&mut self, config: &AudioConfig) {
+        self.sample_rate = config.sample_rate;
+        self.max_block_size = config.max_block_size;
+        self.process_mode = config.process_mode;
+        self.params.set_sample_rate(config.sample_rate);
 
         // CLAP / VST3 may call `reset` on the audio thread; same
         // priority-inversion concern as `process`. The watcher's hold
@@ -180,7 +187,7 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             return;
         };
         if let Some(plugin) = loader.plugin_mut() {
-            plugin.reset(sample_rate, max_block_size);
+            plugin.reset(config);
             self.latency_cache
                 .store(plugin.latency(), Ordering::Relaxed);
             self.tail_cache.store(plugin.tail(), Ordering::Relaxed);
@@ -212,7 +219,9 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         let counter = loader.load_counter();
         if counter != self.last_seen_load_counter {
             if let Some(plugin) = loader.plugin_mut() {
-                plugin.reset(self.sample_rate, self.max_block_size);
+                let config = AudioConfig::new(self.sample_rate, self.max_block_size)
+                    .with_process_mode(self.process_mode);
+                plugin.reset(&config);
             }
             self.last_seen_load_counter = counter;
         }
@@ -243,6 +252,7 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             buffer.num_samples(),
             &mut *context.output_events,
         )
+        .with_process_mode(context.process_mode)
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 

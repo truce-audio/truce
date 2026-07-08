@@ -248,7 +248,8 @@ impl PluginLogic for Multiport {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
         self.sample_rate = sample_rate;
@@ -398,7 +399,7 @@ mod tests {
         // no other test caught it.
         let params = Arc::new(MultiportParams::new());
         let mut plugin = Multiport::new(Arc::clone(&params));
-        plugin.reset(44100.0, 64);
+        plugin.reset(&AudioConfig::new(44100.0, 64));
 
         let mut block = |events: &EventList| -> f32 {
             let in_refs: Vec<&[f32]> = Vec::new();
@@ -444,7 +445,7 @@ mod tests {
         let params = Arc::new(MultiportParams::new());
         setup(&params);
         let mut plugin = Multiport::new(Arc::clone(&params));
-        plugin.reset(44100.0, 64);
+        plugin.reset(&AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut l = vec![0.0f32; 64];

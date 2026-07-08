@@ -14,6 +14,7 @@ use truce_core::TransportSlot;
 use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
 use truce_core::editor::{
     ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, clamp_logical_size,
@@ -350,10 +351,22 @@ unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     }
 }
 
+/// Map a VST3 `ProcessModes` value (`kRealtime` 0, `kPrefetch` 1,
+/// `kOffline` 2) to a truce [`ProcessMode`]. Unknown values fall back
+/// to `Realtime`.
+fn vst3_process_mode(mode: i32) -> ProcessMode {
+    match mode {
+        1 => ProcessMode::Buffered,
+        2 => ProcessMode::Offline,
+        _ => ProcessMode::Realtime,
+    }
+}
+
 unsafe extern "C" fn cb_reset<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     sample_rate: f64,
     max_frames: u32,
+    process_mode: i32,
 ) {
     unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
@@ -372,7 +385,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
             let mut plugin = lock_plugin(&inst.plugin);
-            plugin.reset(sample_rate, max_frames);
+            let config = AudioConfig::new(sample_rate, max_frames)
+                .with_process_mode(vst3_process_mode(process_mode));
+            plugin.reset(&config);
             plugin.params().set_sample_rate(sample_rate);
             plugin.params().snap_smoothers();
             inst.latency_cache
@@ -408,6 +423,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     transport_ptr: *const ffi::Vst3Transport,
     param_changes: *const ffi::Vst3ParamChange,
     num_param_changes: u32,
+    process_mode: i32,
 ) {
     // SAFETY: forwarded - the shim's contract is the same.
     unsafe {
@@ -423,6 +439,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             transport_ptr,
             param_changes,
             num_param_changes,
+            process_mode,
         );
     }
 }
@@ -443,6 +460,7 @@ unsafe extern "C" fn cb_process_f64<P: PluginExport>(
     transport_ptr: *const ffi::Vst3Transport,
     param_changes: *const ffi::Vst3ParamChange,
     num_param_changes: u32,
+    process_mode: i32,
 ) {
     // SAFETY: forwarded - the shim's contract is the same.
     unsafe {
@@ -458,6 +476,7 @@ unsafe extern "C" fn cb_process_f64<P: PluginExport>(
             transport_ptr,
             param_changes,
             num_param_changes,
+            process_mode,
         );
     }
 }
@@ -480,6 +499,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
     transport_ptr: *const ffi::Vst3Transport,
     param_changes: *const ffi::Vst3ParamChange,
     num_param_changes: u32,
+    process_mode: i32,
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("VST3", || unsafe {
@@ -717,6 +737,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             sub_event_scratch: &mut inst.sub_event_scratch,
             transport: &mut transport_snap,
             sample_rate: inst.sample_rate,
+            process_mode: vst3_process_mode(process_mode),
             output_events: &mut inst.output_events,
             params_fn: None,
             meters_fn: None,
@@ -777,7 +798,7 @@ pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
     // (which `process_block` tolerates).
     unsafe {
         let ctx = cb_create::<P>();
-        cb_reset::<P>(ctx, 48_000.0, FRAMES);
+        cb_reset::<P>(ctx, 48_000.0, FRAMES, 0);
 
         // Non-zero input so the sanity check below can confirm the block
         // actually processed (a no-op harness would leave zeros).
@@ -802,6 +823,7 @@ pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
                     0,
                     std::ptr::null(),
                     std::ptr::null(),
+                    0,
                     0,
                 );
             });

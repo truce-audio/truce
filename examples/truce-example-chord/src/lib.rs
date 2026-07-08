@@ -126,7 +126,8 @@ impl PluginLogic for Chord {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -264,7 +265,7 @@ mod tests {
         let params = Arc::new(ChordParams::new());
         let mut plugin = Chord::new(Arc::clone(&params));
         plugin.params.gain.set_value(1.0);
-        plugin.reset(44100.0, 256);
+        plugin.reset(&AudioConfig::new(44100.0, 256));
 
         let input_refs: Vec<&[f32]> = Vec::new();
         let mut output = vec![vec![0.0f32; 256]; 2];

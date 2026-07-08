@@ -1,3 +1,4 @@
+use crate::config::ProcessMode;
 use crate::events::{EventList, TransportInfo};
 
 /// Per-block context handed to `process()`. Construct via
@@ -7,6 +8,12 @@ use crate::events::{EventList, TransportInfo};
 #[non_exhaustive]
 pub struct ProcessContext<'a> {
     pub transport: &'a TransportInfo,
+    /// How the host is driving audio this block. Tracks host toggles
+    /// that don't force a re-prepare (VST3 `kRealtime` <-> `kPrefetch`,
+    /// an LV2 freewheel port). A plugin that reallocates for offline
+    /// keys off `AudioConfig::process_mode` at `reset` instead; this
+    /// field is for "may I relax realtime discipline right now?".
+    pub process_mode: ProcessMode,
     pub sample_rate: f64,
     pub block_size: usize,
     pub output_events: &'a mut EventList,
@@ -23,12 +30,21 @@ impl<'a> ProcessContext<'a> {
     ) -> Self {
         Self {
             transport,
+            process_mode: ProcessMode::Realtime,
             sample_rate,
             block_size,
             output_events,
             params_fn: None,
             meters_fn: None,
         }
+    }
+
+    /// Set the processing mode for this block. Defaults to
+    /// [`ProcessMode::Realtime`]; wrappers stamp the live host mode.
+    #[must_use]
+    pub fn with_process_mode(mut self, mode: ProcessMode) -> Self {
+        self.process_mode = mode;
+        self
     }
 
     /// Set the parameter lookup callback.

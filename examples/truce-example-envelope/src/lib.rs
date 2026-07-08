@@ -78,7 +78,8 @@ impl PluginLogic for Envelope {
         vec![BusLayout::stereo()]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -199,7 +200,7 @@ mod tests {
     fn follows_level_to_cc() {
         let params = Arc::new(EnvelopeParams::new());
         let mut plugin = Envelope::new(Arc::clone(&params));
-        plugin.reset(44100.0, 256);
+        plugin.reset(&AudioConfig::new(44100.0, 256));
 
         // A half-scale constant signal → env settles at ~0.5 → CC ~63.
         let input = vec![vec![0.5f32; 256]; 2];

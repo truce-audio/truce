@@ -3,6 +3,7 @@
 //! Bug: double-denormalization caused gain to slam to extremes in VST3.
 
 use std::sync::Arc;
+use truce_core::AudioConfig;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::PluginRuntime;
@@ -34,7 +35,8 @@ impl TestPlugin {
 impl PluginLogic for TestPlugin {
     type Params = TestParams;
 
-    fn reset(&mut self, sr: f64, _bs: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sr = config.sample_rate;
         self.params.set_sample_rate(sr);
     }
 
@@ -77,7 +79,7 @@ fn plain_param_not_double_denormalized() {
     let mut shell = truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::from_parts(
         params, logic,
     );
-    shell.reset(44100.0, 512);
+    shell.reset(&AudioConfig::new(44100.0, 512));
 
     let input = vec![0.5f32; 512];
     let mut output = vec![0.0f32; 512];

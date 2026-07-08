@@ -28,7 +28,7 @@ use std::marker::PhantomData;
 use std::mem::transmute;
 use std::path::Path;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use clap_sys::audio_buffer::clap_audio_buffer;
@@ -66,6 +66,9 @@ use clap_sys::ext::preset_load::{
     CLAP_EXT_PRESET_LOAD, CLAP_EXT_PRESET_LOAD_COMPAT, clap_host_preset_load,
     clap_plugin_preset_load,
 };
+use clap_sys::ext::render::{
+    CLAP_EXT_RENDER, CLAP_RENDER_OFFLINE, clap_plugin_render, clap_plugin_render_mode,
+};
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_plugin_state};
 use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_plugin_tail};
 use clap_sys::factory::preset_discovery::{
@@ -92,6 +95,7 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
 use truce_core::cast::{len_u32, size_of_u32};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::{
     ClosureBridge, Editor, EditorBuilder, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
 };
@@ -241,6 +245,14 @@ struct ClapPluginData<P: PluginExport> {
     /// state). Main-thread-only (`activate` / `deactivate` / `state_load`
     /// are serialized by the host).
     active: AtomicBool,
+    /// Current render mode as a [`ProcessMode`] discriminant. The host
+    /// sets it through the `clap.render` extension on the main thread;
+    /// the audio thread reads it each block. Most hosts deactivate
+    /// before switching to offline, so `activate` re-preps with the new
+    /// mode; a mode change while active still reaches `process` through
+    /// the per-block `ProcessContext`, but reallocation waits for the
+    /// next `activate`.
+    render_mode: AtomicU8,
     /// Flag: GUI changed params, need rescan on main thread.
     needs_rescan: Arc<AtomicBool>,
     /// Shared transport slot: audio thread writes each block, editor reads.
@@ -536,9 +548,10 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         data.sample_rate = sample_rate;
         let max_block = max_frames_count as usize;
         data.max_block_size = max_block;
+        let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
         {
             let mut instance = lock_plugin(&data.plugin);
-            instance.reset(sample_rate, max_block);
+            instance.reset(&AudioConfig::new(sample_rate, max_block).with_process_mode(mode));
             instance.params().set_sample_rate(sample_rate);
             instance.params().snap_smoothers();
         }
@@ -603,8 +616,11 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         data.sounding_notes.clear_all();
+        let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
         let mut instance = lock_plugin(&data.plugin);
-        instance.reset(data.sample_rate, data.max_block_size);
+        instance.reset(
+            &AudioConfig::new(data.sample_rate, data.max_block_size).with_process_mode(mode),
+        );
         instance.params().snap_smoothers();
     }
 }
@@ -1606,6 +1622,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             sub_event_scratch: &mut data.sub_event_scratch,
             transport: &mut transport_snap,
             sample_rate: data.sample_rate,
+            process_mode: ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed)),
             output_events: &mut data.output_events,
             params_fn: None,
             meters_fn: None,
@@ -3340,6 +3357,7 @@ struct Extensions<P: PluginExport> {
     gui: clap_plugin_gui,
     latency: clap_plugin_latency,
     tail: clap_plugin_tail,
+    render: clap_plugin_render,
     _phantom: PhantomData<P>,
 }
 
@@ -3357,6 +3375,33 @@ unsafe extern "C" fn tail_get<P: PluginExport>(plugin: *const clap_plugin) -> u3
     }
 }
 
+/// `clap.render`: we have no hard realtime requirement - the plugin can
+/// render offline. Returning `false` lets hosts drive an offline bounce.
+unsafe extern "C" fn render_has_hard_realtime<P: PluginExport>(
+    _plugin: *const clap_plugin,
+) -> bool {
+    false
+}
+
+/// `clap.render::set`: the host announces realtime vs offline. Store the
+/// mode; `activate` re-preps with it (hosts deactivate before an offline
+/// bounce), and each `process` block reads it for the per-block mode.
+unsafe extern "C" fn render_set<P: PluginExport>(
+    plugin: *const clap_plugin,
+    mode: clap_plugin_render_mode,
+) -> bool {
+    unsafe {
+        let data = data_from_plugin::<P>(plugin);
+        let pm = if mode == CLAP_RENDER_OFFLINE {
+            ProcessMode::Offline
+        } else {
+            ProcessMode::Realtime
+        };
+        data.render_mode.store(pm.as_u8(), Ordering::Relaxed);
+        true
+    }
+}
+
 impl<P: PluginExport> Extensions<P> {
     fn new() -> Self {
         Self {
@@ -3371,6 +3416,10 @@ impl<P: PluginExport> Extensions<P> {
             },
             tail: clap_plugin_tail {
                 get: Some(tail_get::<P>),
+            },
+            render: clap_plugin_render {
+                has_hard_realtime_requirement: Some(render_has_hard_realtime::<P>),
+                set: Some(render_set::<P>),
             },
             _phantom: PhantomData,
         }
@@ -3437,6 +3486,9 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         }
         if ext_id == CLAP_EXT_TAIL {
             return (&raw const extensions.tail).cast::<c_void>();
+        }
+        if ext_id == CLAP_EXT_RENDER {
+            return (&raw const extensions.render).cast::<c_void>();
         }
         ptr::null()
     }
@@ -3507,6 +3559,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         pending_state: Arc::new(StateLoadQueue::new(1)),
         active: AtomicBool::new(false),
+        render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
         needs_rescan: Arc::new(AtomicBool::new(false)),
         transport_slot: TransportSlot::new(),
         host_scale: 1.0,

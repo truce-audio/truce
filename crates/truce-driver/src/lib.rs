@@ -50,6 +50,7 @@ use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::sample_rate_u32;
 use truce_core::cast::{len_u32, sample_count_usize};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -420,6 +421,11 @@ pub struct PluginDriver<P: PluginExport> {
     channels: Option<usize>,
     block_size: usize,
     duration: Duration,
+    /// Processing mode passed to `reset` and every block's
+    /// `ProcessContext`. Defaults to realtime; the offline renderer sets
+    /// [`ProcessMode::Offline`] so a plugin under test exercises its
+    /// offline branch.
+    process_mode: ProcessMode,
 
     transport: TransportSpec,
     input: InputSource,
@@ -458,6 +464,7 @@ impl<P: PluginExport> PluginDriver<P> {
             channels: None,
             block_size: 512,
             duration: Duration::from_secs(1),
+            process_mode: ProcessMode::Realtime,
             transport: TransportSpec::default(),
             input: InputSource::Silence,
             script: Script::default(),
@@ -487,6 +494,15 @@ impl<P: PluginExport> PluginDriver<P> {
     #[must_use]
     pub fn duration(mut self, d: Duration) -> Self {
         self.duration = d;
+        self
+    }
+    /// Set the processing mode (defaults to [`ProcessMode::Realtime`]).
+    /// The offline renderer passes [`ProcessMode::Offline`] so a plugin
+    /// exercises its offline branch and tests can assert the output
+    /// differs from a realtime run.
+    #[must_use]
+    pub fn process_mode(mut self, mode: ProcessMode) -> Self {
+        self.process_mode = mode;
         self
     }
 
@@ -671,7 +687,10 @@ impl<P: PluginExport> PluginDriver<P> {
         // Build + activate.
         let mut plugin = P::create();
         plugin.init();
-        plugin.reset(self.sample_rate, self.block_size);
+        plugin.reset(
+            &AudioConfig::new(self.sample_rate, self.block_size)
+                .with_process_mode(self.process_mode),
+        );
         plugin.params().set_sample_rate(self.sample_rate);
         plugin.params().snap_smoothers();
 
@@ -907,6 +926,7 @@ impl<P: PluginExport> PluginDriver<P> {
                 sub_event_scratch: &mut sub_event_scratch,
                 transport: &mut transport_snap,
                 sample_rate: self.sample_rate,
+                process_mode: self.process_mode,
                 output_events: &mut output_events_block,
                 params_fn: None,
                 meters_fn: None,

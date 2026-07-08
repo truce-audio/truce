@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 4.0.0
+
+- Offline-render awareness: a `ProcessMode` (realtime / buffered / offline) reaches `reset` via a new `AudioConfig` and every block via `ProcessContext`, so a plugin can raise quality or relax realtime discipline during a bounce. Wired on CLAP, VST3, VST2, and LV2 (freewheel port); AU and AAX stay realtime for now.
+
+### Breaking
+
+- `reset` now takes `&AudioConfig` instead of `(sample_rate, max_block_size)`. Read `config.sample_rate` / `config.max_block_size`; branch on `config.process_mode` to size buffers for offline.
+
 ## 3.1.4
 
 - AU v2 host automation fix. Based on a fix by [@fpbrault](https://github.com/fpbrault).

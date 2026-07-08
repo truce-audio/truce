@@ -3,6 +3,7 @@
 //! causing zipper noise on param changes.
 
 use std::sync::Arc;
+use truce_core::AudioConfig;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::PluginRuntime;
@@ -34,7 +35,8 @@ impl SmootherPlugin {
 impl PluginLogic for SmootherPlugin {
     type Params = SmootherParams;
 
-    fn reset(&mut self, sr: f64, _bs: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sr = config.sample_rate;
         self.params.set_sample_rate(sr);
     }
 
@@ -78,7 +80,7 @@ fn smoother_ramps_gradually() {
         truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
             params, logic,
         );
-    shell.reset(44100.0, 64);
+    shell.reset(&AudioConfig::new(44100.0, 64));
 
     // Set gain to 0.0 initially.
     let mut events = EventList::default();
