@@ -64,15 +64,8 @@ pub struct SurroundMeterParams {
     pub ch_rs: MeterSlot,
 }
 
-pub struct SurroundMeter {
-    params: Arc<SurroundMeterParams>,
-}
-
-impl SurroundMeter {
-    pub fn new(params: Arc<SurroundMeterParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - the meter carries no DSP state, only params.
+pub struct SurroundMeter;
 
 const METER_IDS: [P; CHANS] = [P::ChL, P::ChR, P::ChC, P::ChLfe, P::ChLs, P::ChRs];
 
@@ -82,6 +75,9 @@ const METER_FLOOR_DB: f32 = -60.0;
 
 impl PluginLogic for SurroundMeter {
     type Params = SurroundMeterParams;
+    type DspState = ();
+
+    fn init(_params: &SurroundMeterParams) {}
 
     fn bus_layouts() -> Vec<BusLayout> {
         // CHANS is a compile-time constant (6) that fits trivially
@@ -97,14 +93,15 @@ impl PluginLogic for SurroundMeter {
         ]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn reset(_state: &mut (), params: &SurroundMeterParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &SurroundMeterParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -113,7 +110,7 @@ impl PluginLogic for SurroundMeter {
         // `read_after(n)` advances the smoother by the whole block
         // so the declared exp(10) settling actually completes in
         // ~10 ms wall-clock instead of ~10 blocks.
-        let trim_lin = db_to_linear(self.params.trim.read_after(buffer.num_samples()));
+        let trim_lin = db_to_linear(params.trim.read_after(buffer.num_samples()));
         let nch = buffer.channels().min(CHANS);
 
         // Apply trim and collect per-channel linear peaks. One

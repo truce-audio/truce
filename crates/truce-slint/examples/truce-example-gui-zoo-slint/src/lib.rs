@@ -89,28 +89,23 @@ pub struct ZooParams {
     pub m_r: MeterSlot,
 }
 
-pub struct ZooSlint {
-    params: Arc<ZooParams>,
-}
-
-impl ZooSlint {
-    #[must_use]
-    pub fn new(params: Arc<ZooParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - the zoo is a passthrough with no DSP state.
+pub struct ZooSlint;
 
 impl PluginLogic for ZooSlint {
     type Params = ZooParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+    fn init(_params: &ZooParams) {}
+
+    fn reset(_state: &mut (), params: &ZooParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        _params: &ZooParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,

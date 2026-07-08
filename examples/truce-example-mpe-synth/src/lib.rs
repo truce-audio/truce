@@ -76,25 +76,18 @@ struct Voice {
     pan_r: f32,
 }
 
-pub struct Synth {
-    params: Arc<SynthParams>,
+/// Stateless descriptor - the synth's per-block DSP state is [`SynthDspState`].
+pub struct Synth;
+
+#[derive(DspState)]
+pub struct SynthDspState {
     sample_rate: f64,
     voices: [Voice; NUM_VOICES],
     /// Channel-wide pitch bend, semitones, indexed by channel.
     channel_bend: [f64; 16],
 }
 
-impl Synth {
-    #[must_use]
-    pub fn new(params: Arc<SynthParams>) -> Self {
-        Self {
-            params,
-            sample_rate: 44100.0,
-            voices: [Voice::default(); NUM_VOICES],
-            channel_bend: [0.0; 16],
-        }
-    }
-
+impl SynthDspState {
     /// Store a channel bend and retune every sounding voice on the
     /// channel so the cached `freq` tracks it.
     fn set_channel_bend(&mut self, channel: u8, semis: f64) {
@@ -159,7 +152,7 @@ impl Synth {
             .find(|v| v.active && !v.releasing && v.channel == channel && v.note == note)
     }
 
-    fn handle(&mut self, body: EventBody) {
+    fn handle(&mut self, params: &SynthParams, body: EventBody) {
         match body {
             EventBody::NoteOn {
                 channel,
@@ -213,18 +206,12 @@ impl Synth {
                 cc: CC_BRIGHTNESS,
                 value,
                 ..
-            } => self
-                .params
-                .master_cutoff
-                .set_value(f64::from(unit32(value))),
+            } => params.master_cutoff.set_value(f64::from(unit32(value))),
             EventBody::ControlChange {
                 cc: CC_BRIGHTNESS,
                 value,
                 ..
-            } => self
-                .params
-                .master_cutoff
-                .set_value(f64::from(norm_7bit(value))),
+            } => params.master_cutoff.set_value(f64::from(norm_7bit(value))),
             _ => {}
         }
     }
@@ -267,23 +254,33 @@ fn osc(phase: f64) -> f32 {
 
 impl PluginLogic for Synth {
     type Params = SynthParams;
+    type DspState = SynthDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &SynthParams) -> SynthDspState {
+        SynthDspState {
+            sample_rate: 44100.0,
+            voices: [Voice::default(); NUM_VOICES],
+            channel_bend: [0.0; 16],
+        }
+    }
+
+    fn reset(state: &mut SynthDspState, params: &SynthParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.sample_rate = sample_rate;
-        self.voices = [Voice::default(); NUM_VOICES];
-        self.channel_bend = [0.0; 16];
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.sample_rate = sample_rate;
+        state.voices = [Voice::default(); NUM_VOICES];
+        state.channel_bend = [0.0; 16];
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn process(
-        &mut self,
+        state: &mut SynthDspState,
+        params: &SynthParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         _context: &mut ProcessContext,
@@ -291,11 +288,11 @@ impl PluginLogic for Synth {
         let n = buffer.num_samples();
         // Advance the smoothers by the block (`raw_smoothed_current()`
         // alone never advances - the knobs would freeze at reset).
-        let master = self.params.master_cutoff.read_after(n);
-        let volume = db_to_linear(self.params.volume.read_after(n));
-        let rel_s = self.params.release.raw_target().max(0.01);
-        let atk_step = (1.0 / (0.005 * self.sample_rate)) as f32; // ~5 ms attack
-        let rel_step = (1.0 / (rel_s * self.sample_rate)) as f32;
+        let master = params.master_cutoff.read_after(n);
+        let volume = db_to_linear(params.volume.read_after(n));
+        let rel_s = params.release.raw_target().max(0.01);
+        let atk_step = (1.0 / (0.005 * state.sample_rate)) as f32; // ~5 ms attack
+        let rel_step = (1.0 / (rel_s * state.sample_rate)) as f32;
 
         let mut next = 0;
         // A mono or multi-mono host instance hands us a single output
@@ -306,16 +303,16 @@ impl PluginLogic for Synth {
                 if event.sample_offset as usize > i {
                     break;
                 }
-                self.handle(event.body);
+                state.handle(params, event.body);
                 next += 1;
             }
 
             let mut left = 0.0f32;
             let mut right = 0.0f32;
-            for v in self.voices.iter_mut().filter(|v| v.active) {
+            for v in state.voices.iter_mut().filter(|v| v.active) {
                 let freq = v.freq;
                 let raw = osc(v.phase);
-                v.phase = (v.phase + freq / self.sample_rate).fract();
+                v.phase = (v.phase + freq / state.sample_rate).fract();
                 // Per-voice cutoff scaled by the master macro.
                 let co = (v.cutoff * master).clamp(0.002, 1.0);
                 v.lp += co * (raw - v.lp);
@@ -341,7 +338,7 @@ impl PluginLogic for Synth {
             }
         }
 
-        if self.voices.iter().any(|v| v.active) {
+        if state.voices.iter().any(|v| v.active) {
             ProcessStatus::Normal
         } else {
             ProcessStatus::Tail(0)
@@ -390,10 +387,10 @@ mod tests {
         });
     }
 
-    fn render_full(input: &[Event]) -> (Synth, Vec<f32>, Vec<f32>) {
-        let params = Arc::new(SynthParams::new());
-        let mut plugin = Synth::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 64));
+    fn render_full(input: &[Event]) -> (SynthDspState, Vec<f32>, Vec<f32>) {
+        let params = SynthParams::new();
+        let mut state = Synth::init(&params);
+        Synth::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut l = vec![0.0f32; 64];
@@ -409,13 +406,13 @@ mod tests {
         let transport = TransportInfo::default();
         let mut out_ev = EventList::default();
         let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut out_ev);
-        plugin.process(&mut buffer, &events, &mut ctx);
-        (plugin, l, r)
+        Synth::process(&mut state, &params, &mut buffer, &events, &mut ctx);
+        (state, l, r)
     }
 
-    fn render(input: &[Event]) -> (Synth, Vec<f32>) {
-        let (plugin, l, _r) = render_full(input);
-        (plugin, l)
+    fn render(input: &[Event]) -> (SynthDspState, Vec<f32>) {
+        let (state, l, _r) = render_full(input);
+        (state, l)
     }
 
     fn render_stereo(input: &[Event]) -> (Vec<f32>, Vec<f32>) {

@@ -88,8 +88,13 @@ pub struct FundspReverbSimpleParams {
     pub meter_r: MeterSlot,
 }
 
-pub struct FundspReverbSimple {
-    params: Arc<FundspReverbSimpleParams>,
+/// Stateless descriptor - DSP state lives in [`FundspReverbSimpleDspState`].
+pub struct FundspReverbSimple;
+
+/// Per-instance DSP state: the fundsp graph, the atomic cells it
+/// reads, and the inputs the current graph was built with.
+#[derive(DspState)]
+pub struct FundspReverbSimpleDspState {
     // Atomic cells the fundsp graph reads each sample via `var()`.
     low_cut_shared: Shared,
     high_cut_shared: Shared,
@@ -101,10 +106,9 @@ pub struct FundspReverbSimple {
     last_built_time_s: f32,
 }
 
-impl FundspReverbSimple {
-    pub fn new(params: Arc<FundspReverbSimpleParams>) -> Self {
+impl FundspReverbSimpleDspState {
+    fn new() -> Self {
         Self {
-            params,
             low_cut_shared: shared(DEFAULT_LOW_CUT_HZ),
             high_cut_shared: shared(DEFAULT_HIGH_CUT_HZ),
             mix_shared: shared(DEFAULT_REVERB_MIX),
@@ -149,24 +153,34 @@ impl FundspReverbSimple {
 
 impl PluginLogic for FundspReverbSimple {
     type Params = FundspReverbSimpleParams;
+    type DspState = FundspReverbSimpleDspState;
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &FundspReverbSimpleParams) -> FundspReverbSimpleDspState {
+        FundspReverbSimpleDspState::new()
+    }
+
+    fn reset(
+        state: &mut FundspReverbSimpleDspState,
+        params: &FundspReverbSimpleParams,
+        config: &AudioConfig,
+    ) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        let time_s = self.params.time.value();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        let time_s = params.time.value();
         // SR is a discrete host setting, not a measurement.
-        let sr_changed = sample_rate.to_bits() != self.last_built_sr.to_bits();
-        let time_changed = (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
+        let sr_changed = sample_rate.to_bits() != state.last_built_sr.to_bits();
+        let time_changed = (time_s - state.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
         if sr_changed || time_changed {
-            self.rebuild_graph(sample_rate, time_s);
-            self.last_built_sr = sample_rate;
-            self.last_built_time_s = time_s;
+            state.rebuild_graph(sample_rate, time_s);
+            state.last_built_sr = sample_rate;
+            state.last_built_time_s = time_s;
         }
     }
 
     fn process(
-        &mut self,
+        state: &mut FundspReverbSimpleDspState,
+        params: &FundspReverbSimpleParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -174,23 +188,23 @@ impl PluginLogic for FundspReverbSimple {
         // Read the raw target, not `read()`: a smoothed value would
         // crawl across the threshold for ~200 ms and rebuild every
         // block - audible as an unstable tail until it settles.
-        let time_s = self.params.time.value();
-        if (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
+        let time_s = params.time.value();
+        if (time_s - state.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
             // This is the rt-safety violation called out at the top
             // of the file: the rebuild path allocates on the audio
             // thread. Acceptable for a teaching example; not for
             // shipping.
-            self.rebuild_graph(self.last_built_sr, time_s);
-            self.last_built_time_s = time_s;
+            state.rebuild_graph(state.last_built_sr, time_s);
+            state.last_built_time_s = time_s;
         }
 
         // `for_each_frame::<2>` transposes channel-major to stereo
         // frames so fundsp's `tick(in, out)` fits the closure.
         buffer.for_each_frame::<2, _>(|frame_in, frame_out| {
-            self.low_cut_shared.set_value(self.params.low_cut.read());
-            self.high_cut_shared.set_value(self.params.high_cut.read());
-            self.mix_shared.set_value(self.params.mix.read());
-            self.graph.tick(frame_in, frame_out);
+            state.low_cut_shared.set_value(params.low_cut.read());
+            state.high_cut_shared.set_value(params.high_cut.read());
+            state.mix_shared.set_value(params.mix.read());
+            state.graph.tick(frame_in, frame_out);
         });
 
         if buffer.num_output_channels() >= 1 {

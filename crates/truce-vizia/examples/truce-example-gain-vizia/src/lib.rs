@@ -38,35 +38,30 @@ pub struct GainParams {
     pub meter_right: MeterSlot,
 }
 
-pub struct GainVizia {
-    params: Arc<GainParams>,
-}
-
-impl GainVizia {
-    #[must_use]
-    pub fn new(params: Arc<GainParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - the gain carries no DSP state, only params.
+pub struct GainVizia;
 
 impl PluginLogic for GainVizia {
     type Params = GainParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+    fn init(_params: &GainParams) {}
+
+    fn reset(_state: &mut (), params: &GainParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let gain_db = self.params.gain.read();
-            let pan = self.params.pan.read();
+            let gain_db = params.gain.read();
+            let pan = params.pan.read();
             let gain_linear = db_to_linear(gain_db);
 
             // Linear pan: left attenuates when pan > 0 (right), right

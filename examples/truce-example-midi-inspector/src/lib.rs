@@ -263,26 +263,13 @@ impl InspectorUi {
 
 // --- Plugin ---
 
-pub struct MidiInspector {
-    params: Arc<InspectorParams>,
-}
-
-impl MidiInspector {
-    #[must_use]
-    pub fn new(params: Arc<InspectorParams>) -> Self {
-        Self { params }
-    }
-
-    /// The shared capture ring (lives on the params) - used by tests to
-    /// inspect what `process()` recorded.
-    #[must_use]
-    pub fn ring(&self) -> &EventRing {
-        &self.params.ring
-    }
-}
+/// Stateless descriptor - the capture ring lives on the shared params
+/// (a `#[skip]` field), so there is no separate per-block DSP state.
+pub struct MidiInspector;
 
 impl PluginLogic for MidiInspector {
     type Params = InspectorParams;
+    type DspState = ();
 
     /// Audio effect with MIDI in/out: a stereo bus passes the track's
     /// audio through untouched while the plugin monitors and forwards
@@ -294,25 +281,28 @@ impl PluginLogic for MidiInspector {
         vec![BusLayout::stereo()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &InspectorParams) {}
+
+    fn reset(_state: &mut (), params: &InspectorParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
+        params.set_sample_rate(sample_rate);
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &InspectorParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        let thru = self.params.thru.value();
+        let thru = params.thru.value();
         // Capture every event for the editor; forward it to our MIDI
         // output when Thru is on. `sysex_bytes` resolves the payload
         // (empty for non-SysEx); the ring inlines a fixed prefix so the
         // capture push never allocates.
         for ev in events.iter() {
             let sysex = events.sysex_bytes(&ev.body);
-            self.params.ring.push(ev.sample_offset, ev.body, sysex);
+            params.ring.push(ev.sample_offset, ev.body, sysex);
 
             if !thru {
                 continue;
@@ -479,9 +469,9 @@ mod tests {
 
     // -- capture test: process() records events into the ring --
 
-    fn captured(plugin: &MidiInspector) -> Vec<LogEntry> {
+    fn captured(ring: &EventRing) -> Vec<LogEntry> {
         let mut out = VecDeque::new();
-        plugin.ring().drain_into(&mut out, usize::MAX);
+        ring.drain_into(&mut out, usize::MAX);
         out.into_iter().collect()
     }
 
@@ -493,7 +483,7 @@ mod tests {
         use truce_core::events::{Event, EventList, TransportInfo};
         use truce_core::process::ProcessContext;
 
-        let mut plugin = MidiInspector::new(Arc::new(InspectorParams::new()));
+        let params = InspectorParams::new();
 
         let mut events = EventList::with_capacity(8);
         events.push(Event::new(
@@ -527,10 +517,10 @@ mod tests {
         let mut out_events = EventList::with_capacity(0);
         let mut ctx = ProcessContext::new(&transport, 44_100.0, 16, &mut out_events);
 
-        plugin.process(&mut buffer, &events, &mut ctx);
+        MidiInspector::process(&mut (), &params, &mut buffer, &events, &mut ctx);
         // `ctx`'s borrow of `out_events` ends here (last use above).
 
-        let kinds: Vec<_> = captured(&plugin)
+        let kinds: Vec<_> = captured(&params.ring)
             .iter()
             .map(|e| interpret(e).kind)
             .collect();

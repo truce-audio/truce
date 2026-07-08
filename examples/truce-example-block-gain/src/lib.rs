@@ -44,38 +44,35 @@ pub struct GainParams {
     pub meter_right: MeterSlot,
 }
 
-pub struct Gain {
-    params: Arc<GainParams>,
-}
-
-impl Gain {
-    pub fn new(params: Arc<GainParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - gain carries no DSP state, only params.
+pub struct Gain;
 
 const N: usize = 32;
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for Gain {
     type Params = GainParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &GainParams) {}
+
+    fn reset(_state: &mut (), params: &GainParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        if !self.params.gain.is_smoothing() && !self.params.pan.is_smoothing() {
+        if !params.gain.is_smoothing() && !params.pan.is_smoothing() {
             // Fast path: gain constant for the whole block.
-            let gain_db = self.params.gain.value();
-            let pan = self.params.pan.value();
+            let gain_db = params.gain.value();
+            let pan = params.pan.value();
             let lin = db_to_linear(gain_db);
             let gl = lin * (1.0 - pan.max(0.0));
             let gr = lin * (1.0 + pan.min(0.0));
@@ -94,8 +91,8 @@ impl PluginLogic for Gain {
             let n = buffer.num_samples().min(MAX_BLOCK);
             let mut gain_db = [0.0_f32; MAX_BLOCK];
             let mut pan = [0.0_f32; MAX_BLOCK];
-            self.params.gain.read_into(&mut gain_db[..n]);
-            self.params.pan.read_into(&mut pan[..n]);
+            params.gain.read_into(&mut gain_db[..n]);
+            params.pan.read_into(&mut pan[..n]);
 
             // Vectorize the transcendental into `lin`. This is the
             // only step in the slow path that doesn't autovectorize

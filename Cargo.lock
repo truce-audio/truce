@@ -2797,6 +2797,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "reload-fixture-common"
+version = "3.1.4"
+dependencies = [
+ "truce",
+]
+
+[[package]]
+name = "reload-fixture-keep-a"
+version = "3.1.4"
+dependencies = [
+ "reload-fixture-common",
+ "truce",
+ "truce-loader",
+]
+
+[[package]]
+name = "reload-fixture-keep-b"
+version = "3.1.4"
+dependencies = [
+ "reload-fixture-common",
+ "truce",
+ "truce-loader",
+]
+
+[[package]]
+name = "reload-fixture-reset"
+version = "3.1.4"
+dependencies = [
+ "reload-fixture-common",
+ "truce",
+ "truce-loader",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4544,6 +4578,7 @@ dependencies = [
 name = "truce-loader-tests"
 version = "3.1.4"
 dependencies = [
+ "reload-fixture-common",
  "truce",
  "truce-core",
  "truce-derive",

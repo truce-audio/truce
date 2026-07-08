@@ -36,8 +36,11 @@ pub struct EnvelopeParams {
     pub release: FloatParam,
 }
 
-pub struct Envelope {
-    params: Arc<EnvelopeParams>,
+/// Stateless descriptor - the follower's per-block DSP state is [`EnvelopeDspState`].
+pub struct Envelope;
+
+#[derive(DspState)]
+pub struct EnvelopeDspState {
     sample_rate: f64,
     /// Follower state, peak-tracked with instant attack and a
     /// parameterised release.
@@ -45,17 +48,6 @@ pub struct Envelope {
     /// Last CC value sent, so identical values aren't re-sent every
     /// block (which would flood the host).
     last_sent: Option<u8>,
-}
-
-impl Envelope {
-    pub fn new(params: Arc<EnvelopeParams>) -> Self {
-        Self {
-            params,
-            sample_rate: 44100.0,
-            env: 0.0,
-            last_sent: None,
-        }
-    }
 }
 
 /// Per-sample release coefficient for a time constant of `ms`.
@@ -73,22 +65,32 @@ fn level_to_cc(level: f32) -> u8 {
 
 impl PluginLogic for Envelope {
     type Params = EnvelopeParams;
+    type DspState = EnvelopeDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &EnvelopeParams) -> EnvelopeDspState {
+        EnvelopeDspState {
+            sample_rate: 44100.0,
+            env: 0.0,
+            last_sent: None,
+        }
+    }
+
+    fn reset(state: &mut EnvelopeDspState, params: &EnvelopeParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.env = 0.0;
-        self.last_sent = None;
+        state.sample_rate = sample_rate;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.env = 0.0;
+        state.last_sent = None;
     }
 
     fn process(
-        &mut self,
+        state: &mut EnvelopeDspState,
+        params: &EnvelopeParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -106,25 +108,25 @@ impl PluginLogic for Envelope {
         // 0` - keeps the stream smooth and tracks rises/falls within a
         // block; the old block-rate form showed up in a MIDI monitor as
         // a delayed `@0` burst once per block.
-        let coeff = release_coeff(self.params.release.read(), self.sample_rate);
-        let cc = self.params.cc.value_u8();
+        let coeff = release_coeff(params.release.read(), state.sample_rate);
+        let cc = params.cc.value_u8();
         let nch = buffer.channels();
         for i in 0..buffer.num_samples() {
             let mut peak = 0.0f32;
             for ch in 0..nch {
                 peak = peak.max(buffer.input(ch)[i].abs());
             }
-            self.env = if peak > self.env {
+            state.env = if peak > state.env {
                 peak
             } else {
-                peak + (self.env - peak) * coeff
+                peak + (state.env - peak) * coeff
             };
 
             // De-duplicated: identical consecutive values aren't re-sent,
             // so a steady level stays quiet instead of flooding the host.
-            let value = level_to_cc(self.env);
-            if self.last_sent != Some(value) {
-                self.last_sent = Some(value);
+            let value = level_to_cc(state.env);
+            if state.last_sent != Some(value) {
+                state.last_sent = Some(value);
                 context.output_events.push(Event::new(
                     len_u32(i),
                     EventBody::ControlChange {
@@ -198,9 +200,9 @@ mod tests {
 
     #[test]
     fn follows_level_to_cc() {
-        let params = Arc::new(EnvelopeParams::new());
-        let mut plugin = Envelope::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 256));
+        let params = EnvelopeParams::new();
+        let mut state = Envelope::init(&params);
+        Envelope::reset(&mut state, &params, &AudioConfig::new(44100.0, 256));
 
         // A half-scale constant signal → env settles at ~0.5 → CC ~63.
         let input = vec![vec![0.5f32; 256]; 2];
@@ -214,7 +216,7 @@ mod tests {
         let transport = TransportInfo::default();
         let mut output_events = EventList::default();
         let mut context = ProcessContext::new(&transport, 44100.0, 256, &mut output_events);
-        plugin.process(&mut buffer, &events, &mut context);
+        Envelope::process(&mut state, &params, &mut buffer, &events, &mut context);
 
         // Audio passed through.
         assert_eq!(output[0][0], 0.5);

@@ -162,8 +162,13 @@ const NUM_BANDS: usize = 3;
 /// arrays instead of calling 10 atomic loads per sample.
 const MAX_BLOCK: usize = 512;
 
-pub struct Eq {
-    pub params: Arc<EqParams>,
+/// Stateless descriptor - DSP state lives in [`EqDspState`].
+pub struct Eq;
+
+/// Per-instance DSP state: one stereo filter per band plus the
+/// sample rate cached at `reset()`.
+#[derive(DspState)]
+pub struct EqDspState {
     /// One stereo filter per band; L and R advance through the
     /// same coefficients in parallel `f64x2` lanes. Mono input
     /// feeds both lanes and the L lane is the sole output.
@@ -184,11 +189,13 @@ fn identity_coeffs() -> ::biquad::Coefficients<f64> {
     }
 }
 
-impl Eq {
-    pub fn new(params: Arc<EqParams>) -> Self {
+impl PluginLogic for Eq {
+    type Params = EqParams;
+    type DspState = EqDspState;
+
+    fn init(_params: &EqParams) -> EqDspState {
         let id = identity_coeffs();
-        Self {
-            params,
+        EqDspState {
             bands: [
                 StereoBiquad::new(id),
                 StereoBiquad::new(id),
@@ -197,10 +204,6 @@ impl Eq {
             sample_rate: 44100.0,
         }
     }
-}
-
-impl PluginLogic for Eq {
-    type Params = EqParams;
 
     // A hypothetical pre-truce build of this EQ saved its sessions as
     // `EQS1` + ten little-endian f64s (low/mid/high x freq/gain/q,
@@ -240,23 +243,24 @@ impl PluginLogic for Eq {
         })
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn reset(state: &mut EqDspState, params: &EqParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        for band in &mut self.bands {
+        state.sample_rate = sample_rate;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        for band in &mut state.bands {
             band.reset_state();
         }
     }
 
     fn process(
-        &mut self,
+        state: &mut EqDspState,
+        params: &EqParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
-        let sr = self.sample_rate;
+        let sr = state.sample_rate;
         let num_ch = buffer.channels();
         let stereo = num_ch >= 2;
         let total = buffer.num_samples();
@@ -289,16 +293,16 @@ impl PluginLogic for Eq {
             // still happen per sample so a fast knob sweep stays
             // click-free; only the smoother traffic moves out of the
             // inner loop.
-            self.params.low.freq.read_into(&mut low_freq[..n]);
-            self.params.low.gain.read_into(&mut low_gain[..n]);
-            self.params.low.q.read_into(&mut low_q[..n]);
-            self.params.mid.freq.read_into(&mut mid_freq[..n]);
-            self.params.mid.gain.read_into(&mut mid_gain[..n]);
-            self.params.mid.q.read_into(&mut mid_q[..n]);
-            self.params.high.freq.read_into(&mut high_freq[..n]);
-            self.params.high.gain.read_into(&mut high_gain[..n]);
-            self.params.high.q.read_into(&mut high_q[..n]);
-            self.params.output.read_into(&mut output[..n]);
+            params.low.freq.read_into(&mut low_freq[..n]);
+            params.low.gain.read_into(&mut low_gain[..n]);
+            params.low.q.read_into(&mut low_q[..n]);
+            params.mid.freq.read_into(&mut mid_freq[..n]);
+            params.mid.gain.read_into(&mut mid_gain[..n]);
+            params.mid.q.read_into(&mut mid_q[..n]);
+            params.high.freq.read_into(&mut high_freq[..n]);
+            params.high.gain.read_into(&mut high_gain[..n]);
+            params.high.q.read_into(&mut high_q[..n]);
+            params.output.read_into(&mut output[..n]);
 
             // Vectorize the output dB → linear conversion once per
             // chunk. f64::powf is opaque to LLVM's autovectorizer;
@@ -313,14 +317,14 @@ impl PluginLogic for Eq {
                 // Per-sample coefficient updates because every shape
                 // param is smoothed; one coefficient set serves both
                 // channels.
-                self.bands[0].update_coefficients(low_shelf(
+                state.bands[0].update_coefficients(low_shelf(
                     low_freq[i],
                     low_gain[i],
                     low_q[i],
                     sr,
                 ));
-                self.bands[1].update_coefficients(peaking(mid_freq[i], mid_gain[i], mid_q[i], sr));
-                self.bands[2].update_coefficients(high_shelf(
+                state.bands[1].update_coefficients(peaking(mid_freq[i], mid_gain[i], mid_q[i], sr));
+                state.bands[2].update_coefficients(high_shelf(
                     high_freq[i],
                     high_gain[i],
                     high_q[i],
@@ -334,7 +338,7 @@ impl PluginLogic for Eq {
                 let in_r = if stereo { buffer.io(1).0[idx] } else { in_l };
 
                 let mut sample = StereoSample::from_lr(in_l, in_r);
-                for band in &mut self.bands {
+                for band in &mut state.bands {
                     sample = band.run(sample);
                 }
                 let (l, r) = sample.to_lr();

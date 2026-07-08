@@ -142,22 +142,16 @@ struct Voice {
     lp: f32,
 }
 
-pub struct Multiport {
-    params: Arc<MultiportParams>,
+/// Stateless descriptor. The per-block DSP state lives in [`MultiportDspState`].
+pub struct Multiport;
+
+#[derive(DspState)]
+pub struct MultiportDspState {
     sample_rate: f64,
     voices: [Voice; NUM_VOICES],
 }
 
-impl Multiport {
-    #[must_use]
-    pub fn new(params: Arc<MultiportParams>) -> Self {
-        Self {
-            params,
-            sample_rate: 44100.0,
-            voices: [Voice::default(); NUM_VOICES],
-        }
-    }
-
+impl MultiportDspState {
     fn note_on(&mut self, port: u8, channel: u8, note: u8, amp: f32) {
         // Prefer a free slot; if the pool is full, steal a voice
         // that's already fading (in release) before cutting a still-
@@ -243,30 +237,40 @@ struct Lane {
 
 impl PluginLogic for Multiport {
     type Params = MultiportParams;
+    type DspState = MultiportDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &MultiportParams) -> MultiportDspState {
+        MultiportDspState {
+            sample_rate: 44100.0,
+            voices: [Voice::default(); NUM_VOICES],
+        }
+    }
+
+    fn reset(state: &mut MultiportDspState, params: &MultiportParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.sample_rate = sample_rate;
-        self.voices = [Voice::default(); NUM_VOICES];
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.sample_rate = sample_rate;
+        state.voices = [Voice::default(); NUM_VOICES];
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
     fn process(
-        &mut self,
+        state: &mut MultiportDspState,
+        params: &MultiportParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         let n = buffer.num_samples();
-        let atk_step = (1.0 / (0.005 * self.sample_rate)) as f32; // ~5 ms attack
-        let p0 = &self.params.port0;
-        let p1 = &self.params.port1;
+        let sample_rate = state.sample_rate;
+        let atk_step = (1.0 / (0.005 * sample_rate)) as f32; // ~5 ms attack
+        let p0 = &params.port0;
+        let p1 = &params.port1;
         // `read_after(n)` advances the smoother by the block and hands
         // back the settled value - `raw_smoothed_current()` alone never
         // advances, freezing the knob at its reset-time snapshot.
@@ -275,13 +279,13 @@ impl PluginLogic for Multiport {
                 wave: p0.wave.value(),
                 cutoff: p0.cutoff.read_after(n).clamp(0.002, 1.0),
                 volume: db_to_linear(p0.volume.read_after(n)),
-                rel_step: (1.0 / (p0.release.raw_target().max(0.01) * self.sample_rate)) as f32,
+                rel_step: (1.0 / (p0.release.raw_target().max(0.01) * sample_rate)) as f32,
             },
             Lane {
                 wave: p1.wave.value(),
                 cutoff: p1.cutoff.read_after(n).clamp(0.002, 1.0),
                 volume: db_to_linear(p1.volume.read_after(n)),
-                rel_step: (1.0 / (p1.release.raw_target().max(0.01) * self.sample_rate)) as f32,
+                rel_step: (1.0 / (p1.release.raw_target().max(0.01) * sample_rate)) as f32,
             },
         ];
 
@@ -291,15 +295,15 @@ impl PluginLogic for Multiport {
                 if event.sample_offset as usize > i {
                     break;
                 }
-                self.handle(event.port, event.body);
+                state.handle(event.port, event.body);
                 next += 1;
             }
 
             let mut mix = 0.0f32;
-            for v in self.voices.iter_mut().filter(|v| v.active) {
+            for v in state.voices.iter_mut().filter(|v| v.active) {
                 let lane = &lanes[usize::from(v.port.min(1))];
                 let raw = osc(lane.wave, v.phase);
-                v.phase = (v.phase + v.freq / self.sample_rate).fract();
+                v.phase = (v.phase + v.freq / sample_rate).fract();
                 v.lp += lane.cutoff * (raw - v.lp);
                 if v.releasing {
                     v.env -= lane.rel_step;
@@ -318,7 +322,7 @@ impl PluginLogic for Multiport {
             buffer.output(1)[i] = s;
         }
 
-        if self.voices.iter().any(|v| v.active) {
+        if state.voices.iter().any(|v| v.active) {
             ProcessStatus::Normal
         } else {
             ProcessStatus::Tail(0)
@@ -384,7 +388,7 @@ mod tests {
         });
     }
 
-    fn render(input: &[Event]) -> (Multiport, Vec<f32>) {
+    fn render(input: &[Event]) -> (MultiportDspState, Vec<f32>) {
         render_with(|_| {}, input)
     }
 
@@ -397,9 +401,9 @@ mod tests {
         // frozen at its reset-time snapshot. Only `render_with`'s
         // pre-reset tweaks (snapped by `reset`) worked, which is why
         // no other test caught it.
-        let params = Arc::new(MultiportParams::new());
-        let mut plugin = Multiport::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 64));
+        let params = MultiportParams::new();
+        let mut state = Multiport::init(&params);
+        Multiport::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let mut block = |events: &EventList| -> f32 {
             let in_refs: Vec<&[f32]> = Vec::new();
@@ -411,7 +415,7 @@ mod tests {
             let transport = TransportInfo::default();
             let mut out_ev = EventList::default();
             let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut out_ev);
-            plugin.process(&mut buffer, events, &mut ctx);
+            Multiport::process(&mut state, &params, &mut buffer, events, &mut ctx);
             l.iter().fold(0.0f32, |m, s| m.max(s.abs()))
         };
 
@@ -441,11 +445,14 @@ mod tests {
 
     // Render one block with the given param tweaks applied before
     // `reset` (which snaps smoothers onto the tweaked values).
-    fn render_with(setup: impl Fn(&MultiportParams), input: &[Event]) -> (Multiport, Vec<f32>) {
-        let params = Arc::new(MultiportParams::new());
+    fn render_with(
+        setup: impl Fn(&MultiportParams),
+        input: &[Event],
+    ) -> (MultiportDspState, Vec<f32>) {
+        let params = MultiportParams::new();
         setup(&params);
-        let mut plugin = Multiport::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 64));
+        let mut state = Multiport::init(&params);
+        Multiport::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut l = vec![0.0f32; 64];
@@ -461,8 +468,8 @@ mod tests {
         let transport = TransportInfo::default();
         let mut out_ev = EventList::default();
         let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut out_ev);
-        plugin.process(&mut buffer, &events, &mut ctx);
-        (plugin, l)
+        Multiport::process(&mut state, &params, &mut buffer, &events, &mut ctx);
+        (state, l)
     }
 
     fn note_on_port(port: u8, note: u8) -> Event {

@@ -37,29 +37,26 @@ pub struct WidenParams {
     pub meter_right: MeterSlot,
 }
 
-pub struct Widen {
-    params: Arc<WidenParams>,
-}
-
-impl Widen {
-    pub fn new(params: Arc<WidenParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - the widener carries no DSP state, only params.
+pub struct Widen;
 
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for Widen {
     type Params = WidenParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &WidenParams) {}
+
+    fn reset(_state: &mut (), params: &WidenParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &WidenParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -79,7 +76,7 @@ impl PluginLogic for Widen {
         // Width is applied block-constant; `read_after(n)` advances
         // the smoother by the whole block so the wall-clock
         // convergence time matches the smoother declaration.
-        let width = self.params.width.read_after(n);
+        let width = params.width.read_after(n);
 
         // Build mid + side from input. Scalar loop autovectorizes
         // (LLVM packs the four ops per iteration into NEON / AVX).

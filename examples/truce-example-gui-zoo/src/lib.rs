@@ -116,28 +116,23 @@ pub struct ZooParams {
     pub m_6f: MeterSlot,
 }
 
-pub struct Zoo {
-    params: Arc<ZooParams>,
-}
-
-impl Zoo {
-    #[must_use]
-    pub fn new(params: Arc<ZooParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - passthrough carries no DSP state, only params.
+pub struct Zoo;
 
 impl PluginLogic for Zoo {
     type Params = ZooParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+    fn init(_params: &ZooParams) {}
+
+    fn reset(_state: &mut (), params: &ZooParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        _params: &ZooParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
