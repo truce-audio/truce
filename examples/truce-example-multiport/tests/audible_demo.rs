@@ -23,8 +23,6 @@
     clippy::cast_precision_loss
 )]
 
-use std::sync::Arc;
-
 use truce::prelude::*;
 use truce_example_multiport::{Multiport, MultiportParams};
 
@@ -45,9 +43,9 @@ struct Note {
 /// `BLOCK`-sized chunks, injecting each note's on/off at its
 /// sample-accurate offset within the block it falls in.
 fn render_port(port: u8, notes: &[Note], total: usize) -> Vec<f32> {
-    let params = Arc::new(MultiportParams::new());
-    let mut plugin = Multiport::new(Arc::clone(&params));
-    plugin.reset(&AudioConfig::new(SR, BLOCK));
+    let params = MultiportParams::new();
+    let mut state = Multiport::init(&params);
+    Multiport::reset(&mut state, &params, &AudioConfig::new(SR, BLOCK));
 
     let mut out = Vec::with_capacity(total);
     let transport = TransportInfo::default();
@@ -77,7 +75,7 @@ fn render_port(port: u8, notes: &[Note], total: usize) -> Vec<f32> {
             let mut buffer = AudioBuffer::from_slices_checked(&no_inputs, &mut outs, this);
             let mut out_ev = EventList::default();
             let mut ctx = ProcessContext::new(&transport, SR, this, &mut out_ev);
-            plugin.process(&mut buffer, &events, &mut ctx);
+            Multiport::process(&mut state, &params, &mut buffer, &events, &mut ctx);
         }
         out.extend_from_slice(&l);
         pos += this;

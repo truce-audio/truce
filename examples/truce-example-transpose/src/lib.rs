@@ -25,17 +25,20 @@ pub struct TransposeParams {
 
 // --- Plugin ---
 
-pub struct Transpose {
-    pub params: Arc<TransposeParams>,
+/// Stateless descriptor - DSP state lives in [`TransposeDspState`].
+pub struct Transpose;
+
+/// Per-instance DSP state: the note-tracking table.
+#[derive(DspState)]
+pub struct TransposeDspState {
     /// Maps input note -> output note that was actually sent.
     /// Used to send correct `NoteOff` even if shift changes mid-hold.
     active_notes: [Option<u8>; 128],
 }
 
-impl Transpose {
-    pub fn new(params: Arc<TransposeParams>) -> Self {
+impl Default for TransposeDspState {
+    fn default() -> Self {
         Self {
-            params,
             active_notes: [None; 128],
         }
     }
@@ -51,6 +54,11 @@ fn shift_midi(note: u8, shift: i32) -> u8 {
 
 impl PluginLogic for Transpose {
     type Params = TransposeParams;
+    type DspState = TransposeDspState;
+
+    fn init(_params: &TransposeParams) -> TransposeDspState {
+        TransposeDspState::default()
+    }
 
     /// MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
     /// AAX (which has no audio-less plugin category) auto-adds a
@@ -60,20 +68,21 @@ impl PluginLogic for Transpose {
         vec![BusLayout::new()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn reset(_state: &mut TransposeDspState, params: &TransposeParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        state: &mut TransposeDspState,
+        params: &TransposeParams,
         _buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        let semitones = self.params.semitones.value_i32();
-        let octave = self.params.octave.value_i32();
+        let semitones = params.semitones.value_i32();
+        let octave = params.octave.value_i32();
         let shift = semitones + octave * 12;
 
         for event in events.iter() {
@@ -85,7 +94,7 @@ impl PluginLogic for Transpose {
                     velocity,
                 } => {
                     let transposed = shift_midi(*note, shift);
-                    self.active_notes[*note as usize] = Some(transposed);
+                    state.active_notes[*note as usize] = Some(transposed);
                     context.output_events.push(Event::new(
                         event.sample_offset,
                         EventBody::NoteOn {
@@ -105,7 +114,7 @@ impl PluginLogic for Transpose {
                     // Use the pitch that was actually sent, not the
                     // current shift - held notes get a matching off
                     // even after the user re-transposes mid-hold.
-                    let output_note = self.active_notes[*note as usize]
+                    let output_note = state.active_notes[*note as usize]
                         .take()
                         .unwrap_or_else(|| shift_midi(*note, shift));
                     context.output_events.push(Event::new(
@@ -170,10 +179,10 @@ mod tests {
 
     #[test]
     fn transpose_up_octave() {
-        let params = Arc::new(TransposeParams::new());
-        let mut plugin = Transpose::new(Arc::clone(&params));
-        plugin.params.octave.set_value(1);
-        plugin.reset(&AudioConfig::new(44100.0, 512));
+        let params = TransposeParams::new();
+        let mut state = Transpose::init(&params);
+        params.octave.set_value(1);
+        Transpose::reset(&mut state, &params, &AudioConfig::new(44100.0, 512));
 
         let input = vec![vec![0.0f32; 512]; 2];
         let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();
@@ -198,7 +207,7 @@ mod tests {
         let mut output_events = EventList::default();
         let mut context = ProcessContext::new(&transport, 44100.0, 512, &mut output_events);
 
-        plugin.process(&mut buffer, &events, &mut context);
+        Transpose::process(&mut state, &params, &mut buffer, &events, &mut context);
 
         assert_eq!(output_events.len(), 1);
         match &output_events.get(0).unwrap().body {

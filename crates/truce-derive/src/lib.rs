@@ -2609,6 +2609,82 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
+/// `#[derive(DspState)]` - fold a DSP `State` struct's field layout into
+/// a compile-time `DspState::FINGERPRINT` const, so
+/// the hot-reload shell can decide whether a state allocated by an older
+/// dylib is safe to reuse under freshly loaded code.
+///
+/// The fingerprint hashes each field's name and surface type tokens (a
+/// rename, reorder, or type swap changes it) mixed with the struct's
+/// `size_of` / `align_of` (a padding or repr change changes it). Name
+/// the struct as a plugin's `type DspState` and preservation is wired
+/// automatically - no `STATE_FINGERPRINT` const to write.
+///
+/// **Structural-shallow.** The fingerprint only sees `State`'s own
+/// layout, not through a `Box<T>` / `Vec<T>` / `Arc<T>` / `String` into
+/// the pointee's definition - so a layout change *inside* a boxed
+/// sub-struct won't move it, and reusing the old allocation under new
+/// code is UB. See the `DspState` trait docs for the footgun and the
+/// workaround.
+///
+/// # Panics
+///
+/// Panics if the input fails to parse as a `DeriveInput` (the compiler
+/// only ever feeds this a valid item, so it can't happen in practice).
+#[proc_macro_derive(DspState)]
+pub fn derive_dsp_state(input: TokenStream) -> TokenStream {
+    let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for DspState derive");
+    let name = &ast.ident;
+    let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
+
+    let fields = match &ast.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(named) => &named.named,
+            Fields::Unnamed(unnamed) => &unnamed.unnamed,
+            Fields::Unit => {
+                return syn::Error::new_spanned(
+                    &ast,
+                    "DspState cannot be derived on a unit struct (it has no layout to fingerprint - use `type DspState = ()` or add fields)",
+                )
+                .to_compile_error()
+                .into();
+            }
+        },
+        _ => {
+            return syn::Error::new_spanned(&ast, "DspState can only be derived on structs")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    // Build a stable descriptor from each field's name + type tokens.
+    // Order matters (a reorder changes the string), and the type tokens
+    // catch a type swap; `fold_fingerprint` folds in size/align on top.
+    let mut descriptor = String::new();
+    for (i, f) in fields.iter().enumerate() {
+        let field_name = f
+            .ident
+            .as_ref()
+            .map_or_else(|| i.to_string(), std::string::ToString::to_string);
+        let ty = &f.ty;
+        descriptor.push_str(&field_name);
+        descriptor.push(':');
+        descriptor.push_str(&quote!(#ty).to_string());
+        descriptor.push('|');
+    }
+
+    let expanded = quote! {
+        impl #impl_generics ::truce::core::dsp_state::DspState for #name #ty_generics #where_clause {
+            const FINGERPRINT: u64 = ::truce::core::dsp_state::fold_fingerprint(
+                #descriptor,
+                ::core::mem::size_of::<#name #ty_generics>() as u64,
+                ::core::mem::align_of::<#name #ty_generics>() as u64,
+            );
+        }
+    };
+    expanded.into()
+}
+
 #[cfg(test)]
 mod snake_to_pascal_tests {
     use super::snake_to_pascal;

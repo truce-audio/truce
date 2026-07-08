@@ -59,8 +59,11 @@ pub struct ChordParams {
     pub gain: FloatParam,
 }
 
-pub struct Chord {
-    params: Arc<ChordParams>,
+/// Stateless descriptor - the chord's per-block DSP state is [`ChordDspState`].
+pub struct Chord;
+
+#[derive(DspState)]
+pub struct ChordDspState {
     sample_rate: f64,
     /// Notes currently sounding (and emitted), one per voice.
     notes: [Option<u8>; MAX_VOICES],
@@ -69,17 +72,7 @@ pub struct Chord {
     root: Option<u8>,
 }
 
-impl Chord {
-    pub fn new(params: Arc<ChordParams>) -> Self {
-        Self {
-            params,
-            sample_rate: 44100.0,
-            notes: [None; MAX_VOICES],
-            phases: [0.0; MAX_VOICES],
-            root: None,
-        }
-    }
-
+impl ChordDspState {
     /// Silence every sounding voice and emit a matching `NoteOff` for
     /// each, on `channel` / `group`.
     fn stop(&mut self, out: &mut EventList, offset: u32, group: u8, channel: u8) {
@@ -120,24 +113,35 @@ fn sine_f32(phase: f64) -> f32 {
 
 impl PluginLogic for Chord {
     type Params = ChordParams;
+    type DspState = ChordDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
         // Instrument: audio output only.
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &ChordParams) -> ChordDspState {
+        ChordDspState {
+            sample_rate: 44100.0,
+            notes: [None; MAX_VOICES],
+            phases: [0.0; MAX_VOICES],
+            root: None,
+        }
+    }
+
+    fn reset(state: &mut ChordDspState, params: &ChordParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.notes = [None; MAX_VOICES];
-        self.phases = [0.0; MAX_VOICES];
-        self.root = None;
+        state.sample_rate = sample_rate;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.notes = [None; MAX_VOICES];
+        state.phases = [0.0; MAX_VOICES];
+        state.root = None;
     }
 
     fn process(
-        &mut self,
+        state: &mut ChordDspState,
+        params: &ChordParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
@@ -151,14 +155,12 @@ impl PluginLogic for Chord {
                     velocity,
                 } => {
                     // Last-note priority: drop the previous chord first.
-                    self.stop(context.output_events, event.sample_offset, *group, *channel);
-                    self.root = Some(*note);
-                    for (voice, interval) in
-                        self.params.chord.value().intervals().iter().enumerate()
-                    {
+                    state.stop(context.output_events, event.sample_offset, *group, *channel);
+                    state.root = Some(*note);
+                    for (voice, interval) in params.chord.value().intervals().iter().enumerate() {
                         let chord_note = chord_note(*note, *interval);
-                        self.notes[voice] = Some(chord_note);
-                        self.phases[voice] = 0.0;
+                        state.notes[voice] = Some(chord_note);
+                        state.phases[voice] = 0.0;
                         // Emit the chord note so a downstream instrument
                         // can play the same harmony.
                         context.output_events.push(Event::new(
@@ -177,21 +179,21 @@ impl PluginLogic for Chord {
                     channel,
                     note,
                     ..
-                } if self.root == Some(*note) => {
-                    self.stop(context.output_events, event.sample_offset, *group, *channel);
+                } if state.root == Some(*note) => {
+                    state.stop(context.output_events, event.sample_offset, *group, *channel);
                 }
                 _ => {}
             }
         }
 
-        let gain = self.params.gain.read() * VOICE_MIX;
+        let gain = params.gain.read() * VOICE_MIX;
         for i in 0..buffer.num_samples() {
             let mut sample = 0.0f32;
             for voice in 0..MAX_VOICES {
-                if let Some(note) = self.notes[voice] {
-                    sample += sine_f32(self.phases[voice]);
-                    let inc = note_hz(note) / self.sample_rate;
-                    self.phases[voice] = (self.phases[voice] + inc).rem_euclid(1.0);
+                if let Some(note) = state.notes[voice] {
+                    sample += sine_f32(state.phases[voice]);
+                    let inc = note_hz(note) / state.sample_rate;
+                    state.phases[voice] = (state.phases[voice] + inc).rem_euclid(1.0);
                 }
             }
             sample *= gain;
@@ -262,10 +264,10 @@ mod tests {
 
     #[test]
     fn emits_triad_and_plays_audio() {
-        let params = Arc::new(ChordParams::new());
-        let mut plugin = Chord::new(Arc::clone(&params));
-        plugin.params.gain.set_value(1.0);
-        plugin.reset(&AudioConfig::new(44100.0, 256));
+        let params = ChordParams::new();
+        params.gain.set_value(1.0);
+        let mut state = Chord::init(&params);
+        Chord::reset(&mut state, &params, &AudioConfig::new(44100.0, 256));
 
         let input_refs: Vec<&[f32]> = Vec::new();
         let mut output = vec![vec![0.0f32; 256]; 2];
@@ -287,7 +289,7 @@ mod tests {
         let transport = TransportInfo::default();
         let mut output_events = EventList::default();
         let mut context = ProcessContext::new(&transport, 44100.0, 256, &mut output_events);
-        plugin.process(&mut buffer, &events, &mut context);
+        Chord::process(&mut state, &params, &mut buffer, &events, &mut context);
 
         // C major triad emitted: C4, E4, G4 (60, 64, 67).
         let notes: Vec<u8> = output_events

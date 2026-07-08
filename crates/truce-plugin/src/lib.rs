@@ -62,33 +62,51 @@ use truce_params::sample::Sample;
 ///
 /// Method docs live on the leaf traits ([`PluginLogic`] /
 /// [`PluginLogic64`]); the shape mirrors them exactly.
-pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
-    #[must_use]
-    fn supports_in_place() -> bool
-    where
-        Self: Sized;
+pub trait PluginLogicCore<S: Sample = f32>: 'static {
+    /// The plugin's parameter struct; mirrors the leaf's `Params`.
+    type Params: truce_params::Params;
+    /// The mutable per-block audio state. Owned by the shell, not by
+    /// `Self` (the descriptor). `Send` because the shell moves it across
+    /// threads; `'static` because the shell may outlive any borrow;
+    /// `DspState` so its layout can be fingerprinted for hot-reload
+    /// preservation (`()` and any `#[derive(DspState)]` struct qualify).
+    type DspState: Send + 'static + truce_core::dsp_state::DspState;
+
+    /// Structural fingerprint of `State` for hot-reload preservation,
+    /// defaulted from the `State` type's `DspState` impl. The leaf
+    /// bridge forwards the leaf trait's (identically defaulted) value.
+    const STATE_FINGERPRINT: u64 = <Self::DspState as truce_core::dsp_state::DspState>::FINGERPRINT;
 
     #[must_use]
-    fn bus_layouts() -> Vec<BusLayout>
-    where
-        Self: Sized;
+    fn supports_in_place() -> bool {
+        false
+    }
 
-    fn reset(&mut self, config: &AudioConfig);
+    #[must_use]
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![BusLayout::stereo()]
+    }
+
+    /// Build initial state from params. See [`PluginLogic::init`].
+    fn init(params: &Self::Params) -> Self::DspState;
+
+    fn reset(state: &mut Self::DspState, params: &Self::Params, config: &AudioConfig);
 
     fn process(
-        &mut self,
+        state: &mut Self::DspState,
+        params: &Self::Params,
         buffer: &mut AudioBuffer<S>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus;
 
-    fn save_state(&self) -> Vec<u8>;
+    fn save_state(state: &Self::DspState) -> Vec<u8> {
+        let _ = state;
+        Vec::new()
+    }
     /// Lock-free state-save opt-in. See [`PluginLogic::snapshot_into`].
-    /// Called on the audio thread each block when supported; the shell
-    /// publishes the result into a `SnapshotSlot` the host reads without
-    /// the plugin lock. Default `false`; the leaf bridge overrides it.
-    fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
-        let _ = buf;
+    fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
+        let _ = (state, buf);
         false
     }
     /// Restore plugin-specific state. See [`PluginLogic::load_state`].
@@ -97,16 +115,28 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     ///
     /// Forwards whatever the user impl returns - typically a malformed
     /// blob error decoded by `bincode` / `serde` / similar.
-    fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError>;
+    fn load_state(state: &mut Self::DspState, data: &[u8]) -> Result<(), StateLoadError> {
+        let _ = (state, data);
+        Ok(())
+    }
     /// Translate foreign state into truce shape. See
     /// [`PluginLogic::migrate_state`].
     #[must_use]
-    fn migrate_state(foreign: &ForeignState) -> Option<MigratedState>
-    where
-        Self: Sized;
-    fn state_changed(&mut self);
-    fn latency(&self) -> u32;
-    fn tail(&self) -> u32;
+    fn migrate_state(foreign: &ForeignState) -> Option<MigratedState> {
+        let _ = foreign;
+        None
+    }
+    fn state_changed(state: &mut Self::DspState, params: &Self::Params) {
+        let _ = (state, params);
+    }
+    fn latency(state: &Self::DspState) -> u32 {
+        let _ = state;
+        0
+    }
+    fn tail(state: &Self::DspState) -> u32 {
+        let _ = state;
+        0
+    }
 }
 
 /// Precision-keyed editor factory, bridged from the leaf traits.
@@ -150,11 +180,35 @@ pub trait PluginEditor<S: Sample> {
 macro_rules! plugin_logic_leaf_trait {
     ($(#[$attr:meta])* $vis:vis trait $name:ident<sample = $sample:ty>) => {
         $(#[$attr])*
-        $vis trait $name: Send + 'static {
-            /// The plugin's parameter struct (`#[derive(Params)]`). Named
-            /// here so the editor can be built from an `Arc<Self::Params>`
-            /// without borrowing the plugin - see [`Self::editor`].
+        $vis trait $name: 'static {
+            /// The plugin's parameter struct (`#[derive(Params)]`).
+            /// Shared, immutable during a block - it arrives by
+            /// reference every call from the shell, which owns the
+            /// `Arc`. Never stored in [`Self::DspState`].
             type Params: $crate::__plugin_logic_deps::Params;
+
+            /// The mutable per-block audio state - filter memory, voice
+            /// buffers, phase accumulators. **A distinct type from the
+            /// descriptor `Self`, never `Self`.** A plugin with no audio
+            /// state writes `type DspState = ()`; anything else is a struct
+            /// with `#[derive(DspState)]` (needed so its layout can be
+            /// fingerprinted for safe hot-reload state preservation).
+            /// Owned by the shell, so it can outlive a code swap.
+            type DspState: Send + 'static + $crate::__plugin_logic_deps::DspState;
+
+            /// Structural fingerprint of [`Self::DspState`] for hot-reload
+            /// state preservation - defaulted from the `State` type's
+            /// `#[derive(DspState)]`, so authors never write it. On a
+            /// reload the shell keeps the live state when this matches
+            /// and re-inits otherwise; a change to the `State` struct's
+            /// *own* layout flips the fingerprint automatically. The
+            /// fingerprint is structural-shallow, so a layout change
+            /// hidden behind a `Box` / `Vec` / `Arc` field does *not*
+            /// flip it (see the `DspState` derive docs). Override to
+            /// [`NO_PRESERVE`](truce_core::dsp_state::NO_PRESERVE) to
+            /// force a reset on every reload.
+            const STATE_FINGERPRINT: u64 =
+                <Self::DspState as $crate::__plugin_logic_deps::DspState>::FINGERPRINT;
 
             /// Opt into zero-copy in-place I/O. When this returns `true`,
             /// the format wrapper skips its safety memcpy on host-aliased
@@ -167,10 +221,7 @@ macro_rules! plugin_logic_leaf_trait {
             /// scratch so `input(ch)` and `output(ch)` are always
             /// disjoint. Costs one memcpy per aliased channel per block.
             #[must_use]
-            fn supports_in_place() -> bool
-            where
-                Self: Sized,
-            {
+            fn supports_in_place() -> bool {
                 false
             }
 
@@ -178,25 +229,33 @@ macro_rules! plugin_logic_leaf_trait {
             /// the others are rejected at bus-config time before
             /// `process` is ever called. Default: stereo in, stereo out.
             #[must_use]
-            fn bus_layouts() -> Vec<$crate::__plugin_logic_deps::BusLayout>
-            where
-                Self: Sized,
-            {
+            fn bus_layouts() -> Vec<$crate::__plugin_logic_deps::BusLayout> {
                 vec![$crate::__plugin_logic_deps::BusLayout::stereo()]
             }
 
+            /// Build the initial audio state from params. Replaces the
+            /// old `new` constructor: the descriptor is stateless, so
+            /// state is born here and owned by the shell. Not real-time
+            /// safe - allocate freely.
+            fn init(params: &Self::Params) -> Self::DspState;
+
             /// Reset for a new sample rate / block size / processing
-            /// mode. Called before the first `process` and any time the
-            /// host reconfigures. Read `config.process_mode` to size
-            /// buffers for an offline render (allocation belongs here,
-            /// off the audio thread) - see
-            /// [`AudioConfig`](truce_core::config::AudioConfig).
-            fn reset(&mut self, config: &$crate::__plugin_logic_deps::AudioConfig);
+            /// mode. Clear `state`'s filters / delay lines; read
+            /// `config.process_mode` to size buffers for an offline
+            /// render (allocation belongs here, off the audio thread) -
+            /// see [`AudioConfig`](truce_core::config::AudioConfig).
+            fn reset(
+                state: &mut Self::DspState,
+                params: &Self::Params,
+                config: &$crate::__plugin_logic_deps::AudioConfig,
+            );
 
             /// Process one block of audio. Real-time - no allocations,
-            /// locks, or I/O.
+            /// locks, or I/O. `state` is exclusively owned this block;
+            /// `params` is shared and immutable.
             fn process(
-                &mut self,
+                state: &mut Self::DspState,
+                params: &Self::Params,
                 buffer: &mut $crate::__plugin_logic_deps::AudioBuffer<$sample>,
                 events: &$crate::__plugin_logic_deps::EventList,
                 context: &mut $crate::__plugin_logic_deps::ProcessContext,
@@ -214,9 +273,9 @@ macro_rules! plugin_logic_leaf_trait {
             /// cheap: copy bytes out, don't compute or compress here.
             /// To take this off the plugin lock entirely, override
             /// [`Self::snapshot_into`] instead.
-            fn save_state(&self) -> Vec<u8> {
+            fn save_state(state: &Self::DspState) -> Vec<u8> {
                 let mut buf = Vec::new();
-                let _ = self.snapshot_into(&mut buf);
+                let _ = Self::snapshot_into(state, &mut buf);
                 buf
             }
 
@@ -245,12 +304,12 @@ macro_rules! plugin_logic_leaf_trait {
             /// stalls the audio thread. Overriding this is the
             /// preferred way to serialize custom state; the default
             /// [`Self::save_state`] delegates here.
-            fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
-                let _ = buf;
+            fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
+                let _ = (state, buf);
                 false
             }
 
-            /// Restore plugin-specific state.
+            /// Restore plugin-specific state into `state`.
             ///
             /// Runs on the audio thread between blocks, with the same
             /// exclusive access `process()` has - writing any field
@@ -263,16 +322,20 @@ macro_rules! plugin_logic_leaf_trait {
             /// logs the failure (and on hosts that support it, surfaces
             /// it to the DAW).
             fn load_state(
-                &mut self,
-                _data: &[u8],
+                state: &mut Self::DspState,
+                data: &[u8],
             ) -> Result<(), $crate::__plugin_logic_deps::StateLoadError> {
+                let _ = (state, data);
                 Ok(())
             }
 
             /// Called on the audio thread immediately after
             /// [`Self::load_state`] returns. Invalidate or recompute any
-            /// caches the next `process()` reads. Default: no-op.
-            fn state_changed(&mut self) {}
+            /// caches in `state` that the next `process()` reads. Default:
+            /// no-op.
+            fn state_changed(state: &mut Self::DspState, params: &Self::Params) {
+                let _ = (state, params);
+            }
 
             /// Translate foreign state - a previous framework's blob,
             /// or a truce envelope saved under a different plugin id -
@@ -290,22 +353,24 @@ macro_rules! plugin_logic_leaf_trait {
             /// keys to probe (`[plugin.legacy_state]`).
             #[must_use]
             fn migrate_state(
-                _foreign: &$crate::__plugin_logic_deps::ForeignState,
-            ) -> Option<$crate::__plugin_logic_deps::MigratedState>
-            where
-                Self: Sized,
-            {
+                foreign: &$crate::__plugin_logic_deps::ForeignState,
+            ) -> Option<$crate::__plugin_logic_deps::MigratedState> {
+                let _ = foreign;
                 None
             }
 
             /// Report latency in samples for plugin delay compensation.
-            fn latency(&self) -> u32 {
+            /// May change at runtime - return a new value and the host is
+            /// notified (see the wrapper latency-change path).
+            fn latency(state: &Self::DspState) -> u32 {
+                let _ = state;
                 0
             }
 
             /// Report tail time in samples (audio produced after input
             /// stops - reverbs, delays). `u32::MAX` for infinite tail.
-            fn tail(&self) -> u32 {
+            fn tail(state: &Self::DspState) -> u32 {
+                let _ = state;
                 0
             }
 
@@ -344,6 +409,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::buffer::AudioBuffer;
     pub use truce_core::bus::BusLayout;
     pub use truce_core::config::AudioConfig;
+    pub use truce_core::dsp_state::{DspState, NO_PRESERVE};
     pub use truce_core::editor::Editor;
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
@@ -417,26 +483,30 @@ plugin_logic_leaf_trait! {
 macro_rules! plugin_logic_bridge {
     ($leaf:ident, $sample:ty) => {
         impl<T: $leaf> PluginLogicCore<$sample> for T {
-            fn supports_in_place() -> bool
-            where
-                Self: Sized,
-            {
+            type Params = <T as $leaf>::Params;
+            type DspState = <T as $leaf>::DspState;
+
+            const STATE_FINGERPRINT: u64 = <T as $leaf>::STATE_FINGERPRINT;
+
+            fn supports_in_place() -> bool {
                 <Self as $leaf>::supports_in_place()
             }
 
-            fn bus_layouts() -> Vec<BusLayout>
-            where
-                Self: Sized,
-            {
+            fn bus_layouts() -> Vec<BusLayout> {
                 <Self as $leaf>::bus_layouts()
             }
 
-            fn reset(&mut self, config: &AudioConfig) {
-                <Self as $leaf>::reset(self, config);
+            fn init(params: &Self::Params) -> Self::DspState {
+                <Self as $leaf>::init(params)
+            }
+
+            fn reset(state: &mut Self::DspState, params: &Self::Params, config: &AudioConfig) {
+                <Self as $leaf>::reset(state, params, config);
             }
 
             fn process(
-                &mut self,
+                state: &mut Self::DspState,
+                params: &Self::Params,
                 buffer: &mut AudioBuffer<$sample>,
                 events: &EventList,
                 context: &mut ProcessContext,
@@ -444,40 +514,39 @@ macro_rules! plugin_logic_bridge {
                 // FTZ/DAZ (or FZ on AArch64) for the duration of
                 // the user's process body. Denormals on filter
                 // feedback paths stall the core; the guard pays
-                // ~two MXCSR writes per block to avoid that.
+                // ~two MXCSR writes per block to avoid that. Both the
+                // static and hot shells route process through here, so
+                // this brackets exactly the user body in both modes.
                 let _denormal_guard = DenormalGuard::new();
-                <Self as $leaf>::process(self, buffer, events, context)
+                <Self as $leaf>::process(state, params, buffer, events, context)
             }
 
-            fn save_state(&self) -> Vec<u8> {
-                <Self as $leaf>::save_state(self)
+            fn save_state(state: &Self::DspState) -> Vec<u8> {
+                <Self as $leaf>::save_state(state)
             }
 
-            fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
-                <Self as $leaf>::snapshot_into(self, buf)
+            fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
+                <Self as $leaf>::snapshot_into(state, buf)
             }
 
-            fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
-                <Self as $leaf>::load_state(self, data)
+            fn load_state(state: &mut Self::DspState, data: &[u8]) -> Result<(), StateLoadError> {
+                <Self as $leaf>::load_state(state, data)
             }
 
-            fn state_changed(&mut self) {
-                <Self as $leaf>::state_changed(self);
+            fn state_changed(state: &mut Self::DspState, params: &Self::Params) {
+                <Self as $leaf>::state_changed(state, params);
             }
 
-            fn migrate_state(foreign: &ForeignState) -> Option<MigratedState>
-            where
-                Self: Sized,
-            {
+            fn migrate_state(foreign: &ForeignState) -> Option<MigratedState> {
                 <Self as $leaf>::migrate_state(foreign)
             }
 
-            fn latency(&self) -> u32 {
-                <Self as $leaf>::latency(self)
+            fn latency(state: &Self::DspState) -> u32 {
+                <Self as $leaf>::latency(state)
             }
 
-            fn tail(&self) -> u32 {
-                <Self as $leaf>::tail(self)
+            fn tail(state: &Self::DspState) -> u32 {
+                <Self as $leaf>::tail(state)
             }
         }
 

@@ -158,8 +158,13 @@ struct RebuildChannel {
     shutdown: AtomicBool,
 }
 
-pub struct FundspReverbWorker {
-    params: Arc<FundspReverbWorkerParams>,
+/// Stateless descriptor - DSP state lives in [`FundspReverbWorkerDspState`].
+pub struct FundspReverbWorker;
+
+/// Per-instance DSP state: the live graph, the atomic cells it reads,
+/// and the lock-free channel + worker thread that rebuild it.
+#[derive(DspState)]
+pub struct FundspReverbWorkerDspState {
     // Atomic cells the fundsp graph reads each sample via `var()`.
     low_cut_shared: Shared,
     high_cut_shared: Shared,
@@ -177,8 +182,8 @@ pub struct FundspReverbWorker {
     worker_handle: Option<JoinHandle<()>>,
 }
 
-impl FundspReverbWorker {
-    pub fn new(params: Arc<FundspReverbWorkerParams>) -> Self {
+impl FundspReverbWorkerDspState {
+    fn new() -> Self {
         let low_cut_shared = shared(DEFAULT_LOW_CUT_HZ);
         let high_cut_shared = shared(DEFAULT_HIGH_CUT_HZ);
         let mix_shared = shared(DEFAULT_REVERB_MIX);
@@ -199,7 +204,6 @@ impl FundspReverbWorker {
         let worker_thread = worker_handle.thread().clone();
 
         Self {
-            params,
             low_cut_shared,
             high_cut_shared,
             mix_shared,
@@ -274,7 +278,7 @@ fn spawn_rebuild_worker(
         .expect("spawn fundsp-reverb-rebuild worker")
 }
 
-impl Drop for FundspReverbWorker {
+impl Drop for FundspReverbWorkerDspState {
     fn drop(&mut self) {
         self.rebuild.shutdown.store(true, Ordering::Release);
         self.worker_thread.unpark();
@@ -286,22 +290,32 @@ impl Drop for FundspReverbWorker {
 
 impl PluginLogic for FundspReverbWorker {
     type Params = FundspReverbWorkerParams;
+    type DspState = FundspReverbWorkerDspState;
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &FundspReverbWorkerParams) -> FundspReverbWorkerDspState {
+        FundspReverbWorkerDspState::new()
+    }
+
+    fn reset(
+        state: &mut FundspReverbWorkerDspState,
+        params: &FundspReverbWorkerParams,
+        config: &AudioConfig,
+    ) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        let time_s = self.params.time.value();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        let time_s = params.time.value();
         // SR is a discrete host setting, not a measurement.
-        let sr_changed = sample_rate.to_bits() != self.last_built_sr.to_bits();
-        let time_changed = (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
+        let sr_changed = sample_rate.to_bits() != state.last_built_sr.to_bits();
+        let time_changed = (time_s - state.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
         if sr_changed || time_changed {
-            self.rebuild_now(sample_rate, time_s);
+            state.rebuild_now(sample_rate, time_s);
         }
     }
 
     fn process(
-        &mut self,
+        state: &mut FundspReverbWorkerDspState,
+        params: &FundspReverbWorkerParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -309,18 +323,18 @@ impl PluginLogic for FundspReverbWorker {
         // Swap in any graph the worker has finished. A ready entry
         // built for a stale SR (one `reset()` ago) is rerouted to the
         // discard queue so it's freed off-thread.
-        if let Some(ready) = self.rebuild.ready.pop() {
-            if ready.sample_rate.to_bits() == self.last_built_sr.to_bits() {
-                let old = std::mem::replace(&mut self.graph, ready.graph);
+        if let Some(ready) = state.rebuild.ready.pop() {
+            if ready.sample_rate.to_bits() == state.last_built_sr.to_bits() {
+                let old = std::mem::replace(&mut state.graph, ready.graph);
                 // try_push: capacity 8 vs at most one swap per block,
                 // so a non-stalled worker drains long before this
                 // ever fills. On the theoretical overflow we keep the
                 // old graph live for a block rather than free on the
                 // audio thread.
-                let _ = self.rebuild.discard.push(old);
-                self.last_built_time_s = ready.time_s;
+                let _ = state.rebuild.discard.push(old);
+                state.last_built_time_s = ready.time_s;
             } else {
-                let _ = self.rebuild.discard.push(ready.graph);
+                let _ = state.rebuild.discard.push(ready.graph);
             }
         }
 
@@ -328,27 +342,27 @@ impl PluginLogic for FundspReverbWorker {
         // crawl across the threshold for ~200 ms and request a
         // rebuild every block - audible as an unstable tail until it
         // settles.
-        let time_s = self.params.time.value();
-        if (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
+        let time_s = params.time.value();
+        if (time_s - state.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
             // Optimistic update so we don't re-request the same
             // target every block while the worker is building. If
             // the user moves Time again past the threshold, this
             // diff trips and we re-request.
-            self.last_built_time_s = time_s;
-            self.rebuild.requests.force_push(RebuildRequest {
-                sample_rate: self.last_built_sr,
+            state.last_built_time_s = time_s;
+            state.rebuild.requests.force_push(RebuildRequest {
+                sample_rate: state.last_built_sr,
                 time_s,
             });
-            self.worker_thread.unpark();
+            state.worker_thread.unpark();
         }
 
         // `for_each_frame::<2>` transposes channel-major to stereo
         // frames so fundsp's `tick(in, out)` fits the closure.
         buffer.for_each_frame::<2, _>(|frame_in, frame_out| {
-            self.low_cut_shared.set_value(self.params.low_cut.read());
-            self.high_cut_shared.set_value(self.params.high_cut.read());
-            self.mix_shared.set_value(self.params.mix.read());
-            self.graph.tick(frame_in, frame_out);
+            state.low_cut_shared.set_value(params.low_cut.read());
+            state.high_cut_shared.set_value(params.high_cut.read());
+            state.mix_shared.set_value(params.mix.read());
+            state.graph.tick(frame_in, frame_out);
         });
 
         if buffer.num_output_channels() >= 1 {

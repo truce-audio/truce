@@ -14,10 +14,7 @@ mod test {
         let loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
 
         // Plugin should be None (not loaded), not a crash.
-        assert!(
-            loader.plugin().is_none(),
-            "should not load a nonexistent dylib"
-        );
+        assert!(!loader.is_loaded(), "should not load a nonexistent dylib");
     }
 
     #[test]
@@ -27,7 +24,7 @@ mod test {
         std::fs::write(&path, b"not a valid dylib").ok();
 
         let loader: NativeLoader = NativeLoader::new(path.clone(), std::ptr::null());
-        assert!(loader.plugin().is_none(), "should not load a corrupt dylib");
+        assert!(!loader.is_loaded(), "should not load a corrupt dylib");
 
         // Cleanup.
         std::fs::remove_file(&path).ok();

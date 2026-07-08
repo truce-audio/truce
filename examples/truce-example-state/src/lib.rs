@@ -53,37 +53,38 @@ pub struct InstanceMemo {
 
 // --- Plugin ---
 
-pub struct StateExample {
-    params: Arc<StateExampleParams>,
+/// Stateless descriptor. The per-instance state lives in [`StateExampleDspState`].
+pub struct StateExample;
+
+#[derive(DspState)]
+pub struct StateExampleDspState {
     memo: InstanceMemo,
     /// Runtime counter - how many times the host has restored
     /// state on this instance (preset recall, undo, session
-    /// load). Lives on the plugin struct, *not* in `InstanceMemo`,
+    /// load). Lives in the plugin state, *not* in `InstanceMemo`,
     /// because it's diagnostic and shouldn't persist across
     /// sessions. See `PluginLogic::state_changed` below.
     state_load_count: u32,
 }
 
-impl StateExample {
-    pub fn new(params: Arc<StateExampleParams>) -> Self {
-        Self {
-            params,
+impl PluginLogic for StateExample {
+    type Params = StateExampleParams;
+    type DspState = StateExampleDspState;
+
+    fn init(_params: &StateExampleParams) -> StateExampleDspState {
+        StateExampleDspState {
             memo: InstanceMemo::default(),
             state_load_count: 0,
         }
     }
-}
 
-impl PluginLogic for StateExample {
-    type Params = StateExampleParams;
-
-    fn reset(&mut self, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
+    fn reset(_state: &mut StateExampleDspState, params: &StateExampleParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
     }
 
     fn process(
-        &mut self,
+        _state: &mut StateExampleDspState,
+        _params: &StateExampleParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         _context: &mut ProcessContext,
@@ -96,7 +97,7 @@ impl PluginLogic for StateExample {
         ProcessStatus::Normal
     }
 
-    fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+    fn snapshot_into(state: &StateExampleDspState, buf: &mut Vec<u8>) -> bool {
         // Opt into lock-free save: the audio thread publishes the memo
         // into the shell's slot each block, and the host serializes it
         // without ever taking the plugin lock. (The default `save_state`
@@ -105,14 +106,17 @@ impl PluginLogic for StateExample {
         // `serialize_into` clears and refills `buf`, reusing its
         // capacity - no allocation once warmed, as the audio thread
         // requires.
-        self.memo.serialize_into(buf);
+        state.memo.serialize_into(buf);
         true
     }
 
-    fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
+    fn load_state(
+        state: &mut StateExampleDspState,
+        data: &[u8],
+    ) -> Result<(), truce_core::state::StateLoadError> {
         match InstanceMemo::deserialize(data) {
             Some(m) => {
-                self.memo = m;
+                state.memo = m;
                 Ok(())
             }
             None => Err(truce_core::state::StateLoadError::Malformed(
@@ -132,8 +136,8 @@ impl PluginLogic for StateExample {
     /// [`truce_core::Editor`]) is what refreshes the GUI cache -
     /// the two hooks split plugin-thread invalidation from
     /// GUI-thread repaint.
-    fn state_changed(&mut self) {
-        self.state_load_count = self.state_load_count.saturating_add(1);
+    fn state_changed(state: &mut StateExampleDspState, _params: &StateExampleParams) {
+        state.state_load_count = state.state_load_count.saturating_add(1);
     }
 
     fn editor(params: Arc<StateExampleParams>) -> Box<dyn Editor> {
@@ -245,8 +249,8 @@ mod tests {
         });
     }
 
-    fn make_plugin() -> StateExample {
-        StateExample::new(Arc::new(StateExampleParams::new()))
+    fn make_state() -> StateExampleDspState {
+        StateExample::init(&StateExampleParams::new())
     }
 
     #[test]
@@ -264,32 +268,32 @@ mod tests {
     /// `PluginLogic::save_state` ↔ `load_state` direct path.
     #[test]
     fn label_round_trips() {
-        let mut p = make_plugin();
+        let mut p = make_state();
         p.memo.label = "guitar bus".to_string();
-        let bytes = p.save_state();
+        let bytes = StateExample::save_state(&p);
 
-        let mut fresh = make_plugin();
+        let mut fresh = make_state();
         assert_eq!(fresh.memo.label, "");
-        fresh.load_state(&bytes).unwrap();
+        StateExample::load_state(&mut fresh, &bytes).unwrap();
         assert_eq!(fresh.memo.label, "guitar bus");
     }
 
     #[test]
     fn empty_label_round_trips() {
-        let p = make_plugin();
-        let bytes = p.save_state();
-        let mut fresh = make_plugin();
-        fresh.load_state(&bytes).unwrap();
+        let p = make_state();
+        let bytes = StateExample::save_state(&p);
+        let mut fresh = make_state();
+        StateExample::load_state(&mut fresh, &bytes).unwrap();
         assert_eq!(fresh.memo.label, "");
     }
 
     #[test]
     fn unicode_label_round_trips() {
-        let mut p = make_plugin();
+        let mut p = make_state();
         p.memo.label = "🎸 distortion ⚡ ã ç ñ".to_string();
-        let bytes = p.save_state();
-        let mut fresh = make_plugin();
-        fresh.load_state(&bytes).unwrap();
+        let bytes = StateExample::save_state(&p);
+        let mut fresh = make_state();
+        StateExample::load_state(&mut fresh, &bytes).unwrap();
         assert_eq!(fresh.memo.label, "🎸 distortion ⚡ ã ç ñ");
     }
 
@@ -298,11 +302,11 @@ mod tests {
         // 8 KB of label - exercises the `Vec<u8>` growth path in
         // `serialize` plus the byte-count length-prefix in
         // `StateField` for `String`.
-        let mut p = make_plugin();
+        let mut p = make_state();
         p.memo.label = "x".repeat(8 * 1024);
-        let bytes = p.save_state();
-        let mut fresh = make_plugin();
-        fresh.load_state(&bytes).unwrap();
+        let bytes = StateExample::save_state(&p);
+        let mut fresh = make_state();
+        StateExample::load_state(&mut fresh, &bytes).unwrap();
         assert_eq!(fresh.memo.label.len(), 8 * 1024);
     }
 
@@ -312,12 +316,12 @@ mod tests {
         // default rather than panic in deserialize. The Err return
         // is the documented signal - we just want to confirm it
         // doesn't unwind.
-        let mut p = make_plugin();
-        let _ = p.load_state(&[]);
+        let mut p = make_state();
+        let _ = StateExample::load_state(&mut p, &[]);
         assert_eq!(p.memo.label, "");
-        let _ = p.load_state(&[0xFF; 3]);
+        let _ = StateExample::load_state(&mut p, &[0xFF; 3]);
         assert_eq!(p.memo.label, "");
-        let _ = p.load_state(&[0xFF; 32]);
+        let _ = StateExample::load_state(&mut p, &[0xFF; 32]);
         assert_eq!(p.memo.label, "");
     }
 
@@ -348,7 +352,7 @@ mod tests {
     /// `load_state`.
     #[test]
     fn editor_bytes_feed_load_state_not_envelope() {
-        let mut p = make_plugin();
+        let mut p = make_state();
         p.memo.label = "from editor".to_string();
         let editor_bytes = p.memo.serialize(); // what StateBinding::update sends
 
@@ -360,8 +364,8 @@ mod tests {
         );
 
         // The correct sink consumes them directly.
-        let mut fresh = make_plugin();
-        fresh.load_state(&editor_bytes).unwrap();
+        let mut fresh = make_state();
+        StateExample::load_state(&mut fresh, &editor_bytes).unwrap();
         assert_eq!(fresh.memo.label, "from editor");
     }
 

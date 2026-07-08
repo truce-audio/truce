@@ -113,8 +113,11 @@ fn step_to_seq_idx(step: i64, seq_len: usize) -> usize {
 
 // --- Plugin ---
 
-pub struct Arpeggio {
-    pub params: Arc<ArpParams>,
+/// Stateless descriptor - the arp's per-block DSP state is [`ArpeggioDspState`].
+pub struct Arpeggio;
+
+#[derive(DspState)]
+pub struct ArpeggioDspState {
     held_notes: Vec<u8>,
     /// Reusable arp sequence, rebuilt in place each block (never
     /// reallocated on the audio thread). Sized for the worst case: 4
@@ -139,27 +142,10 @@ pub struct Arpeggio {
     rng: u32,
 }
 
-impl Arpeggio {
-    pub fn new(params: Arc<ArpParams>) -> Self {
-        Self {
-            params,
-            // Pre-size so the audio thread never reallocates: at most 128
-            // distinct held notes, and a worst-case 4-octave up-down
-            // sequence.
-            held_notes: Vec::with_capacity(128),
-            sequence: Vec::with_capacity(1024),
-            scratch_down: Vec::with_capacity(512),
-            sample_rate: 44100.0,
-            last_step: None,
-            active_note: None,
-            free_beat: 0.0,
-            rng: 12345,
-        }
-    }
-
+impl ArpeggioDspState {
     /// Rebuild `self.sequence` in place from the held notes - no audio-
-    /// thread allocation, since every buffer is pre-sized in `new`.
-    fn rebuild_sequence(&mut self) {
+    /// thread allocation, since every buffer is pre-sized in `init`.
+    fn rebuild_sequence(&mut self, params: &ArpParams) {
         self.sequence.clear();
         if self.held_notes.is_empty() {
             return;
@@ -169,7 +155,7 @@ impl Arpeggio {
         // irrelevant, and this avoids cloning it every block.
         self.held_notes.sort_unstable();
 
-        let octaves = self.params.octaves.value_u8();
+        let octaves = params.octaves.value_u8();
         for oct in 0..octaves {
             for &note in &self.held_notes {
                 if let Some(n) = note.checked_add(oct.saturating_mul(12))
@@ -180,7 +166,7 @@ impl Arpeggio {
             }
         }
 
-        match self.params.pattern.value() {
+        match params.pattern.value() {
             ArpPattern::Down => {
                 self.sequence.reverse();
             }
@@ -205,6 +191,7 @@ impl Arpeggio {
 
 impl PluginLogic for Arpeggio {
     type Params = ArpParams;
+    type DspState = ArpeggioDspState;
 
     /// MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
     /// AAX (which has no audio-less plugin category) auto-adds a
@@ -214,19 +201,36 @@ impl PluginLogic for Arpeggio {
         vec![BusLayout::new()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &ArpParams) -> ArpeggioDspState {
+        ArpeggioDspState {
+            // Pre-size so the audio thread never reallocates: at most 128
+            // distinct held notes, and a worst-case 4-octave up-down
+            // sequence.
+            held_notes: Vec::with_capacity(128),
+            sequence: Vec::with_capacity(1024),
+            scratch_down: Vec::with_capacity(512),
+            sample_rate: 44100.0,
+            last_step: None,
+            active_note: None,
+            free_beat: 0.0,
+            rng: 12345,
+        }
+    }
+
+    fn reset(state: &mut ArpeggioDspState, params: &ArpParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.held_notes.clear();
-        self.last_step = None;
-        self.active_note = None;
-        self.free_beat = 0.0;
+        state.sample_rate = sample_rate;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.held_notes.clear();
+        state.last_step = None;
+        state.active_note = None;
+        state.free_beat = 0.0;
     }
 
     fn process(
-        &mut self,
+        state: &mut ArpeggioDspState,
+        params: &ArpParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
@@ -234,14 +238,14 @@ impl PluginLogic for Arpeggio {
         // Process input MIDI -- track held notes
         for event in events.iter() {
             match &event.body {
-                EventBody::NoteOn { note, .. } if !self.held_notes.contains(note) => {
-                    self.held_notes.push(*note);
+                EventBody::NoteOn { note, .. } if !state.held_notes.contains(note) => {
+                    state.held_notes.push(*note);
                 }
                 EventBody::NoteOff { note, .. } => {
-                    self.held_notes.retain(|n| n != note);
-                    if self.held_notes.is_empty() {
+                    state.held_notes.retain(|n| n != note);
+                    if state.held_notes.is_empty() {
                         // Release current arp note
-                        if let Some(cn) = self.active_note.take() {
+                        if let Some(cn) = state.active_note.take() {
                             context.output_events.push(Event::new(
                                 event.sample_offset,
                                 EventBody::NoteOff {
@@ -258,26 +262,26 @@ impl PluginLogic for Arpeggio {
             }
         }
 
-        if self.held_notes.is_empty() {
+        if state.held_notes.is_empty() {
             // Clear phase state so the next held chord re-triggers on
             // the next step boundary rather than carrying over the old
             // step index.
-            self.last_step = None;
+            state.last_step = None;
             return ProcessStatus::Normal;
         }
 
-        self.rebuild_sequence();
-        if self.sequence.is_empty() {
+        state.rebuild_sequence(params);
+        if state.sequence.is_empty() {
             return ProcessStatus::Normal;
         }
         // Move the sequence out for the sample loop so it can call
-        // `&mut self` (`next_random`) without holding a borrow of
-        // `self.sequence`. Put back below - the swap reuses the buffer's
+        // `&mut state` (`next_random`) without holding a borrow of
+        // `state.sequence`. Put back below - the swap reuses the buffer's
         // capacity, so no allocation.
-        let seq = std::mem::take(&mut self.sequence);
+        let seq = std::mem::take(&mut state.sequence);
 
-        let beats_per_step = self.params.rate.value().beats_per_step();
-        let gate_frac = f64::from(self.params.gate.value());
+        let beats_per_step = params.rate.value().beats_per_step();
+        let gate_frac = f64::from(params.gate.value());
 
         // Phase-lock to the host beat grid whenever the host reports
         // transport with a real tempo. Otherwise fall back to a
@@ -290,24 +294,24 @@ impl PluginLogic for Arpeggio {
         } else {
             120.0
         };
-        let beats_per_sample = tempo / 60.0 / self.sample_rate;
+        let beats_per_sample = tempo / 60.0 / state.sample_rate;
         let block_start_beat = if host_locked {
             transport.position_beats
         } else {
-            self.free_beat
+            state.free_beat
         };
 
-        let pattern = self.params.pattern.value();
+        let pattern = params.pattern.value();
         let mut beat = block_start_beat;
 
         for i in 0..buffer.num_samples() {
             let step_num = beat_to_step(beat, beats_per_step);
 
-            if Some(step_num) != self.last_step {
+            if Some(step_num) != state.last_step {
                 // Step boundary: release the previous note (if still
                 // sounding past gate-off, this is a no-op) and trigger
                 // the next step.
-                if let Some(cn) = self.active_note.take() {
+                if let Some(cn) = state.active_note.take() {
                     context.output_events.push(Event::new(
                         len_u32(i),
                         EventBody::NoteOff {
@@ -319,7 +323,7 @@ impl PluginLogic for Arpeggio {
                     ));
                 }
                 let note = if pattern == ArpPattern::Random {
-                    let idx = self.next_random() as usize % seq.len();
+                    let idx = state.next_random() as usize % seq.len();
                     seq[idx]
                 } else {
                     seq[step_to_seq_idx(step_num, seq.len())]
@@ -333,14 +337,14 @@ impl PluginLogic for Arpeggio {
                         velocity: 102,
                     },
                 ));
-                self.active_note = Some(note);
-                self.last_step = Some(step_num);
-            } else if let Some(step) = self.last_step {
+                state.active_note = Some(note);
+                state.last_step = Some(step_num);
+            } else if let Some(step) = state.last_step {
                 // Same step - check whether we've crossed the gate-off
                 // boundary within it.
                 let gate_off_beat = (step_as_f64(step) + gate_frac) * beats_per_step;
                 if beat >= gate_off_beat
-                    && let Some(cn) = self.active_note.take()
+                    && let Some(cn) = state.active_note.take()
                 {
                     context.output_events.push(Event::new(
                         len_u32(i),
@@ -358,11 +362,11 @@ impl PluginLogic for Arpeggio {
         }
 
         // Restore the sequence buffer (keeps its capacity for next block).
-        self.sequence = seq;
+        state.sequence = seq;
 
         // Keep the free-running counter aligned so dropping out of host
         // mode mid-session doesn't cause a phase jump.
-        self.free_beat = beat;
+        state.free_beat = beat;
 
         ProcessStatus::Normal
     }

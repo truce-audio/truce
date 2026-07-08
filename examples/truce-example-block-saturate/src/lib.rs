@@ -46,29 +46,26 @@ pub struct SaturateParams {
     pub meter_right: MeterSlot,
 }
 
-pub struct Saturate {
-    params: Arc<SaturateParams>,
-}
-
-impl Saturate {
-    pub fn new(params: Arc<SaturateParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - saturation carries no DSP state, only params.
+pub struct Saturate;
 
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for Saturate {
     type Params = SaturateParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &SaturateParams) {}
+
+    fn reset(_state: &mut (), params: &SaturateParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &SaturateParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -80,10 +77,10 @@ impl PluginLogic for Saturate {
         let mut sx = [0.0_f32; MAX_BLOCK];
         let mut sy = [0.0_f32; MAX_BLOCK];
 
-        if !self.params.drive.is_smoothing() && !self.params.output.is_smoothing() {
+        if !params.drive.is_smoothing() && !params.output.is_smoothing() {
             // Fast path: constant drive + output gains.
-            let drive_lin = db_to_linear(self.params.drive.value());
-            let output_lin = db_to_linear(self.params.output.value());
+            let drive_lin = db_to_linear(params.drive.value());
+            let output_lin = db_to_linear(params.output.value());
 
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
@@ -103,8 +100,8 @@ impl PluginLogic for Saturate {
             let n = buffer.num_samples().min(MAX_BLOCK);
             let mut drive_db = [0.0_f32; MAX_BLOCK];
             let mut output_db = [0.0_f32; MAX_BLOCK];
-            self.params.drive.read_into(&mut drive_db[..n]);
-            self.params.output.read_into(&mut output_db[..n]);
+            params.drive.read_into(&mut drive_db[..n]);
+            params.output.read_into(&mut output_db[..n]);
             let mut drive_lin_buf = [0.0_f32; MAX_BLOCK];
             let mut output_lin_buf = [0.0_f32; MAX_BLOCK];
             math::db_to_linear_block(&mut drive_lin_buf[..n], &drive_db[..n]);

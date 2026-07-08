@@ -1,0 +1,20 @@
+[package]
+name = "reload-fixture-keep-b"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Reload-transition fixture (CounterState). Paired with keep-a to exercise the code-only, same-fingerprint reload path. Internal test-only."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+truce = { workspace = true }
+truce-loader = { workspace = true }
+reload-fixture-common = { path = "../reload-fixture-common" }
+
+[lints]
+workspace = true

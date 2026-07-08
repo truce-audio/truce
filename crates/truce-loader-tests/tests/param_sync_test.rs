@@ -8,7 +8,7 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_derive::Params;
+use truce_derive::{DspState, Params};
 use truce_gui::PluginLogic;
 use truce_params::{FloatParamReadF32, Params};
 
@@ -18,36 +18,36 @@ struct TestParams {
     gain: truce_params::FloatParam,
 }
 
-struct TestPlugin {
-    params: Arc<TestParams>,
-    last_gain_plain: f64,
-}
+struct TestPlugin;
 
-impl TestPlugin {
-    fn new(params: Arc<TestParams>) -> Self {
-        Self {
-            params,
-            last_gain_plain: 0.0,
-        }
-    }
+#[derive(DspState)]
+struct TestDspState {
+    last_gain_plain: f64,
 }
 
 impl PluginLogic for TestPlugin {
     type Params = TestParams;
+    type DspState = TestDspState;
 
-    fn reset(&mut self, config: &AudioConfig) {
-        let sr = config.sample_rate;
-        self.params.set_sample_rate(sr);
+    fn init(_params: &TestParams) -> TestDspState {
+        TestDspState {
+            last_gain_plain: 0.0,
+        }
+    }
+
+    fn reset(_state: &mut TestDspState, params: &TestParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
     }
 
     fn process(
-        &mut self,
+        state: &mut TestDspState,
+        params: &TestParams,
         _buffer: &mut AudioBuffer,
         _events: &EventList,
         _ctx: &mut ProcessContext,
     ) -> ProcessStatus {
         // Record what the plugin sees as the gain value.
-        self.last_gain_plain = f64::from(self.params.gain.value());
+        state.last_gain_plain = f64::from(params.gain.value());
         ProcessStatus::Normal
     }
 
@@ -75,10 +75,8 @@ fn plain_param_not_double_denormalized() {
     // and denormalized to -60 + (-27 * 66) = way out of range.
 
     let params = Arc::new(TestParams::new());
-    let logic = TestPlugin::new(Arc::clone(&params));
-    let mut shell = truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::from_parts(
-        params, logic,
-    );
+    let mut shell =
+        truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::from_parts(params);
     shell.reset(&AudioConfig::new(44100.0, 512));
 
     let input = vec![0.5f32; 512];
@@ -109,7 +107,7 @@ fn plain_param_not_double_denormalized() {
 
     // The plugin should see -27.0 dB (the plain value), NOT some
     // double-denormalized extreme.
-    let gain = shell.logic_ref().last_gain_plain;
+    let gain = shell.state_ref().last_gain_plain;
     assert!(
         (gain - (-27.0)).abs() < 0.1,
         "Expected gain ≈ -27.0 dB, got {gain}. Likely double-denormalization bug."

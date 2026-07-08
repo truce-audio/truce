@@ -43,8 +43,12 @@ pub struct StereoUtilityParams {
     pub right: ChannelStrip,
 }
 
-pub struct StereoUtility {
-    params: Arc<StereoUtilityParams>,
+/// Stateless descriptor - DSP state lives in [`StereoUtilityDspState`].
+pub struct StereoUtility;
+
+/// Per-instance DSP state: the delay lines and their write heads.
+#[derive(DspState)]
+pub struct StereoUtilityDspState {
     /// One delay line per channel, sized in `reset()` for `MAX_DELAY_MS`.
     lines: [Vec<f32>; 2],
     write_pos: [usize; 2],
@@ -52,10 +56,9 @@ pub struct StereoUtility {
     sample_rate: f64,
 }
 
-impl StereoUtility {
-    pub fn new(params: Arc<StereoUtilityParams>) -> Self {
+impl Default for StereoUtilityDspState {
+    fn default() -> Self {
         Self {
-            params,
             lines: [Vec::new(), Vec::new()],
             write_pos: [0; 2],
             line_len: 0,
@@ -85,47 +88,53 @@ fn ms_to_samples(ms: f64, sr: f64, line_len: usize) -> usize {
 
 impl PluginLogic for StereoUtility {
     type Params = StereoUtilityParams;
+    type DspState = StereoUtilityDspState;
+
+    fn init(_params: &StereoUtilityParams) -> StereoUtilityDspState {
+        StereoUtilityDspState::default()
+    }
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn reset(
+        state: &mut StereoUtilityDspState,
+        params: &StereoUtilityParams,
+        config: &AudioConfig,
+    ) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        state.sample_rate = sample_rate;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
         let len = delay_line_len(sample_rate);
-        self.line_len = len;
-        for line in &mut self.lines {
+        state.line_len = len;
+        for line in &mut state.lines {
             line.clear();
             line.resize(len, 0.0);
         }
-        self.write_pos = [0; 2];
+        state.write_pos = [0; 2];
     }
 
     fn process(
-        &mut self,
+        state: &mut StereoUtilityDspState,
+        params: &StereoUtilityParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
-        let sr = self.sample_rate;
-        let len = self.line_len;
+        let sr = state.sample_rate;
+        let len = state.line_len;
 
         for ch in 0..buffer.channels().min(2) {
-            let strip = if ch == 0 {
-                &self.params.left
-            } else {
-                &self.params.right
-            };
+            let strip = if ch == 0 { &params.left } else { &params.right };
             // Delay distance and polarity are read per block; gain stays
             // per-sample smoothed so a fader move is click-free.
             let delay_samples = ms_to_samples(f64::from(strip.delay.value()), sr, len);
             let sign = if strip.invert.value() { -1.0 } else { 1.0 };
 
-            let line = &mut self.lines[ch];
-            let mut wp = self.write_pos[ch];
+            let line = &mut state.lines[ch];
+            let mut wp = state.write_pos[ch];
             let (inp, out) = buffer.io(ch);
             for i in 0..inp.len() {
                 line[wp] = inp[i];
@@ -134,7 +143,7 @@ impl PluginLogic for StereoUtility {
                 out[i] = line[read] * gain * sign;
                 wp = (wp + 1) % len;
             }
-            self.write_pos[ch] = wp;
+            state.write_pos[ch] = wp;
         }
 
         ProcessStatus::Normal

@@ -18,37 +18,34 @@ pub struct SysexEchoParams {
     pub enabled: BoolParam,
 }
 
-pub struct SysexEcho {
-    params: Arc<SysexEchoParams>,
-}
-
-impl SysexEcho {
-    pub fn new(params: Arc<SysexEchoParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - the echo carries no DSP state, only params.
+pub struct SysexEcho;
 
 impl PluginLogic for SysexEcho {
     type Params = SysexEchoParams;
+    type DspState = ();
+
+    fn init(_params: &SysexEchoParams) {}
 
     fn bus_layouts() -> Vec<BusLayout> {
         // MIDI effect: no audio I/O.
         vec![BusLayout::new()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn reset(_state: &mut (), params: &SysexEchoParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &SysexEchoParams,
         _buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        if !self.params.enabled.value() {
+        if !params.enabled.value() {
             return ProcessStatus::Normal;
         }
 
@@ -110,9 +107,9 @@ mod tests {
 
     #[test]
     fn echoes_sysex_payload() {
-        let params = Arc::new(SysexEchoParams::new());
-        let mut plugin = SysexEcho::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 64));
+        let params = SysexEchoParams::new();
+        SysexEcho::init(&params);
+        SysexEcho::reset(&mut (), &params, &AudioConfig::new(44100.0, 64));
 
         let input: Vec<Vec<f32>> = Vec::new();
         let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();
@@ -130,7 +127,7 @@ mod tests {
         let transport = TransportInfo::default();
         let mut output_events = EventList::with_capacity(8);
         let mut context = ProcessContext::new(&transport, 44100.0, 64, &mut output_events);
-        plugin.process(&mut buffer, &events, &mut context);
+        SysexEcho::process(&mut (), &params, &mut buffer, &events, &mut context);
 
         let echoed: Vec<&[u8]> = output_events
             .iter()

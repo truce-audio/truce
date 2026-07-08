@@ -124,34 +124,30 @@ impl IcedPlugin<GainParams> for GainUi {
 
 // --- Plugin ---
 
-pub struct GainIced {
-    params: Arc<GainParams>,
-}
-
-impl GainIced {
-    pub fn new(params: Arc<GainParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - carries no DSP state, only params.
+pub struct GainIced;
 
 impl PluginLogic for GainIced {
     type Params = GainParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+    fn init(_params: &GainParams) {}
+
+    fn reset(_state: &mut (), params: &GainParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let gain_db = self.params.gain.read();
-            let pan = self.params.pan.read();
+            let gain_db = params.gain.read();
+            let pan = params.pan.read();
             let gain_linear = db_to_linear(gain_db);
 
             let gain_l = gain_linear * (1.0 - pan.max(0.0));

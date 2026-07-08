@@ -102,8 +102,12 @@ pub struct TremoloParams {
 
 // --- Plugin ---
 
+/// The tremolo's per-block DSP state. `type DspState = Self` folds the
+/// stateless descriptor into this struct, so `Tremolo` is both the
+/// `PluginLogic` carrier and the hot-reload-preserved DSP state - no
+/// separate descriptor type.
+#[derive(DspState)]
 pub struct Tremolo {
-    params: Arc<TremoloParams>,
     /// Free-running phase used when the host provides no tempo (e.g.
     /// standalone running, or a host that does not report transport).
     /// Advances at 2 Hz so the effect stays visibly active offline.
@@ -111,41 +115,40 @@ pub struct Tremolo {
     sample_rate: f64,
 }
 
-impl Tremolo {
-    pub fn new(params: Arc<TremoloParams>) -> Self {
-        Self {
-            params,
-            free_phase: 0.0,
-            sample_rate: 44100.0,
-        }
-    }
-}
-
 /// Rate at which `free_phase` advances when no host tempo is available.
 const FREE_LFO_HZ: f64 = 2.0;
 
 impl PluginLogic for Tremolo {
     type Params = TremoloParams;
+    type DspState = Self;
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &TremoloParams) -> Self {
+        Tremolo {
+            free_phase: 0.0,
+            sample_rate: 44100.0,
+        }
+    }
+
+    fn reset(state: &mut Self, params: &TremoloParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.free_phase = 0.0;
+        state.sample_rate = sample_rate;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.free_phase = 0.0;
     }
 
     fn process(
-        &mut self,
+        state: &mut Self,
+        params: &TremoloParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         let transport = context.transport;
-        let shape = self.params.shape.value();
-        let rate = self.params.rate.value();
+        let shape = params.shape.value();
+        let rate = params.rate.value();
         let beats_per_cycle = rate.beats_per_cycle();
-        let sr = self.sample_rate;
+        let sr = state.sample_rate;
         let host_sync = transport.playing && transport.tempo > 0.0;
 
         let host_phase_inc = if host_sync {
@@ -160,10 +163,10 @@ impl PluginLogic for Tremolo {
         } else {
             0.0
         };
-        let mut free_phase = self.free_phase;
+        let mut free_phase = state.free_phase;
 
         for i in 0..buffer.num_samples() {
-            let depth = self.params.depth.read();
+            let depth = params.depth.read();
             let phase = if host_sync { host_phase } else { free_phase };
             let lfo = shape.at(phase); // in [0, 1]
             // `lfo` is in [0, 1]; the f32 cast is exact for that range.
@@ -179,7 +182,7 @@ impl PluginLogic for Tremolo {
             free_phase = (free_phase + free_phase_inc).rem_euclid(1.0);
         }
 
-        self.free_phase = free_phase;
+        state.free_phase = free_phase;
         ProcessStatus::Normal
     }
 

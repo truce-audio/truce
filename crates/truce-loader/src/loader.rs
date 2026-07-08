@@ -1,7 +1,12 @@
 //! `NativeLoader` - loads and hot-reloads a plugin dylib.
 //!
 //! Uses native Rust ABI (no C translation layer). Verifies
-//! compatibility via `AbiCanary` + vtable probe before use.
+//! compatibility via `AbiCanary` + symbol presence before use. The
+//! dylib exports a flat set of functions over an opaque `*mut ()` state
+//! pointer (see `export_plugin!`); the loader resolves them into
+//! [`LogicSymbols`]. The DSP state itself is owned by the shell
+//! ([`crate::shell::HotShell`]), not the loader, so it can survive a
+//! reload - the loader only swaps the code.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -26,17 +31,99 @@ static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};
 
-use crate::PluginLogicCore;
-use crate::canary::{AbiCanary, verify_probe};
+use crate::canary::AbiCanary;
+use truce_core::buffer::AudioBuffer;
+use truce_core::config::AudioConfig;
+use truce_core::events::EventList;
+use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_core::state::StateLoadError;
 use truce_params::sample::Sample;
 
-type ProbeFn<S> = fn() -> Box<dyn PluginLogicCore<S>>;
-type CreateFn<S> = fn(*const ()) -> Box<dyn PluginLogicCore<S>>;
+/// The `truce_process` export's signature (state, params, buffer,
+/// events, ctx) -> status. Aliased to keep [`LogicSymbols`] readable.
+type ProcessFn<S> =
+    fn(*mut (), *const (), &mut AudioBuffer<S>, &EventList, &mut ProcessContext) -> ProcessStatus;
 
-/// Verified candidate dylib + instance, ready to swap in.
+/// The `truce_drop_state` export's signature. The shell keeps one of
+/// these alongside its state so the allocation is freed by the dylib
+/// that made it, even after a reload.
+pub type StateDropFn = fn(*mut ());
+
+/// The flat function-pointer table resolved from a loaded dylib. Every
+/// entry operates on an opaque `*mut ()` / `*const ()` state pointer
+/// (an erased `Box<State>`) plus a `*const ()` params pointer (the
+/// shell's `Arc<Params>`). The pointers stay valid because the loader
+/// never `dlclose`s a library (handles leak by design), so a table
+/// resolved from an older dylib keeps working for state that dylib made.
+struct LogicSymbols<S: Sample> {
+    init_state: fn(*const ()) -> *mut (),
+    drop_state: StateDropFn,
+    reset: fn(*mut (), *const (), &AudioConfig),
+    process: ProcessFn<S>,
+    latency: fn(*const ()) -> u32,
+    tail: fn(*const ()) -> u32,
+    save_state: fn(*const ()) -> Vec<u8>,
+    snapshot_into: fn(*const (), &mut Vec<u8>) -> bool,
+    load_state: fn(*mut (), &[u8]) -> Result<(), StateLoadError>,
+    state_changed: fn(*mut (), *const ()),
+    /// Structural fingerprint of the plugin's `State`. The shell keeps
+    /// live state across a reload only when this matches the fingerprint
+    /// the held state was created with.
+    fingerprint: u64,
+}
+
+impl<S: Sample> LogicSymbols<S> {
+    /// Resolve every exported symbol from `lib`. Returns `None` (and
+    /// logs) if any is missing - a stale dylib built before the flat ABI
+    /// won't have them, and is refused rather than half-bound.
+    ///
+    /// # Safety
+    /// `lib` must be a truce logic dylib whose `AbiCanary` already
+    /// matched the shell (checked before this call), so each symbol has
+    /// the signature named here.
+    unsafe fn resolve(lib: &Library) -> Option<Self> {
+        // Each `*sym` copies the bare `fn` pointer out of the borrowed
+        // `Symbol`; it stays valid as long as `lib`'s code is mapped,
+        // which it always is (libraries are leaked, never closed).
+        macro_rules! sym {
+            ($name:literal, $ty:ty) => {{
+                let s: Symbol<$ty> = match unsafe { lib.get($name) } {
+                    Ok(s) => s,
+                    Err(e) => {
+                        log::warn!(
+                            "missing export {} (stale pre-flat-ABI dylib?): {e}",
+                            std::str::from_utf8($name).unwrap_or("?")
+                        );
+                        return None;
+                    }
+                };
+                *s
+            }};
+        }
+        let fingerprint_fn: fn() -> u64 = sym!(b"truce_state_fingerprint", fn() -> u64);
+        Some(Self {
+            init_state: sym!(b"truce_init_state", fn(*const ()) -> *mut ()),
+            drop_state: sym!(b"truce_drop_state", fn(*mut ())),
+            reset: sym!(b"truce_reset", fn(*mut (), *const (), &AudioConfig)),
+            process: sym!(b"truce_process", ProcessFn<S>),
+            latency: sym!(b"truce_latency", fn(*const ()) -> u32),
+            tail: sym!(b"truce_tail", fn(*const ()) -> u32),
+            save_state: sym!(b"truce_save_state", fn(*const ()) -> Vec<u8>),
+            snapshot_into: sym!(b"truce_snapshot_into", fn(*const (), &mut Vec<u8>) -> bool),
+            load_state: sym!(
+                b"truce_load_state",
+                fn(*mut (), &[u8]) -> Result<(), StateLoadError>
+            ),
+            state_changed: sym!(b"truce_state_changed", fn(*mut (), *const ())),
+            fingerprint: fingerprint_fn(),
+        })
+    }
+}
+
+/// Verified candidate dylib + resolved symbol table, ready to swap in.
 struct Candidate<S: Sample> {
     library: Library,
-    plugin: Box<dyn PluginLogicCore<S>>,
+    symbols: LogicSymbols<S>,
     hash: u32,
     mtime: SystemTime,
     /// Path of the versioned copy in the system temp dir. Tracked so
@@ -55,9 +142,12 @@ struct Candidate<S: Sample> {
 pub struct NativeLoader<S: Sample = f32> {
     dylib_path: PathBuf,
     library: Option<Library>,
-    plugin: Option<Box<dyn PluginLogicCore<S>>>,
-    /// Raw pointer to the shell's `Arc<Params>` (type-erased).
-    /// Passed to `truce_create()` so the plugin shares the same params.
+    /// Resolved flat-ABI function table for the currently loaded dylib.
+    /// `None` before the first successful load. State is not held here -
+    /// the shell owns it so it can survive a reload.
+    symbols: Option<LogicSymbols<S>>,
+    /// Raw pointer to the shell's `Arc<Params>` (type-erased), passed to
+    /// every state-op symbol so the plugin shares the shell's params.
     params_ptr: *const (),
     last_modified: SystemTime,
     last_hash: u32,
@@ -96,7 +186,7 @@ impl<S: Sample> NativeLoader<S> {
         let mut loader = Self {
             dylib_path,
             library: None,
-            plugin: None,
+            symbols: None,
             params_ptr,
             last_modified: SystemTime::UNIX_EPOCH,
             last_hash: 0,
@@ -216,36 +306,19 @@ impl<S: Sample> NativeLoader<S> {
             return None;
         }
 
-        let probe_fn: Symbol<ProbeFn<S>> = match unsafe { lib.get(b"truce_vtable_probe") } {
-            Ok(f) => f,
-            Err(e) => {
-                log::warn!("missing truce_vtable_probe export: {e}");
-                cleanup_temp(lib, &temp);
-                return None;
-            }
-        };
-        let mut probe = probe_fn();
-        let probe_result = verify_probe(probe.as_mut());
-        drop(probe);
-        if let Err(msg) = probe_result {
-            log::error!("vtable probe failed: {msg}");
+        // Resolve the flat-ABI symbol table. Symbol presence (plus the
+        // canary above) replaces the old vtable probe: a mismatched or
+        // stale dylib is missing these exports and is refused here.
+        // SAFETY: the canary matched, so the exports have the signatures
+        // `LogicSymbols::resolve` names.
+        let Some(symbols) = (unsafe { LogicSymbols::<S>::resolve(&lib) }) else {
             cleanup_temp(lib, &temp);
             return None;
-        }
-
-        let create_fn: Symbol<CreateFn<S>> = match unsafe { lib.get(b"truce_create") } {
-            Ok(f) => f,
-            Err(e) => {
-                log::warn!("missing truce_create export: {e}");
-                cleanup_temp(lib, &temp);
-                return None;
-            }
         };
-        let plugin = create_fn(self.params_ptr);
 
         Some(Candidate {
             library: lib,
-            plugin,
+            symbols,
             hash: new_hash,
             mtime: file_mtime(&self.dylib_path),
             temp_path: temp,
@@ -268,7 +341,7 @@ impl<S: Sample> NativeLoader<S> {
         match self.build_candidate(new_hash) {
             Some(cand) => {
                 self.library = Some(cand.library);
-                self.plugin = Some(cand.plugin);
+                self.symbols = Some(cand.symbols);
                 self.last_hash = cand.hash;
                 self.last_modified = cand.mtime;
                 self.current_temp = Some(cand.temp_path);
@@ -279,14 +352,19 @@ impl<S: Sample> NativeLoader<S> {
         }
     }
 
-    /// Reload the dylib. Verifies the *new* dylib first; only drops the
-    /// old plugin/library after the candidate is fully constructed, so a
-    /// failed canary or vtable probe leaves the host with the previous
-    /// plugin still loaded instead of silence.
+    /// Reload the dylib. Verifies the *new* dylib first; only swaps the
+    /// symbol table after the candidate is fully constructed, so a failed
+    /// canary or missing symbol leaves the host on the previous code
+    /// instead of silence.
+    ///
+    /// State is not touched here: the shell owns it and, on seeing the
+    /// [`load_counter`](Self::load_counter) advance, decides via the
+    /// [`state_fingerprint`](Self::state_fingerprint) whether to keep the
+    /// live state (code-only edit) or re-init it (layout changed).
     pub fn reload(&mut self) -> bool {
         let Some(new_hash) = crc32_file(&self.dylib_path) else {
             log::warn!(
-                "failed to hash dylib at {} (missing / unreadable / mid-write); keeping previous plugin loaded",
+                "failed to hash dylib at {} (missing / unreadable / mid-write); keeping previous code loaded",
                 self.dylib_path.display()
             );
             return false;
@@ -296,50 +374,28 @@ impl<S: Sample> NativeLoader<S> {
             return true;
         }
 
-        // Build + verify the candidate while the old plugin is still alive.
+        // Build + verify the candidate while the old code is still live.
         let Some(candidate) = self.build_candidate(new_hash) else {
-            log::warn!("hot-reload failed; keeping previous plugin loaded");
+            log::warn!("hot-reload failed; keeping previous code loaded");
             return false;
         };
 
-        // Save state from the old instance, then swap.
-        let state = self.plugin.as_ref().map(|p| p.save_state());
-        // Drop old plugin before leaking the library (plugin's `Drop`
-        // lives in that library).
-        self.plugin = None;
+        // Leak the old library: its code must stay mapped because the
+        // shell may still hold state whose `drop_state` lives in it, and
+        // `dlclose` would segfault on TLS destructors (macOS). The temp
+        // file is tracked so `Drop` removes it once the process exits.
         if let Some(old) = self.library.take() {
             self.leaked_handles.push(old);
             if let Some(p) = self.current_temp.take() {
-                // Track the temp path alongside the leaked handle so
-                // `Drop` can remove the file once the handle is gone.
                 self.temp_paths.push(p);
             }
         }
 
         self.library = Some(candidate.library);
-        self.plugin = Some(candidate.plugin);
+        self.symbols = Some(candidate.symbols);
         self.last_hash = candidate.hash;
         self.last_modified = candidate.mtime;
         self.current_temp = Some(candidate.temp_path);
-
-        if let (Some(state), Some(plugin)) = (state, self.plugin.as_mut())
-            && !state.is_empty()
-        {
-            if let Err(e) = plugin.load_state(&state) {
-                // The new dylib refused state saved by the previous one -
-                // typically a state-format change between builds during
-                // iteration. The plugin keeps its post-`create()` defaults;
-                // log so the developer can see why the params jumped.
-                log::warn!("hot-reload: new dylib rejected previous state ({e}); keeping defaults");
-            }
-            // Fire state_changed in the same `&mut` borrow window as
-            // `load_state` - format-wrapper bridges (StaticShell, HotShell)
-            // do this for host-driven loads, but at this depth we hold the
-            // raw `dyn PluginLogic` and have to call it ourselves.
-            // Run on both Ok and Err so partial state still triggers a
-            // cache refresh - same policy as the format-wrapper bridges.
-            plugin.state_changed();
-        }
 
         log::info!(
             "hot-reload complete (load #{}, {} leaked handles)",
@@ -349,9 +405,84 @@ impl<S: Sample> NativeLoader<S> {
         true
     }
 
+    /// Fingerprint of the currently loaded dylib's `State` layout, or
+    /// `None` if nothing is loaded. The shell compares this to the
+    /// fingerprint its live state was born with to decide preservation.
     #[must_use]
-    pub fn plugin(&self) -> Option<&dyn PluginLogicCore<S>> {
-        self.plugin.as_ref().map(std::convert::AsRef::as_ref)
+    pub fn state_fingerprint(&self) -> Option<u64> {
+        self.symbols.as_ref().map(|s| s.fingerprint)
+    }
+
+    /// Allocate fresh DSP state from the current dylib. Returns the
+    /// opaque state pointer, its layout fingerprint, and the matching
+    /// `drop` function (which the shell must keep and call to free that
+    /// exact allocation, since it lives in this dylib's code).
+    #[must_use]
+    pub fn init_state(&self) -> Option<(*mut (), u64, StateDropFn)> {
+        let s = self.symbols.as_ref()?;
+        Some(((s.init_state)(self.params_ptr), s.fingerprint, s.drop_state))
+    }
+
+    /// Run the current dylib's `process` on `state` (opaque, layout must
+    /// match the current fingerprint). Returns `Normal` if nothing is
+    /// loaded (silent block).
+    pub fn process(
+        &self,
+        state: *mut (),
+        buffer: &mut AudioBuffer<S>,
+        events: &EventList,
+        ctx: &mut ProcessContext,
+    ) -> ProcessStatus {
+        match self.symbols.as_ref() {
+            Some(s) => (s.process)(state, self.params_ptr, buffer, events, ctx),
+            None => ProcessStatus::Normal,
+        }
+    }
+
+    /// Run the current dylib's `reset` on `state`.
+    pub fn reset(&self, state: *mut (), config: &AudioConfig) {
+        if let Some(s) = self.symbols.as_ref() {
+            (s.reset)(state, self.params_ptr, config);
+        }
+    }
+
+    #[must_use]
+    pub fn latency(&self, state: *const ()) -> u32 {
+        self.symbols.as_ref().map_or(0, |s| (s.latency)(state))
+    }
+
+    #[must_use]
+    pub fn tail(&self, state: *const ()) -> u32 {
+        self.symbols.as_ref().map_or(0, |s| (s.tail)(state))
+    }
+
+    #[must_use]
+    pub fn save_state(&self, state: *const ()) -> Vec<u8> {
+        self.symbols
+            .as_ref()
+            .map_or_else(Vec::new, |s| (s.save_state)(state))
+    }
+
+    pub fn snapshot_into(&self, state: *const (), buf: &mut Vec<u8>) -> bool {
+        self.symbols
+            .as_ref()
+            .is_some_and(|s| (s.snapshot_into)(state, buf))
+    }
+
+    /// Restore `state` from `data`, then fire `state_changed` in the same
+    /// window (matching the format-wrapper bridges' policy).
+    ///
+    /// # Errors
+    /// Forwards the dylib's `load_state` failure (malformed / stale blob).
+    pub fn load_state(&self, state: *mut (), data: &[u8]) -> Result<(), StateLoadError> {
+        match self.symbols.as_ref() {
+            Some(s) => {
+                let r = (s.load_state)(state, data);
+                (s.state_changed)(state, self.params_ptr);
+                r
+            }
+            None => Ok(()),
+        }
     }
 
     /// Build the loaded plugin's editor via the dylib's
@@ -376,8 +507,10 @@ impl<S: Sample> NativeLoader<S> {
         Some(build(params_ptr))
     }
 
-    pub fn plugin_mut(&mut self) -> Option<&mut dyn PluginLogicCore<S>> {
-        self.plugin.as_mut().map(std::convert::AsMut::as_mut)
+    /// Whether a dylib is currently loaded (symbols resolved).
+    #[must_use]
+    pub fn is_loaded(&self) -> bool {
+        self.symbols.is_some()
     }
 
     /// Monotonic counter of successful (or attempted) reloads: bumps
@@ -414,8 +547,11 @@ impl<S: Sample> NativeLoader<S> {
 impl<S: Sample> Drop for NativeLoader<S> {
     fn drop(&mut self) {
         self.watcher_stop.store(true, Ordering::Relaxed);
-        // Drop plugin before library (plugin's drop is in the library).
-        self.plugin = None;
+        // The loader owns only the resolved symbol table (bare fn
+        // pointers, nothing to drop); the DSP state is owned and freed
+        // by the shell. Drop the symbols before the library, matching
+        // library-outlives-its-code ordering.
+        self.symbols = None;
         // Leaked handles are intentionally not closed (TLS destructors
         // in the dylib could segfault on unload). But we *can* clean
         // up the temp files for the active handle - its plugin is gone

@@ -147,13 +147,14 @@ pub struct {struct_name}Params {
 }"#;
 
 const EFFECT_PROCESS_BODY: &str = r"    fn process(
-        &mut self,
+        _state: &mut (),
+        params: &Self::Params,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let gain = db_to_linear(self.params.gain.read());
+            let gain = db_to_linear(params.gain.read());
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
                 out[i] = inp[i] * gain;
@@ -163,7 +164,8 @@ const EFFECT_PROCESS_BODY: &str = r"    fn process(
     }";
 
 const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(
-        &mut self,
+        _state: &mut (),
+        _params: &Self::Params,
         buffer: &mut AudioBuffer,
         events: &EventList,
         _context: &mut ProcessContext,
@@ -195,12 +197,13 @@ const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(
     }";
 
 const MIDI_PROCESS_BODY: &str = r"    fn process(
-        &mut self,
+        _state: &mut (),
+        params: &Self::Params,
         _buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        let semitones = self.params.semitones.value_i32();
+        let semitones = params.semitones.value_i32();
         // Clamped to the MIDI note domain, so the narrowing cast is
         // lossless.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
