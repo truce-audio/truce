@@ -88,8 +88,9 @@ pub struct AuParamDescriptor {
 /// `#define` together when appending a callback (or changing an
 /// unreleased tail callback's signature); a test asserts they match.
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
-/// argument. v3: appended `latency_samples` / `tail_samples`.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7503;
+/// argument. v3: appended `latency_samples` / `tail_samples`. v4:
+/// appended `set_render_mode`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7504;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -264,6 +265,15 @@ pub struct AuCallbacks {
     /// [`Self::latency_samples`] for `kAudioUnitProperty_TailTime` /
     /// `AUAudioUnit.tailTime`.
     pub tail_samples: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Host → plugin render-mode signal, as a `ProcessMode`
+    /// discriminant (0 realtime, 1 buffered, 2 offline). The shim calls
+    /// it when the host toggles AU offline rendering
+    /// (`kAudioUnitProperty_OfflineRender` on v2,
+    /// `AUAudioUnit.isRenderingOffline` on v3); the Rust side stashes it
+    /// in an atomic that `cb_reset` and every `cb_process` block read.
+    /// Appended per the append-only rule (gate on `abi_version`
+    /// cross-binary).
+    pub set_render_mode: unsafe extern "C" fn(ctx: *mut c_void, mode: u32),
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

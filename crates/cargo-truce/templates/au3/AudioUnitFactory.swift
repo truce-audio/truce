@@ -340,7 +340,18 @@ class TruceAUAudioUnit: AUAudioUnit {
         try super.allocateRenderResources()
         if _outputBusArray.count > 0 { _sampleRate = _outputBusArray[0].format.sampleRate }
         _maxFrames = maximumFramesToRender
-        if let ctx = rustCtx, let cb = g_callbacks { cb.pointee.reset(ctx, _sampleRate, _maxFrames) }
+        if let ctx = rustCtx, let cb = g_callbacks {
+            // Forward the host's offline-render flag before prep so the
+            // plugin's reset / process observe the right ProcessMode
+            // (0 realtime, 2 offline). `set_render_mode` is an ABI v4
+            // tail callback - gate so an older plugin binary is never
+            // called through a pointer past its tail.
+            if truceAbiTailVersion(cb) >= 4 {
+                let mode: UInt32 = isRenderingOffline ? 2 : 0
+                cb.pointee.set_render_mode(ctx, mode)
+            }
+            cb.pointee.reset(ctx, _sampleRate, _maxFrames)
+        }
         // Watch for dynamic-latency changes on the main thread while
         // rendering (KVO must fire off the audio thread). Scheduled on
         // the main run loop even if the host allocates on another thread.

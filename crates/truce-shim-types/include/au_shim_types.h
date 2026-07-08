@@ -39,9 +39,11 @@
 // argument; an appex must not drain a v1 binary through them.
 // v3: appended `latency_samples` / `tail_samples`; an appex must not
 // query them on a pre-v3 binary (the pointers would be past its tail).
+// v4: appended `set_render_mode`; a shim must not push a render-mode
+// change into a pre-v4 binary (the pointer would be past its tail).
 #define TRUCE_AU_ABI_MAGIC_MASK 0xFFFFFF00u
 #define TRUCE_AU_ABI_MAGIC 0x54417500u
-#define TRUCE_AU_ABI_VERSION 0x54417503u
+#define TRUCE_AU_ABI_VERSION 0x54417504u
 
 typedef struct {
     uint8_t component_type[4];
@@ -310,6 +312,15 @@ typedef struct {
      * abi_version). */
     uint32_t (*latency_samples)(void *ctx);
     uint32_t (*tail_samples)(void *ctx);
+    /* Host -> plugin render-mode signal. The host sets AU offline
+     * rendering (`kAudioUnitProperty_OfflineRender` on v2,
+     * `AUAudioUnit.isRenderingOffline` on v3); the shim forwards it here
+     * as a `ProcessMode` discriminant (0 realtime, 1 buffered, 2
+     * offline) so the plugin can raise quality / relax realtime
+     * discipline during a bounce. The Rust side stashes it in an atomic
+     * that `reset` and every `process` block read. Appended per the
+     * append-only rule; gate on abi_version (>= v4) before calling. */
+    void (*set_render_mode)(void *ctx, uint32_t mode);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

@@ -36,6 +36,12 @@ typedef struct {
     UInt32 maxFramesPerSlice;
     Boolean initialized;
 
+    // kAudioUnitProperty_OfflineRender (= 37): 1 while the host renders
+    // offline (bounce / freeze), 0 for realtime. The host sets it; we
+    // forward the change to Rust via g_callbacks->set_render_mode so the
+    // plugin's process_mode tracks it, and hand it back on GetProperty.
+    UInt32 offlineRender;
+
     // kAudioUnitProperty_PresentPreset (= 36) state. The host writes
     // an AUPreset (presetNumber + retained CFStringRef name) here and
     // reads it back; we also round-trip the name through
@@ -452,6 +458,8 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = sizeof(Float64); writable = true; break;
         case kAudioUnitProperty_MaximumFramesPerSlice:
             size = sizeof(UInt32); writable = true; break;
+        case kAudioUnitProperty_OfflineRender:
+            size = sizeof(UInt32); writable = true; break;
         case kAudioUnitProperty_ParameterList:
             if (scope == kAudioUnitScope_Global)
                 size = g_num_params * sizeof(AudioUnitParameterID);
@@ -590,6 +598,12 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
 
         case kAudioUnitProperty_MaximumFramesPerSlice: {
             *(UInt32 *)outData = inst->maxFramesPerSlice;
+            *ioSize = sizeof(UInt32);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_OfflineRender: {
+            *(UInt32 *)outData = inst->offlineRender;
             *ioSize = sizeof(UInt32);
             return noErr;
         }
@@ -999,6 +1013,19 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             inst->maxFramesPerSlice = *(const UInt32 *)inData;
             notify_listeners(inst, kAudioUnitProperty_MaximumFramesPerSlice,
                            kAudioUnitScope_Global, 0);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_OfflineRender: {
+            if (inSize < sizeof(UInt32)) return kAudioUnitErr_InvalidPropertyValue;
+            inst->offlineRender = *(const UInt32 *)inData;
+            // Forward to the plugin as a ProcessMode discriminant (0
+            // realtime, 2 offline). The Rust side reads it in reset (the
+            // host re-initializes after setting this) and per process
+            // block. Gate on the callback pointer so a plugin binary
+            // built before this ABI field is never called through it.
+            if (g_callbacks && g_callbacks->set_render_mode && inst->rustCtx)
+                g_callbacks->set_render_mode(inst->rustCtx, inst->offlineRender ? 2u : 0u);
             return noErr;
         }
 

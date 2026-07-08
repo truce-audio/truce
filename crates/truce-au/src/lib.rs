@@ -10,7 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 // The AU v2 param-notify pump is macOS-only (v2 doesn't exist on iOS).
 #[cfg(target_os = "macos")]
@@ -218,6 +218,11 @@ struct AuInstance<P: PluginExport> {
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
+    /// Current render mode as a [`ProcessMode`] discriminant. The host
+    /// toggles AU offline rendering on the main thread (`cb_set_render_
+    /// mode`); `cb_reset` and every `cb_process` block read it so a
+    /// bounce can relax realtime discipline. Defaults to `Realtime` (0).
+    render_mode: AtomicU8,
     /// AU v2 (macOS) process-emitted `ParamChange` feedback pump. Set
     /// once in `cb_create` (after the instance has its final address);
     /// `None` only if the notifier thread failed to spawn.
@@ -340,6 +345,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin: shared_plugin(plugin),
         latency_cache,
         tail_cache,
+        render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
         #[cfg(target_os = "macos")]
         param_notify: None,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
@@ -415,12 +421,14 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
+        // Host-set offline flag (`kAudioUnitProperty_OfflineRender` /
+        // `isRenderingOffline`), forwarded by the shim before the host
+        // (re)initializes. Prepares the plugin for the render mode the
+        // host is about to drive.
+        let mode = ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed));
         {
             let mut plugin = lock_plugin(&inst.plugin);
-            // AU offline (`kAudioUnitProperty_OfflineRender` /
-            // `renderingOffline`) isn't threaded through the shim yet, so
-            // AU always prepares for realtime.
-            plugin.reset(&AudioConfig::new(sample_rate, max_frames));
+            plugin.reset(&AudioConfig::new(sample_rate, max_frames).with_process_mode(mode));
             plugin.params().set_sample_rate(sample_rate);
             plugin.params().snap_smoothers();
             inst.latency_cache
@@ -428,6 +436,21 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
         }
         inst.prepared = true;
+    }
+}
+
+/// Host toggled AU offline rendering. `mode` is a [`ProcessMode`]
+/// discriminant; stash it so `cb_reset` (buffer / quality prep) and
+/// every `cb_process` block pick it up. Unknown values fold to
+/// `Realtime` via [`ProcessMode::from_u8`].
+unsafe extern "C" fn cb_set_render_mode<P: PluginExport>(ctx: *mut std::ffi::c_void, mode: u32) {
+    unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        // Normalize through `from_u8` so an out-of-range discriminant
+        // folds to `Realtime` before it reaches the audio thread.
+        let disc = u8::try_from(mode).unwrap_or(0);
+        inst.render_mode
+            .store(ProcessMode::from_u8(disc).as_u8(), Ordering::Relaxed);
     }
 }
 
@@ -637,8 +660,10 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             sub_event_scratch: &mut inst.sub_event_scratch,
             transport: &mut transport_snap,
             sample_rate: inst.sample_rate,
-            // AU offline signal not threaded through the shim yet.
-            process_mode: ProcessMode::Realtime,
+            // Host offline flag, forwarded by the shim (`cb_set_render_
+            // mode`); read per block so a mid-session toggle applies to
+            // the next block without waiting on a re-prep.
+            process_mode: ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed)),
             output_events: &mut inst.output_events,
             params_fn: None,
             meters_fn: None,
@@ -1934,6 +1959,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         state_load_foreign: cb_state_load_foreign::<P>,
         latency_samples: cb_latency_samples::<P>,
         tail_samples: cb_tail_samples::<P>,
+        set_render_mode: cb_set_render_mode::<P>,
     }));
 
     let param_descs = param_descs.leak();
