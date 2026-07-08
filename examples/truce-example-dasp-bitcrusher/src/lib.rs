@@ -23,23 +23,17 @@ pub struct BitcrusherParams {
     pub mix: FloatParam,
 }
 
-pub struct Bitcrusher {
-    params: Arc<BitcrusherParams>,
+/// Stateless descriptor - DSP state lives in [`BitcrusherDspState`].
+pub struct Bitcrusher;
+
+/// Per-instance DSP state: the sample-and-hold buffer and its
+/// frame counter.
+#[derive(DspState, Default)]
+pub struct BitcrusherDspState {
     /// Sample-and-hold buffer per channel (max 2 channels supported).
     held: [f32; 2],
     /// Frame counter for the hold ratio.
     hold_counter: usize,
-}
-
-impl Bitcrusher {
-    #[must_use]
-    pub fn new(params: Arc<BitcrusherParams>) -> Self {
-        Self {
-            params,
-            held: [0.0; 2],
-            hold_counter: 0,
-        }
-    }
 }
 
 /// Quantize a `[-1.0, 1.0]` sample to `bits` bits of resolution. Routes
@@ -60,40 +54,46 @@ fn quantize(s: f32, bits: u8) -> f32 {
 
 impl PluginLogic for Bitcrusher {
     type Params = BitcrusherParams;
+    type DspState = BitcrusherDspState;
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &BitcrusherParams) -> BitcrusherDspState {
+        BitcrusherDspState::default()
+    }
+
+    fn reset(state: &mut BitcrusherDspState, params: &BitcrusherParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.held = [0.0; 2];
-        self.hold_counter = 0;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.held = [0.0; 2];
+        state.hold_counter = 0;
     }
 
     fn process(
-        &mut self,
+        state: &mut BitcrusherDspState,
+        params: &BitcrusherParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         // `bits` ∈ [2, 16], stored as i64 by `IntParam`; the cast is exact.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let bits = self.params.bits.value() as u8;
-        let hold = self.params.hold.value_usize().max(1);
-        let mix = self.params.mix.read();
+        let bits = params.bits.value() as u8;
+        let hold = params.hold.value_usize().max(1);
+        let mix = params.mix.read();
 
         let channels = buffer.channels().min(2);
         for i in 0..buffer.num_samples() {
-            let refresh = self.hold_counter.is_multiple_of(hold);
+            let refresh = state.hold_counter.is_multiple_of(hold);
             for ch in 0..channels {
                 let (inp, out) = buffer.io(ch);
                 let dry = inp[i];
                 if refresh {
-                    self.held[ch] = dry;
+                    state.held[ch] = dry;
                 }
-                let crushed = quantize(self.held[ch], bits);
+                let crushed = quantize(state.held[ch], bits);
                 out[i] = dry * (1.0 - mix) + crushed * mix;
             }
-            self.hold_counter = self.hold_counter.wrapping_add(1);
+            state.hold_counter = state.hold_counter.wrapping_add(1);
         }
 
         ProcessStatus::Normal

@@ -8,7 +8,7 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_derive::Params;
+use truce_derive::{DspState, Params};
 use truce_gui::PluginLogic;
 use truce_params::{FloatParamReadF32, Params};
 
@@ -18,37 +18,37 @@ struct SmootherParams {
     gain: truce_params::FloatParam,
 }
 
-struct SmootherPlugin {
-    params: Arc<SmootherParams>,
-    samples: Vec<f32>,
-}
+struct SmootherPlugin;
 
-impl SmootherPlugin {
-    fn new(params: Arc<SmootherParams>) -> Self {
-        Self {
-            params,
-            samples: Vec::new(),
-        }
-    }
+#[derive(DspState)]
+struct SmootherDspState {
+    samples: Vec<f32>,
 }
 
 impl PluginLogic for SmootherPlugin {
     type Params = SmootherParams;
+    type DspState = SmootherDspState;
 
-    fn reset(&mut self, config: &AudioConfig) {
-        let sr = config.sample_rate;
-        self.params.set_sample_rate(sr);
+    fn init(_params: &SmootherParams) -> SmootherDspState {
+        SmootherDspState {
+            samples: Vec::new(),
+        }
+    }
+
+    fn reset(_state: &mut SmootherDspState, params: &SmootherParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
     }
 
     fn process(
-        &mut self,
+        state: &mut SmootherDspState,
+        params: &SmootherParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         _ctx: &mut ProcessContext,
     ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let g = self.params.gain.read();
-            self.samples.push(g);
+            let g = params.gain.read();
+            state.samples.push(g);
             let (inp, out) = buffer.io_pair(0, 0);
             out[i] = inp[i] * g;
         }
@@ -75,10 +75,9 @@ impl truce::prelude::Editor for NoEditor {
 #[test]
 fn smoother_ramps_gradually() {
     let params = Arc::new(SmootherParams::new());
-    let logic = SmootherPlugin::new(Arc::clone(&params));
     let mut shell =
         truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
-            params, logic,
+            params,
         );
     shell.reset(&AudioConfig::new(44100.0, 64));
 
@@ -107,7 +106,7 @@ fn smoother_ramps_gradually() {
     events.clear();
     events.push(Event::new(0, EventBody::ParamChange { id: 0, value: 1.0 }));
 
-    shell.logic_ref_mut().samples.clear();
+    shell.state_ref_mut().samples.clear();
 
     let mut second_output = vec![0.0f32; 64];
     let mut outputs2: Vec<&mut [f32]> = vec![&mut second_output];
@@ -119,7 +118,7 @@ fn smoother_ramps_gradually() {
 
     shell.process(&mut buffer2, &events, &mut ctx2);
 
-    let samples = &shell.logic_ref().samples;
+    let samples = &shell.state_ref().samples;
     assert!(!samples.is_empty(), "should have recorded samples");
 
     // The first sample should NOT be 1.0 - it should be somewhere

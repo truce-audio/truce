@@ -5,22 +5,21 @@ use truce_gui_types::layout::\{GridLayout, knob, widgets};
 
 use {struct_name}ParamsParamId as P;
 
-pub struct {struct_name} \{
-    params: Arc<{struct_name}Params>,
-}
-
-impl {struct_name} \{
-    pub fn new(params: Arc<{struct_name}Params>) -> Self \{
-        Self \{ params }
-    }
-}
+// Stateless descriptor. When your DSP needs per-instance state (filters,
+// voices, phase), put it in a `#[derive(DspState)] struct {struct_name}DspState`,
+// set `type DspState = {struct_name}DspState`, and build it in `init` -
+// the derive keeps the state alive across a hot-reload.
+pub struct {struct_name};
 
 impl PluginLogic for {struct_name} \{
     type Params = {struct_name}Params;
+    type DspState = ();
 
-{bus_layouts_method | unescaped}    fn reset(&mut self, config: &AudioConfig) \{
-        self.params.set_sample_rate(config.sample_rate);
-        self.params.snap_smoothers();
+{bus_layouts_method | unescaped}    fn init(_params: &{struct_name}Params) \{}
+
+    fn reset(_state: &mut (), params: &{struct_name}Params, config: &AudioConfig) \{
+        params.set_sample_rate(config.sample_rate);
+        params.snap_smoothers();
     }
 
 {process_body | unescaped}

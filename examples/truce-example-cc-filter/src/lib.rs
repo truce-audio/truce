@@ -36,8 +36,13 @@ pub struct CcFilterParams {
     pub cc: IntParam,
 }
 
-pub struct CcFilter {
-    params: Arc<CcFilterParams>,
+/// Stateless descriptor - DSP state lives in [`CcFilterDspState`].
+pub struct CcFilter;
+
+/// Per-instance DSP state: the one-pole filter memory and the
+/// CC-driven cutoff.
+#[derive(DspState)]
+pub struct CcFilterDspState {
     sample_rate: f64,
     /// One-pole state per channel.
     z1: [f64; 2],
@@ -45,10 +50,9 @@ pub struct CcFilter {
     cutoff_hz: f64,
 }
 
-impl CcFilter {
-    pub fn new(params: Arc<CcFilterParams>) -> Self {
+impl Default for CcFilterDspState {
+    fn default() -> Self {
         Self {
-            params,
             sample_rate: 44100.0,
             z1: [0.0; 2],
             cutoff_hz: 1000.0,
@@ -71,45 +75,51 @@ fn one_pole_a(cutoff: f64, sr: f64) -> f64 {
 
 impl PluginLogic for CcFilter {
     type Params = CcFilterParams;
+    type DspState = CcFilterDspState;
+
+    fn init(_params: &CcFilterParams) -> CcFilterDspState {
+        CcFilterDspState::default()
+    }
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn reset(state: &mut CcFilterDspState, params: &CcFilterParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.z1 = [0.0; 2];
-        self.cutoff_hz = f64::from(self.params.cutoff.read());
+        state.sample_rate = sample_rate;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.z1 = [0.0; 2];
+        state.cutoff_hz = f64::from(params.cutoff.read());
     }
 
     fn process(
-        &mut self,
+        state: &mut CcFilterDspState,
+        params: &CcFilterParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         // Listen for the configured CC and steer the cutoff from it.
-        let target_cc = self.params.cc.value_u8();
+        let target_cc = params.cc.value_u8();
         for event in events.iter() {
             if let EventBody::ControlChange { cc, value, .. } = &event.body
                 && *cc == target_cc
             {
-                self.cutoff_hz = cc_to_cutoff(*value);
+                state.cutoff_hz = cc_to_cutoff(*value);
             }
         }
 
-        let a = one_pole_a(self.cutoff_hz, self.sample_rate);
+        let a = one_pole_a(state.cutoff_hz, state.sample_rate);
         for ch in 0..buffer.channels().min(2) {
-            let mut z = self.z1[ch];
+            let mut z = state.z1[ch];
             let (inp, out) = buffer.io(ch);
             for i in 0..inp.len() {
                 z += a * (f64::from(inp[i]) - z);
                 out[i] = filtered_f32(z);
             }
-            self.z1[ch] = z;
+            state.z1[ch] = z;
         }
 
         ProcessStatus::Normal
@@ -193,11 +203,11 @@ mod tests {
 
     #[test]
     fn cc_steers_cutoff() {
-        let params = Arc::new(CcFilterParams::new());
-        let mut plugin = CcFilter::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 64));
+        let params = CcFilterParams::new();
+        let mut state = CcFilter::init(&params);
+        CcFilter::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
-        let before = plugin.cutoff_hz;
+        let before = state.cutoff_hz;
         let input = vec![vec![0.0f32; 64]; 2];
         let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();
         let mut output = vec![vec![0.0f32; 64]; 2];
@@ -219,12 +229,12 @@ mod tests {
         let transport = TransportInfo::default();
         let mut output_events = EventList::default();
         let mut context = ProcessContext::new(&transport, 44100.0, 64, &mut output_events);
-        plugin.process(&mut buffer, &events, &mut context);
+        CcFilter::process(&mut state, &params, &mut buffer, &events, &mut context);
 
         assert!(
-            plugin.cutoff_hz < before,
+            state.cutoff_hz < before,
             "CC74 = 0 should lower the cutoff (was {before}, now {})",
-            plugin.cutoff_hz
+            state.cutoff_hz
         );
     }
 

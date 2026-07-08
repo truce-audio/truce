@@ -53,29 +53,26 @@ pub struct DryWetParams {
     pub meter_right: MeterSlot,
 }
 
-pub struct DryWet {
-    params: Arc<DryWetParams>,
-}
-
-impl DryWet {
-    pub fn new(params: Arc<DryWetParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - dry/wet carries no DSP state, only params.
+pub struct DryWet;
 
 const MAX_BLOCK: usize = 1024;
 
 impl PluginLogic for DryWet {
     type Params = DryWetParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &DryWetParams) {}
+
+    fn reset(_state: &mut (), params: &DryWetParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &DryWetParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -93,7 +90,7 @@ impl PluginLogic for DryWet {
         // pattern instead of silently downsampling smoother
         // convergence to once-per-block.
         let n = buffer.num_samples();
-        let mix = self.params.mix.read_after(n);
+        let mix = params.mix.read_after(n);
         let dry_g = 1.0 - mix;
         let wet_g = mix;
 
@@ -101,7 +98,7 @@ impl PluginLogic for DryWet {
         // mix_block, the dB → linear conversion is a one-line
         // call; envelope precompute is over-engineering for two
         // gain stages.
-        let drive_lin = db_to_linear(self.params.drive.read_after(n));
+        let drive_lin = db_to_linear(params.drive.read_after(n));
 
         for ch in 0..buffer.channels() {
             let (inp, out) = buffer.io(ch);

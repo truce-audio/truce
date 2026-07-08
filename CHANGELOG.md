@@ -4,12 +4,64 @@ Notable changes per release.
 
 ## 4.0.0
 
-- Offline-render awareness: a `ProcessMode` (realtime / buffered / offline) reaches `reset` via a new `AudioConfig` and every block via `ProcessContext`, so a plugin can raise quality or relax realtime discipline during a bounce. Wired on CLAP, VST3, VST2, and LV2 (freewheel port); AU and AAX stay realtime for now.
-- Dynamic latency reporting: a plugin that varies its `latency()` return value now notifies the host of the change. Wired on CLAP (`latency.changed` + restart), VST3 (`restartComponent`), AU v2 (property notification), AU v3 (KVO on `latency`), VST2 (`audioMasterIOChanged`, best-effort), and LV2 (new `reportsLatency` port). AAX stays static (no push notification).
+- Render-mode support: a `ProcessMode` (realtime / buffered / offline) reaches `reset` through the new `AudioConfig` and every block through `ProcessContext`, so a plugin can raise quality or relax realtime discipline during an offline bounce. Wired on CLAP, VST3, VST2, and LV2 (freewheel port); AU and AAX stay realtime for now.
+- Receiverless `PluginLogic`: the trait is a stateless descriptor whose methods (`process`, `reset`, `save_state`, ...) are associated functions over `&mut Self::DspState` / `&Self::Params` - no `&self`. DSP state moves into the shell, so a hot-reload keeps it alive across a code-only swap: reverb tails and oscillator phases survive an edit-and-reload. Put the DSP fields in a `#[derive(DspState)]` struct named as `type DspState`; the layout fingerprint that guards preservation is derived automatically. A stateless plugin writes `type DspState = ()`.
+- Dynamic latency reporting: a plugin that changes its `latency()` return now notifies the host. Wired on CLAP, VST3, AU v2, AU v3, and VST2 (best-effort), plus LV2's new `reportsLatency` port; AAX stays static.
 
 ### Breaking
 
-- `reset` now takes `&AudioConfig` instead of `(sample_rate, max_block_size)`. Read `config.sample_rate` / `config.max_block_size`; branch on `config.process_mode` to size buffers for offline.
+- `reset` takes `&AudioConfig` instead of `(sample_rate, max_block_size)`. Read `config.sample_rate` / `config.max_block_size`; branch on `config.process_mode` for offline.
+- `PluginLogic` is a descriptor plus `type DspState`. Move `self.<dsp field>` into the `DspState` struct, drop the stored params `Arc`, replace `new` with `init(params) -> Self::DspState`, and make each method receiverless over `state` / `params` (e.g. `fn process(state: &mut Self::DspState, params: &Self::Params, ...)`).
+
+### Migrating from 3.x
+
+Your plugin becomes two types: a (usually empty) descriptor and a `DspState` struct holding the fields that used to live on `self`.
+
+1. **Split out the DSP state.** Move every non-params field into a `#[derive(DspState)]` struct and point `type DspState` at it. A plugin with no DSP state writes `type DspState = ()`. The dropped params `Arc` is gone - `params` arrives as an argument now.
+
+   ```diff
+   -struct MyPlugin {
+   -    params: Arc<MyParams>,
+   -    filter: Filter,
+   -    phase: f32,
+   -}
+   +struct MyPlugin;                 // stateless descriptor
+   +
+   +#[derive(DspState)]
+   +struct MyDspState {
+   +    filter: Filter,
+   +    phase: f32,
+   +}
+
+    impl PluginLogic for MyPlugin {
+        type Params = MyParams;
+   +    type DspState = MyDspState;
+   ```
+
+2. **Replace `new` with `init`.** It takes `&Self::Params` and returns the state instead of `Self`.
+
+   ```diff
+   -    fn new(params: Arc<MyParams>) -> Self {
+   -        Self { params, filter: Filter::default(), phase: 0.0 }
+   +    fn init(_params: &MyParams) -> MyDspState {
+   +        MyDspState { filter: Filter::default(), phase: 0.0 }
+        }
+   ```
+
+3. **Make each method receiverless.** Swap `&mut self` for explicit `state` / `params`, and rewrite the body's `self.<field>` as `state.<field>` and `self.params` as `params`. `reset` also takes `&AudioConfig`.
+
+   ```diff
+   -    fn reset(&mut self, sample_rate: f32, max_block_size: usize) {
+   -        self.filter.set_rate(sample_rate);
+   +    fn reset(state: &mut MyDspState, params: &MyParams, config: &AudioConfig) {
+   +        state.filter.set_rate(config.sample_rate);
+        }
+
+   -    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList, ctx: &mut ProcessContext) -> ProcessStatus {
+   +    fn process(state: &mut MyDspState, params: &MyParams, buffer: &mut AudioBuffer, events: &EventList, ctx: &mut ProcessContext) -> ProcessStatus {
+   ```
+
+   `editor` is unchanged - it already takes `Arc<Self::Params>` (see 3.0.0).
 
 ## 3.1.4
 

@@ -153,8 +153,11 @@ const PITCH_BEND_RANGE: f64 = 2.0;
 const VIBRATO_RATE_HZ: f64 = 5.0;
 const VIBRATO_DEPTH_SEMITONES: f64 = 0.5;
 
-pub struct Synth {
-    pub params: Arc<SynthParams>,
+/// Stateless descriptor - the synth's per-block DSP state is [`SynthDspState`].
+pub struct Synth;
+
+#[derive(DspState)]
+pub struct SynthDspState {
     voices: Vec<Voice>,
     sample_rate: f64,
     /// Channel pitch bend as a frequency multiplier. `1.0` is centered.
@@ -165,30 +168,19 @@ pub struct Synth {
     lfo_phase: f64,
 }
 
-impl Synth {
-    pub fn new(params: Arc<SynthParams>) -> Self {
-        Self {
-            params,
-            voices: Vec::with_capacity(MAX_VOICES),
-            sample_rate: 44100.0,
-            pitch_bend_mult: 1.0,
-            mod_wheel: 0.0,
-            lfo_phase: 0.0,
-        }
-    }
-
+impl SynthDspState {
     /// Map a 14-bit pitch-bend code to a frequency multiplier.
     fn pitch_bend(&mut self, value: u16) {
         let semitones = f64::from(norm_pitch_bend(value)) * PITCH_BEND_RANGE;
         self.pitch_bend_mult = 2.0_f64.powf(semitones / 12.0);
     }
 
-    fn note_on(&mut self, note: u8, velocity: f32) {
+    fn note_on(&mut self, params: &SynthParams, note: u8, velocity: f32) {
         let freq = midi_note_to_freq(note);
-        let attack = self.params.envelope.attack.value();
-        let decay = self.params.envelope.decay.value();
-        let sustain = self.params.envelope.sustain.value();
-        let release = self.params.envelope.release.value();
+        let attack = params.envelope.attack.value();
+        let decay = params.envelope.decay.value();
+        let sustain = params.envelope.sustain.value();
+        let release = params.envelope.release.value();
 
         self.voices.push(Voice::new(
             note,
@@ -216,24 +208,36 @@ impl Synth {
 
 impl PluginLogic for Synth {
     type Params = SynthParams;
+    type DspState = SynthDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &SynthParams) -> SynthDspState {
+        SynthDspState {
+            voices: Vec::with_capacity(MAX_VOICES),
+            sample_rate: 44100.0,
+            pitch_bend_mult: 1.0,
+            mod_wheel: 0.0,
+            lfo_phase: 0.0,
+        }
+    }
+
+    fn reset(state: &mut SynthDspState, params: &SynthParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.sample_rate = sample_rate;
-        self.voices.clear();
-        self.pitch_bend_mult = 1.0;
-        self.mod_wheel = 0.0;
-        self.lfo_phase = 0.0;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        state.sample_rate = sample_rate;
+        state.voices.clear();
+        state.pitch_bend_mult = 1.0;
+        state.mod_wheel = 0.0;
+        state.lfo_phase = 0.0;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        state: &mut SynthDspState,
+        params: &SynthParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         _context: &mut ProcessContext,
@@ -250,42 +254,42 @@ impl PluginLogic for Synth {
                 }
                 match &event.body {
                     EventBody::NoteOn { note, velocity, .. } => {
-                        self.note_on(*note, norm_7bit(*velocity));
+                        state.note_on(params, *note, norm_7bit(*velocity));
                     }
-                    EventBody::NoteOff { note, .. } => self.note_off(*note),
-                    EventBody::PitchBend { value, .. } => self.pitch_bend(*value),
+                    EventBody::NoteOff { note, .. } => state.note_off(*note),
+                    EventBody::PitchBend { value, .. } => state.pitch_bend(*value),
                     // CC1 is the mod wheel; steer vibrato depth from it.
                     EventBody::ControlChange { cc: 1, value, .. } => {
-                        self.mod_wheel = f64::from(norm_7bit(*value));
+                        state.mod_wheel = f64::from(norm_7bit(*value));
                     }
                     _ => {}
                 }
                 next_event += 1;
             }
 
-            let waveform_idx = self.params.waveform.index();
-            let cutoff = self.params.filter.cutoff.read();
-            let resonance = self.params.filter.resonance.read();
-            let volume = db_to_linear(self.params.volume.read());
+            let waveform_idx = params.waveform.index();
+            let cutoff = params.filter.cutoff.read();
+            let resonance = params.filter.resonance.read();
+            let volume = db_to_linear(params.volume.read());
 
             // Advance the shared vibrato LFO and fold it into the
             // channel pitch bend, so every voice gets one combined
             // pitch multiplier this sample.
             let vibrato_semitones =
-                self.mod_wheel * VIBRATO_DEPTH_SEMITONES * (self.lfo_phase * TAU).sin();
-            self.lfo_phase += VIBRATO_RATE_HZ / self.sample_rate;
-            if self.lfo_phase >= 1.0 {
-                self.lfo_phase -= 1.0;
+                state.mod_wheel * VIBRATO_DEPTH_SEMITONES * (state.lfo_phase * TAU).sin();
+            state.lfo_phase += VIBRATO_RATE_HZ / state.sample_rate;
+            if state.lfo_phase >= 1.0 {
+                state.lfo_phase -= 1.0;
             }
-            let pitch_mult = self.pitch_bend_mult * 2.0_f64.powf(vibrato_semitones / 12.0);
+            let pitch_mult = state.pitch_bend_mult * 2.0_f64.powf(vibrato_semitones / 12.0);
 
             let mut sample = 0.0f64;
-            for voice in &mut self.voices {
+            for voice in &mut state.voices {
                 sample += voice.render(
                     waveform_idx,
                     cutoff,
                     resonance,
-                    self.sample_rate,
+                    state.sample_rate,
                     pitch_mult,
                 );
             }
@@ -298,8 +302,8 @@ impl PluginLogic for Synth {
             }
         }
 
-        self.voices.retain(|v| !v.is_done());
-        if self.voices.is_empty() {
+        state.voices.retain(|v| !v.is_done());
+        if state.voices.is_empty() {
             ProcessStatus::Tail(0)
         } else {
             ProcessStatus::Normal

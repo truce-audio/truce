@@ -1,0 +1,20 @@
+[package]
+name = "reload-fixture-reset"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Reload-transition fixture (ResetState). Distinct fingerprint from keep-a/keep-b, so a reload to it must drop + re-init state. Internal test-only."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+truce = { workspace = true }
+truce-loader = { workspace = true }
+reload-fixture-common = { path = "../reload-fixture-common" }
+
+[lints]
+workspace = true

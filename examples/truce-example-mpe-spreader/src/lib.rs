@@ -138,8 +138,11 @@ struct Held {
     phase: f64,
 }
 
-pub struct Spreader {
-    params: Arc<SpreaderParams>,
+/// Stateless descriptor. The per-block DSP state lives in [`SpreaderDspState`].
+pub struct Spreader;
+
+#[derive(DspState)]
+pub struct SpreaderDspState {
     sample_rate: f64,
     /// Held notes indexed by note number. One entry per pitch - a second
     /// `NoteOn` of the same pitch overwrites (a test tool, not a full
@@ -150,19 +153,6 @@ pub struct Spreader {
     /// The wire vibrato bent on last block, so a note-off or a mode
     /// change can recentre the note instead of leaving it detuned.
     vibrato: Option<VibratoKind>,
-}
-
-impl Spreader {
-    #[must_use]
-    pub fn new(params: Arc<SpreaderParams>) -> Self {
-        Self {
-            params,
-            sample_rate: 44100.0,
-            held: [None; 128],
-            next_channel: 0,
-            vibrato: None,
-        }
-    }
 }
 
 // LFO sample -> 32-bit per-note pitch bend around centre.
@@ -176,32 +166,43 @@ fn lfo_bend(depth: f64, s: f64) -> u32 {
 
 impl PluginLogic for Spreader {
     type Params = SpreaderParams;
+    type DspState = SpreaderDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
         // MIDI effect: no audio I/O.
         vec![BusLayout::new()]
     }
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &SpreaderParams) -> SpreaderDspState {
+        SpreaderDspState {
+            sample_rate: 44100.0,
+            held: [None; 128],
+            next_channel: 0,
+            vibrato: None,
+        }
+    }
+
+    fn reset(state: &mut SpreaderDspState, params: &SpreaderParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
-        self.sample_rate = sample_rate;
-        self.held = [None; 128];
-        self.next_channel = 0;
-        self.vibrato = None;
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
+        state.sample_rate = sample_rate;
+        state.held = [None; 128];
+        state.next_channel = 0;
+        state.vibrato = None;
     }
 
     // One arm per promoted event type - long but flat.
     #[allow(clippy::too_many_lines)]
     fn process(
-        &mut self,
+        state: &mut SpreaderDspState,
+        params: &SpreaderParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        let algo = self.params.algo.value();
-        let width = self.params.channels.value_u8().clamp(1, 16);
+        let algo = params.algo.value();
+        let width = params.channels.value_u8().clamp(1, 16);
 
         for event in events.iter() {
             let off = event.sample_offset;
@@ -212,8 +213,8 @@ impl PluginLogic for Spreader {
                     note,
                     velocity,
                 } => {
-                    let (g, ch) = self.route(algo, width, group, channel);
-                    self.held[usize::from(note)] = Some(Held {
+                    let (g, ch) = Self::route(state, algo, width, group, channel);
+                    state.held[usize::from(note)] = Some(Held {
                         group: g,
                         channel: ch,
                         phase: 0.0,
@@ -236,13 +237,13 @@ impl PluginLogic for Spreader {
                     note,
                     velocity,
                 } => {
-                    let held = self.held[usize::from(note)].take();
+                    let held = state.held[usize::from(note)].take();
                     let (g, ch) = held.map_or((group, channel), |h| (h.group, h.channel));
                     // Recentre a note that was being vibrato'd before it
                     // ends, so its release tail isn't stuck at the last
                     // bend. (Playback stop sends note-offs, so this covers
                     // "recentre on stop" too.)
-                    if let Some(kind) = self.vibrato
+                    if let Some(kind) = state.vibrato
                         && held.is_some()
                     {
                         context
@@ -273,8 +274,8 @@ impl PluginLogic for Spreader {
                     attribute_type,
                     attribute,
                 } => {
-                    let (g, ch) = self.route(algo, width, group, channel);
-                    self.held[usize::from(note)] = Some(Held {
+                    let (g, ch) = Self::route(state, algo, width, group, channel);
+                    state.held[usize::from(note)] = Some(Held {
                         group: g,
                         channel: ch,
                         phase: 0.0,
@@ -299,9 +300,9 @@ impl PluginLogic for Spreader {
                     attribute_type,
                     attribute,
                 } => {
-                    let held = self.held[usize::from(note)].take();
+                    let held = state.held[usize::from(note)].take();
                     let (g, ch) = held.map_or((group, channel), |h| (h.group, h.channel));
-                    if let Some(kind) = self.vibrato
+                    if let Some(kind) = state.vibrato
                         && held.is_some()
                     {
                         context
@@ -328,7 +329,7 @@ impl PluginLogic for Spreader {
                     // channel as the note so a downstream voice keyed by
                     // (channel, note) actually receives it.
                     for note in 0u8..128 {
-                        if let Some(h) = self.held[usize::from(note)] {
+                        if let Some(h) = state.held[usize::from(note)] {
                             context.output_events.push(Event::new(
                                 off,
                                 EventBody::PerNoteCC {
@@ -434,14 +435,14 @@ impl PluginLogic for Spreader {
         // covers a transport stop, since the host sends note-offs then.
         let last = u32::try_from(buffer.num_samples().saturating_sub(1)).unwrap_or(0);
         let kind = vibrato_kind(algo);
-        if self.vibrato != kind {
-            if let Some(old) = self.vibrato {
-                self.recentre_held(old, last, context);
+        if state.vibrato != kind {
+            if let Some(old) = state.vibrato {
+                Self::recentre_held(state, old, last, context);
             }
-            self.vibrato = kind;
+            state.vibrato = kind;
         }
         if let Some(kind) = kind {
-            self.emit_vibrato(kind, buffer.num_samples(), last, context);
+            Self::emit_vibrato(state, params, kind, buffer.num_samples(), last, context);
         }
 
         ProcessStatus::Normal
@@ -465,11 +466,17 @@ impl Spreader {
     /// Resolve the output `(group, channel)` for a fresh note and advance
     /// any round-robin counters. Only called on `NoteOn`. `MPE Vibrato`
     /// fans like `Channel Fan` so each channel bend lands on one note.
-    fn route(&mut self, algo: Algo, width: u8, group: u8, channel: u8) -> (u8, u8) {
+    fn route(
+        state: &mut SpreaderDspState,
+        algo: Algo,
+        width: u8,
+        group: u8,
+        channel: u8,
+    ) -> (u8, u8) {
         match algo {
             Algo::ChannelFan | Algo::MpeVibrato => {
-                let ch = self.next_channel % width;
-                self.next_channel = (self.next_channel + 1) % width;
+                let ch = state.next_channel % width;
+                state.next_channel = (state.next_channel + 1) % width;
                 (group, ch)
             }
             Algo::Passthrough | Algo::PerNoteVibrato | Algo::ModBrightness => (group, channel),
@@ -480,9 +487,14 @@ impl Spreader {
     /// cancelling residual vibrato detune when the mode switches.
     /// `offset` is the block's last sample (see the ordering note at
     /// the call site).
-    fn recentre_held(&mut self, kind: VibratoKind, offset: u32, context: &mut ProcessContext) {
+    fn recentre_held(
+        state: &mut SpreaderDspState,
+        kind: VibratoKind,
+        offset: u32,
+        context: &mut ProcessContext,
+    ) {
         for note in 0u8..128 {
-            if let Some(h) = self.held[usize::from(note)].as_mut() {
+            if let Some(h) = state.held[usize::from(note)].as_mut() {
                 h.phase = 0.0;
                 context.output_events.push(Event::new(
                     offset,
@@ -496,22 +508,23 @@ impl Spreader {
     /// bend on `kind`'s wire at `offset` (the block's last sample). The
     /// semitone depth param scales into the wire's bend range.
     fn emit_vibrato(
-        &mut self,
+        state: &mut SpreaderDspState,
+        params: &SpreaderParams,
         kind: VibratoKind,
         block_samples: usize,
         offset: u32,
         context: &mut ProcessContext,
     ) {
-        let rate = self.params.vib_rate.raw_target();
+        let rate = params.vib_rate.raw_target();
         let range = match kind {
             VibratoKind::PerNote => PER_NOTE_BEND_RANGE_SEMIS,
             VibratoKind::Channel => CHANNEL_BEND_RANGE_SEMIS,
         };
-        let depth = (self.params.vib_depth.raw_target() / range).min(1.0);
+        let depth = (params.vib_depth.raw_target() / range).min(1.0);
         let n = u32::try_from(block_samples).unwrap_or(0);
-        let inc = rate * f64::from(n) / self.sample_rate;
+        let inc = rate * f64::from(n) / state.sample_rate;
         for note in 0u8..128 {
-            if let Some(h) = self.held[usize::from(note)].as_mut() {
+            if let Some(h) = state.held[usize::from(note)].as_mut() {
                 h.phase = (h.phase + inc).fract();
                 let value = lfo_bend(depth, (h.phase * TAU).sin());
                 let body = match kind {
@@ -565,11 +578,11 @@ mod tests {
     }
 
     fn run(algo: Algo, width: i64, input: &[EventBody]) -> EventList {
-        let params = Arc::new(SpreaderParams::new());
+        let params = SpreaderParams::new();
         params.algo.set_value(algo);
         params.channels.set_value(width);
-        let mut plugin = Spreader::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 64));
+        let mut state = Spreader::init(&params);
+        Spreader::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut out_refs: Vec<&mut [f32]> = Vec::new();
@@ -582,7 +595,7 @@ mod tests {
         let transport = TransportInfo::default();
         let mut output = EventList::default();
         let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut output);
-        plugin.process(&mut buffer, &events, &mut ctx);
+        Spreader::process(&mut state, &params, &mut buffer, &events, &mut ctx);
         output
     }
 
@@ -690,10 +703,10 @@ mod tests {
     // block with `second_algo` + events; returns the second block's
     // output for recentre assertions.
     fn second_block(first_algo: Algo, second_algo: Algo, second_events: &[EventBody]) -> EventList {
-        let params = Arc::new(SpreaderParams::new());
+        let params = SpreaderParams::new();
         params.algo.set_value(first_algo);
-        let mut plugin = Spreader::new(Arc::clone(&params));
-        plugin.reset(&AudioConfig::new(44100.0, 64));
+        let mut state = Spreader::init(&params);
+        Spreader::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut out_refs: Vec<&mut [f32]> = Vec::new();
@@ -704,7 +717,7 @@ mod tests {
         on.push(Event::new(0, note_on(0, 60)));
         let mut out1 = EventList::default();
         let mut ctx1 = ProcessContext::new(&transport, 44100.0, 64, &mut out1);
-        plugin.process(&mut buffer, &on, &mut ctx1);
+        Spreader::process(&mut state, &params, &mut buffer, &on, &mut ctx1);
 
         params.algo.set_value(second_algo);
         let mut ev2 = EventList::default();
@@ -713,7 +726,7 @@ mod tests {
         }
         let mut out2 = EventList::default();
         let mut ctx2 = ProcessContext::new(&transport, 44100.0, 64, &mut out2);
-        plugin.process(&mut buffer, &ev2, &mut ctx2);
+        Spreader::process(&mut state, &params, &mut buffer, &ev2, &mut ctx2);
         out2
     }
 

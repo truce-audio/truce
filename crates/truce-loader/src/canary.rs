@@ -1,23 +1,24 @@
 //! ABI canary - runtime verification that shell and dylib have
-//! compatible type layouts and vtable ordering.
+//! compatible type layouts across the hot-reload boundary. The dylib
+//! exports a flat set of Rust-ABI symbols over an opaque state pointer
+//! (no trait object), so this checks the sizes / layouts those symbols
+//! pass by value or reference, plus the rustc build hash and sample
+//! precision. Per-plugin `State` identity rides a separate
+//! `truce_state_fingerprint` symbol, not this struct.
 
-use std::cell::RefCell;
 use std::mem::{align_of, size_of};
 use std::ptr;
 
 use truce_core::buffer::AudioBuffer;
-use truce_core::config::AudioConfig;
-use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
+use truce_core::events::{Event, EventBody, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
 // Source canary types from `truce-gui-types` (the lightweight types
-// crate) and `truce-plugin` (the trait surface) so the canary - which
-// every shell needs - stays available even when `builtin-gui` is off
-// and the heavy `truce-gui` renderer crate is out of the dep graph.
+// crate) so the canary - which every shell needs - stays available even
+// when `builtin-gui` is off and the heavy `truce-gui` renderer crate is
+// out of the dep graph.
 use truce_gui_types::interaction::WidgetRegion;
 use truce_gui_types::layout::GridLayout;
 use truce_gui_types::theme::{Color, Theme};
-use truce_params::sample::Sample;
-use truce_plugin::PluginLogicCore;
 
 /// Hand-bumped ABI epoch. Sizes and alignments can't see every
 /// layout change: `Event::port` landed in former padding, so
@@ -42,7 +43,14 @@ use truce_plugin::PluginLogicCore;
 /// `ProcessContext` gained a `process_mode` field. A stale epoch-3 dylib
 /// would call `reset` with mismatched arguments and read a differently
 /// sized context; this bump rejects it before either can happen.
-pub const ABI_EPOCH: u32 = 4;
+/// Epoch 5: the dylib boundary stopped being a `dyn PluginLogicCore`
+/// vtable and became a flat set of Rust-ABI symbols over an opaque
+/// `*mut ()` state pointer (state now lives in the shell, so it can
+/// survive a code-only reload). The vtable probe is gone; a stale
+/// epoch-4 dylib exports the old `truce_create` shape and lacks the new
+/// symbols, so it fails at `dlsym` - this bump rejects it earlier and
+/// with a clearer message.
+pub const ABI_EPOCH: u32 = 5;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
@@ -53,7 +61,6 @@ pub struct AbiCanary {
     /// [`ABI_EPOCH`] the side was built with; see its rules for when
     /// to bump what.
     pub abi_epoch: u32,
-    pub trait_object_size: usize,
     pub audio_buffer_size: usize,
     pub process_context_size: usize,
     pub process_status_size: usize,
@@ -96,7 +103,6 @@ impl AbiCanary {
         let sample_precision = (size_of::<S>() * 8) as u8;
         Self {
             abi_epoch: ABI_EPOCH,
-            trait_object_size: size_of::<*const dyn PluginLogicCore<S>>() * 2,
             audio_buffer_size: size_of::<AudioBuffer<S>>(),
             process_context_size: size_of::<ProcessContext>(),
             process_status_size: size_of::<ProcessStatus>(),
@@ -152,7 +158,6 @@ impl AbiCanary {
         // adding one line below; `matches` and `diff_report` both
         // reuse this list.
         check!(abi_epoch);
-        check!(trait_object_size);
         check!(audio_buffer_size);
         check!(process_context_size);
         check!(process_status_size);
@@ -192,174 +197,6 @@ fn discriminant_byte<T>(value: &T) -> u8 {
 fn rustc_hash() -> u64 {
     env!("TRUCE_RUSTC_HASH").parse().unwrap_or(0)
 }
-
-// ---------------------------------------------------------------------------
-// Vtable probe
-// ---------------------------------------------------------------------------
-
-/// A plugin with known return values for vtable verification.
-///
-/// The shell creates this via `truce_vtable_probe()`, calls every
-/// method, and checks the results. If any method returns the wrong
-/// value, the vtable is reordered and the dylib is rejected.
-///
-/// `last_load_state` is the only mutable cell - `load_state` writes
-/// it, `save_state` reads it back. This lets `verify_probe`
-/// round-trip a sentinel through the load/save pair to confirm the
-/// `load_state` slot isn't swapped with another `&mut self` slot.
-#[derive(Default)]
-pub struct ProbePlugin {
-    last_load_state: RefCell<Vec<u8>>,
-}
-
-impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
-    fn supports_in_place() -> bool
-    where
-        Self: Sized,
-    {
-        false
-    }
-
-    fn bus_layouts() -> Vec<truce_core::bus::BusLayout>
-    where
-        Self: Sized,
-    {
-        vec![truce_core::bus::BusLayout::stereo()]
-    }
-
-    fn reset(&mut self, _config: &AudioConfig) {}
-
-    fn process(
-        &mut self,
-        _buffer: &mut AudioBuffer<S>,
-        _events: &EventList,
-        _context: &mut ProcessContext,
-    ) -> ProcessStatus {
-        ProcessStatus::Normal
-    }
-
-    fn save_state(&self) -> Vec<u8> {
-        // If `load_state` wasn't called, return the default sentinel;
-        // otherwise echo what was just loaded so verify can check the
-        // load/save vtable slots aren't crossed.
-        let cached = self.last_load_state.borrow();
-        if cached.is_empty() {
-            vec![0xCA, 0xFE]
-        } else {
-            cached.clone()
-        }
-    }
-    fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
-        *self.last_load_state.borrow_mut() = data.to_vec();
-        Ok(())
-    }
-    fn state_changed(&mut self) {}
-    fn migrate_state(
-        _foreign: &truce_core::state::ForeignState,
-    ) -> Option<truce_core::state::MigratedState>
-    where
-        Self: Sized,
-    {
-        // Receiverless, so it has no vtable slot to probe.
-        None
-    }
-    fn latency(&self) -> u32 {
-        0xAAAA
-    }
-    fn tail(&self) -> u32 {
-        0xBBBB
-    }
-}
-
-/// Verify a probe plugin returns the expected values.
-///
-/// Coverage notes: methods exercised, in source-declaration order:
-/// `latency`, `tail`, `save_state` (default path), then `load_state` +
-/// `save_state` (echo path). 4 of `PluginLogicCore`'s 8 instance
-/// methods covered. The four not exercised (`reset`, `process`,
-/// `state_changed`, `editor`) would require constructing an
-/// `AudioBuffer` / opening a real window mock, heavyweight enough to
-/// outweigh the marginal vtable-reorder detection benefit.
-/// (Trait-object dispatch goes through a vtable whose slot order is
-/// rustc-internal and not stable; we don't depend on a particular
-/// layout. The goal here is just to call enough of the surface that
-/// any ABI-affecting reshuffle is likely to land on a method we *do*
-/// exercise.)
-///
-/// # Errors
-///
-/// Returns `Err(ProbeError)` on the first canary value that failed
-/// to round-trip. Each variant pins which trait method drifted so
-/// callers can pattern-match.
-#[cfg(feature = "shell")]
-pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogicCore<S>) -> Result<(), ProbeError> {
-    if probe.latency() != 0xAAAA {
-        return Err(ProbeError::Latency {
-            expected: 0xAAAA,
-            actual: probe.latency(),
-        });
-    }
-    if probe.tail() != 0xBBBB {
-        return Err(ProbeError::Tail {
-            expected: 0xBBBB,
-            actual: probe.tail(),
-        });
-    }
-    if probe.save_state() != vec![0xCA, 0xFE] {
-        return Err(ProbeError::SaveStateDefault);
-    }
-    // Round-trip a sentinel through load_state → save_state to confirm
-    // the load slot isn't swapped with another `&mut self` slot.
-    let sentinel = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
-    probe
-        .load_state(&sentinel)
-        .map_err(ProbeError::LoadStateFailed)?;
-    if probe.save_state() != sentinel {
-        return Err(ProbeError::LoadSaveRoundTrip);
-    }
-    Ok(())
-}
-
-/// Why a vtable probe rejected a candidate dylib. Each variant
-/// names the trait method whose canary value drifted; the loader
-/// logs the `Display` form and refuses the load.
-#[cfg(feature = "shell")]
-#[derive(Debug)]
-pub enum ProbeError {
-    /// `PluginLogicCore::latency` didn't return the canary value.
-    Latency { expected: u32, actual: u32 },
-    /// `PluginLogicCore::tail` didn't return the canary value.
-    Tail { expected: u32, actual: u32 },
-    /// `PluginLogicCore::save_state` default path didn't return
-    /// the canary `[0xCA, 0xFE]`.
-    SaveStateDefault,
-    /// `PluginLogicCore::load_state` itself failed (returned `Err`)
-    /// for the canary sentinel.
-    LoadStateFailed(truce_core::state::StateLoadError),
-    /// `load_state` + `save_state` together didn't echo the
-    /// sentinel back - the two `&mut self` slots are crossed.
-    LoadSaveRoundTrip,
-}
-
-#[cfg(feature = "shell")]
-impl std::fmt::Display for ProbeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Latency { expected, actual } => {
-                write!(f, "latency: expected 0x{expected:X}, got 0x{actual:X}")
-            }
-            Self::Tail { expected, actual } => {
-                write!(f, "tail: expected 0x{expected:X}, got 0x{actual:X}")
-            }
-            Self::SaveStateDefault => f.write_str("save_state (default): expected [0xCA, 0xFE]"),
-            Self::LoadStateFailed(e) => write!(f, "load_state probe: {e}"),
-            Self::LoadSaveRoundTrip => f.write_str("load_state/save_state round-trip mismatch"),
-        }
-    }
-}
-
-#[cfg(feature = "shell")]
-impl std::error::Error for ProbeError {}
 
 #[cfg(test)]
 mod tests {

@@ -19,6 +19,10 @@ truce-derive = { workspace = true }
 truce-gui = { workspace = true }
 truce-loader = { workspace = true }
 truce-params = { workspace = true }
+# Shared params / state / logic for the reload-transition fixtures. A
+# dev-dep (not a build-graph edge to the cdylibs, which expose no rlib)
+# so the test can build `FxParams` for the shared params pointer.
+reload-fixture-common = { path = "fixtures/reload-fixture-common" }
 
 [features]
 # Mirror `truce-loader`'s `shell` feature so `#[cfg(feature = "shell")]`

@@ -40,27 +40,24 @@ pub struct GateParams {
     pub meter_right: MeterSlot,
 }
 
-pub struct Gate {
-    params: Arc<GateParams>,
-}
-
-impl Gate {
-    pub fn new(params: Arc<GateParams>) -> Self {
-        Self { params }
-    }
-}
+/// Stateless descriptor - the gate carries no DSP state, only params.
+pub struct Gate;
 
 impl PluginLogic for Gate {
     type Params = GateParams;
+    type DspState = ();
 
-    fn reset(&mut self, config: &AudioConfig) {
+    fn init(_params: &GateParams) {}
+
+    fn reset(_state: &mut (), params: &GateParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
+        params.set_sample_rate(sample_rate);
+        params.snap_smoothers();
     }
 
     fn process(
-        &mut self,
+        _state: &mut (),
+        params: &GateParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
@@ -69,7 +66,7 @@ impl PluginLogic for Gate {
         // in one atomic pair, so the threshold's `exp(20)` smoothing
         // settles in ~20 ms wall-clock instead of ~20 blocks (which
         // a per-block `.read()` would silently downsample to).
-        let threshold_lin = db_to_linear(self.params.threshold.read_after(buffer.num_samples()));
+        let threshold_lin = db_to_linear(params.threshold.read_after(buffer.num_samples()));
         let nch = buffer.channels();
 
         // Detect: peak over every input channel. The gate opens

@@ -28,9 +28,11 @@ use truce_plugin::PluginLogicCore;
 ///
 /// Same bridging as `HotShell` but without `NativeLoader`, `Mutex`,
 /// file watching, or any dynamic loading overhead. Use via `export_static!`.
-pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
+pub struct StaticShell<P: Params, L: PluginLogicCore<S, Params = P>, S: Sample = f32> {
     pub params: Arc<P>,
-    logic: L,
+    /// The user's mutable DSP state, owned by the shell (not the
+    /// descriptor `L`). Built once via `L::init(&params)`.
+    state: L::DspState,
     meters: Arc<MeterStore>,
     /// Lock-free publish slot for `snapshot_into`-based state save.
     snapshots: Arc<SnapshotSlot>,
@@ -44,25 +46,27 @@ pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
 }
 
 // SAFETY: `StaticShell` owns `Arc<P>` (params, `Sync` by the
-// `Params` trait contract), `L` (the user's logic - `Send + 'static`
-// per the `PluginLogicCore` bound), an atomic-slot `MeterStore`,
-// and a `PhantomData<fn() -> S>`. No raw pointers, no
-// `!Send` fields, no interior mutability that escapes the shell's
-// own `&mut` borrows. The host contract that format wrappers
-// invoke methods on a single thread at a time per instance is what
-// keeps the embedded `L` safe to access without an inner mutex -
-// same model `HotShell` uses through `parking_lot::Mutex`.
-unsafe impl<P: Params, L: PluginLogicCore<S>, S: Sample> Send for StaticShell<P, L, S> {}
+// `Params` trait contract), `L::DspState` (`Send + 'static` per the
+// `PluginLogicCore` bound), an atomic-slot `MeterStore`, and a
+// `PhantomData<fn() -> S>`. No raw pointers, no `!Send` fields, no
+// interior mutability that escapes the shell's own `&mut` borrows. The
+// host contract that format wrappers invoke methods on a single thread
+// at a time per instance is what keeps the embedded state safe to
+// access without an inner mutex - same model `HotShell` uses through
+// `parking_lot::Mutex`.
+unsafe impl<P: Params, L: PluginLogicCore<S, Params = P>, S: Sample> Send for StaticShell<P, L, S> {}
 
-impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
+impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static, S: Sample>
     StaticShell<P, L, S>
 {
-    /// Create from pre-constructed parts. The plugin logic should
-    /// hold an `Arc::clone` of the same params.
-    pub fn from_parts(params: Arc<P>, logic: L) -> Self {
+    /// Build the shell from shared params, constructing the initial DSP
+    /// state via `L::init(&params)`. The descriptor `L` is a type-only
+    /// marker; the shell owns the state it produces.
+    pub fn from_parts(params: Arc<P>) -> Self {
+        let state = L::init(&params);
         Self {
             params,
-            logic,
+            state,
             meters: MeterStore::new(),
             snapshots: SnapshotSlot::new(),
             try_snapshot: true,
@@ -83,19 +87,19 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
         Arc::clone(&self.snapshots)
     }
 
-    /// Access the plugin logic (for testing).
-    pub fn logic_ref(&self) -> &L {
-        &self.logic
+    /// Access the plugin's DSP state (for testing).
+    pub fn state_ref(&self) -> &L::DspState {
+        &self.state
     }
 
-    /// Mutable access to the plugin logic (for testing).
-    pub fn logic_ref_mut(&mut self) -> &mut L {
-        &mut self.logic
+    /// Mutable access to the plugin's DSP state (for testing).
+    pub fn state_ref_mut(&mut self) -> &mut L::DspState {
+        &mut self.state
     }
 }
 
-impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> PluginRuntime
-    for StaticShell<P, L, S>
+impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static, S: Sample>
+    PluginRuntime for StaticShell<P, L, S>
 {
     type Sample = S;
 
@@ -118,7 +122,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
     fn reset(&mut self, config: &AudioConfig) {
         self.sample_rate = config.sample_rate;
         self.params.set_sample_rate(config.sample_rate);
-        self.logic.reset(config);
+        L::reset(&mut self.state, &self.params, config);
     }
 
     fn process(
@@ -153,22 +157,22 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 
-        let status = self.logic.process(buffer, events, &mut ctx);
-        publish_snapshot(&self.logic, &self.snapshots, &mut self.try_snapshot);
+        let status = L::process(&mut self.state, &self.params, buffer, events, &mut ctx);
+        publish_snapshot::<S, L>(&self.state, &self.snapshots, &mut self.try_snapshot);
         status
     }
 
     fn save_state(&self) -> Vec<u8> {
-        self.logic.save_state()
+        L::save_state(&self.state)
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
-        let result = self.logic.load_state(data);
+        let result = L::load_state(&mut self.state, data);
         // Plugin-side cache invalidation runs in the same `&mut`
         // borrow window so the next `process()` block sees the
         // refreshed caches - fire it whether or not load_state
         // succeeded so partial state still triggers a refresh.
-        PluginLogicCore::state_changed(&mut self.logic);
+        L::state_changed(&mut self.state, &self.params);
         result
     }
 
@@ -180,10 +184,10 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
     }
 
     fn latency(&self) -> u32 {
-        self.logic.latency()
+        L::latency(&self.state)
     }
     fn tail(&self) -> u32 {
-        self.logic.tail()
+        L::tail(&self.state)
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
@@ -203,18 +207,22 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
 /// calling it rather than silently latching off and serving stale bytes.
 /// Never blocks: `SnapshotSlot::publish` skips on reader contention, in
 /// which case the closure doesn't run and the latch is left alone.
-pub(crate) fn publish_snapshot<S, L>(logic: &L, slot: &SnapshotSlot, try_snapshot: &mut bool)
-where
+pub(crate) fn publish_snapshot<S, L>(
+    state: &L::DspState,
+    slot: &SnapshotSlot,
+    try_snapshot: &mut bool,
+) where
     S: Sample,
-    L: PluginLogicCore<S> + ?Sized,
+    L: PluginLogicCore<S>,
 {
-    publish_snapshot_with(slot, try_snapshot, |buf| logic.snapshot_into(buf));
+    publish_snapshot_with(slot, try_snapshot, |buf| L::snapshot_into(state, buf));
 }
 
 /// Latch logic behind [`publish_snapshot`], parameterized over the raw
 /// `snapshot_into` closure so it can be unit-tested without a full
-/// `PluginLogicCore` mock.
-fn publish_snapshot_with(
+/// `PluginLogicCore` mock. `pub(crate)` so `HotShell` can drive it with
+/// a closure over the reloadable dylib's `truce_snapshot_into` symbol.
+pub(crate) fn publish_snapshot_with(
     slot: &SnapshotSlot,
     try_snapshot: &mut bool,
     snapshot_into: impl FnOnce(&mut Vec<u8>) -> bool,
@@ -359,9 +367,10 @@ macro_rules! export_static {
 
             fn create() -> Self {
                 let params = std::sync::Arc::new(<$params>::new());
-                let logic = <$logic>::new(std::sync::Arc::clone(&params));
+                // The descriptor `$logic` is stateless; `from_parts`
+                // builds the DSP state via `<$logic>::init(&params)`.
                 Self {
-                    inner: $crate::static_shell::StaticShell::from_parts(params, logic),
+                    inner: $crate::static_shell::StaticShell::from_parts(params),
                 }
             }
 

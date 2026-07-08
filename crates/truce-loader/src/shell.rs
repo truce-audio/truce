@@ -1,12 +1,13 @@
 //! Shell-side integration: the hot-reloadable `HotShell<P, S>`.
 //!
 //! `HotShell<P, S = f32>` implements truce-core's `Plugin` +
-//! `PluginExport` traits, delegating all logic to a
-//! sample-type-specific `Box<dyn PluginLogicCore<S>>` trait object
-//! loaded from the hot-reloadable dylib. The user's plugin impls
-//! one of the leaf traits (`PluginLogic` for `f32` or
-//! `PluginLogic64` for `f64`); the blanket bridges in `truce-plugin`
-//! lift that into the `PluginLogicCore<S>` the shell stores.
+//! `PluginExport` traits, delegating all logic to the flat Rust-ABI
+//! symbols the hot-reloadable dylib exports (`export_plugin!`), which
+//! it drives over an opaque `state: *mut ()` it owns across reloads.
+//! The user's plugin impls one of the leaf traits (`PluginLogic` for
+//! `f32` or `PluginLogic64` for `f64`); the blanket bridges in
+//! `truce-plugin` lift that into the `PluginLogicCore<S>` the dylib's
+//! exported functions call through.
 //!
 //! `HotShell` is parameterised over `S` so a `prelude64` plugin
 //! and its `S = f64` logic dylib can hot-reload too. The chosen
@@ -55,11 +56,25 @@ const GUI_LOCK_WAIT: Duration = Duration::from_millis(50);
 /// check at load time rather than silently binding to a vtable whose
 /// `process()` slot expects a different `AudioBuffer<S>`.
 ///
-/// All plugin logic (DSP, GUI rendering, layout) is delegated to
-/// the `PluginLogic<S>` trait object in the loaded dylib.
+/// All plugin logic (DSP, GUI rendering, layout) is delegated to the
+/// flat exported functions in the loaded dylib, called over the
+/// shell-owned opaque `state` pointer.
 pub struct HotShell<P: Params, S: Sample = f32> {
     pub params: Arc<P>,
     loader: Arc<Mutex<NativeLoader<S>>>,
+    /// The plugin's DSP state, owned by the shell as an erased
+    /// `Box<State>` so it can outlive a hot-reload. Null before the
+    /// first successful load. Only ever touched while the loader lock is
+    /// held (audio thread) or under the wrapper's serialize (state
+    /// save / load), never concurrently.
+    state: *mut (),
+    /// Fingerprint of the dylib that produced `state`. Compared against
+    /// a reloaded dylib's fingerprint to decide preservation.
+    state_fingerprint: u64,
+    /// `drop` function from the dylib that produced `state` - kept so
+    /// the state is freed by the exact code that made it, even after a
+    /// reload swaps in a different dylib.
+    state_dropper: Option<fn(*mut ())>,
     /// Meter values written by DSP, read by GUI.
     meters: Arc<truce_core::meters::MeterStore>,
     /// Lock-free publish slot for `snapshot_into`-based state save.
@@ -85,14 +100,19 @@ pub struct HotShell<P: Params, S: Sample = f32> {
     tail_cache: AtomicU32,
 }
 
-// SAFETY: `HotShell` holds `Arc<P>` (params, `Sync` by the trait
-// contract on `Params`), `Arc<Mutex<NativeLoader<S>>>` (already
-// `Send + Sync`), atomics, and an atomic-slot `MeterStore`. The
-// `Mutex` is the synchronisation point for every access to the
-// underlying `Box<dyn PluginLogicCore<S>>` - audio thread takes
-// `try_lock`, GUI thread takes `try_lock_for(GUI_LOCK_WAIT)`, file
-// watcher takes a blocking `lock_for`. No raw pointers, no
-// interior mutability that escapes the mutex.
+// SAFETY: the load-bearing field is `state: *mut ()` - a raw pointer,
+// so the compiler won't infer `Send` and this manual impl is required.
+// It is an erased `Box<L::DspState>`, and `PluginLogicCore::DspState:
+// Send`, so the pointee is `Send` and safe to move to another thread; the
+// shell exclusively owns that allocation (it alone frees it, through
+// the origin dylib's `state_dropper`). The pointer is only
+// dereferenced while the shell holds `&mut self` / `&self`, and the
+// format wrapper serializes `process` / `reset` / `save_state` /
+// `load_state` behind its plugin lock, so no two threads ever touch
+// `state` at once. `state_dropper` is a bare `fn` pointer (`Send`).
+// The remaining fields are `Send` on their own: `Arc<P>` (`P: Sync` by
+// the `Params` contract), `Arc<Mutex<NativeLoader<S>>>` (`Send + Sync`),
+// the atomics, and the atomic-slot `MeterStore`.
 unsafe impl<P: Params, S: Sample> Send for HotShell<P, S> {}
 
 impl<P: Params + 'static, S: Sample> HotShell<P, S> {
@@ -101,6 +121,13 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
         let params_ptr = Arc::as_ptr(&params).cast::<()>();
         let loader = NativeLoader::new(dylib_path, params_ptr);
         let initial_counter = loader.load_counter();
+        // Allocate the initial DSP state from the freshly loaded dylib
+        // (before wrapping the loader in the mutex - no contention yet).
+        let (state, state_fingerprint, state_dropper) = loader
+            .init_state()
+            .map_or((std::ptr::null_mut(), 0, None), |(st, fp, d)| {
+                (st, fp, Some(d))
+            });
         let loader = Arc::new(Mutex::new(loader));
         // Drive reloads off the audio thread. The watcher polls the
         // dylib path and runs `reload()` itself when mtime advances.
@@ -108,6 +135,9 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
         Self {
             params,
             loader,
+            state,
+            state_fingerprint,
+            state_dropper,
             meters: truce_core::meters::MeterStore::new(),
             snapshots: truce_core::snapshot::SnapshotSlot::new(),
             try_snapshot: true,
@@ -118,6 +148,31 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
             latency_cache: AtomicU32::new(0),
             tail_cache: AtomicU32::new(0),
         }
+    }
+
+    /// Ensure `self.state` is a live allocation from the current dylib,
+    /// allocating it if the shell came up before any dylib was loaded.
+    /// Returns `false` if nothing is loaded (nothing to run).
+    fn ensure_state(&mut self, loader: &NativeLoader<S>) -> bool {
+        if !self.state.is_null() {
+            return true;
+        }
+        if let Some((st, fp, dropper)) = loader.init_state() {
+            self.state = st;
+            self.state_fingerprint = fp;
+            self.state_dropper = Some(dropper);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Free the current state through the dylib that made it, if any.
+    fn drop_state(&mut self) {
+        if let (false, Some(dropper)) = (self.state.is_null(), self.state_dropper.take()) {
+            dropper(self.state);
+        }
+        self.state = std::ptr::null_mut();
     }
 
     /// Shared meter storage handle - the GUI-thread-safe channel
@@ -183,14 +238,19 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // `process` call will still pick up the new sample rate via
         // the `last_seen_load_counter` path. So a missed reset here
         // is recoverable, while a blocked audio thread is not.
-        let Some(mut loader) = self.loader.try_lock() else {
+        // Lock through a cloned handle (one relaxed atomic inc, RT-safe)
+        // so the guard borrows the local `Arc`, not `self` - leaving the
+        // shell's state fields free to mutate under the lock.
+        let loader_arc = Arc::clone(&self.loader);
+        let Some(loader) = loader_arc.try_lock() else {
             return;
         };
-        if let Some(plugin) = loader.plugin_mut() {
-            plugin.reset(config);
+        if self.ensure_state(&loader) {
+            loader.reset(self.state, config);
             self.latency_cache
-                .store(plugin.latency(), Ordering::Relaxed);
-            self.tail_cache.store(plugin.tail(), Ordering::Relaxed);
+                .store(loader.latency(self.state), Ordering::Relaxed);
+            self.tail_cache
+                .store(loader.tail(self.state), Ordering::Relaxed);
         }
     }
 
@@ -209,26 +269,48 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // watcher takes the lock briefly per reload (mtime poll loop's
         // `try_lock_for(50ms)`), so contention is bounded to the
         // reload window itself.
-        let Some(mut loader) = self.loader.try_lock() else {
+        // Lock through a cloned handle (RT-safe atomic inc) so the guard
+        // borrows the local, not `self` - the state fields stay mutable.
+        let loader_arc = Arc::clone(&self.loader);
+        let Some(loader) = loader_arc.try_lock() else {
             return ProcessStatus::Normal;
         };
 
         // The watcher thread drives reload directly; the audio thread
-        // only observes the swap and resets the new plugin to the
-        // current sample rate / block size.
+        // observes the swap here and decides what happens to the live
+        // DSP state.
         let counter = loader.load_counter();
         if counter != self.last_seen_load_counter {
-            if let Some(plugin) = loader.plugin_mut() {
-                let config = AudioConfig::new(self.sample_rate, self.max_block_size)
-                    .with_process_mode(self.process_mode);
-                plugin.reset(&config);
+            let config = AudioConfig::new(self.sample_rate, self.max_block_size)
+                .with_process_mode(self.process_mode);
+            match loader.state_fingerprint() {
+                // Same `State` layout as our live state: the author
+                // changed only code. Keep the allocation and run the new
+                // `process` on it - the reverb tail keeps ringing, no
+                // reset. This is the hot-reload payoff. `may_preserve`
+                // rejects `NO_PRESERVE` (a stateless `()` state, or an
+                // explicit opt-out) even against itself, so those re-init.
+                Some(fp)
+                    if !self.state.is_null()
+                        && truce_core::dsp_state::may_preserve(fp, self.state_fingerprint) => {}
+                // Different (or first) layout: the old bytes aren't a
+                // valid new `State`. Drop them through the origin dylib,
+                // allocate fresh from the new one, and reset.
+                Some(_) => {
+                    self.drop_state();
+                    if self.ensure_state(&loader) {
+                        loader.reset(self.state, &config);
+                    }
+                }
+                // Nothing loaded now (failed reload): keep our state.
+                None => {}
             }
             self.last_seen_load_counter = counter;
         }
 
-        let Some(plugin) = loader.plugin_mut() else {
+        if !self.ensure_state(&loader) {
             return ProcessStatus::Normal;
-        };
+        }
 
         // Apply parameter change events to our atomic params.
         // ParamChange values from format wrappers are PLAIN (already denormalized).
@@ -239,7 +321,8 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         }
         self.params.snap_smoothers();
 
-        // No sync needed - plugin reads from the same Arc<Params>.
+        // No sync needed - the dylib reads from the same Arc<Params>
+        // via the shell's params pointer.
 
         // Build a ProcessContext with param/meter callbacks for the logic.
         let params = &self.params;
@@ -256,16 +339,20 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 
-        let status = plugin.process(buffer, events, &mut ctx);
+        let status = loader.process(self.state, buffer, events, &mut ctx);
 
-        crate::static_shell::publish_snapshot(&*plugin, &self.snapshots, &mut self.try_snapshot);
+        let state = self.state.cast_const();
+        crate::static_shell::publish_snapshot_with(
+            &self.snapshots,
+            &mut self.try_snapshot,
+            |buf| loader.snapshot_into(state, buf),
+        );
 
         // Refresh latency / tail caches so host-thread queries don't
-        // have to take the loader lock (and don't dispatch through
-        // `&PluginLogic` while audio holds `&mut PluginLogic`).
+        // have to take the loader lock.
         self.latency_cache
-            .store(plugin.latency(), Ordering::Relaxed);
-        self.tail_cache.store(plugin.tail(), Ordering::Relaxed);
+            .store(loader.latency(state), Ordering::Relaxed);
+        self.tail_cache.store(loader.tail(state), Ordering::Relaxed);
 
         status
     }
@@ -280,10 +367,10 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
             return Vec::new();
         };
-        loader
-            .plugin()
-            .map(truce_plugin::PluginLogicCore::save_state)
-            .unwrap_or_default()
+        if self.state.is_null() {
+            return Vec::new();
+        }
+        loader.save_state(self.state.cast_const())
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
@@ -294,18 +381,16 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // load was carrying real preset bytes, the watcher's reload
         // will pull them back from the next user-driven preset
         // refresh; the alternative (UI hang) is worse.
-        let Some(mut loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
             return Ok(());
         };
-        let Some(plugin) = loader.plugin_mut() else {
+        if self.state.is_null() {
             return Ok(());
-        };
-        let result = plugin.load_state(data);
-        // Plugin-side cache invalidation runs in the same `&mut`
-        // borrow window so the next `process()` block sees the
-        // refreshed caches - fire even on partial state.
-        plugin.state_changed();
-        result
+        }
+        // The loader restores into `state` and fires `state_changed` in
+        // the same window (so the next `process` sees refreshed caches),
+        // matching the static shell's policy.
+        loader.load_state(self.state, data)
     }
 
     fn migrate_state(
@@ -340,6 +425,16 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
 
     fn get_meter(&self, meter_id: u32) -> f32 {
         self.meters.read(meter_id)
+    }
+}
+
+impl<P: Params, S: Sample> Drop for HotShell<P, S> {
+    fn drop(&mut self) {
+        // Free the DSP state through the dylib that produced it (its
+        // `Drop` glue lives there). The library is leaked, never closed,
+        // so the drop function is still mapped. The loader's own `Drop`
+        // then tears down the symbol table + leaked handles.
+        self.drop_state();
     }
 }
 

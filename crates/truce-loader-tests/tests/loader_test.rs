@@ -36,11 +36,13 @@ mod test {
         }
 
         let loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
-        let plugin = loader.plugin().expect("plugin should be loaded");
+        assert!(loader.is_loaded(), "plugin should be loaded");
 
-        // Verify we got a real plugin (not the probe).
-        assert_eq!(plugin.latency(), 0);
-        assert_eq!(plugin.tail(), 0);
+        // Allocate state from the dylib and verify its reports.
+        let (state, _fp, drop_state) = loader.init_state().expect("init state");
+        assert_eq!(loader.latency(state), 0);
+        assert_eq!(loader.tail(state), 0);
+        drop_state(state);
     }
 
     #[test]
@@ -51,9 +53,9 @@ mod test {
             return;
         }
 
-        let mut loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
-        let plugin = loader.plugin_mut().expect("plugin should be loaded");
-        plugin.reset(&AudioConfig::new(44100.0, 512));
+        let loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
+        let (state, _fp, drop_state) = loader.init_state().expect("init state");
+        loader.reset(state, &AudioConfig::new(44100.0, 512));
 
         // Create test audio buffers.
         let input_l = vec![0.5f32; 512];
@@ -76,13 +78,14 @@ mod test {
             .with_params(&param_fn)
             .with_meters(&meter_fn);
 
-        let result = plugin.process(&mut buffer, &events, &mut context);
+        let result = loader.process(state, &mut buffer, &events, &mut context);
         assert_eq!(result, ProcessStatus::Normal);
 
         // Output should be close to input (gain smoothing may not
         // reach exactly 1.0 in 512 samples from the default of 1.0
         // with target of 1.0, so it should be very close).
         assert!(output_l[511].abs() > 0.0, "output should be non-zero");
+        drop_state(state);
     }
 
     #[test]
@@ -93,17 +96,17 @@ mod test {
             return;
         }
 
-        let mut loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
-        let plugin = loader.plugin_mut().expect("plugin should be loaded");
+        let loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
+        let (state, _fp, drop_state) = loader.init_state().expect("init state");
 
-        let state = plugin.save_state();
-        assert_eq!(state.len(), 8); // f64 = 8 bytes
+        let blob = loader.save_state(state);
 
-        // Restore into a fresh instance.
-        plugin
-            .load_state(&state)
+        // Round-trip: restore the blob and re-serialize; must match.
+        loader
+            .load_state(state, &blob)
             .expect("save/load_state round-trip should succeed");
-        let state2 = plugin.save_state();
-        assert_eq!(state, state2);
+        let blob2 = loader.save_state(state);
+        assert_eq!(blob, blob2);
+        drop_state(state);
     }
 }
