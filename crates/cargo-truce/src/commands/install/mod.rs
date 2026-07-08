@@ -52,6 +52,53 @@ use aax::install_aax;
 #[cfg(target_os = "macos")]
 use au_v3::build_and_install_au_v3;
 
+/// Guarantee the param-manifest sidecar exists for every plugin that
+/// ships presets, so install-time preset name resolution can't fail on a
+/// missing one.
+///
+/// `truce::plugin!` / `#[derive(Params)]` write
+/// `target/lv2-meta/<crate>/param_index.toml` as a compile-time side
+/// effect, but cargo doesn't track it: delete it (or `cargo clean` only
+/// that dir) while the crate stays cached and the next *incremental* build
+/// won't re-run the macro, leaving preset install to abort with "no param
+/// manifest". When the file is missing we force `cargo clean -p <crate>`
+/// so the upcoming build recompiles the crate and regenerates it. A crate
+/// that was never built has nothing to clean (the build writes the sidecar
+/// naturally); only the deleted-but-cached case actually pays for it.
+fn ensure_preset_sidecars(plugins: &[&PluginDef], root: &Path) -> Res {
+    for p in plugins {
+        let ships_presets = presets::authored_presets_dir(root, p).is_some_and(|d| d.is_dir());
+        if !ships_presets {
+            continue;
+        }
+        let sidecar = truce_build::target_dir(root)
+            .join("lv2-meta")
+            .join(&p.crate_name)
+            .join("param_index.toml");
+        if sidecar.exists() {
+            continue;
+        }
+        crate::vprintln!(
+            "  Param manifest for {} is missing; cleaning it so the build regenerates it.",
+            p.crate_name
+        );
+        let status = std::process::Command::new("cargo")
+            .arg("clean")
+            .arg("-p")
+            .arg(&p.crate_name)
+            .status()
+            .map_err(|e| format!("running `cargo clean -p {}`: {e}", p.crate_name))?;
+        if !status.success() {
+            return Err(format!(
+                "`cargo clean -p {}` failed; needed to regenerate its preset param manifest",
+                p.crate_name
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_install(args: &[String]) -> Res {
     let config = load_config()?;
@@ -227,6 +274,14 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut extra_features = Vec::new();
     if shell_mode {
         extra_features.push("shell");
+    }
+
+    // Preset name resolution reads a param-manifest sidecar the plugin
+    // macro writes at compile time; force a rebuild of any preset-shipping
+    // plugin whose sidecar has gone missing so the upcoming build restores
+    // it. Skipped under `--no-build` (nothing would rebuild it).
+    if !no_build {
+        ensure_preset_sidecars(&plugins, &root)?;
     }
 
     // --- Build ---
