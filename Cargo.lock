@@ -4275,7 +4275,6 @@ dependencies = [
  "truce-au",
  "truce-clap",
  "truce-core",
- "truce-example-mpe-spreader",
  "truce-gui",
  "truce-gui-types",
  "truce-loader",
