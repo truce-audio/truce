@@ -43,6 +43,7 @@ use truce_params::{ParamInfo, ParamRange, Params};
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::thread::{self, JoinHandle, Thread};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper
@@ -54,6 +55,79 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 /// double-recall doesn't get the audio thread to apply a stale state
 /// after the host already moved on.
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
+
+/// VST3 wants `IComponentHandler::restartComponent` off the audio
+/// thread, so a latency change detected in `process` can't call it
+/// inline. This parked thread does: the audio thread flags a change and
+/// unparks it, and it calls `truce_vst3_restart_component(kLatencyChanged)`
+/// from a non-audio context. The dirty flag coalesces a burst into one
+/// host notification.
+const K_LATENCY_CHANGED: i32 = 8;
+
+struct LatencyNotifier {
+    dirty: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+    thread: Thread,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl LatencyNotifier {
+    /// Spawn the notifier for the instance the shim maps to `ctx`.
+    ///
+    /// # Safety
+    /// `ctx` must stay a valid shim ctx key until this notifier is
+    /// dropped - guaranteed because it lives in the `Vst3Instance` and
+    /// `cb_destroy` drops it (joining the thread) before the shim frees
+    /// the component. The pointer is only an opaque key, never derefed.
+    unsafe fn spawn(ctx: SendPtr<std::ffi::c_void>) -> Option<Self> {
+        let dirty = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (d, s) = (Arc::clone(&dirty), Arc::clone(&stop));
+        let handle = thread::Builder::new()
+            .name("truce-vst3-latency-notify".to_string())
+            .spawn(move || {
+                while !s.load(Ordering::Acquire) {
+                    if d.swap(false, Ordering::AcqRel) {
+                        // SAFETY: `ctx` is the shim's opaque ctx key,
+                        // valid until this thread is joined in Drop.
+                        unsafe {
+                            ffi::truce_vst3_restart_component(
+                                ctx.as_ptr().cast_mut(),
+                                K_LATENCY_CHANGED,
+                            );
+                        }
+                    }
+                    thread::park();
+                }
+            })
+            .ok()?;
+        let thread = handle.thread().clone();
+        Some(Self {
+            dirty,
+            stop,
+            thread,
+            handle: Some(handle),
+        })
+    }
+
+    /// Flag a latency change and wake the notifier. Cheap enough for the
+    /// audio thread: one atomic swap, and `unpark` only on the edge.
+    fn notify(&self) {
+        if !self.dirty.swap(true, Ordering::Release) {
+            self.thread.unpark();
+        }
+    }
+}
+
+impl Drop for LatencyNotifier {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.thread.unpark();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
 
 struct Vst3Instance<P: PluginExport> {
     /// The plugin behind the wrapper-standard mediation lock: the
@@ -162,6 +236,11 @@ struct Vst3Instance<P: PluginExport> {
     /// value is whatever the plugin reports immediately after `init()`.
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
+    /// Deferred restart notifier. `process` flags a latency change and
+    /// this thread calls `restartComponent(kLatencyChanged)` off the
+    /// audio thread. `None` if the thread couldn't spawn (the report
+    /// then just drifts until the host re-queries, as before).
+    latency_notify: Option<LatencyNotifier>,
     /// Last-seen values of the hidden MIDI proxy params (f64 bits),
     /// indexed by `id - MIDI_PROXY_ID_BASE`. Empty when the plugin
     /// doesn't accept MIDI input. Written by `cb_param_set_value` and
@@ -330,6 +409,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         pending_state: Arc::new(StateLoadQueue::new(1)),
         latency_cache,
         tail_cache,
+        latency_notify: None,
         midi_proxy_values: (0..midi_proxy_len::<P>())
             .map(|i| {
                 // Bounded by MIDI_PROXY_COUNT.
@@ -340,7 +420,15 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
             .collect(),
         note_id_map: NoteIdMap::new(),
     });
-    Box::into_raw(instance).cast::<std::ffi::c_void>()
+    let raw = Box::into_raw(instance);
+    unsafe {
+        // SAFETY: `raw` is live until `cb_destroy`, which drops
+        // `latency_notify` (joining the thread) before the shim frees
+        // the component; the notifier only uses the pointer as a key.
+        let ctx = SendPtr::new(raw.cast::<std::ffi::c_void>().cast_const());
+        (*raw).latency_notify = LatencyNotifier::spawn(ctx);
+    }
+    raw.cast::<std::ffi::c_void>()
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
@@ -760,9 +848,15 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             .finish_widening(outputs, num_output_channels, len_u32(num_frames));
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to take the plugin lock.
-        inst.latency_cache
-            .store(plugin.latency(), Ordering::Relaxed);
+        // queries don't have to take the plugin lock. On an actual
+        // latency change, wake the notifier thread to tell the host
+        // (`restartComponent` must run off the audio thread).
+        let new_latency = plugin.latency();
+        if inst.latency_cache.swap(new_latency, Ordering::Relaxed) != new_latency
+            && let Some(notifier) = &inst.latency_notify
+        {
+            notifier.notify();
+        }
         inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
     });
     if !ok {

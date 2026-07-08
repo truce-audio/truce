@@ -313,4 +313,11 @@ unsafe extern "C" {
     /// view re-creation between calls (Cubase theme change, Live
     /// dock/undock) doesn't leave a stale pointer in the closure.
     pub fn truce_vst3_request_resize(ctx: *mut std::ffi::c_void, w: u32, h: u32) -> i32;
+
+    /// Notify host that a restart-class property changed
+    /// (`IComponentHandler::restartComponent`). `flags` is a VST3
+    /// `RestartFlags` bitmask - `kLatencyChanged` (8) for a latency
+    /// change. Must not be called from the audio thread; truce drives it
+    /// from a deferred notifier thread.
+    pub fn truce_vst3_restart_component(ctx: *mut std::ffi::c_void, flags: i32);
 }

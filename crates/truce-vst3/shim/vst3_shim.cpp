@@ -2284,6 +2284,17 @@ void truce_vst3_end_edit(void* ctx, uint32_t id) {
     endEdit(comp->componentHandler, id);
 }
 
+// Plugin -> host restart notification. IComponentHandler vtable:
+//   [3] beginEdit  [4] performEdit  [5] endEdit  [6] restartComponent
+// Driven off the audio thread (VST3 requires it) by the Rust latency
+// notifier; `flags` is a RestartFlags bitmask (kLatencyChanged = 8).
+void truce_vst3_restart_component(void* ctx, int32_t flags) {
+    auto* comp = ctx_lookup(ctx);
+    if (!comp || !comp->componentHandler) return;
+    auto restart = (tresult (*)(void*, int32))(*(void***)comp->componentHandler)[6];
+    restart(comp->componentHandler, flags);
+}
+
 // Plugin -> host resize request. Walk ctx -> TruceComponent ->
 // TrucePlugView -> IPlugFrame*, then call IPlugFrame::resizeView.
 //
