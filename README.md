@@ -154,23 +154,26 @@ pub struct GainParams {
 
 use GainParamsParamId as P;
 
-pub struct Gain { params: Arc<GainParams> }
-
-impl Gain {
-    pub fn new(params: Arc<GainParams>) -> Self { Self { params } }
-}
+// A stateless descriptor. Parameters live in `GainParams`; this gain
+// carries no per-instance DSP state, so `type DspState = ()`. (A plugin
+// with DSP state - filter memory, oscillator phase - names a plain
+// `struct GainDspState { .. }` here instead.)
+pub struct Gain;
 
 impl PluginLogic for Gain {
     type Params = GainParams;
+    type DspState = ();
 
-    fn reset(&mut self, sr: f64, _bs: usize) {
-        self.params.set_sample_rate(sr);
+    fn init(_params: &GainParams) {}
+
+    fn reset(_state: &mut (), params: &GainParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
     }
 
-    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
-               _ctx: &mut ProcessContext) -> ProcessStatus {
+    fn process(_state: &mut (), params: &GainParams, buffer: &mut AudioBuffer,
+               _events: &EventList, _ctx: &mut ProcessContext) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let gain = db_to_linear(self.params.gain.read());
+            let gain = db_to_linear(params.gain.read());
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
                 out[i] = inp[i] * gain;
