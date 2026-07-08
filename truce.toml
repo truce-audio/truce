@@ -477,9 +477,10 @@ name = "Truce Channel Spread"
 bundle_id = "chan-spread"
 crate = "truce-example-mpe-spreader"
 category = "midi"
-# Promotes 1.0 -> 2.0 and fans notes across channels. Asymmetric dialect:
-# 1.0 in (real 1.0 to promote), 2.0 out.
-midi2_output = true
+# Fans notes across channels and adds per-note expression. Pure MIDI 2.0
+# (2.0 in and out) so the whole AU v3 chain speaks one protocol - the
+# spreader handles both 1.0 and 2.0 note input and always emits 2.0.
+midi2 = true
 fourcc = "TMpe"
 au3_subtype = "TMp3"
 au_tag = "MIDI"
