@@ -36,7 +36,8 @@ impl PluginLogic for SysexEcho {
         vec![BusLayout::new()]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
     }
@@ -111,7 +112,7 @@ mod tests {
     fn echoes_sysex_payload() {
         let params = Arc::new(SysexEchoParams::new());
         let mut plugin = SysexEcho::new(Arc::clone(&params));
-        plugin.reset(44100.0, 64);
+        plugin.reset(&AudioConfig::new(44100.0, 64));
 
         let input: Vec<Vec<f32>> = Vec::new();
         let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();

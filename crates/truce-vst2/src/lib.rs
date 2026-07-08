@@ -15,6 +15,7 @@ use truce_core::buffer::RawBufferScratch;
 use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
@@ -285,6 +286,18 @@ unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     }
 }
 
+/// Map a VST2 `audioMasterGetCurrentProcessLevel` value
+/// (`kVstProcessLevelRealtime` 2 / `Prefetch` 3 / `Offline` 4) to a
+/// truce [`ProcessMode`]. Unknown / unsupported (0) falls back to
+/// `Realtime`.
+fn vst2_process_mode(level: i32) -> ProcessMode {
+    match level {
+        3 => ProcessMode::Buffered,
+        4 => ProcessMode::Offline,
+        _ => ProcessMode::Realtime,
+    }
+}
+
 unsafe extern "C" fn cb_reset<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     sample_rate: f64,
@@ -304,7 +317,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
             let mut plugin = lock_plugin(&inst.plugin);
-            plugin.reset(sample_rate, max_frames);
+            // VST2 exposes no setup-time offline flag; the per-block
+            // process-level poll carries the mode into `process`.
+            plugin.reset(&AudioConfig::new(sample_rate, max_frames));
             plugin.params().set_sample_rate(sample_rate);
             plugin.params().snap_smoothers();
             inst.latency_cache
@@ -337,6 +352,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     num_frames: u32,
     events: *const Vst2MidiEvent,
     num_events: u32,
+    process_level: i32,
 ) {
     // SAFETY: forwarded - the shim's contract is the same.
     unsafe {
@@ -349,6 +365,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             num_frames,
             events,
             num_events,
+            process_level,
         );
     }
 }
@@ -366,6 +383,7 @@ unsafe extern "C" fn cb_process_f64<P: PluginExport>(
     num_frames: u32,
     events: *const Vst2MidiEvent,
     num_events: u32,
+    process_level: i32,
 ) {
     // SAFETY: forwarded - the shim's contract is the same.
     unsafe {
@@ -378,6 +396,7 @@ unsafe extern "C" fn cb_process_f64<P: PluginExport>(
             num_frames,
             events,
             num_events,
+            process_level,
         );
     }
 }
@@ -397,6 +416,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
     num_frames: u32,
     events: *const Vst2MidiEvent,
     num_events: u32,
+    process_level: i32,
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("VST2", || unsafe {
@@ -501,6 +521,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             sub_event_scratch: &mut inst.sub_event_scratch,
             transport: &mut transport_snap,
             sample_rate: inst.sample_rate,
+            process_mode: vst2_process_mode(process_level),
             output_events: &mut inst.output_events,
             params_fn: None,
             meters_fn: None,
@@ -580,6 +601,7 @@ pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
                     CH,
                     FRAMES,
                     std::ptr::null(),
+                    0,
                     0,
                 );
             });

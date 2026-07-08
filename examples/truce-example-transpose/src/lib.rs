@@ -60,7 +60,8 @@ impl PluginLogic for Transpose {
         vec![BusLayout::new()]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
     }
@@ -172,7 +173,7 @@ mod tests {
         let params = Arc::new(TransposeParams::new());
         let mut plugin = Transpose::new(Arc::clone(&params));
         plugin.params.octave.set_value(1);
-        plugin.reset(44100.0, 512);
+        plugin.reset(&AudioConfig::new(44100.0, 512));
 
         let input = vec![vec![0.0f32; 512]; 2];
         let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();

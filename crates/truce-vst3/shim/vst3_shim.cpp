@@ -189,15 +189,15 @@ struct Vst3ParamChange {
 struct Vst3Callbacks {
     void* (*create)();
     void (*destroy)(void*);
-    void (*reset)(void*, double, uint32_t);
+    void (*reset)(void*, double, uint32_t, int32_t);
     void (*process)(void*, const float**, float**, uint32_t, uint32_t, uint32_t,
                     const Vst3MidiEvent*, uint32_t,
-                    const Vst3Transport*, const Vst3ParamChange*, uint32_t);
+                    const Vst3Transport*, const Vst3ParamChange*, uint32_t, int32_t);
     /* 64-bit twin of process. Exactly one of the two runs per block,
      * chosen by the sample size negotiated in setupProcessing. */
     void (*process_f64)(void*, const double**, double**, uint32_t, uint32_t, uint32_t,
                         const Vst3MidiEvent*, uint32_t,
-                        const Vst3Transport*, const Vst3ParamChange*, uint32_t);
+                        const Vst3Transport*, const Vst3ParamChange*, uint32_t, int32_t);
     uint32_t (*param_count)(void*);
     double (*param_get_value)(void*, uint32_t);
     void (*param_set_value)(void*, uint32_t, double);
@@ -440,6 +440,10 @@ class TruceComponent {
     /* Sample size negotiated in setupProcessing; process() rejects a
      * block whose symbolicSampleSize disagrees. */
     int32 procSampleSize = kSample32;
+    /* ProcessModes from setupProcessing (kRealtime / kPrefetch /
+     * kOffline). Replayed into reset() at setActive; process() reads
+     * the per-block ProcessData::processMode directly. */
+    int32 procMode = 0;
 public:
     void* componentHandler;  // IComponentHandler*, stored with addRef
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
@@ -587,7 +591,7 @@ public:
                     deferredParent = nullptr;
                 }
             }
-            g_cb->reset(ctx, sampleRate, maxFrames);
+            g_cb->reset(ctx, sampleRate, maxFrames, procMode);
         }
         // Tell Rust the activation state for both directions so a state
         // load while suspended isn't stranded in the audio-thread queue.
@@ -699,6 +703,7 @@ public:
         procSampleSize = setup->symbolicSampleSize;
         sampleRate = setup->sampleRate;
         maxFrames = setup->maxSamplesPerBlock;
+        procMode = setup->processMode;
         return kResultOk;
     }
 
@@ -951,12 +956,14 @@ public:
             g_cb->process_f64(ctx, (const double**)inPtrs, (double**)outPtrs,
                               numIn, numOut, numFrames,
                               midiEvents, numMidi,
-                              transportPtr, paramChanges, numParamChanges);
+                              transportPtr, paramChanges, numParamChanges,
+                              data->processMode);
         else
             g_cb->process(ctx, (const float**)inPtrs, (float**)outPtrs,
                           numIn, numOut, numFrames,
                           midiEvents, numMidi,
-                          transportPtr, paramChanges, numParamChanges);
+                          transportPtr, paramChanges, numParamChanges,
+                          data->processMode);
 
         // Forward output events (MIDI output from instruments/effects)
         if (data->outputEvents && g_cb->get_output_event_count) {

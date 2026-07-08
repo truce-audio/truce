@@ -13,6 +13,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use truce_core::AudioConfig;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{EventList, TransportInfo};
 use truce_core::info::{AutomationConfig, MidiDialect, PluginCategory, PluginInfo};
@@ -77,7 +78,7 @@ impl PluginRuntime for RacyByDesign {
         }
     }
 
-    fn reset(&mut self, _sample_rate: f64, _max_block_size: usize) {}
+    fn reset(&mut self, _config: &AudioConfig) {}
 
     fn process(
         &mut self,

@@ -207,8 +207,14 @@ impl Layout {
     fn notify_out_port(&self) -> u32 {
         self.midi_out_start() + self.midi_out_ports
     }
-    fn total(&self) -> u32 {
+    /// `lv2:freeWheeling` control input, last so it never shifts any
+    /// other port index. Hosts that support freewheel drive it to `1`
+    /// during an offline export; the rest leave it at its `0` default.
+    fn freewheel_port(&self) -> u32 {
         self.notify_out_port() + 1
+    }
+    fn total(&self) -> u32 {
+        self.freewheel_port() + 1
     }
 }
 
@@ -425,6 +431,20 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
         let _ = writeln!(f, "        lv2:symbol \"notify_out\" ;");
         let _ = writeln!(f, "        lv2:name \"Notify Out\" ;");
         let _ = writeln!(f, "        rsz:minimumSize 4096 ;");
+    } else if index == layout.freewheel_port() {
+        // Freewheel indicator: hosts drive it to 1 during an offline
+        // export, letting the plugin relax realtime discipline. Toggled,
+        // hidden from the GUI, and auto-connected by the host via the
+        // designation.
+        let _ = writeln!(f, "        a lv2:InputPort, lv2:ControlPort ;");
+        let _ = writeln!(f, "        lv2:index {index} ;");
+        let _ = writeln!(f, "        lv2:symbol \"freewheel\" ;");
+        let _ = writeln!(f, "        lv2:name \"Freewheel\" ;");
+        let _ = writeln!(f, "        lv2:default 0.0 ;");
+        let _ = writeln!(f, "        lv2:minimum 0.0 ;");
+        let _ = writeln!(f, "        lv2:maximum 1.0 ;");
+        let _ = writeln!(f, "        lv2:designation lv2:freeWheeling ;");
+        let _ = writeln!(f, "        lv2:portProperty lv2:toggled, pprop:notOnGUI ;");
     }
 }
 
@@ -866,7 +886,16 @@ mod tests {
         assert_eq!(layout.num_atom_in(), 2);
         assert_eq!(layout.midi_out_start(), 7);
         assert_eq!(layout.notify_out_port(), 9);
-        assert_eq!(layout.total(), 10);
+        // Freewheel control input is last, so `total` is notify + 2.
+        assert_eq!(layout.freewheel_port(), 10);
+        assert_eq!(layout.total(), 11);
+    }
+
+    #[test]
+    fn freewheel_port_is_emitted_with_designation() {
+        let (_m, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
+        assert!(ttl.contains("lv2:symbol \"freewheel\""));
+        assert!(ttl.contains("lv2:designation lv2:freeWheeling"));
     }
 
     /// A range-less enum resolves to a concrete count upstream; here we

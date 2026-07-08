@@ -137,7 +137,8 @@ impl GainIced {
 impl PluginLogic for GainIced {
     type Params = GainParams;
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
     }

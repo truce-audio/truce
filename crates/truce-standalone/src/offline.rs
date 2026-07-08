@@ -24,6 +24,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use truce_core::cast::frame_count_f64;
+use truce_core::config::ProcessMode;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_driver::{InputSource, PluginDriver};
@@ -93,6 +94,7 @@ where
         .channels(channels)
         .block_size(block_size)
         .duration(duration)
+        .process_mode(ProcessMode::Offline)
         .bpm(opts.bpm.unwrap_or(120.0))
         .input(InputSource::Buffer(input_buf));
 

@@ -1,5 +1,6 @@
 use crate::buffer::AudioBuffer;
 use crate::bus::BusLayout;
+use crate::config::AudioConfig;
 use crate::events::EventList;
 use crate::info::PluginInfo;
 use crate::process::{ProcessContext, ProcessStatus};
@@ -20,7 +21,7 @@ use truce_params::sample::Sample;
 /// ```ignore
 /// impl truce::prelude::PluginLogic for MyPlugin {
 ///     type Params = MyPluginParams;
-///     fn reset(&mut self, sr: f64, bs: usize) { /* ... */ }
+///     fn reset(&mut self, config: &AudioConfig) { /* ... */ }
 ///     fn process(&mut self, /* ... */) -> ProcessStatus { /* ... */ }
 ///     fn editor(params: Arc<MyPluginParams>) -> Box<dyn Editor> { /* ... */ }
 /// }
@@ -93,9 +94,11 @@ pub trait PluginRuntime: Send + 'static {
     /// Called once after construction. Not real-time safe.
     fn init(&mut self) {}
 
-    /// Called when sample rate or max block size changes.
-    /// Reset filters, delay lines, etc. Not real-time safe.
-    fn reset(&mut self, sample_rate: f64, max_block_size: usize);
+    /// Called when sample rate, max block size, or processing mode
+    /// changes. Reset filters, delay lines, etc., and size any
+    /// mode-dependent buffers off `config.process_mode`. Not real-time
+    /// safe.
+    fn reset(&mut self, config: &AudioConfig);
 
     /// Real-time audio processing.
     fn process(

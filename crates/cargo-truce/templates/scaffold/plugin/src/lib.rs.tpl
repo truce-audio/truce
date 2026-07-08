@@ -18,8 +18,8 @@ impl {struct_name} \{
 impl PluginLogic for {struct_name} \{
     type Params = {struct_name}Params;
 
-{bus_layouts_method | unescaped}    fn reset(&mut self, sr: f64, _bs: usize) \{
-        self.params.set_sample_rate(sr);
+{bus_layouts_method | unescaped}    fn reset(&mut self, config: &AudioConfig) \{
+        self.params.set_sample_rate(config.sample_rate);
         self.params.snap_smoothers();
     }
 

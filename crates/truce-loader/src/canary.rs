@@ -6,6 +6,7 @@ use std::mem::{align_of, size_of};
 use std::ptr;
 
 use truce_core::buffer::AudioBuffer;
+use truce_core::config::AudioConfig;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
 // Source canary types from `truce-gui-types` (the lightweight types
@@ -37,7 +38,11 @@ use truce_plugin::PluginLogicCore;
 /// `save_state` / `latency` / `tail` to the wrong slots and lacks the
 /// new symbol; this bump rejects it cleanly at the canary instead of
 /// relying on the probe to notice the misalignment.
-pub const ABI_EPOCH: u32 = 3;
+/// Epoch 4: `reset` takes `&AudioConfig` instead of `(f64, usize)`, and
+/// `ProcessContext` gained a `process_mode` field. A stale epoch-3 dylib
+/// would call `reset` with mismatched arguments and read a differently
+/// sized context; this bump rejects it before either can happen.
+pub const ABI_EPOCH: u32 = 4;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
@@ -222,7 +227,7 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
         vec![truce_core::bus::BusLayout::stereo()]
     }
 
-    fn reset(&mut self, _sr: f64, _bs: usize) {}
+    fn reset(&mut self, _config: &AudioConfig) {}
 
     fn process(
         &mut self,

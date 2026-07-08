@@ -3,6 +3,7 @@
 #[cfg(feature = "shell")]
 mod test {
     use std::path::PathBuf;
+    use truce_core::AudioConfig;
     use truce_core::buffer::AudioBuffer;
     use truce_core::events::{EventList, TransportInfo};
     use truce_core::process::ProcessContext;
@@ -52,7 +53,7 @@ mod test {
 
         let mut loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
         let plugin = loader.plugin_mut().expect("plugin should be loaded");
-        plugin.reset(44100.0, 512);
+        plugin.reset(&AudioConfig::new(44100.0, 512));
 
         // Create test audio buffers.
         let input_l = vec![0.5f32; 512];

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use truce_core::AudioConfig;
 use truce_core::events::{EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::plugin::PluginRuntime;
@@ -26,7 +27,7 @@ const BLOCK_DEADLINE: Duration = Duration::from_secs(1);
 fn concurrent_save_never_wedges_the_audio_thread() {
     let mut plugin = Plugin::create();
     plugin.init();
-    plugin.reset(48_000.0, BLOCK_SIZE);
+    plugin.reset(&AudioConfig::new(48_000.0, BLOCK_SIZE));
     let plugin = shared_plugin(plugin);
 
     let stop = Arc::new(AtomicBool::new(false));

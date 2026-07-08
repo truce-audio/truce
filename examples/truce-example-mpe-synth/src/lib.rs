@@ -272,7 +272,8 @@ impl PluginLogic for Synth {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
         self.sample_rate = sample_rate;
@@ -392,7 +393,7 @@ mod tests {
     fn render_full(input: &[Event]) -> (Synth, Vec<f32>, Vec<f32>) {
         let params = Arc::new(SynthParams::new());
         let mut plugin = Synth::new(Arc::clone(&params));
-        plugin.reset(44100.0, 64);
+        plugin.reset(&AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut l = vec![0.0f32; 64];

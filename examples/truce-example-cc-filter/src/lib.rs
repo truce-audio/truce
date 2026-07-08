@@ -76,7 +76,8 @@ impl PluginLogic for CcFilter {
         vec![BusLayout::stereo()]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -194,7 +195,7 @@ mod tests {
     fn cc_steers_cutoff() {
         let params = Arc::new(CcFilterParams::new());
         let mut plugin = CcFilter::new(Arc::clone(&params));
-        plugin.reset(44100.0, 64);
+        plugin.reset(&AudioConfig::new(44100.0, 64));
 
         let before = plugin.cutoff_hz;
         let input = vec![vec![0.0f32; 64]; 2];

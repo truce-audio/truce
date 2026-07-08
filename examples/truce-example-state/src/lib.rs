@@ -77,7 +77,8 @@ impl StateExample {
 impl PluginLogic for StateExample {
     type Params = StateExampleParams;
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
     }
 
@@ -396,6 +397,7 @@ mod tests {
 
     use std::sync::mpsc;
     use std::time::Duration;
+    use truce_core::AudioConfig;
     use truce_core::buffer::AudioBuffer;
     use truce_core::events::{EventList, TransportInfo};
     use truce_core::export::PluginExport;
@@ -411,7 +413,7 @@ mod tests {
         // Nothing is published before the first block.
         assert!(snapshot.read().is_none());
 
-        inst.reset(44100.0, 64);
+        inst.reset(&AudioConfig::new(44100.0, 64));
         let input = vec![0.0f32; 64];
         let inputs: Vec<&[f32]> = vec![&input, &input];
         let mut out0 = vec![0.0f32; 64];

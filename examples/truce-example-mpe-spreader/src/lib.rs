@@ -182,7 +182,8 @@ impl PluginLogic for Spreader {
         vec![BusLayout::new()]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
         self.sample_rate = sample_rate;
@@ -568,7 +569,7 @@ mod tests {
         params.algo.set_value(algo);
         params.channels.set_value(width);
         let mut plugin = Spreader::new(Arc::clone(&params));
-        plugin.reset(44100.0, 64);
+        plugin.reset(&AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut out_refs: Vec<&mut [f32]> = Vec::new();
@@ -692,7 +693,7 @@ mod tests {
         let params = Arc::new(SpreaderParams::new());
         params.algo.set_value(first_algo);
         let mut plugin = Spreader::new(Arc::clone(&params));
-        plugin.reset(44100.0, 64);
+        plugin.reset(&AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
         let mut out_refs: Vec<&mut [f32]> = Vec::new();

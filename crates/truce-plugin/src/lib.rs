@@ -38,6 +38,7 @@
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
+use truce_core::config::AudioConfig;
 use truce_core::denormal::DenormalGuard;
 use truce_core::editor::Editor;
 use truce_core::events::EventList;
@@ -72,7 +73,7 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     where
         Self: Sized;
 
-    fn reset(&mut self, sample_rate: f64, max_block_size: usize);
+    fn reset(&mut self, config: &AudioConfig);
 
     fn process(
         &mut self,
@@ -184,9 +185,13 @@ macro_rules! plugin_logic_leaf_trait {
                 vec![$crate::__plugin_logic_deps::BusLayout::stereo()]
             }
 
-            /// Reset for a new sample rate / block size. Called before
-            /// the first `process` and any time the host reconfigures.
-            fn reset(&mut self, sample_rate: f64, max_block_size: usize);
+            /// Reset for a new sample rate / block size / processing
+            /// mode. Called before the first `process` and any time the
+            /// host reconfigures. Read `config.process_mode` to size
+            /// buffers for an offline render (allocation belongs here,
+            /// off the audio thread) - see
+            /// [`AudioConfig`](truce_core::config::AudioConfig).
+            fn reset(&mut self, config: &$crate::__plugin_logic_deps::AudioConfig);
 
             /// Process one block of audio. Real-time - no allocations,
             /// locks, or I/O.
@@ -338,6 +343,7 @@ macro_rules! plugin_logic_leaf_trait {
 pub mod __plugin_logic_deps {
     pub use truce_core::buffer::AudioBuffer;
     pub use truce_core::bus::BusLayout;
+    pub use truce_core::config::AudioConfig;
     pub use truce_core::editor::Editor;
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
@@ -425,8 +431,8 @@ macro_rules! plugin_logic_bridge {
                 <Self as $leaf>::bus_layouts()
             }
 
-            fn reset(&mut self, sample_rate: f64, max_block_size: usize) {
-                <Self as $leaf>::reset(self, sample_rate, max_block_size);
+            fn reset(&mut self, config: &AudioConfig) {
+                <Self as $leaf>::reset(self, config);
             }
 
             fn process(

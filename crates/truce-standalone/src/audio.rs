@@ -25,6 +25,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::{sample_count_usize, sample_rate_u32};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
+use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -559,7 +560,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let plugin = Arc::new(Mutex::new({
         let mut p = P::create();
         p.init();
-        p.reset(sample_rate, initial_max_frames);
+        p.reset(&AudioConfig::new(sample_rate, initial_max_frames));
         p.params().set_sample_rate(sample_rate);
         // Apply `--state <path>` BEFORE snapping smoothers so the
         // first audio block sees the restored values, not defaults
@@ -1038,7 +1039,7 @@ fn open_output_stream<P: PluginExport>(
         let mut p = plugin_a
             .lock()
             .expect("plugin mutex poisoned at audio setup");
-        p.reset(sample_rate, frame_bound);
+        p.reset(&AudioConfig::new(sample_rate, frame_bound));
         p.params().snap_smoothers();
     }
     scratch.ensure_capacity(channels, channels, frame_bound);
@@ -1511,6 +1512,9 @@ fn audio_callback<P: PluginExport>(
         sub_event_scratch,
         transport: &mut transport_snap,
         sample_rate,
+        // The standalone is a live host; offline render goes through
+        // `offline.rs` + the driver, not this realtime path.
+        process_mode: ProcessMode::Realtime,
         output_events,
         params_fn: None,
         meters_fn: None,

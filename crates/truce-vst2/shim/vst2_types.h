@@ -56,6 +56,7 @@
 #define audioMasterVersion  1
 #define audioMasterGetTime  7
 #define audioMasterProcessEvents 8 /* plugin → host MIDI output */
+#define audioMasterGetCurrentProcessLevel 23 /* realtime vs offline poll */
 #define audioMasterBeginEdit 43
 #define audioMasterEndEdit   44
 
@@ -255,18 +256,22 @@ typedef struct {
     void* (*create)(void);
     void  (*destroy)(void* ctx);
     void  (*reset)(void* ctx, double sample_rate, uint32_t max_frames);
+    /* `process_level` is the host's audioMasterGetCurrentProcessLevel
+     * (kVstProcessLevelRealtime 2 / Prefetch 3 / Offline 4). */
     void  (*process)(void* ctx,
                      const float** inputs, float** outputs,
                      uint32_t num_input_channels, uint32_t num_output_channels,
                      uint32_t num_frames,
-                     const Vst2MidiEventCompact* events, uint32_t num_events);
+                     const Vst2MidiEventCompact* events, uint32_t num_events,
+                     int32_t process_level);
     /* 64-bit twin of process, called from processDoubleReplacing
      * (only wired when the descriptor sets supports_f64). */
     void  (*process_f64)(void* ctx,
                          const double** inputs, double** outputs,
                          uint32_t num_input_channels, uint32_t num_output_channels,
                          uint32_t num_frames,
-                         const Vst2MidiEventCompact* events, uint32_t num_events);
+                         const Vst2MidiEventCompact* events, uint32_t num_events,
+                         int32_t process_level);
     uint32_t (*param_count)(void* ctx);
     /* VST2 hosts work in normalized [0, 1] space. The Rust side
      * routes through `ParamRange::denormalize` so non-linear tapers

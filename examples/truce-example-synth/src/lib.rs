@@ -221,7 +221,8 @@ impl PluginLogic for Synth {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+    fn reset(&mut self, config: &AudioConfig) {
+        let sample_rate = config.sample_rate;
         self.sample_rate = sample_rate;
         self.voices.clear();
         self.pitch_bend_mult = 1.0;

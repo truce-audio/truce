@@ -447,20 +447,30 @@ static void processAnyReplacing(AEffect* e, void** inputs, void** outputs,
         }
     }
 
+    /* Poll the host's realtime-vs-offline process level each block.
+     * Best-effort: hosts that don't implement it return 0, which the
+     * Rust side maps to Realtime. */
+    int32_t processLevel = 0;
+    if (inst->master)
+        processLevel = (int32_t)inst->master(
+            e, audioMasterGetCurrentProcessLevel, 0, 0, NULL, 0.0f);
+
     if (use64)
         g_vst2_callbacks->process_f64(
             inst->rust_ctx,
             (const double**)inputs, (double**)outputs,
             numIn, numOut,
             (uint32_t)sampleFrames,
-            inst->midi_buf, inst->midi_count);
+            inst->midi_buf, inst->midi_count,
+            processLevel);
     else
         g_vst2_callbacks->process(
             inst->rust_ctx,
             (const float**)inputs, (float**)outputs,
             numIn, numOut,
             (uint32_t)sampleFrames,
-            inst->midi_buf, inst->midi_count);
+            inst->midi_buf, inst->midi_count,
+            processLevel);
 
     inst->midi_count = 0;
 

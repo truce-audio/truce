@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
+use truce_core::config::AudioConfig;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::meters::MeterStore;
@@ -114,10 +115,10 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
 
     fn init(&mut self) {}
 
-    fn reset(&mut self, sample_rate: f64, max_block_size: usize) {
-        self.sample_rate = sample_rate;
-        self.params.set_sample_rate(sample_rate);
-        self.logic.reset(sample_rate, max_block_size);
+    fn reset(&mut self, config: &AudioConfig) {
+        self.sample_rate = config.sample_rate;
+        self.params.set_sample_rate(config.sample_rate);
+        self.logic.reset(config);
     }
 
     fn process(
@@ -148,6 +149,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
             buffer.num_samples(),
             &mut *context.output_events,
         )
+        .with_process_mode(context.process_mode)
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 
@@ -308,8 +310,8 @@ macro_rules! export_static {
                 self.inner.init();
             }
 
-            fn reset(&mut self, sample_rate: f64, max_block_size: usize) {
-                self.inner.reset(sample_rate, max_block_size);
+            fn reset(&mut self, config: &$crate::__macro_deps::truce_core::config::AudioConfig) {
+                self.inner.reset(config);
             }
 
             fn process(
