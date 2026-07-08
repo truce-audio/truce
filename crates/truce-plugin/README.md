@@ -38,7 +38,7 @@ the same regardless of which precision the prelude chose:
 ```rust
 use truce::prelude::*;          // or prelude64::*
 impl PluginLogic for MyPlugin {
-    fn process(&mut self, buffer: &mut AudioBuffer, ...) -> ProcessStatus { ... }
+    fn process(state: &mut Self::DspState, params: &Self::Params, buffer: &mut AudioBuffer, ...) -> ProcessStatus { ... }
 }
 ```
 
