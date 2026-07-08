@@ -82,19 +82,21 @@ pub struct MyParams {
     pub gain: FloatParam,
 }
 
-pub struct MyPlugin {
-    params: Arc<MyParams>,
-}
+pub struct MyPlugin;
 
 impl PluginLogic for MyPlugin {
     type Params = MyParams;
+    type DspState = ();
 
-    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
-        self.params.set_sample_rate(sample_rate);
+    fn init(_params: &MyParams) -> Self::DspState {}
+
+    fn reset(_state: &mut Self::DspState, params: &MyParams, config: &AudioConfig) {
+        params.set_sample_rate(config.sample_rate);
     }
 
     fn process(
-        &mut self,
+        _state: &mut Self::DspState,
+        params: &MyParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         _context: &mut ProcessContext,

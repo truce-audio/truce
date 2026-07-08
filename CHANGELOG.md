@@ -11,7 +11,7 @@ Notable changes per release.
 ### Breaking
 
 - `reset` takes `&AudioConfig` instead of `(sample_rate, max_block_size)`. Read `config.sample_rate` / `config.max_block_size`; branch on `config.process_mode` for offline.
-- `PluginLogic` is a descriptor plus `type DspState`. Move `self.<dsp field>` into the `DspState` struct, drop the stored params `Arc`, replace `new` with `init(params) -> Self::DspState`, and make each method receiverless over `state` / `params` (e.g. `fn process(state: &mut Self::DspState, params: &Self::Params, ...)`). The `DspState` struct is a plain type - no `#[derive]`.
+- `PluginLogic` is a descriptor plus `type DspState`. Move `self.<dsp field>` into the `DspState` struct, drop the stored params `Arc`, replace `new` with `init(params) -> Self::DspState`, and make each method receiverless over `state` / `params` (e.g. `fn process(state: &mut Self::DspState, params: &Self::Params, ...)`).
 
 ### Migrating from 3.x
 
@@ -62,10 +62,9 @@ Your plugin becomes two types: a (usually empty) descriptor and a `DspState` str
 
    `editor` is unchanged - it already takes `Arc<Self::Params>` (see 3.0.0).
 
-If you would rather not carry a separate descriptor, `#[derive(DspState)]` on the plugin struct itself and point `type DspState` at `Self` - the struct then plays both roles:
+If you would rather not carry a separate descriptor, point `type DspState` at `Self` - the plugin struct then plays both roles:
 
 ```rust
-#[derive(DspState)]
 pub struct MyPlugin { filter: Filter, phase: f32 }
 
 impl PluginLogic for MyPlugin {
