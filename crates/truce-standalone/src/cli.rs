@@ -39,6 +39,11 @@ pub struct Options {
     /// the env var, or `[plugin.standalone].output_enabled` in
     /// `truce.toml`.
     pub output_enabled: Option<bool>,
+    /// Whether the QWERTY-keyboard-to-MIDI note input is on at launch.
+    /// Off by default - typing shouldn't play notes unless asked for.
+    /// Enable with `--qwerty-keys` (or the env var), and toggle live
+    /// with Cmd/Ctrl+K or the Settings menu's "Computer Keyboard" item.
+    pub qwerty_midi: bool,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     /// MIDI input device substrings, one per `--midi-input`. The i-th
@@ -110,6 +115,9 @@ OPTIONS:
                             Press `I` in the window to toggle live.
   --output-enabled <on|off> Enable speaker output at launch (default: on).
                             Toggle live from the Plugin menu (Cmd+O / Ctrl+O).
+  --qwerty-keys             Let the computer keyboard play MIDI notes
+                            (default: off). Toggle live with Cmd/Ctrl+K
+                            or the Settings menu's Computer Keyboard item.
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
   --midi-input <name>       MIDI input device (substring match).
@@ -194,6 +202,7 @@ pub fn parse() -> Result<Options, String> {
     let headless = args.contains("--headless");
     let list_devices = args.contains("--list-devices");
     let list_midi = args.contains("--list-midi");
+    let qwerty_midi = args.contains("--qwerty-keys");
     let verbose = args.contains(["-v", "--verbose"]);
 
     // Parse values - each `Option<...>` short-circuits to None if absent.
@@ -280,6 +289,8 @@ pub fn parse() -> Result<Options, String> {
             env("OUTPUT_ENABLED")
                 .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_OUTPUT_ENABLED").ok())
         }),
+        qwerty_midi: qwerty_midi
+            || env("QWERTY_KEYS").is_some_and(|s| matches!(s.trim(), "1" | "true" | "on" | "yes")),
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
         // Env fallback is single-device (one port); flags win when
