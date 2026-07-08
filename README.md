@@ -6,7 +6,7 @@
 
 <p align="center">
   Build audio plugins in Rust. VST3, CLAP, AU v2, AU v3 (macOS + iOS), 
-  AAX (Pro Tools), LV2, and standalone from a single Rust codebase. 
+  AAX (Pro Tools), and standalone from a single Rust codebase. 
   Dead simple developer experience: in 5 minutes, you can load
   your own plugin in a DAW and test your custom DSP, MIDI, and
   GUI.
@@ -44,12 +44,12 @@ Other formats:
 ```sh
 cargo truce install              # formats in your plugin's default features
 cargo truce install --vst3       # VST3
-cargo truce install --vst2       # VST2 (opt-in, legacy — see note below)
-cargo truce install --lv2        # LV2
 cargo truce install --au3        # AU v3 (macOS, requires Xcode)
 cargo truce install --ios        # AU v3 on the booted iOS Simulator
 cargo truce install --ios-device # AU v3 on a tethered iPhone / iPad
 cargo truce install --aax        # AAX (requires AAX SDK)
+cargo truce install --vst2       # VST2 
+cargo truce install --lv2        # LV2
 
 cargo truce validate             # auval + pluginval + clap-validator on installed plugins
 ```
