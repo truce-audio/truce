@@ -75,14 +75,16 @@ typedef struct {
     /* 1 if the plugin's MIDI input port is MIDI 2.0 dialect (`midi2 =
      * true` in truce.toml). The AU v3 appex declares
      * `audioUnitMIDIProtocol` = 2.0 when set so the host delivers native
-     * UMP 2.0; otherwise it declares 1.0 and the host down-converts.
-     * AU v2 ignores it (single-stream MIDI 1.0). */
+     * UMP 2.0 input; otherwise it declares 1.0 and the host down-converts
+     * input. AU v2 ignores it (single-stream MIDI 1.0). */
     int32_t midi2_input;
     /* 1 if the plugin's MIDI output port is MIDI 2.0 dialect. The AU v3
-     * appex's output drain emits UMP via `midiOutputEventListBlock` when
-     * set; the framework converts to the host's protocol. AU v2 ignores
-     * it. Independent of `midi2_input` (a 1.0 -> 2.0 promoter is 1.0 in,
-     * 2.0 out). */
+     * appex emits the plugin's output as a pure UMP 2.0 stream via
+     * `midiOutputEventListBlock` when set - independent of the input
+     * protocol - so per-note output (PerNotePitchBend / PerNoteCC) isn't
+     * down-converted onto one channel. Independent of `midi2_input` (a
+     * 1.0 -> 2.0 promoter is 1.0 in, 2.0 out; AU v3 input and output are
+     * separate self-describing streams). AU v2 ignores it. */
     int32_t midi2_output;
 } AuPluginDescriptor;
 

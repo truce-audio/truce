@@ -46,6 +46,10 @@ truce-lv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }
+# In-process chain test: pipe the spreader's per-note output into the synth.
+# `default-features = false` keeps its format entry points (and their export
+# symbols) out of the test binary - we only want the `Spreader` plugin logic.
+truce-example-mpe-spreader = { path = "../truce-example-mpe-spreader", default-features = false }
 
 [lints]
 workspace = true
