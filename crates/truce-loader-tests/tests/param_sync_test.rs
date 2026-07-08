@@ -8,7 +8,7 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_derive::{DspState, Params};
+use truce_derive::Params;
 use truce_gui::PluginLogic;
 use truce_params::{FloatParamReadF32, Params};
 
@@ -20,7 +20,6 @@ struct TestParams {
 
 struct TestPlugin;
 
-#[derive(DspState)]
 struct TestDspState {
     last_gain_plain: f64,
 }

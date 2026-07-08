@@ -26,7 +26,7 @@ pub mod wrapper;
 pub use buffer::{AudioBuffer, RawBufferScratch};
 pub use bus::{BusConfig, BusKind, BusLayout, ChannelConfig};
 pub use config::{AudioConfig, ProcessMode};
-pub use dsp_state::{DspState, NO_PRESERVE, fold_fingerprint};
+pub use dsp_state::{NO_PRESERVE, layout_fingerprint};
 pub use editor::{Editor, EditorBuilder, IntoEditor, PluginContext};
 pub use events::{Event, EventBody, EventList, PushError, SYSEX_POOL_PREALLOC, TransportInfo};
 pub use export::PluginExport;

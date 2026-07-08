@@ -79,7 +79,6 @@ struct Voice {
 /// Stateless descriptor - the synth's per-block DSP state is [`SynthDspState`].
 pub struct Synth;
 
-#[derive(DspState)]
 pub struct SynthDspState {
     sample_rate: f64,
     voices: [Voice; NUM_VOICES],

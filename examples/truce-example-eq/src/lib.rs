@@ -167,7 +167,6 @@ pub struct Eq;
 
 /// Per-instance DSP state: one stereo filter per band plus the
 /// sample rate cached at `reset()`.
-#[derive(DspState)]
 pub struct EqDspState {
     /// One stereo filter per band; L and R advance through the
     /// same coefficients in parallel `f64x2` lanes. Mono input

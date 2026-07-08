@@ -7,11 +7,13 @@ Notable changes per release.
 - Render-mode support: a `ProcessMode` (realtime / buffered / offline) reaches `reset` through the new `AudioConfig` and every block through `ProcessContext`, so a plugin can raise quality or relax realtime discipline during an offline bounce. Wired on every format: CLAP, VST3, VST2, LV2 (freewheel port), AU (v2 `OfflineRender` property + v3 `isRenderingOffline`), and AAX (host offline-bounce notifications).
 - Dynamic latency reporting: a plugin that changes its `latency()` return now notifies the host. Wired on CLAP, VST3, AU v2, AU v3, VST2 (best-effort), LV2's new `reportsLatency` port, and AAX (`SetSignalLatency` pushed from the host idle thread).
 - Receiverless `PluginLogic`: the trait is a stateless descriptor whose methods (`process`, `reset`, `save_state`, ...) are associated functions over `&mut Self::DspState` / `&Self::Params` - no `&self`. DSP state moves into the shell, so a hot-reload keeps it alive across a code-only swap: reverb tails and oscillator phases survive an edit-and-reload. Put the DSP fields in a `#[derive(DspState)]` struct named as `type DspState`; the layout fingerprint that guards preservation is derived automatically. A stateless plugin writes `type DspState = ()`.
+- Recursive `DspState` fingerprint: the layout fingerprint now folds each field type's *own* fingerprint and threads it through `Vec<T>` / `Box<T>` / `Arc<T>` / `[T; N]` / ... into the element, so a layout change inside a `Vec<Voice>` element (add a field to `Voice`) moves the outer fingerprint and forces a safe re-init - closing a shallow-fold UB footgun where preservation reinterpreted old-stride heap bytes. Every field type in a `DspState` must therefore itself implement `DspState` (derive it on nested structs / enums); a foreign field type (a `fundsp` graph, a `biquad` filter, a thread handle) is marked `#[dsp_state(opaque)]`, which folds that one field shallowly (name + size) and acknowledges a change *inside* it won't be caught.
 
 ### Breaking
 
 - `reset` takes `&AudioConfig` instead of `(sample_rate, max_block_size)`. Read `config.sample_rate` / `config.max_block_size`; branch on `config.process_mode` for offline.
 - `PluginLogic` is a descriptor plus `type DspState`. Move `self.<dsp field>` into the `DspState` struct, drop the stored params `Arc`, replace `new` with `init(params) -> Self::DspState`, and make each method receiverless over `state` / `params` (e.g. `fn process(state: &mut Self::DspState, params: &Self::Params, ...)`).
+- Every field type in a `#[derive(DspState)]` struct must itself implement `DspState` (the recursive fingerprint folds it). Derive `DspState` on nested structs / enums; mark a foreign field type `#[dsp_state(opaque)]`. Primitives, `String`, and `Vec` / `Box` / `Arc` / `Rc` / `Option` / `VecDeque` / `[T; N]` of a `DspState` element are covered already.
 
 ### Migrating from 3.x
 
@@ -36,6 +38,21 @@ Your plugin becomes two types: a (usually empty) descriptor and a `DspState` str
     impl PluginLogic for MyPlugin {
         type Params = MyParams;
    +    type DspState = MyDspState;
+   ```
+
+   Then make every field type in `MyDspState` implement `DspState` too, since the fingerprint recurses into them:
+
+   ```diff
+   +#[derive(DspState)]
+    struct Filter { /* your fields */ }        // a nested struct you own: derive it
+
+    #[derive(DspState)]
+    struct MyDspState {
+        filter: Filter,
+        voices: Vec<Voice>,                     // Vec/Box/[T;N]/... of a DspState element: already covered
+   +    #[dsp_state(opaque)]
+        graph: fundsp::Box<dyn AudioUnit>,      // a foreign type you can't derive: mark it opaque
+    }
    ```
 
 2. **Replace `new` with `init`.** It takes `&Self::Params` and returns the state instead of `Self`.

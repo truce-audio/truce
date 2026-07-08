@@ -67,15 +67,15 @@ pub trait PluginLogicCore<S: Sample = f32>: 'static {
     type Params: truce_params::Params;
     /// The mutable per-block audio state. Owned by the shell, not by
     /// `Self` (the descriptor). `Send` because the shell moves it across
-    /// threads; `'static` because the shell may outlive any borrow;
-    /// `DspState` so its layout can be fingerprinted for hot-reload
-    /// preservation (`()` and any `#[derive(DspState)]` struct qualify).
-    type DspState: Send + 'static + truce_core::dsp_state::DspState;
+    /// threads; `'static` because the shell may outlive any borrow. No
+    /// layout trait is required: the hot-reload shell fingerprints the
+    /// type at load time from its `type_name` / `size_of` / `align_of`.
+    type DspState: Send + 'static;
 
-    /// Structural fingerprint of `State` for hot-reload preservation,
-    /// defaulted from the `State` type's `DspState` impl. The leaf
-    /// bridge forwards the leaf trait's (identically defaulted) value.
-    const STATE_FINGERPRINT: u64 = <Self::DspState as truce_core::dsp_state::DspState>::FINGERPRINT;
+    /// Whether the hot-reload shell may preserve live DSP state across a
+    /// code-only reload. Default `true` (best-effort layout probe).
+    /// Override to `false` on a state that must always re-init on reload.
+    const PRESERVE_DSP_STATE: bool = true;
 
     #[must_use]
     fn supports_in_place() -> bool {
@@ -190,25 +190,20 @@ macro_rules! plugin_logic_leaf_trait {
             /// The mutable per-block audio state - filter memory, voice
             /// buffers, phase accumulators. **A distinct type from the
             /// descriptor `Self`, never `Self`.** A plugin with no audio
-            /// state writes `type DspState = ()`; anything else is a struct
-            /// with `#[derive(DspState)]` (needed so its layout can be
-            /// fingerprinted for safe hot-reload state preservation).
-            /// Owned by the shell, so it can outlive a code swap.
-            type DspState: Send + 'static + $crate::__plugin_logic_deps::DspState;
+            /// state writes `type DspState = ()`; anything else is a plain
+            /// struct. Owned by the shell, so it can outlive a code swap.
+            /// No layout trait is required - the hot-reload shell
+            /// fingerprints the type at load time from its `type_name` /
+            /// `size_of` / `align_of`.
+            type DspState: Send + 'static;
 
-            /// Structural fingerprint of [`Self::DspState`] for hot-reload
-            /// state preservation - defaulted from the `State` type's
-            /// `#[derive(DspState)]`, so authors never write it. On a
-            /// reload the shell keeps the live state when this matches
-            /// and re-inits otherwise; a change to the `State` struct's
-            /// *own* layout flips the fingerprint automatically. The
-            /// fingerprint is structural-shallow, so a layout change
-            /// hidden behind a `Box` / `Vec` / `Arc` field does *not*
-            /// flip it (see the `DspState` derive docs). Override to
-            /// [`NO_PRESERVE`](truce_core::dsp_state::NO_PRESERVE) to
-            /// force a reset on every reload.
-            const STATE_FINGERPRINT: u64 =
-                <Self::DspState as $crate::__plugin_logic_deps::DspState>::FINGERPRINT;
+            /// Whether the hot-reload shell may preserve live DSP state
+            /// across a code-only reload. Default `true`: the shell keeps
+            /// the state when a best-effort layout probe (`type_name` +
+            /// `size_of` + `align_of`) matches, so a reverb tail survives
+            /// an edit-and-reload, and re-inits when it differs. Set to
+            /// `false` on a state that must always re-init on reload.
+            const PRESERVE_DSP_STATE: bool = true;
 
             /// Opt into zero-copy in-place I/O. When this returns `true`,
             /// the format wrapper skips its safety memcpy on host-aliased
@@ -409,7 +404,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::buffer::AudioBuffer;
     pub use truce_core::bus::BusLayout;
     pub use truce_core::config::AudioConfig;
-    pub use truce_core::dsp_state::{DspState, NO_PRESERVE};
+    pub use truce_core::dsp_state::{NO_PRESERVE, layout_fingerprint};
     pub use truce_core::editor::Editor;
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
@@ -486,7 +481,7 @@ macro_rules! plugin_logic_bridge {
             type Params = <T as $leaf>::Params;
             type DspState = <T as $leaf>::DspState;
 
-            const STATE_FINGERPRINT: u64 = <T as $leaf>::STATE_FINGERPRINT;
+            const PRESERVE_DSP_STATE: bool = <T as $leaf>::PRESERVE_DSP_STATE;
 
             fn supports_in_place() -> bool {
                 <Self as $leaf>::supports_in_place()

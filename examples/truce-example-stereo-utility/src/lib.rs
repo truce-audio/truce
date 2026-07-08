@@ -47,7 +47,6 @@ pub struct StereoUtilityParams {
 pub struct StereoUtility;
 
 /// Per-instance DSP state: the delay lines and their write heads.
-#[derive(DspState)]
 pub struct StereoUtilityDspState {
     /// One delay line per channel, sized in `reset()` for `MAX_DELAY_MS`.
     lines: [Vec<f32>; 2],

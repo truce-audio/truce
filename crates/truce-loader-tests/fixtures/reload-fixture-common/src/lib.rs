@@ -20,13 +20,11 @@ pub struct FxParams {
 }
 
 /// One-field state shared by keep-a and keep-b (same fingerprint).
-#[derive(DspState)]
 pub struct CounterState {
     pub counter: u64,
 }
 
 /// Two-field state (distinct fingerprint from [`CounterState`]).
-#[derive(DspState)]
 pub struct ResetState {
     pub counter: u64,
     pub extra: u64,
