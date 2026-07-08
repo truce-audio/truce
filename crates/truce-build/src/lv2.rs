@@ -213,8 +213,14 @@ impl Layout {
     fn freewheel_port(&self) -> u32 {
         self.notify_out_port() + 1
     }
-    fn total(&self) -> u32 {
+    /// `lv2:reportsLatency` control output. The plugin writes its
+    /// current latency (samples) here each `run()`; the host reads it
+    /// for delay compensation. Native LV2 dynamic-latency support.
+    fn latency_port(&self) -> u32 {
         self.freewheel_port() + 1
+    }
+    fn total(&self) -> u32 {
+        self.latency_port() + 1
     }
 }
 
@@ -445,6 +451,18 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
         let _ = writeln!(f, "        lv2:maximum 1.0 ;");
         let _ = writeln!(f, "        lv2:designation lv2:freeWheeling ;");
         let _ = writeln!(f, "        lv2:portProperty lv2:toggled, pprop:notOnGUI ;");
+    } else if index == layout.latency_port() {
+        // Latency report: the DSP writes its current delay (samples)
+        // here each run; the host reads it for delay compensation.
+        let _ = writeln!(f, "        a lv2:OutputPort, lv2:ControlPort ;");
+        let _ = writeln!(f, "        lv2:index {index} ;");
+        let _ = writeln!(f, "        lv2:symbol \"latency\" ;");
+        let _ = writeln!(f, "        lv2:name \"Latency\" ;");
+        let _ = writeln!(f, "        lv2:minimum 0.0 ;");
+        let _ = writeln!(f, "        lv2:maximum 192000.0 ;");
+        let _ = writeln!(f, "        lv2:default 0.0 ;");
+        let _ = writeln!(f, "        lv2:designation lv2:reportsLatency ;");
+        let _ = writeln!(f, "        lv2:portProperty lv2:integer, pprop:notOnGUI ;");
     }
 }
 
@@ -886,9 +904,11 @@ mod tests {
         assert_eq!(layout.num_atom_in(), 2);
         assert_eq!(layout.midi_out_start(), 7);
         assert_eq!(layout.notify_out_port(), 9);
-        // Freewheel control input is last, so `total` is notify + 2.
+        // Freewheel + latency control ports are last, so `total` is
+        // notify + 3.
         assert_eq!(layout.freewheel_port(), 10);
-        assert_eq!(layout.total(), 11);
+        assert_eq!(layout.latency_port(), 11);
+        assert_eq!(layout.total(), 12);
     }
 
     #[test]
@@ -896,6 +916,13 @@ mod tests {
         let (_m, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
         assert!(ttl.contains("lv2:symbol \"freewheel\""));
         assert!(ttl.contains("lv2:designation lv2:freeWheeling"));
+    }
+
+    #[test]
+    fn latency_port_is_emitted_with_designation() {
+        let (_m, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
+        assert!(ttl.contains("lv2:symbol \"latency\""));
+        assert!(ttl.contains("lv2:designation lv2:reportsLatency"));
     }
 
     /// A range-less enum resolves to a concrete count upstream; here we

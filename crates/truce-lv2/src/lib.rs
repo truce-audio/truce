@@ -119,9 +119,15 @@ impl PortLayout {
     pub fn freewheel_port(&self) -> u32 {
         self.notify_out_port() + 1
     }
+    /// `lv2:reportsLatency` control output. Mirrors
+    /// `truce_build::lv2::Layout`.
+    #[must_use]
+    pub fn latency_port(&self) -> u32 {
+        self.freewheel_port() + 1
+    }
     #[must_use]
     pub fn total(&self) -> u32 {
-        self.freewheel_port() + 1
+        self.latency_port() + 1
     }
 }
 
@@ -160,6 +166,9 @@ pub struct Lv2Instance<P: PluginExport> {
     /// it; a value >= 0.5 means the host is freewheeling (offline
     /// export), which `run()` maps to [`ProcessMode::Offline`].
     freewheel_port: *const f32,
+    /// `lv2:reportsLatency` control output. `run()` writes the plugin's
+    /// current `latency()` here each block for host delay compensation.
+    latency_port: *mut f32,
 
     /// Last observed value on each control port; used to emit
     /// `ParamChange` events only when the host actually moved a knob.
@@ -320,6 +329,7 @@ pub unsafe fn instantiate<P: PluginExport>(
                 midi_out_ports: vec![ptr::null_mut(); midi_out_count],
                 notify_out_port: ptr::null_mut(),
                 freewheel_port: ptr::null(),
+                latency_port: ptr::null_mut(),
 
                 last_control: vec![None; control_port_count],
 
@@ -366,6 +376,7 @@ pub unsafe fn connect_port<P: PluginExport>(
         let midi_out_start = inst.layout.midi_out_start();
         let notify_out_port = inst.layout.notify_out_port();
         let freewheel_port = inst.layout.freewheel_port();
+        let latency_port = inst.layout.latency_port();
 
         if port < audio_out_start {
             inst.audio_inputs[(port - audio_in_start) as usize] = data as *const f32;
@@ -383,6 +394,8 @@ pub unsafe fn connect_port<P: PluginExport>(
             inst.notify_out_port = data.cast::<AtomSequence>();
         } else if port == freewheel_port {
             inst.freewheel_port = data.cast::<f32>();
+        } else if port == latency_port {
+            inst.latency_port = data.cast::<f32>();
         }
     }
 }
@@ -656,6 +669,17 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             }
             let v = inst.plugin.get_meter(id);
             **slot = v;
+        }
+
+        // Report current latency to the host each block; LV2 delay
+        // compensation reads this designated output port live, so a
+        // plugin that varies `latency()` needs no separate notify.
+        if !inst.latency_port.is_null() {
+            // Sample latencies fit well under f32's 24-bit exact-integer
+            // range (2^24 = ~349 s at 48 kHz).
+            #[allow(clippy::cast_precision_loss)]
+            let latency = inst.plugin.latency() as f32;
+            *inst.latency_port = latency;
         }
 
         // Write MIDI output to each connected atom sequence port,

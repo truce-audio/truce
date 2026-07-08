@@ -51,7 +51,7 @@ use clap_sys::ext::audio_ports::{
     CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO, clap_audio_port_info,
     clap_plugin_audio_ports,
 };
-use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_plugin_latency};
+use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_host_latency, clap_plugin_latency};
 use clap_sys::ext::note_ports::{
     CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
     clap_note_port_info, clap_plugin_note_ports,
@@ -227,6 +227,13 @@ struct ClapPluginData<P: PluginExport> {
     host: *const clap_host,
     /// Host params extension (for `request_flush`).
     host_params: *const clap_host_params,
+    /// Host latency extension (for `changed`). Null if the host doesn't
+    /// expose `clap.latency`.
+    host_latency: *const clap_host_latency,
+    /// Set on the audio thread when `latency()` changes; drained on the
+    /// main thread, which notifies the host. Coalesces a burst of
+    /// changes into one host notification per main-thread callback.
+    latency_dirty: AtomicBool,
     /// Queue of GUI-initiated parameter changes to emit as output events.
     gui_changes: Arc<GuiChangeQueue>,
     /// Bounded SPSC handoff for state loads. Host (`state_load`) and
@@ -510,6 +517,10 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
             if !ext.is_null() {
                 data.host_params = ext.cast::<clap_host_params>();
             }
+            let lat_ext = get_ext(data.host, CLAP_EXT_LATENCY.as_ptr());
+            if !lat_ext.is_null() {
+                data.host_latency = lat_ext.cast::<clap_host_latency>();
+            }
         }
         true
     }
@@ -634,6 +645,23 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             && let Some(rescan) = (*data.host_params).rescan
         {
             rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
+        }
+
+        // Latency changed on the audio thread: tell the host here, off
+        // the audio thread. `changed()` re-reads our reported latency;
+        // an active plugin additionally needs `request_restart` to apply
+        // the new delay compensation.
+        if data.latency_dirty.swap(false, Ordering::Relaxed) && !data.host.is_null() {
+            if !data.host_latency.is_null()
+                && let Some(changed) = (*data.host_latency).changed
+            {
+                changed(data.host);
+            }
+            if data.active.load(Ordering::Relaxed)
+                && let Some(req_restart) = (*data.host).request_restart
+            {
+                req_restart(data.host);
+            }
         }
     }
 }
@@ -1666,9 +1694,18 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         }
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to take the plugin lock.
-        data.latency_cache
-            .store(instance.latency(), Ordering::Relaxed);
+        // queries don't have to take the plugin lock. On an actual
+        // latency change, flag it and wake the main thread, which
+        // notifies the host (`clap.latency` requires the call off the
+        // audio thread).
+        let new_latency = instance.latency();
+        if data.latency_cache.swap(new_latency, Ordering::Relaxed) != new_latency
+            && !data.latency_dirty.swap(true, Ordering::Relaxed)
+            && !data.host.is_null()
+            && let Some(req_cb) = (*data.host).request_callback
+        {
+            req_cb(data.host);
+        }
         data.tail_cache.store(instance.tail(), Ordering::Relaxed);
 
         // Flush GUI-initiated param changes to host output events
@@ -3556,6 +3593,8 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         gui_created: false,
         host,
         host_params: ptr::null(),
+        host_latency: ptr::null(),
+        latency_dirty: AtomicBool::new(false),
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         pending_state: Arc::new(StateLoadQueue::new(1)),
         active: AtomicBool::new(false),

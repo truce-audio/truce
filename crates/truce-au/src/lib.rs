@@ -105,6 +105,10 @@ type ParamNotifyQueue = crossbeam_queue::ArrayQueue<(u32, f32)>;
 struct ParamNotifier {
     queue: Arc<ParamNotifyQueue>,
     stop: Arc<AtomicBool>,
+    /// Set by the audio thread when `latency()` changes; drained on the
+    /// same wakeup as the param queue. The notifier thread broadcasts a
+    /// `kAudioUnitProperty_Latency` change, off the audio thread.
+    latency_dirty: Arc<AtomicBool>,
     /// Cached for a cheap `unpark` from the audio thread.
     thread: Thread,
     handle: Option<JoinHandle<()>>,
@@ -124,13 +128,21 @@ impl ParamNotifier {
     unsafe fn spawn(ctx: SendPtr<std::ffi::c_void>) -> Option<Self> {
         let queue = Arc::new(ParamNotifyQueue::new(EVENT_LIST_PREALLOC));
         let stop = Arc::new(AtomicBool::new(false));
-        let (q, s) = (Arc::clone(&queue), Arc::clone(&stop));
+        let latency_dirty = Arc::new(AtomicBool::new(false));
+        let (q, s, ld) = (
+            Arc::clone(&queue),
+            Arc::clone(&stop),
+            Arc::clone(&latency_dirty),
+        );
         let drain = move || {
+            // SAFETY (both calls): `ctx` is an opaque key the C side maps
+            // to its component; the Rust instance is never dereferenced
+            // through it, and this thread is joined before the component
+            // is freed.
+            if ld.swap(false, Ordering::AcqRel) {
+                unsafe { truce_au_v2_host_latency_changed(ctx.as_ptr().cast_mut()) };
+            }
             while let Some((id, value)) = q.pop() {
-                // SAFETY: `ctx` is an opaque key the C side maps to its
-                // component; the Rust instance is never dereferenced
-                // through it, and this thread is joined before the
-                // component is freed.
                 unsafe { truce_au_v2_host_set_param(ctx.as_ptr().cast_mut(), id, value) };
             }
         };
@@ -149,9 +161,19 @@ impl ParamNotifier {
         Some(Self {
             queue,
             stop,
+            latency_dirty,
             thread,
             handle: Some(handle),
         })
+    }
+
+    /// Flag a latency change and wake the notifier. Audio-thread cheap:
+    /// one atomic swap, `unpark` only on the edge so a burst coalesces
+    /// into one host notification.
+    fn notify_latency(&self) {
+        if !self.latency_dirty.swap(true, Ordering::Release) {
+            self.thread.unpark();
+        }
     }
 }
 
@@ -660,9 +682,20 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         }
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to take the plugin lock.
-        inst.latency_cache
-            .store(plugin.latency(), Ordering::Relaxed);
+        // queries don't have to take the plugin lock. On an actual
+        // change, wake the notifier thread to broadcast a
+        // `kAudioUnitProperty_Latency` change (AU v2 / macOS). AU v3
+        // (iOS) has no Rust->appex notify path; its host re-reads the
+        // cached value on its own, unchanged.
+        let prev_latency = inst.latency_cache.swap(plugin.latency(), Ordering::Relaxed);
+        #[cfg(target_os = "macos")]
+        if prev_latency != inst.latency_cache.load(Ordering::Relaxed)
+            && let Some(notifier) = &inst.param_notify
+        {
+            notifier.notify_latency();
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = prev_latency;
         inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
     });
     if !ok {
@@ -1749,6 +1782,7 @@ unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
+    fn truce_au_v2_host_latency_changed(ctx: *mut std::ffi::c_void);
 }
 
 // ---------------------------------------------------------------------------

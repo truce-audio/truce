@@ -474,6 +474,19 @@ static void processAnyReplacing(AEffect* e, void** inputs, void** outputs,
 
     inst->midi_count = 0;
 
+    /* Best-effort dynamic latency: the Rust process above refreshed the
+     * plugin's latency cache, so re-read it and, on a change, update
+     * `initialDelay` and tell the host. audioMasterIOChanged support is
+     * uneven across VST2 hosts, so this is best-effort and runs inline
+     * on the audio thread (VST2 has no main-thread callback). */
+    if (inst->rust_ctx && g_vst2_callbacks->get_latency && inst->master) {
+        int32_t newLatency = (int32_t)g_vst2_callbacks->get_latency(inst->rust_ctx);
+        if (newLatency != inst->effect.initialDelay) {
+            inst->effect.initialDelay = newLatency;
+            inst->master(&inst->effect, audioMasterIOChanged, 0, 0, NULL, 0.0f);
+        }
+    }
+
     /* Drain plugin → host MIDI. The Rust side has already filtered
      * the queue down to events that fit in 3-byte MIDI 1.0 packets;
      * we rebuild a `VstEvents` block in stack-local storage and call

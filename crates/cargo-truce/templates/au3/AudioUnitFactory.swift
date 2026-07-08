@@ -152,6 +152,15 @@ class TruceAUAudioUnit: AUAudioUnit {
     private var _parameterTree: AUParameterTree?
     private var _sampleRate: Double = 44100.0
     private var _maxFrames: UInt32 = 1024
+    /// Last latency (samples) pushed to the host via KVO. The framework
+    /// refreshes its latency cache each block; a main-thread timer
+    /// compares against this and fires KVO on `latency` when it moves, so
+    /// a plugin that varies its latency reaches the host.
+    private var _lastLatencySamples: UInt32 = 0
+    /// Polls `latency` while render resources are allocated, so a latency
+    /// change driven by host automation (no editor open) still notifies.
+    /// Slow (a few Hz) - latency moves on mode switches, not per block.
+    private var _latencyTimer: Timer?
 
     override init(componentDescription: AudioComponentDescription,
                   options: AudioComponentInstantiationOptions = []) throws {
@@ -332,9 +341,26 @@ class TruceAUAudioUnit: AUAudioUnit {
         if _outputBusArray.count > 0 { _sampleRate = _outputBusArray[0].format.sampleRate }
         _maxFrames = maximumFramesToRender
         if let ctx = rustCtx, let cb = g_callbacks { cb.pointee.reset(ctx, _sampleRate, _maxFrames) }
+        // Watch for dynamic-latency changes on the main thread while
+        // rendering (KVO must fire off the audio thread). Scheduled on
+        // the main run loop even if the host allocates on another thread.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self._latencyTimer?.invalidate()
+            self._latencyTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) {
+                [weak self] _ in
+                self?.notifyLatencyIfChanged()
+            }
+        }
     }
 
-    override func deallocateRenderResources() { super.deallocateRenderResources() }
+    override func deallocateRenderResources() {
+        DispatchQueue.main.async { [weak self] in
+            self?._latencyTimer?.invalidate()
+            self?._latencyTimer = nil
+        }
+        super.deallocateRenderResources()
+    }
 
     private static func render(
         ctx: UnsafeMutableRawPointer, cb: UnsafePointer<AuCallbacks>,
@@ -820,6 +846,24 @@ class TruceAUAudioUnit: AUAudioUnit {
         return TimeInterval(cb.pointee.tail_samples(ctx)) / _sampleRate
     }
     override var shouldBypassEffect: Bool { get { false } set { } }
+
+    // AUAudioUnit.latency is KVO-observed by hosts for delay
+    // compensation, but the value comes from a callback (a computed
+    // property) so re-assignment can't fire the notification. Called on
+    // the main thread from the param-sync timer: when the framework's
+    // reported latency moves, fire KVO manually so the host re-reads the
+    // fresh `latency`. This is AU v3's push path - the audio thread only
+    // refreshes the cache, never touches KVO.
+    func notifyLatencyIfChanged() {
+        guard let ctx = rustCtx, let cb = g_callbacks,
+              truceAbiTailVersion(cb) >= 3 else { return }
+        let now = cb.pointee.latency_samples(ctx)
+        if now != _lastLatencySamples {
+            _lastLatencySamples = now
+            willChangeValue(forKey: "latency")
+            didChangeValue(forKey: "latency")
+        }
+    }
 }
 
 // MARK: - Factory
@@ -1169,5 +1213,9 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
             }
         }
         au.isSyncingToHost = false
+
+        // Push a latency change (if any) to the host on the same
+        // main-thread tick.
+        au.notifyLatencyIfChanged()
     }
 }

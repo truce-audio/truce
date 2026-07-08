@@ -5,6 +5,7 @@ Notable changes per release.
 ## 4.0.0
 
 - Offline-render awareness: a `ProcessMode` (realtime / buffered / offline) reaches `reset` via a new `AudioConfig` and every block via `ProcessContext`, so a plugin can raise quality or relax realtime discipline during a bounce. Wired on CLAP, VST3, VST2, and LV2 (freewheel port); AU and AAX stay realtime for now.
+- Dynamic latency reporting: a plugin that varies its `latency()` return value now notifies the host of the change. Wired on CLAP (`latency.changed` + restart), VST3 (`restartComponent`), AU v2 (property notification), AU v3 (KVO on `latency`), VST2 (`audioMasterIOChanged`, best-effort), and LV2 (new `reportsLatency` port). AAX stays static (no push notification).
 
 ### Breaking
 

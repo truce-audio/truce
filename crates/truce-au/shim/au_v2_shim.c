@@ -239,6 +239,24 @@ void truce_au_v2_host_end_param_gesture(void *ctx, uint32_t param_id) {
     AUEventListenerNotify(NULL, NULL, &event);
 }
 
+/* Called from the Rust latency notifier when the plugin's reported
+ * latency changed. Broadcasts a `kAudioUnitProperty_Latency` property
+ * change so the host re-reads `kAudioUnitProperty_Latency` and updates
+ * its delay compensation. Runs on the notifier thread, off the audio
+ * thread, exactly like the parameter notifications above. */
+void truce_au_v2_host_latency_changed(void *ctx) {
+    TruceAUv2 *inst = au_ctx_map_lookup(ctx);
+    if (!inst || !inst->componentInstance) return;
+    AudioUnitEvent event;
+    memset(&event, 0, sizeof(event));
+    event.mEventType = kAudioUnitEvent_PropertyChange;
+    event.mArgument.mProperty.mAudioUnit = inst->componentInstance;
+    event.mArgument.mProperty.mPropertyID = kAudioUnitProperty_Latency;
+    event.mArgument.mProperty.mScope = kAudioUnitScope_Global;
+    event.mArgument.mProperty.mElement = 0;
+    AUEventListenerNotify(NULL, NULL, &event);
+}
+
 /* Whether the host should hand this plugin MIDI input. Gated on the
  * `accepts_midi_in` capability (category default, overridable via
  * `midi_input` in truce.toml), not the component type - so an `aumu`

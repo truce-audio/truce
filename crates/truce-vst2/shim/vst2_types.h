@@ -56,6 +56,7 @@
 #define audioMasterVersion  1
 #define audioMasterGetTime  7
 #define audioMasterProcessEvents 8 /* plugin → host MIDI output */
+#define audioMasterIOChanged 13 /* latency / IO config changed */
 #define audioMasterGetCurrentProcessLevel 23 /* realtime vs offline poll */
 #define audioMasterBeginEdit 43
 #define audioMasterEndEdit   44
