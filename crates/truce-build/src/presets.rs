@@ -55,7 +55,7 @@ impl AuthoredPreset {
     pub fn state_blob(&self, plugin_id_hash: u64) -> Vec<u8> {
         let ids: Vec<u32> = self.params.iter().map(|(id, _)| *id).collect();
         let values: Vec<f64> = self.params.iter().map(|(_, v)| *v).collect();
-        truce_utils::state::serialize_state(plugin_id_hash, &ids, &values, &self.extra)
+        truce_utils::state::serialize_state(plugin_id_hash, &ids, &values, &self.extra, &[])
     }
 }
 

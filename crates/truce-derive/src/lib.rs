@@ -756,6 +756,36 @@ fn has_skip_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("skip"))
 }
 
+/// A `#[persist]` field: a non-parameter value the host saves alongside
+/// the param values (editor-editable config). Like a `#[skip]` field it
+/// is `Default`-initialized in `new()` and excluded from ids / infos /
+/// count, but its bytes are round-tripped through the generated
+/// `serialize_persist` / `load_persist`.
+fn has_persist_attr(field: &syn::Field) -> bool {
+    field.attrs.iter().any(|a| a.path().is_ident("persist"))
+}
+
+/// The `#[persist = "key"]` string key, or the field name when the
+/// attribute is bare (`#[persist]`). The key identifies the field in the
+/// saved blob so add / remove / reorder stays compatible.
+fn persist_key(field: &syn::Field) -> String {
+    for attr in &field.attrs {
+        if attr.path().is_ident("persist")
+            && let syn::Meta::NameValue(nv) = &attr.meta
+            && let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) = &nv.value
+        {
+            return s.value();
+        }
+    }
+    field
+        .ident
+        .as_ref()
+        .map_or_else(String::new, std::string::ToString::to_string)
+}
+
 /// How auto-assigned parameter IDs are derived when `#[param(id = N)]`
 /// is omitted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -926,9 +956,12 @@ fn collect_fields(fields: &Fields) -> CollectedFields {
             continue;
         };
 
-        // Checked first: an explicit `#[skip]` opt-out always wins over
-        // whatever the field's type would otherwise classify as.
-        if has_skip_attr(f) {
+        // Checked first: an explicit `#[skip]` opt-out (or a
+        // `#[persist]` saved-config field) always wins over whatever the
+        // field's type would otherwise classify as. Both are non-params,
+        // `Default`-initialized in `new()`; `#[persist]` fields are also
+        // collected separately for the serialize/load-persist codegen.
+        if has_skip_attr(f) || has_persist_attr(f) {
             skipped.push(ident);
             continue;
         }
@@ -1398,7 +1431,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
 /// happens on syntactically broken input (rustc would already be
 /// rejecting the same file), so the panic surfaces a derive-internal
 /// regression rather than user error.
-#[proc_macro_derive(Params, attributes(param, nested, meter, skip, params))]
+#[proc_macro_derive(Params, attributes(param, nested, meter, skip, persist, params))]
 #[allow(clippy::too_many_lines)]
 pub fn derive_params(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for Params derive");
@@ -1414,6 +1447,20 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     };
 
     let (mut param_fields, nested_fields, mut meter_fields, skip_fields) = collect_fields(fields);
+
+    // `#[persist]` fields are non-params the host saves alongside param
+    // values (editor-editable config). Also present in `skip_fields` so
+    // `new()` `Default`-constructs them; collected here (ident + key) for
+    // the serialize/load-persist codegen.
+    let persist_fields: Vec<(syn::Ident, String)> = match fields {
+        Fields::Named(named) => named
+            .named
+            .iter()
+            .filter(|f| has_persist_attr(f))
+            .filter_map(|f| f.ident.clone().map(|id| (id, persist_key(f))))
+            .collect(),
+        _ => Vec::new(),
+    };
 
     if param_fields.is_empty() && nested_fields.is_empty() && meter_fields.is_empty() {
         return syn::Error::new_spanned(
@@ -2155,6 +2202,110 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .flat_map(|f| f.attrs.errors.iter().cloned())
         .collect();
 
+    // `#[persist]` codegen. The blob is a self-delimiting keyed list so
+    // fields can be added / removed / reordered without breaking older
+    // saves: a `u32` count, then per entry a `String` key and a
+    // `u32`-length-prefixed value. Own `#[persist]` fields and `#[nested]`
+    // sub-params share one list; a nested entry's value is that
+    // sub-struct's own `serialize_persist` blob, so it recurses.
+    let persist_write_stmts: Vec<proc_macro2::TokenStream> = persist_fields
+        .iter()
+        .map(|(ident, key)| {
+            (
+                key.clone(),
+                quote! {
+                    ::truce::core::custom_state::PersistField::persist_write(&self.#ident, &mut __buf);
+                },
+            )
+        })
+        .chain(nested_idents.iter().map(|ident| {
+            (
+                ident.to_string(),
+                quote! {
+                    __buf.extend_from_slice(&self.#ident.serialize_persist());
+                },
+            )
+        }))
+        .map(|(key, write)| {
+            quote! {
+                <::std::string::String as ::truce::core::custom_state::StateField>::write_field(
+                    &#key.to_string(), &mut __buf,
+                );
+                let __start = __buf.len();
+                __buf.extend_from_slice(&0u32.to_le_bytes());
+                #write
+                #[allow(clippy::cast_possible_truncation)]
+                let __len = (__buf.len() - __start - 4) as u32;
+                __buf[__start..__start + 4].copy_from_slice(&__len.to_le_bytes());
+            }
+        })
+        .collect();
+
+    let persist_read_arms: Vec<proc_macro2::TokenStream> = persist_fields
+        .iter()
+        .map(|(ident, key)| {
+            quote! {
+                #key => ::truce::core::custom_state::PersistField::persist_read(
+                    &self.#ident,
+                    &mut ::truce::core::custom_state::StateCursor::new(__value),
+                ),
+            }
+        })
+        .chain(nested_idents.iter().map(|ident| {
+            let key = ident.to_string();
+            quote! {
+                #key => self.#ident.load_persist(__value),
+            }
+        }))
+        .collect();
+
+    #[allow(clippy::cast_possible_truncation)]
+    let persist_count = (persist_fields.len() + nested_idents.len()) as u32;
+
+    // Nothing to carry: leave the empty-`Vec` trait default so a plugin
+    // without persisted config adds no bytes to its saved state.
+    let persist_impl = if persist_fields.is_empty() && nested_idents.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+        fn serialize_persist(&self) -> ::std::vec::Vec<u8> {
+            let mut __buf: ::std::vec::Vec<u8> = ::std::vec::Vec::new();
+            <u32 as ::truce::core::custom_state::StateField>::write_field(&#persist_count, &mut __buf);
+            #(#persist_write_stmts)*
+            __buf
+        }
+
+        fn load_persist(&self, __data: &[u8]) {
+            let mut __cursor = ::truce::core::custom_state::StateCursor::new(__data);
+            let ::core::option::Option::Some(__count) =
+                <u32 as ::truce::core::custom_state::StateField>::read_field(&mut __cursor)
+            else {
+                return;
+            };
+            for _ in 0..__count {
+                let ::core::option::Option::Some(__key) =
+                    <::std::string::String as ::truce::core::custom_state::StateField>::read_field(&mut __cursor)
+                else {
+                    return;
+                };
+                let ::core::option::Option::Some(__len_bytes) = __cursor.read_bytes(4) else {
+                    return;
+                };
+                let __len = u32::from_le_bytes(
+                    __len_bytes.try_into().expect("read_bytes(4) yields 4 bytes"),
+                ) as usize;
+                let ::core::option::Option::Some(__value) = __cursor.read_bytes(__len) else {
+                    return;
+                };
+                match __key.as_str() {
+                    #(#persist_read_arms)*
+                    _ => {}
+                }
+            }
+        }
+        }
+    };
+
     let expanded = quote! {
         #(#attr_errors)*
 
@@ -2251,6 +2402,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                     self.set_plain(*id, *value);
                 }
             }
+
+            #persist_impl
         }
     };
 
@@ -2602,6 +2755,29 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                     field_idx += 1;
                 }
                 Some(result)
+            }
+        }
+
+        // Also usable as a single length-prefixed `StateField`, so a
+        // `#[derive(State)]` struct can be a `#[persist]` field's inner
+        // type (`RwLock<MyState>`) or nest inside another state struct.
+        impl ::truce::core::custom_state::StateField for #name {
+            fn write_field(&self, buf: &mut Vec<u8>) {
+                let start = buf.len();
+                buf.extend_from_slice(&0u32.to_le_bytes());
+                let mut inner = Vec::new();
+                <Self as ::truce::core::custom_state::State>::serialize_into(self, &mut inner);
+                buf.extend_from_slice(&inner);
+                let len = (buf.len() - start - 4) as u32;
+                buf[start..start + 4].copy_from_slice(&len.to_le_bytes());
+            }
+            fn read_field(
+                cursor: &mut ::truce::core::custom_state::StateCursor,
+            ) -> Option<Self> {
+                let len_bytes = cursor.read_bytes(4)?;
+                let len = u32::from_le_bytes(<[u8; 4]>::try_from(len_bytes).ok()?) as usize;
+                let bytes = cursor.read_bytes(len)?;
+                <Self as ::truce::core::custom_state::State>::deserialize(bytes)
             }
         }
     };

@@ -982,7 +982,8 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // Rust global allocator for both save + free; do not cross
         // wires when refactoring `_save_state` paths together.)
         let extra = save_extra(&inst.snapshot, &inst.plugin);
-        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
+        let persist = inst.params_arc.serialize_persist();
+        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);
         let len = blob.len();
         let ptr = libc_malloc(len).cast::<u8>();
         if ptr.is_null() {
@@ -1953,6 +1954,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         let _ = pending_state_for_set.force_push(state::DeserializedState {
                             params: Vec::new(),
                             extra: Some(bytes),
+                            persist: Vec::new(),
                         });
                     }),
                     transport: Box::new(move || transport_slot.read()),

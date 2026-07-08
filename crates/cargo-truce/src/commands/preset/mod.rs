@@ -361,7 +361,7 @@ fn encode_native(
         .ok_or_else(|| format!("unsupported preset extension: {}", output.display()))?;
     let ids: Vec<u32> = params.iter().map(|(id, _)| *id).collect();
     let values: Vec<f64> = params.iter().map(|(_, v)| *v).collect();
-    let blob = serialize_state(ctx.plugin_id_hash, &ids, &values, extra);
+    let blob = serialize_state(ctx.plugin_id_hash, &ids, &values, extra, &[]);
     let mut meta = meta.clone();
     if meta.uuid.is_empty() {
         meta.uuid = mint_uuid();

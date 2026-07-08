@@ -2372,7 +2372,8 @@ unsafe extern "C" fn state_save<P: PluginExport>(
         // `save_state` never runs concurrently with `process` - plain
         // (non-atomic) plugin fields are safe to read here.
         let extra = save_extra(&data.snapshot, &data.plugin);
-        let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, &extra);
+        let persist = data.params_arc.serialize_persist();
+        let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, &extra, &persist);
 
         // Write to the CLAP output stream
         let Some(write_fn) = (*stream).write else {
@@ -3061,6 +3062,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     let _ = pending_state_for_set.force_push(state::DeserializedState {
                         params: Vec::new(),
                         extra: Some(bytes),
+                        persist: Vec::new(),
                     });
                 }),
                 transport: Box::new(move || transport_slot.read()),

@@ -64,6 +64,7 @@ impl From<MigratedState> for DeserializedState {
         Self {
             params: migrated.params,
             extra: migrated.extra,
+            persist: Vec::new(),
         }
     }
 }
@@ -121,6 +122,7 @@ impl std::error::Error for StateLoadError {}
 pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &DeserializedState) {
     use truce_params::Params;
     plugin.params().restore_values(&state.params);
+    plugin.params().load_persist(&state.persist);
     plugin.params().snap_smoothers();
     if let Some(extra) = &state.extra
         && let Err(e) = plugin.load_state(extra)
@@ -257,9 +259,17 @@ impl std::error::Error for RestoreError {}
 /// written by one host loads in any other (subject to the
 /// plugin-ID match `deserialize_state` enforces).
 pub fn snapshot_plugin<P: PluginExport>(plugin: &P) -> Vec<u8> {
+    use truce_params::Params;
     let (ids, values) = plugin.params().collect_values();
     let extra = plugin.save_state();
-    serialize_state(hash_plugin_id(P::info().clap_id), &ids, &values, &extra)
+    let persist = plugin.params().serialize_persist();
+    serialize_state(
+        hash_plugin_id(P::info().clap_id),
+        &ids,
+        &values,
+        &extra,
+        &persist,
+    )
 }
 
 /// Inverse of [`snapshot_plugin`]. Validates the envelope's magic,
@@ -277,6 +287,7 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
     let id = hash_plugin_id(P::info().clap_id);
     let s = deserialize_state(bytes, id).ok_or(RestoreError::Invalid)?;
     plugin.params().restore_values(&s.params);
+    plugin.params().load_persist(&s.persist);
     if let Some(extra) = s.extra {
         plugin.load_state(&extra).map_err(RestoreError::LoadState)?;
     }

@@ -25,6 +25,10 @@
 //! }
 //! ```
 
+/// Re-exported so plugin authors name the lock-free `#[persist]` cell
+/// as `AtomicCell` through the prelude, without depending on crossbeam.
+pub use crossbeam_utils::atomic::AtomicCell;
+
 /// Cursor for reading binary state data.
 pub struct StateCursor<'a> {
     data: &'a [u8],
@@ -109,6 +113,67 @@ pub trait State: Sized + Default {
     }
 
     fn deserialize(data: &[u8]) -> Option<Self>;
+}
+
+/// A `#[persist]` field on a `#[derive(Params)]` struct: an
+/// interior-mutable, `Sync` wrapper around a [`StateField`] value that
+/// the host saves alongside the parameter values (session / preset) and
+/// restores on load. Implemented for `RwLock<T>` / `Mutex<T>` where
+/// `T: StateField` (a primitive, `String`, `Vec`, `Option`, or a
+/// `#[derive(State)]` struct - the derive also emits a `StateField`
+/// impl). Interior mutability is required because a load reaches the
+/// field through `&Params` (the store is shared via `Arc<Params>`).
+pub trait PersistField {
+    /// Append the current value's bytes.
+    fn persist_write(&self, buf: &mut Vec<u8>);
+    /// Read a value from `cursor` and store it in place. A short or
+    /// malformed read leaves the current value untouched.
+    fn persist_read(&self, cursor: &mut StateCursor);
+}
+
+impl<T: StateField> PersistField for std::sync::RwLock<T> {
+    fn persist_write(&self, buf: &mut Vec<u8>) {
+        if let Ok(guard) = self.read() {
+            guard.write_field(buf);
+        }
+    }
+    fn persist_read(&self, cursor: &mut StateCursor) {
+        if let Some(value) = T::read_field(cursor)
+            && let Ok(mut guard) = self.write()
+        {
+            *guard = value;
+        }
+    }
+}
+
+impl<T: StateField> PersistField for std::sync::Mutex<T> {
+    fn persist_write(&self, buf: &mut Vec<u8>) {
+        if let Ok(guard) = self.lock() {
+            guard.write_field(buf);
+        }
+    }
+    fn persist_read(&self, cursor: &mut StateCursor) {
+        if let Some(value) = T::read_field(cursor)
+            && let Ok(mut guard) = self.lock()
+        {
+            *guard = value;
+        }
+    }
+}
+
+/// Lock-free-friendly cell for `Copy` config: a persisted `f32`, small
+/// enum, or index reads as `AtomicCell<T>` instead of sitting behind a
+/// `Mutex`. `AtomicCell` is genuinely atomic for word-sized types and
+/// falls back to an internal lock for larger ones.
+impl<T: StateField + Copy> PersistField for AtomicCell<T> {
+    fn persist_write(&self, buf: &mut Vec<u8>) {
+        self.load().write_field(buf);
+    }
+    fn persist_read(&self, cursor: &mut StateCursor) {
+        if let Some(value) = T::read_field(cursor) {
+            self.store(value);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,5 +415,43 @@ mod tests {
 
         let mut cursor = StateCursor::new(&buf);
         assert_eq!(Vec::<String>::read_field(&mut cursor), Some(v));
+    }
+
+    #[test]
+    fn persist_field_lock_round_trip() {
+        let src = std::sync::RwLock::new("guitar bus".to_string());
+        let mut buf = Vec::new();
+        src.persist_write(&mut buf);
+
+        let dst = std::sync::RwLock::new(String::new());
+        dst.persist_read(&mut StateCursor::new(&buf));
+        assert_eq!(*dst.read().unwrap(), "guitar bus");
+
+        let m_src = std::sync::Mutex::new(vec![1u32, 2, 3]);
+        let mut m_buf = Vec::new();
+        m_src.persist_write(&mut m_buf);
+        let m_dst = std::sync::Mutex::new(Vec::<u32>::new());
+        m_dst.persist_read(&mut StateCursor::new(&m_buf));
+        assert_eq!(*m_dst.lock().unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn persist_field_atomic_cell_round_trip() {
+        let src = AtomicCell::new(0.75f32);
+        let mut buf = Vec::new();
+        src.persist_write(&mut buf);
+
+        let dst = AtomicCell::new(0.0f32);
+        dst.persist_read(&mut StateCursor::new(&buf));
+        // Bit-exact: the value round-trips through `to_le_bytes`.
+        assert_eq!(dst.load().to_bits(), 0.75f32.to_bits());
+    }
+
+    #[test]
+    fn persist_field_leaves_value_on_short_read() {
+        // A truncated blob must not clobber the current value.
+        let dst = AtomicCell::new(42u32);
+        dst.persist_read(&mut StateCursor::new(&[0xFF, 0xFF]));
+        assert_eq!(dst.load(), 42);
     }
 }

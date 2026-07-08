@@ -27,6 +27,10 @@ backtrace = { version = "0.3", optional = true }
 # with existing `truce_core::cast::*` and `truce_core::slugify` callers.
 truce-utils = { workspace = true }
 png = "0.18"
+# `AtomicCell<T>` backs the lock-free `#[persist]` path for `Copy`
+# config fields (re-exported from the prelude). Small types stay
+# genuinely atomic; larger ones fall back to a private lock.
+crossbeam-utils = "0.8"
 
 # The mediation lock (`wrapper::PluginMutex`) is a
 # PTHREAD_PRIO_INHERIT pthread mutex on Linux - std's futex lock has

@@ -92,7 +92,7 @@ macro_rules! enable_rt_paranoid {
 mod prelude_impl {
     pub use std::f64::consts::TAU;
     pub use std::sync::Arc;
-    pub use truce_core::custom_state::{State as StateTrait, StateBinding, StateField};
+    pub use truce_core::custom_state::{AtomicCell, State as StateTrait, StateBinding, StateField};
     pub use truce_core::sample::{Float, Sample as SampleTrait};
     pub use truce_core::state::{ForeignState, MigratedState, PluginFormat, StateLoadError};
     pub use truce_core::util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};

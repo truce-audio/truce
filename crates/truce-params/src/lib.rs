@@ -240,6 +240,22 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
     /// Restore parameter values from a list of (id, value) pairs.
     fn restore_values(&self, values: &[(u32, f64)]);
 
+    /// Serialize this store's `#[persist]` fields into a keyed blob the
+    /// host saves alongside the parameter values. Default: empty (no
+    /// persist fields). The `#[derive(Params)]` macro overrides it when
+    /// any field carries `#[persist]`.
+    #[must_use]
+    fn serialize_persist(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Restore this store's `#[persist]` fields from a blob produced by
+    /// [`Self::serialize_persist`]. Unknown / missing keys are skipped,
+    /// leaving those fields at their current value. Default: no-op.
+    fn load_persist(&self, data: &[u8]) {
+        let _ = data;
+    }
+
     /// Walk every parameter and meter ID reachable from `self`
     /// (including nested `#[nested]` substructs) and panic on the
     /// first duplicate.
