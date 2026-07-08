@@ -25,8 +25,12 @@ extern "C" {
  *   2 → 3: SysEx I/O - push_sysex_input + output_sysex_count +
  *           output_sysex_at exports.
  *   3 → 4: legacy-state migration - legacy_chunk_ids on the
- *           descriptor + load_state_foreign export. */
-#define TRUCE_AAX_ABI_VERSION 4u
+ *           descriptor + load_state_foreign export.
+ *   4 → 5: offline-bounce awareness - set_render_mode export
+ *           (host EnteringOfflineMode / ExitingOfflineMode).
+ *   5 → 6: latency reporting - latency export (template pushes it
+ *           via AAX_IController::SetSignalLatency). */
+#define TRUCE_AAX_ABI_VERSION 6u
 
 /* Capacity of TruceAaxDescriptor::legacy_chunk_ids. */
 #define TRUCE_AAX_MAX_LEGACY_CHUNKS 8u
@@ -144,6 +148,19 @@ void truce_aax_get_param_info(uint32_t index, TruceAaxParamInfo* out);
 void* truce_aax_create(void);
 void  truce_aax_destroy(void* ctx);
 void  truce_aax_reset(void* ctx, double sample_rate, uint32_t max_frames);
+
+/* Render-mode signal, as a ProcessMode discriminant (0 realtime, 1
+ * buffered, 2 offline). The template calls this from its
+ * NotificationReceived override when the host posts
+ * AAX_eNotificationEvent_EnteringOfflineMode / ExitingOfflineMode
+ * (offline bounce). The Rust side stashes it in an atomic that reset
+ * and every process block read. */
+void  truce_aax_set_render_mode(void* ctx, uint32_t mode);
+
+/* Current plugin latency in samples, for host delay compensation. The
+ * template polls this from its TimerWakeup idle callback and pushes
+ * changes to the host via AAX_IController::SetSignalLatency. */
+uint32_t truce_aax_latency(void* ctx);
 
 /* Audio processing. `transport` may be NULL when the template did not
  * manage to query AAX_ITransport for this block. */

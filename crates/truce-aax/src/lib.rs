@@ -15,7 +15,7 @@ use std::mem;
 use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use truce_core::TransportSlot;
@@ -233,6 +233,12 @@ struct AaxInstance<P: PluginExport> {
     /// `tail()`. Updated by the audio thread (or `_reset`).
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
+    /// Current render mode as a [`ProcessMode`] discriminant. Pro Tools
+    /// posts `EnteringOfflineMode` / `ExitingOfflineMode` notifications
+    /// on offline bounce; the template forwards them via
+    /// `_set_render_mode` (main thread) and `_reset` / `_process` read
+    /// it (audio thread). Defaults to `Realtime` (0).
+    render_mode: AtomicU8,
     event_list: EventList,
     /// Set when `_push_sysex_input` has queued `SysEx` for the current
     /// `_render` block. `RenderAudio` reassembles `SysEx` from the MIDI
@@ -593,6 +599,17 @@ macro_rules! export_aax {
                 ::truce_aax::_reset::<$plugin_type>(ctx, sample_rate, max_frames);
             }
             #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_set_render_mode(
+                ctx: *mut ::std::ffi::c_void,
+                mode: u32,
+            ) {
+                ::truce_aax::_set_render_mode::<$plugin_type>(ctx, mode);
+            }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_latency(ctx: *mut ::std::ffi::c_void) -> u32 {
+                ::truce_aax::_latency::<$plugin_type>(ctx)
+            }
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_process(
                 ctx: *mut ::std::ffi::c_void,
                 inputs: *const *const f32,
@@ -826,6 +843,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         meter_store,
         latency_cache,
         tail_cache,
+        render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sysex_inputs_pending: false,
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
@@ -867,12 +885,12 @@ pub unsafe fn _reset<P: PluginExport>(
     let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
     inst.scratch
         .ensure_capacity(num_in as usize, num_out as usize, max_frames);
+    // Offline-bounce state, set from the host's `EnteringOfflineMode` /
+    // `ExitingOfflineMode` notifications (forwarded by the template).
+    let mode = ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed));
     {
         let mut plugin = lock_plugin(&inst.plugin);
-        // AAX's offline signal is AudioSuite instantiation, not a
-        // per-block flag, and its exact SDK identifier needs verifying
-        // against the headers - so AAX prepares for realtime for now.
-        plugin.reset(&AudioConfig::new(sample_rate, max_frames));
+        plugin.reset(&AudioConfig::new(sample_rate, max_frames).with_process_mode(mode));
         plugin.params().set_sample_rate(sample_rate);
         plugin.params().snap_smoothers();
         inst.latency_cache
@@ -880,6 +898,31 @@ pub unsafe fn _reset<P: PluginExport>(
         inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
     }
     inst.prepared = true;
+}
+
+/// Host entered / left offline-bounce mode. `mode` is a [`ProcessMode`]
+/// discriminant; stash it so `_reset` (buffer / quality prep) and every
+/// `_process` block pick it up. Unknown values fold to `Realtime`.
+///
+/// # Safety
+/// `ctx` must be a live `AaxInstance<P>` pointer from [`_create`].
+pub unsafe fn _set_render_mode<P: PluginExport>(ctx: *mut std::ffi::c_void, mode: u32) {
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    let disc = u8::try_from(mode).unwrap_or(0);
+    inst.render_mode
+        .store(ProcessMode::from_u8(disc).as_u8(), Ordering::Relaxed);
+}
+
+/// Current plugin latency in samples, for host delay compensation.
+/// Reads the audio-thread-updated cache, so the template's idle-thread
+/// `TimerWakeup` poll never contends on the plugin lock. The template
+/// pushes changes to Pro Tools via `AAX_IController::SetSignalLatency`.
+///
+/// # Safety
+/// `ctx` must be a live `AaxInstance<P>` pointer from [`_create`].
+pub unsafe fn _latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    inst.latency_cache.load(Ordering::Relaxed)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1011,8 +1054,9 @@ pub unsafe fn _process<P: PluginExport>(
                 sub_event_scratch: &mut inst.sub_event_scratch,
                 transport: &mut transport_snap,
                 sample_rate: inst.sample_rate,
-                // AAX AudioSuite detection not wired; runs as realtime.
-                process_mode: ProcessMode::Realtime,
+                // Offline-bounce state from the host notifications; read
+                // per block so a mid-session toggle applies immediately.
+                process_mode: ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed)),
                 output_events: &mut inst.output_events,
                 params_fn: None,
                 meters_fn: None,

@@ -42,6 +42,18 @@ public:
         const TParamValPair* inSynchronizedParamValues[],
         int32_t inNumSynchronizedParamValues) override;
 
+    // Offline-bounce awareness: Pro Tools posts EnteringOfflineMode /
+    // ExitingOfflineMode here; we forward the render mode to Rust so
+    // reset / process observe the right ProcessMode.
+    AAX_Result NotificationReceived(AAX_CTypeID inNotificationType,
+                                    const void* inNotificationData,
+                                    uint32_t inNotificationDataSize) override;
+
+    // Dynamic latency: the host drives this idle callback (~30 ms). We
+    // poll the plugin's current latency and push changes to the host via
+    // AAX_IController::SetSignalLatency - off the audio thread.
+    AAX_Result TimerWakeup() override;
+
     // State
     AAX_Result GetChunkSize(AAX_CTypeID chunkID, uint32_t* oSize) const override;
     AAX_Result GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* oChunk) const override;
@@ -54,6 +66,10 @@ public:
     void* GetRustCtx() const { return mRustCtx; }
 
 private:
+    // Push the plugin's current latency to the host when it changed
+    // since the last push. Idle-thread only (calls the controller).
+    void PushLatencyIfChanged();
+
     void* mRustCtx;
     std::vector<uint32_t> mParamIDs; // maps AAX index → truce param ID
     // Cache for a single GetChunkSize → GetChunk pair. Pro Tools calls
@@ -66,4 +82,8 @@ private:
     // than `mMaxBlockSize`.
     double mSampleRate = 44100.0;
     uint32_t mMaxBlockSize = 0;
+    // Last latency (samples) pushed to the host via SetSignalLatency.
+    // -1 sentinel so the first TimerWakeup always reports, even if the
+    // plugin's latency is 0. Touched only on the host idle thread.
+    int32_t mLastReportedLatency = -1;
 };

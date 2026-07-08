@@ -4,9 +4,9 @@ Notable changes per release.
 
 ## 4.0.0
 
-- Render-mode support: a `ProcessMode` (realtime / buffered / offline) reaches `reset` through the new `AudioConfig` and every block through `ProcessContext`, so a plugin can raise quality or relax realtime discipline during an offline bounce. Wired on CLAP, VST3, VST2, and LV2 (freewheel port); AU and AAX stay realtime for now.
+- Render-mode support: a `ProcessMode` (realtime / buffered / offline) reaches `reset` through the new `AudioConfig` and every block through `ProcessContext`, so a plugin can raise quality or relax realtime discipline during an offline bounce. Wired on every format: CLAP, VST3, VST2, LV2 (freewheel port), AU (v2 `OfflineRender` property + v3 `isRenderingOffline`), and AAX (host offline-bounce notifications).
 - Receiverless `PluginLogic`: the trait is a stateless descriptor whose methods (`process`, `reset`, `save_state`, ...) are associated functions over `&mut Self::DspState` / `&Self::Params` - no `&self`. DSP state moves into the shell, so a hot-reload keeps it alive across a code-only swap: reverb tails and oscillator phases survive an edit-and-reload. Put the DSP fields in a `#[derive(DspState)]` struct named as `type DspState`; the layout fingerprint that guards preservation is derived automatically. A stateless plugin writes `type DspState = ()`.
-- Dynamic latency reporting: a plugin that changes its `latency()` return now notifies the host. Wired on CLAP, VST3, AU v2, AU v3, and VST2 (best-effort), plus LV2's new `reportsLatency` port; AAX stays static.
+- Dynamic latency reporting: a plugin that changes its `latency()` return now notifies the host. Wired on CLAP, VST3, AU v2, AU v3, VST2 (best-effort), LV2's new `reportsLatency` port, and AAX (`SetSignalLatency` pushed from the host idle thread).
 
 ### Breaking
 
