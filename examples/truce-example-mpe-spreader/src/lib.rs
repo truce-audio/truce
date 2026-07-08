@@ -1,10 +1,10 @@
-//! Promotes MIDI 1.0 to MIDI 2.0 (UMP) and spreads notes across the
-//! channel address space - a test vehicle for truce's 2.0 **encode**
-//! surface.
+//! Spreads notes across the channel address space and adds per-note
+//! expression - a test vehicle for truce's 2.0 **encode** surface.
 //!
-//! Every incoming 1.0 channel-voice message is re-emitted as its native
-//! 2.0 `EventBody` (7-bit velocity -> 16-bit, 7/14-bit controller/bend
-//! values -> 32-bit). An `Algo` mode chooses how notes are addressed:
+//! Pure MIDI 2.0 (`midi2 = true`): the output is always native 2.0 UMP,
+//! and note input is accepted in either dialect - a 1.0 `NoteOn`
+//! promotes (7-bit velocity -> 16-bit), a native `NoteOn2` re-addresses
+//! at full resolution. An `Algo` mode chooses how notes are addressed:
 //!
 //! - **Passthrough**   - promotion only, addressing untouched.
 //! - **Channel Fan**   - round-robin each note across `Channels` MIDI
@@ -24,9 +24,10 @@
 //! `Vibrato Depth` is in semitones; both modes scale it into their
 //! wire's bend range.
 //!
-//! `midi2_output = true` in `truce.toml` makes the output carry native
-//! UMP on CLAP / AU v3; on formats without a UMP transport the wrapper
-//! (or host) down-converts to 1.0. Non-1.0-channel-voice input is ignored.
+//! `midi2 = true` in `truce.toml` makes the output carry native UMP on
+//! CLAP / AU v3; on formats without a UMP transport the wrapper (or host)
+//! down-converts to 1.0. Non-note channel-voice input beyond the arms
+//! below (e.g. a native 2.0 CC) is ignored.
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -256,6 +257,65 @@ impl PluginLogic for Spreader {
                             velocity: upscale_7_to_16(velocity),
                             attribute_type: 0,
                             attribute: 0,
+                        },
+                    ));
+                }
+                // Native 2.0 notes (the host negotiated a 2.0 input
+                // connection): re-address and re-emit at full resolution,
+                // no promotion. Same routing / held-tracking as the 1.0
+                // arms above.
+                EventBody::NoteOn2 {
+                    group,
+                    channel,
+                    note,
+                    velocity,
+                    attribute_type,
+                    attribute,
+                } => {
+                    let (g, ch) = self.route(algo, width, group, channel);
+                    self.held[usize::from(note)] = Some(Held {
+                        group: g,
+                        channel: ch,
+                        phase: 0.0,
+                    });
+                    context.output_events.push(Event::new(
+                        off,
+                        EventBody::NoteOn2 {
+                            group: g,
+                            channel: ch,
+                            note,
+                            velocity,
+                            attribute_type,
+                            attribute,
+                        },
+                    ));
+                }
+                EventBody::NoteOff2 {
+                    group,
+                    channel,
+                    note,
+                    velocity,
+                    attribute_type,
+                    attribute,
+                } => {
+                    let held = self.held[usize::from(note)].take();
+                    let (g, ch) = held.map_or((group, channel), |h| (h.group, h.channel));
+                    if let Some(kind) = self.vibrato
+                        && held.is_some()
+                    {
+                        context
+                            .output_events
+                            .push(Event::new(off, recentre_body(kind, g, ch, note)));
+                    }
+                    context.output_events.push(Event::new(
+                        off,
+                        EventBody::NoteOff2 {
+                            group: g,
+                            channel: ch,
+                            note,
+                            velocity,
+                            attribute_type,
+                            attribute,
                         },
                     ));
                 }

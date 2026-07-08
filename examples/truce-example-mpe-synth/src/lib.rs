@@ -495,17 +495,9 @@ mod tests {
                 unsafe { AudioBuffer::from_slices(&spread_in_refs, &mut spread_out_refs, 64) };
             let mut spread_in = EventList::default();
             if blk == 0 {
-                // 1.0 note-on: the spreader is a 1.0 -> 2.0 promoter and
-                // ignores 2.0-dialect input.
-                spread_in.push(Event::new(
-                    0,
-                    EventBody::NoteOn {
-                        group: 0,
-                        channel: 0,
-                        note: 60,
-                        velocity: 100,
-                    },
-                ));
+                // Native 2.0 note-on: the spreader is pure MIDI 2.0 now, so
+                // a Logic-negotiated 2.0 connection feeds it `NoteOn2`.
+                spread_in.push(note_on_ch(0, 60));
             }
             let mut spread_out = EventList::default();
             let mut spread_ctx = ProcessContext::new(&transport, 44100.0, 64, &mut spread_out);
