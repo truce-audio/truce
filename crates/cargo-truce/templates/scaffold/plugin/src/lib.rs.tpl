@@ -6,9 +6,9 @@ use truce_gui_types::layout::\{GridLayout, knob, widgets};
 use {struct_name}ParamsParamId as P;
 
 // Stateless descriptor. When your DSP needs per-instance state (filters,
-// voices, phase), put it in a `#[derive(DspState)] struct {struct_name}DspState`,
-// set `type DspState = {struct_name}DspState`, and build it in `init` -
-// the derive keeps the state alive across a hot-reload.
+// voices, phase), put it in a plain `struct {struct_name}DspState`, set
+// `type DspState = {struct_name}DspState`, and build it in `init` - the
+// shell keeps that state alive across a hot-reload.
 pub struct {struct_name};
 
 impl PluginLogic for {struct_name} \{

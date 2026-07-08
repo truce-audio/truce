@@ -62,7 +62,6 @@ pub struct ChordParams {
 /// Stateless descriptor - the chord's per-block DSP state is [`ChordDspState`].
 pub struct Chord;
 
-#[derive(DspState)]
 pub struct ChordDspState {
     sample_rate: f64,
     /// Notes currently sounding (and emitted), one per voice.

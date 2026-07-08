@@ -28,7 +28,7 @@ pub struct Bitcrusher;
 
 /// Per-instance DSP state: the sample-and-hold buffer and its
 /// frame counter.
-#[derive(DspState, Default)]
+#[derive(Default)]
 pub struct BitcrusherDspState {
     /// Sample-and-hold buffer per channel (max 2 channels supported).
     held: [f32; 2],

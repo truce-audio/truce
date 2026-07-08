@@ -93,7 +93,6 @@ pub struct FundspReverbSimple;
 
 /// Per-instance DSP state: the fundsp graph, the atomic cells it
 /// reads, and the inputs the current graph was built with.
-#[derive(DspState)]
 pub struct FundspReverbSimpleDspState {
     // Atomic cells the fundsp graph reads each sample via `var()`.
     low_cut_shared: Shared,

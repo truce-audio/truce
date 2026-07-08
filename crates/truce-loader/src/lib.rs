@@ -106,11 +106,20 @@ macro_rules! export_plugin {
             });
         }
 
-        /// Structural fingerprint of `State` - the shell keeps the old
-        /// state across a reload only when this matches.
+        /// Best-effort layout fingerprint of `State` - the shell keeps
+        /// the old state across a reload only when this matches.
+        /// Computed at load time from the state type's `type_name` /
+        /// `size_of` / `align_of`; `NO_PRESERVE` when the plugin opts out
+        /// via `PRESERVE_DSP_STATE = false` (or the state is zero-sized).
         #[unsafe(no_mangle)]
         pub fn truce_state_fingerprint() -> u64 {
-            <$logic as $crate::PluginLogicCore<Sample>>::STATE_FINGERPRINT
+            if <$logic as $crate::PluginLogicCore<Sample>>::PRESERVE_DSP_STATE {
+                $crate::__macro_deps::truce_core::dsp_state::layout_fingerprint::<
+                    <$logic as $crate::PluginLogicCore<Sample>>::DspState,
+                >()
+            } else {
+                $crate::__macro_deps::truce_core::dsp_state::NO_PRESERVE
+            }
         }
 
         #[unsafe(no_mangle)]

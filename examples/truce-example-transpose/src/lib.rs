@@ -29,7 +29,6 @@ pub struct TransposeParams {
 pub struct Transpose;
 
 /// Per-instance DSP state: the note-tracking table.
-#[derive(DspState)]
 pub struct TransposeDspState {
     /// Maps input note -> output note that was actually sent.
     /// Used to send correct `NoteOff` even if shift changes mid-hold.

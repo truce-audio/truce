@@ -106,7 +106,6 @@ pub struct TremoloParams {
 /// stateless descriptor into this struct, so `Tremolo` is both the
 /// `PluginLogic` carrier and the hot-reload-preserved DSP state - no
 /// separate descriptor type.
-#[derive(DspState)]
 pub struct Tremolo {
     /// Free-running phase used when the host provides no tempo (e.g.
     /// standalone running, or a host that does not report transport).

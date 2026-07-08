@@ -56,7 +56,6 @@ pub struct InstanceMemo {
 /// Stateless descriptor. The per-instance state lives in [`StateExampleDspState`].
 pub struct StateExample;
 
-#[derive(DspState)]
 pub struct StateExampleDspState {
     memo: InstanceMemo,
     /// Runtime counter - how many times the host has restored

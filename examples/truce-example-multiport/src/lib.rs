@@ -145,7 +145,6 @@ struct Voice {
 /// Stateless descriptor. The per-block DSP state lives in [`MultiportDspState`].
 pub struct Multiport;
 
-#[derive(DspState)]
 pub struct MultiportDspState {
     sample_rate: f64,
     voices: [Voice; NUM_VOICES],

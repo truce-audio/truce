@@ -41,7 +41,6 @@ pub struct CcFilter;
 
 /// Per-instance DSP state: the one-pole filter memory and the
 /// CC-driven cutoff.
-#[derive(DspState)]
 pub struct CcFilterDspState {
     sample_rate: f64,
     /// One-pole state per channel.

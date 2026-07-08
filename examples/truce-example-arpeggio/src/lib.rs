@@ -116,7 +116,6 @@ fn step_to_seq_idx(step: i64, seq_len: usize) -> usize {
 /// Stateless descriptor - the arp's per-block DSP state is [`ArpeggioDspState`].
 pub struct Arpeggio;
 
-#[derive(DspState)]
 pub struct ArpeggioDspState {
     held_notes: Vec<u8>,
     /// Reusable arp sequence, rebuilt in place each block (never

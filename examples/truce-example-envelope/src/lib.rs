@@ -39,7 +39,6 @@ pub struct EnvelopeParams {
 /// Stateless descriptor - the follower's per-block DSP state is [`EnvelopeDspState`].
 pub struct Envelope;
 
-#[derive(DspState)]
 pub struct EnvelopeDspState {
     sample_rate: f64,
     /// Follower state, peak-tracked with instant attack and a

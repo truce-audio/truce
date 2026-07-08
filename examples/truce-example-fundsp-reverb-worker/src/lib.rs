@@ -163,7 +163,6 @@ pub struct FundspReverbWorker;
 
 /// Per-instance DSP state: the live graph, the atomic cells it reads,
 /// and the lock-free channel + worker thread that rebuild it.
-#[derive(DspState)]
 pub struct FundspReverbWorkerDspState {
     // Atomic cells the fundsp graph reads each sample via `var()`.
     low_cut_shared: Shared,

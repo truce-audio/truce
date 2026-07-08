@@ -1,105 +1,61 @@
-//! Structural fingerprint for hot-reload state preservation.
+//! Best-effort layout probe for hot-reload state preservation.
 //!
 //! A plugin's DSP state lives in a `State` type owned by the shell, not
 //! the reloadable dylib. When the dylib is swapped, the shell can keep
 //! the existing state and run the new code on it - but only if the two
 //! builds agree on the `State` memory layout. Running new code over a
 //! differently-laid-out allocation is undefined behavior, so the shell
-//! compares a [`DspState::FINGERPRINT`] across the swap and preserves
-//! state only on an exact match.
+//! compares a fingerprint across the swap and preserves state only on an
+//! exact match.
 //!
-//! Preservation is opt-in: a `State` that doesn't derive `DspState`
-//! reports [`NO_PRESERVE`], which never matches, so the shell always
-//! re-initializes. Derive `DspState` on the `State` struct to keep the
-//! sound alive across a code-only reload. The fingerprint is
-//! structural-*shallow* - it covers `State`'s own layout but not layout
-//! changes hidden behind a `Box` / `Vec` / `Arc` field, which stay a UB
-//! footgun in the dev loop; see [`DspState`] for the details.
+//! The fingerprint is a *heuristic*, not a proof, computed automatically
+//! at dylib-load time from the state type's full path + `size_of` +
+//! `align_of` ([`layout_fingerprint`]). No derive, no trait, no
+//! annotation. It catches every edit that moves the state's size, align,
+//! or type identity - add / remove / resize a field, swap the type -
+//! which is the large majority of real edits. It does **not** catch a
+//! same-size field reorder, or a layout change hidden behind a `Box` /
+//! `Vec` / `Arc` (the pointer's own size is unchanged). Because this only
+//! runs in `--shell` dev builds and never ships, those stay a dev-loop
+//! caveat: when you change a boxed sub-struct's layout, touch a `State`
+//! field or do one clean rebuild to force a re-init.
 
 /// Fingerprint value that never compares equal to a real one, forcing a
-/// fresh `init` on every reload. It is the default for any `State` that
-/// hasn't opted into preservation.
+/// fresh `init` on every reload. A zero-sized state (`type DspState =
+/// ()`) reports it - there is nothing to preserve.
 pub const NO_PRESERVE: u64 = 0;
 
-/// A DSP `State` whose memory layout can be fingerprinted, so the
-/// hot-reload shell can decide whether a state allocated by an older
-/// dylib is safe to reuse under freshly loaded code.
-///
-/// Derive it with `#[derive(DspState)]`; the derive folds each of the
-/// `State` struct's own field name+type tokens, plus the struct's
-/// `size_of` / `align_of`, into [`FINGERPRINT`](Self::FINGERPRINT). A
-/// change to `State` itself - a new / removed / reordered field, a
-/// swapped field type, a `repr` or padding change - moves the
-/// fingerprint, so the shell re-initializes instead of reinterpreting
-/// mismatched bytes.
-///
-/// # The fingerprint is structural-*shallow*
-///
-/// It sees only `State`'s **own** layout. It does **not** follow
-/// indirection into a pointee's definition. If a field is
-/// `Box<Filter>` / `Vec<Filter>` / `Arc<Filter>` / `&Filter` / `String`
-/// / `Rc<_>`, adding or reordering a field *inside `Filter`* leaves
-/// `State`'s size, align, and the `Box<Filter>` token all unchanged - so
-/// the fingerprint still matches, the shell reuses the old heap
-/// allocation, and freshly loaded code reads the old `Filter` layout
-/// through the pointer. **That is undefined behavior.**
-///
-/// This is a hot-reload dev-loop feature, and preservation is a
-/// deliberate opt-in (the derive), so the practical guidance is: while
-/// iterating on a plugin whose `State` holds boxed / heap-indirected
-/// sub-structs, edit the top-level `State` (touch any field) when you
-/// change a pointee's layout to force a clean re-init, or drop the
-/// derive to disable preservation for that session.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` can't be a plugin's `type DspState` without a layout fingerprint",
-    label = "this type has no `DspState` fingerprint",
-    note = "add `#[derive(DspState)]` to it, or use `type DspState = ()` if the plugin has no DSP state"
-)]
-pub trait DspState {
-    /// Structural identity of this `State`'s layout. Two builds that
-    /// produce the same value guarantee (as far as the derive can see)
-    /// an identical layout; a different value means "don't reuse".
-    const FINGERPRINT: u64;
-}
+const FINGERPRINT_SEED: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-/// A stateless plugin (`type DspState = ()`) carries nothing to preserve,
-/// so it reports [`NO_PRESERVE`] - the shell re-inits the empty state on
-/// every reload (a no-op). This impl is what lets `type DspState = ()`
-/// satisfy the `State: DspState` bound without a derive.
-impl DspState for () {
-    const FINGERPRINT: u64 = NO_PRESERVE;
-}
-
-/// Fold a field descriptor string plus the struct's size and alignment
-/// into a fingerprint. The `#[derive(DspState)]` macro passes a string
-/// built from each field's name and *surface* type tokens (so a rename,
-/// reorder, or type swap changes it) together with `size_of` /
-/// `align_of` of the whole struct (so a padding or repr change changes
-/// it too). Const, so the fingerprint is a compile-time constant.
+/// Best-effort layout fingerprint for a DSP state type `S`. Computed at
+/// dylib-load time (a runtime call, so it can use [`std::any::type_name`])
+/// by folding the type's full path plus its `size_of` / `align_of`.
 ///
-/// The fold sees only the tokens it is handed - it can't follow a
-/// `Box<T>` / `Vec<T>` / `Arc<T>` token into `T`'s own definition, so a
-/// layout change hidden behind indirection does not move the
-/// fingerprint. See [`DspState`] for why that is a UB footgun and how
-/// to work around it.
+/// Returns [`NO_PRESERVE`] for a zero-sized `S` (nothing to preserve).
 ///
-/// Never returns [`NO_PRESERVE`]: a real derived layout must not collide
-/// with the "always re-init" sentinel, so a zero fold is nudged to 1.
+/// This is a heuristic. Two builds that agree on `S`'s path, size, and
+/// align get the same value and the shell reuses the live state; any
+/// difference re-inits. It therefore catches add / remove / resize of a
+/// field (size moves) and a type swap or rename (path moves), but not a
+/// same-size reorder or a change *behind* a pointer - see the module
+/// docs.
 #[must_use]
-pub const fn fold_fingerprint(fields: &str, size: u64, align: u64) -> u64 {
-    // FNV-1a over the field descriptor bytes.
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    let bytes = fields.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        hash ^= bytes[i] as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        i += 1;
+pub fn layout_fingerprint<S>() -> u64 {
+    let size = std::mem::size_of::<S>();
+    if size == 0 {
+        return NO_PRESERVE;
     }
-    // Mix in the concrete layout so a same-tokens/different-layout build
-    // (unlikely, but a repr or generic-param change could) still differs.
-    hash ^= size.wrapping_mul(0x9e37_79b9_7f4a_7c15);
-    hash = hash.rotate_left(17) ^ align.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    let mut hash = FINGERPRINT_SEED;
+    // `type_name` includes the full path and any generic arguments, so
+    // swapping the state type (or a top-level generic param) moves it.
+    for b in std::any::type_name::<S>().bytes() {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash ^= (size as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    hash = hash.rotate_left(17)
+        ^ (std::mem::align_of::<S>() as u64).wrapping_mul(0xff51_afd7_ed55_8ccd);
     if hash == NO_PRESERVE { 1 } else { hash }
 }
 
@@ -107,12 +63,8 @@ pub const fn fold_fingerprint(fields: &str, size: u64, align: u64) -> u64 {
 /// reloaded dylib reporting `reloaded`.
 ///
 /// True only when two *real* fingerprints match exactly. [`NO_PRESERVE`]
-/// never preserves - not even against itself: an opt-out state carries no
-/// layout guarantee, so on a swap the old bytes can't be trusted (the
-/// author may have changed the layout, which is the whole point of the
-/// edit-and-reload loop) and the shell must re-initialize. Guarding the
-/// sentinel here, at the one comparison site, is what makes the derive's
-/// `0 -> 1` nudge in [`fold_fingerprint`] actually pay off.
+/// never preserves - not even against itself: a zero-sized or opted-out
+/// state carries no layout to trust, so the shell always re-initializes.
 #[must_use]
 pub fn may_preserve(reloaded: u64, held: u64) -> bool {
     reloaded != NO_PRESERVE && reloaded == held
@@ -120,13 +72,12 @@ pub fn may_preserve(reloaded: u64, held: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{NO_PRESERVE, may_preserve};
+    use super::{NO_PRESERVE, layout_fingerprint, may_preserve};
 
     #[test]
     fn no_preserve_never_matches_itself() {
-        // The self-collision the guard exists to prevent: an opt-out
-        // state whose layout changed between builds must re-init, not
-        // reuse the old allocation under new code.
+        // The self-collision the guard exists to prevent: an opt-out /
+        // zero-sized state must always re-init, never reuse old bytes.
         assert!(!may_preserve(NO_PRESERVE, NO_PRESERVE));
     }
 
@@ -142,7 +93,24 @@ mod tests {
     }
 
     #[test]
-    fn different_real_fingerprints_reinit() {
-        assert!(!may_preserve(0xdead_beef, 0xfeed_face));
+    fn zero_sized_state_never_preserves() {
+        assert_eq!(layout_fingerprint::<()>(), NO_PRESERVE);
+    }
+
+    #[test]
+    fn distinct_types_get_distinct_fingerprints() {
+        // Different size, or different type path, moves the fingerprint.
+        assert_ne!(layout_fingerprint::<u32>(), layout_fingerprint::<u64>());
+        assert_ne!(
+            layout_fingerprint::<[u8; 4]>(),
+            layout_fingerprint::<[u8; 8]>()
+        );
+        assert_ne!(layout_fingerprint::<f64>(), layout_fingerprint::<i64>());
+        assert_ne!(layout_fingerprint::<u32>(), NO_PRESERVE);
+    }
+
+    #[test]
+    fn same_type_is_stable() {
+        assert_eq!(layout_fingerprint::<u64>(), layout_fingerprint::<u64>());
     }
 }

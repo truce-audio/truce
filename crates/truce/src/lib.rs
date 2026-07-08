@@ -5,7 +5,7 @@ pub use truce_core as core;
 /// checker itself is the opt-in `rt-paranoid` feature; install it with
 /// [`enable_rt_paranoid!`]. See the audio-testing guide.
 pub use truce_core::rt;
-pub use truce_derive::{DspState, ParamEnum, Params, State};
+pub use truce_derive::{ParamEnum, Params, State};
 // `truce` is renderer-agnostic - it no longer re-exports `truce-gui`.
 // Plugins pick a renderer crate (truce-gui, truce-egui, truce-iced,
 // truce-slint) directly in their Cargo.toml and use it inside their
@@ -108,11 +108,11 @@ mod prelude_impl {
     // name collision with the new user-facing `Plugin` trait and
     // signals it as an internal contract.
     pub use truce_core::{
-        AudioConfig, BusConfig, BusKind, BusLayout, ChannelConfig, DspState, Editor, Event,
-        EventBody, EventList, IntoEditor, PluginCategory, PluginContext, PluginExport, PluginInfo,
+        AudioConfig, BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody,
+        EventList, IntoEditor, PluginCategory, PluginContext, PluginExport, PluginInfo,
         ProcessContext, ProcessMode, ProcessStatus, TransportInfo,
     };
-    pub use truce_derive::{DspState, ParamEnum, Params, State, plugin_info};
+    pub use truce_derive::{ParamEnum, Params, State, plugin_info};
     // `PluginLogic` itself is *not* re-exported here - each prelude
     // chooses its own leaf trait (`PluginLogic` for f32, aliased
     // `PluginLogic64 as PluginLogic` for f64) so plugin authors write

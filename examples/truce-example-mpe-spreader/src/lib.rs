@@ -141,7 +141,6 @@ struct Held {
 /// Stateless descriptor. The per-block DSP state lives in [`SpreaderDspState`].
 pub struct Spreader;
 
-#[derive(DspState)]
 pub struct SpreaderDspState {
     sample_rate: f64,
     /// Held notes indexed by note number. One entry per pitch - a second

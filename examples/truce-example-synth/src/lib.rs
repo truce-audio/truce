@@ -156,7 +156,6 @@ const VIBRATO_DEPTH_SEMITONES: f64 = 0.5;
 /// Stateless descriptor - the synth's per-block DSP state is [`SynthDspState`].
 pub struct Synth;
 
-#[derive(DspState)]
 pub struct SynthDspState {
     voices: Vec<Voice>,
     sample_rate: f64,
