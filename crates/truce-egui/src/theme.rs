@@ -25,19 +25,19 @@ pub fn dark() -> egui::Visuals {
     visuals.faint_bg_color = SURFACE;
 
     visuals.widgets.noninteractive.bg_fill = SURFACE;
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT_DIM);
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT_DIM);
 
     visuals.widgets.inactive.bg_fill = KNOB_TRACK;
-    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
 
     visuals.widgets.hovered.bg_fill = Color32::from_rgb(77, 77, 92);
-    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, TEXT);
+    visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, TEXT);
 
     visuals.widgets.active.bg_fill = PRIMARY;
-    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, Color32::WHITE);
+    visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, Color32::WHITE);
 
     visuals.selection.bg_fill = PRIMARY.linear_multiply(0.4);
-    visuals.selection.stroke = egui::Stroke::new(1.0, PRIMARY);
+    visuals.selection.stroke = egui::Stroke::new(1.0_f32, PRIMARY);
 
     visuals.override_text_color = Some(TEXT);
 

@@ -64,7 +64,7 @@ pub fn param_xy_pad<P: ?Sized>(
         // only the right edge is affected, but inset all four for an
         // even border.)
         let bc = egui::Color32::from_rgb(115, 115, 115);
-        let bs = egui::Stroke::new(1.0, bc);
+        let bs = egui::Stroke::new(1.0_f32, bc);
         let b = pad_rect.shrink(0.5);
         painter.line_segment([b.left_top(), b.right_top()], bs);
         painter.line_segment([b.right_top(), b.right_bottom()], bs);
@@ -84,14 +84,14 @@ pub fn param_xy_pad<P: ?Sized>(
                 egui::pos2(dot_x, pad_rect.top()),
                 egui::pos2(dot_x, pad_rect.bottom()),
             ],
-            egui::Stroke::new(1.0, crosshair_color),
+            egui::Stroke::new(1.0_f32, crosshair_color),
         );
         painter.line_segment(
             [
                 egui::pos2(pad_rect.left(), dot_y),
                 egui::pos2(pad_rect.right(), dot_y),
             ],
-            egui::Stroke::new(1.0, crosshair_color),
+            egui::Stroke::new(1.0_f32, crosshair_color),
         );
 
         // Dot

@@ -98,7 +98,7 @@ pub fn param_knob<P: Params + ?Sized>(
             let hover_points = arc_points(center, KNOB_RADIUS + 3.0, START_ANGLE, SWEEP, 64);
             painter.add(egui::Shape::line(
                 hover_points,
-                egui::Stroke::new(1.5, hover_color),
+                egui::Stroke::new(1.5_f32, hover_color),
             ));
         }
 
@@ -127,7 +127,10 @@ pub fn param_knob<P: Params + ?Sized>(
         let value_angle = START_ANGLE + SWEEP * value;
         let pointer_len = KNOB_RADIUS * 0.6;
         let pointer_end = center + egui::vec2(value_angle.cos(), value_angle.sin()) * pointer_len;
-        painter.line_segment([center, pointer_end], egui::Stroke::new(2.0, pointer_color));
+        painter.line_segment(
+            [center, pointer_end],
+            egui::Stroke::new(2.0_f32, pointer_color),
+        );
 
         // Value text (below knob arc)
         let value_text = state.format_param(id);
