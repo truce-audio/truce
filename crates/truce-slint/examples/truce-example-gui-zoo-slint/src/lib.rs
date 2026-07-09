@@ -98,11 +98,6 @@ impl PluginLogic for ZooSlint {
 
     fn init(_params: &ZooParams) {}
 
-    fn reset(_state: &mut (), params: &ZooParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
-        params.snap_smoothers();
-    }
-
     fn process(
         _state: &mut (),
         _params: &ZooParams,

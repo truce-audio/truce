@@ -48,12 +48,6 @@ impl PluginLogic for Widen {
 
     fn init(_params: &WidenParams) {}
 
-    fn reset(_state: &mut (), params: &WidenParams, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
-    }
-
     fn process(
         _state: &mut (),
         params: &WidenParams,

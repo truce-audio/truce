@@ -38,11 +38,6 @@ impl PluginLogic for GainSlint {
 
     fn init(_params: &GainParams) {}
 
-    fn reset(_state: &mut (), params: &GainParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
-        params.snap_smoothers();
-    }
-
     fn process(
         _state: &mut (),
         params: &GainParams,

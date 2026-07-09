@@ -57,12 +57,6 @@ impl PluginLogic for Saturate {
 
     fn init(_params: &SaturateParams) {}
 
-    fn reset(_state: &mut (), params: &SaturateParams, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
-    }
-
     fn process(
         _state: &mut (),
         params: &SaturateParams,

@@ -128,11 +128,9 @@ impl PluginLogic for Tremolo {
         }
     }
 
-    fn reset(state: &mut Self, params: &TremoloParams, config: &AudioConfig) {
+    fn reset(state: &mut Self, _params: &TremoloParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.free_phase = 0.0;
     }
 

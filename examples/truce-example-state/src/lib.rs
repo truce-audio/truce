@@ -77,10 +77,6 @@ impl PluginLogic for StateExample {
 
     fn init(_params: &StateExampleParams) {}
 
-    fn reset(_state: &mut (), params: &StateExampleParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
-    }
-
     fn process(
         _state: &mut (),
         _params: &StateExampleParams,

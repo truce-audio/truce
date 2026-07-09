@@ -283,11 +283,6 @@ impl PluginLogic for MidiInspector {
 
     fn init(_params: &InspectorParams) {}
 
-    fn reset(_state: &mut (), params: &InspectorParams, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-    }
-
     fn process(
         _state: &mut (),
         params: &InspectorParams,

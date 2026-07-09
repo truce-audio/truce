@@ -121,7 +121,11 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
 
     fn reset(&mut self, config: &AudioConfig) {
         self.sample_rate = config.sample_rate;
+        // Params plumbing is the shell's job, not the plugin's: settle
+        // smoother coefficients and state before the user's `reset` so
+        // its body reads post-snap values.
         self.params.set_sample_rate(config.sample_rate);
+        self.params.snap_smoothers();
         L::reset(&mut self.state, &self.params, config);
     }
 

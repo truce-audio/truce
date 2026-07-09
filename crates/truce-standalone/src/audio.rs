@@ -561,7 +561,6 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         let mut p = P::create();
         p.init();
         p.reset(&AudioConfig::new(sample_rate, initial_max_frames));
-        p.params().set_sample_rate(sample_rate);
         // Apply `--state <path>` BEFORE snapping smoothers so the
         // first audio block sees the restored values, not defaults
         // ramping toward them.
@@ -1040,7 +1039,6 @@ fn open_output_stream<P: PluginExport>(
             .lock()
             .expect("plugin mutex poisoned at audio setup");
         p.reset(&AudioConfig::new(sample_rate, frame_bound));
-        p.params().snap_smoothers();
     }
     scratch.ensure_capacity(channels, channels, frame_bound);
 

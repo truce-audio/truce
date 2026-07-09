@@ -181,10 +181,8 @@ impl PluginLogic for Spreader {
         }
     }
 
-    fn reset(state: &mut SpreaderDspState, params: &SpreaderParams, config: &AudioConfig) {
+    fn reset(state: &mut SpreaderDspState, _params: &SpreaderParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.sample_rate = sample_rate;
         state.held = [None; 128];
         state.next_channel = 0;

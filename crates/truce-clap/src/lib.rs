@@ -563,8 +563,6 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         {
             let mut instance = lock_plugin(&data.plugin);
             instance.reset(&AudioConfig::new(sample_rate, max_block).with_process_mode(mode));
-            instance.params().set_sample_rate(sample_rate);
-            instance.params().snap_smoothers();
         }
 
         // Pre-grow the widening / narrowing scratch on the f64 path.
@@ -632,7 +630,6 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
         instance.reset(
             &AudioConfig::new(data.sample_rate, data.max_block_size).with_process_mode(mode),
         );
-        instance.params().snap_smoothers();
     }
 }
 

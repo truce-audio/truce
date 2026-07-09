@@ -93,12 +93,6 @@ impl PluginLogic for SurroundMeter {
         ]
     }
 
-    fn reset(_state: &mut (), params: &SurroundMeterParams, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
-    }
-
     fn process(
         _state: &mut (),
         params: &SurroundMeterParams,

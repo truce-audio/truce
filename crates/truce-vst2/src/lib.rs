@@ -320,8 +320,6 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
             // VST2 exposes no setup-time offline flag; the per-block
             // process-level poll carries the mode into `process`.
             plugin.reset(&AudioConfig::new(sample_rate, max_frames));
-            plugin.params().set_sample_rate(sample_rate);
-            plugin.params().snap_smoothers();
             inst.latency_cache
                 .store(plugin.latency(), Ordering::Relaxed);
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);

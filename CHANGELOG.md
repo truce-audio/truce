@@ -4,13 +4,14 @@ Notable changes per release.
 
 ## 4.0.0
 
-- `#[persist]`: annotate a field on a `#[derive(Params)]` struct and the host saves it alongside the parameter values in every session and preset - editor-facing config (a view mode, an instance name, a file path) persists with no hand-written `save_state` / `load_state`. A `Copy` value sits in a lock-free `AtomicCell`; a `String`, `Vec`, or `#[derive(State)]` struct goes behind `RwLock` / `Mutex`. Fields are stored as a keyed list (`#[persist = "key"]`, defaulting to the field name), so loading skips unknown keys and leaves missing ones at their defaults - old sessions open in newer plugin versions and vice versa. Works inside `#[nested]` param structs and on every format, including `cargo-truce` preset files.
 - Render-mode support: a `ProcessMode` (realtime / buffered / offline) reaches `reset` through the new `AudioConfig` and every block through `ProcessContext`, so a plugin can raise quality or relax realtime discipline during an offline bounce. Wired on every format: CLAP, VST3, VST2, LV2 (freewheel port), AU (v2 `OfflineRender` property + v3 `isRenderingOffline`), and AAX (host offline-bounce notifications).
 - Dynamic latency reporting: a plugin that changes its `latency()` return now notifies the host. Wired on CLAP, VST3, AU v2, AU v3, VST2 (best-effort), LV2's new `reportsLatency` port, and AAX (`SetSignalLatency` pushed from the host idle thread).
+- `#[persist]`: annotate a field on a `#[derive(Params)]` struct and the host saves it alongside the parameter values in every session and preset - editor-facing config (a view mode, an instance name, a file path) persists with no hand-written `save_state` / `load_state`. A `Copy` value sits in a lock-free `AtomicCell`; a `String`, `Vec`, or `#[derive(State)]` struct goes behind `RwLock` / `Mutex`. Fields are stored as a keyed list (`#[persist = "key"]`, defaulting to the field name), so loading skips unknown keys and leaves missing ones at their defaults - old sessions open in newer plugin versions and vice versa. Works inside `#[nested]` param structs and on every format, including `cargo-truce` preset files.
 - `PluginLogic` splits code from data: the trait is now a stateless descriptor, and its methods (`process`, `reset`, `latency`, `save_state`, ...) are associated functions - no `&self` - that take exactly the data they touch. That makes the three kinds of per-plugin data distinct, so a method's signature spells out which it may read or mutate:
     - **Parameters** - `type Params`, a `#[derive(Params)]` struct of host-automatable values. Passed read-only to the audio methods as `&Self::Params`, and to the editor as `Arc<Self::Params>`.
     - **Saved state** - the non-parameter values the host persists in a project or preset. Two routes: `save_state` / `load_state` for opaque plugin-owned bytes (with `#[derive(State)]` serializing them), or `#[persist = "key"]` on a `#[derive(Params)]` field for editor-facing config saved alongside the param values without a manual `save_state`. A `Copy` field (a persisted `f32`, small enum, or index) uses a lock-free `AtomicCell`; a `String`, `Vec`, or `#[derive(State)]` struct is wrapped in `RwLock` / `Mutex`.
     - **DSP state** - `type DspState`, a plain struct of instance-local audio memory (filter buffers, oscillator phase, a voice pool). Neither a parameter nor saved to disk. It lives in the shell rather than the descriptor, so a hot-reload keeps it alive across a code-only swap - reverb tails and oscillator phases survive an edit-and-reload. A stateless effect writes `type DspState = ()`.
+- `reset` is now optional and carries no params plumbing: the shell calls `params.set_sample_rate(config.sample_rate)` and `params.snap_smoothers()` before invoking it, and the method has a default no-op body. A stateless plugin drops `reset` entirely; implement it only to clear plugin-owned DSP state (existing bodies that still do the params calls keep working - both are idempotent).
 
 ### Breaking
 
@@ -36,9 +37,6 @@ impl PluginLogic for Gain {
     type Params = GainParams;
     type DspState = ();
     fn init(_params: &GainParams) {}
-    fn reset(_state: &mut (), params: &GainParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
-    }
     fn process(_state: &mut (), params: &GainParams, buffer: &mut AudioBuffer, _events: &EventList, _ctx: &mut ProcessContext) -> ProcessStatus {
         let g = db_to_linear(params.gain.read()); /* ... */
     }
@@ -59,7 +57,7 @@ impl PluginLogic for Tremolo {
     fn init(_params: &TremoloParams) -> Self {
         Tremolo { phase: 0.0, sample_rate: 44100.0 }
     }
-    fn reset(state: &mut Self, params: &TremoloParams, config: &AudioConfig) {
+    fn reset(state: &mut Self, _params: &TremoloParams, config: &AudioConfig) {
         state.sample_rate = config.sample_rate;
     }
     fn process(state: &mut Self, params: &TremoloParams, /* ... */) -> ProcessStatus { /* ... */ }
@@ -93,7 +91,7 @@ impl PluginLogic for Tremolo {
 
 -    fn reset(&mut self, sample_rate: f32, max_block_size: usize) {
 -        self.filter.set_rate(sample_rate);
-+    fn reset(state: &mut MyDspState, params: &MyParams, config: &AudioConfig) {
++    fn reset(state: &mut MyDspState, _params: &MyParams, config: &AudioConfig) {
 +        state.filter.set_rate(config.sample_rate);
      }
 

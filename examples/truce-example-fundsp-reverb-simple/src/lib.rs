@@ -164,8 +164,6 @@ impl PluginLogic for FundspReverbSimple {
         config: &AudioConfig,
     ) {
         let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         let time_s = params.time.value();
         // SR is a discrete host setting, not a measurement.
         let sr_changed = sample_rate.to_bits() != state.last_built_sr.to_bits();
