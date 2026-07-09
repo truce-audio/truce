@@ -22,13 +22,14 @@ mod kind;
 mod layout;
 mod render;
 mod spec;
+mod statefulness;
 
 use std::fs;
 use std::path::Path;
 
 use crate::{CargoTruceError, Res};
 
-use context::{PluginScaffoldingContext, TruceTomlContext, WorkspaceContext};
+use context::{Pins, PluginScaffoldingContext, TruceTomlContext, WorkspaceContext};
 use layout::{ProjectLayout, WorkspaceLayout};
 use render::{Renderer, tpl};
 
@@ -36,6 +37,7 @@ pub use case::to_pascal_case;
 pub use fourcc::{resolve_fourccs, to_fourcc};
 pub use kind::PluginKind;
 pub use spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
+pub use statefulness::Statefulness;
 
 /// Driver that owns the renderer + writes scaffold output to disk.
 ///
@@ -116,7 +118,14 @@ impl Scaffolder {
         } else {
             DepForm::GitTag
         };
-        self.write_plugin_files(&layout, &plugin.name, plugin.kind, dep_form, features)?;
+        self.write_plugin_files(
+            &layout,
+            &plugin.name,
+            plugin.kind,
+            plugin.statefulness,
+            dep_form,
+            features,
+        )?;
 
         let plugins = std::slice::from_ref(plugin);
         let fourcc_map = resolve_fourccs(plugins)?;
@@ -183,7 +192,14 @@ impl Scaffolder {
         for p in plugins {
             let layout = ProjectLayout::workspace_plugin(root, &p.name);
             let crate_name = format!("{workspace_name}-{}", p.name);
-            self.write_plugin_files(&layout, &crate_name, p.kind, DepForm::Workspace, features)?;
+            self.write_plugin_files(
+                &layout,
+                &crate_name,
+                p.kind,
+                p.statefulness,
+                DepForm::Workspace,
+                features,
+            )?;
         }
 
         Ok(())
@@ -196,6 +212,7 @@ impl Scaffolder {
         layout: &ProjectLayout,
         crate_name: &str,
         kind: PluginKind,
+        statefulness: Statefulness,
         dep_form: DepForm,
         features: FeatureSet,
     ) -> Res {
@@ -205,11 +222,14 @@ impl Scaffolder {
         let ctx = PluginScaffoldingContext::new(
             crate_name,
             kind,
+            statefulness,
             dep_form,
             features,
-            &self.tag,
-            &self.version,
-            self.use_registry,
+            Pins {
+                tag: &self.tag,
+                version: &self.version,
+                use_registry: self.use_registry,
+            },
         );
 
         write(

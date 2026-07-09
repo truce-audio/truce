@@ -113,7 +113,18 @@ pub fn resolve_fourccs(plugins: &[PluginSpec]) -> Result<HashMap<String, String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scaffold::PluginKind;
+    use crate::scaffold::{PluginKind, Statefulness};
+
+    // `resolve_fourccs` keys only off the plugin name, so these tests
+    // don't care about kind or statefulness - one constructor keeps
+    // the fixtures terse.
+    fn spec(name: &str, kind: PluginKind) -> PluginSpec {
+        PluginSpec {
+            name: name.into(),
+            kind,
+            statefulness: Statefulness::Pure,
+        }
+    }
 
     // --- to_fourcc: segment-initials algorithm ---
 
@@ -177,14 +188,8 @@ mod tests {
     #[test]
     fn no_collision() {
         let plugins = vec![
-            PluginSpec {
-                name: "gain".into(),
-                kind: PluginKind::Effect,
-            },
-            PluginSpec {
-                name: "synth".into(),
-                kind: PluginKind::Instrument,
-            },
+            spec("gain", PluginKind::Effect),
+            spec("synth", PluginKind::Instrument),
         ];
         let map = resolve_fourccs(&plugins).unwrap();
         assert_eq!(map["gain"], to_fourcc("gain"));
@@ -195,14 +200,8 @@ mod tests {
     fn collision_produces_unique_codes() {
         // Two names that produce the same initials + backfill
         let plugins = vec![
-            PluginSpec {
-                name: "aa".into(),
-                kind: PluginKind::Effect,
-            },
-            PluginSpec {
-                name: "ab".into(),
-                kind: PluginKind::Effect,
-            },
+            spec("aa", PluginKind::Effect),
+            spec("ab", PluginKind::Effect),
         ];
         let map = resolve_fourccs(&plugins).unwrap();
         assert_ne!(map["aa"], map["ab"]);
@@ -213,18 +212,9 @@ mod tests {
     #[test]
     fn three_way_collision_all_unique() {
         let plugins = vec![
-            PluginSpec {
-                name: "soft-clip".into(),
-                kind: PluginKind::Effect,
-            },
-            PluginSpec {
-                name: "soft-comp".into(),
-                kind: PluginKind::Effect,
-            },
-            PluginSpec {
-                name: "soft-crush".into(),
-                kind: PluginKind::Effect,
-            },
+            spec("soft-clip", PluginKind::Effect),
+            spec("soft-comp", PluginKind::Effect),
+            spec("soft-crush", PluginKind::Effect),
         ];
         let map = resolve_fourccs(&plugins).unwrap();
         let mut codes: Vec<&String> = map.values().collect();
@@ -236,14 +226,8 @@ mod tests {
     #[test]
     fn first_plugin_keeps_natural_code() {
         let plugins = vec![
-            PluginSpec {
-                name: "soft-clip".into(),
-                kind: PluginKind::Effect,
-            },
-            PluginSpec {
-                name: "soft-comp".into(),
-                kind: PluginKind::Effect,
-            },
+            spec("soft-clip", PluginKind::Effect),
+            spec("soft-comp", PluginKind::Effect),
         ];
         let map = resolve_fourccs(&plugins).unwrap();
         // First plugin should keep its natural code
