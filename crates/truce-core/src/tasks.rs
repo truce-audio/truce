@@ -46,13 +46,30 @@ trait Drain: Send + Sync {
 /// (`Arc`) between the schedulers (audio thread / editor / init, via
 /// [`TaskSpawner`]) and the pool worker that drains it.
 struct Sink<T: Send + 'static> {
+    /// `try_spawn`: FIFO, every queued task runs.
     queue: ArrayQueue<T>,
+    /// `spawn_coalescing`: a single slot. `force_push` keeps only the
+    /// newest target, and `drain` runs it at most once, so a burst of
+    /// requests between two drains collapses to one execution instead of
+    /// running one build per intermediate target.
+    coalesced: ArrayQueue<T>,
     /// Coalesces wake-ups: set when this sink is already queued in the
     /// injector, so a burst of pushes injects it once.
     scheduled: AtomicBool,
     /// `run(task)` is `move |task| L::run_task(task, &params)`, built
     /// once when the instance registers - never per task.
     run: Box<dyn Fn(T) + Send + Sync>,
+}
+
+impl<T: Send + 'static> Sink<T> {
+    /// Run one task, catching panics so a bad handler can't kill the
+    /// shared worker (which would strand every other instance's tasks).
+    /// `run`/`task` are effectively unwind-safe: `run` is `&`-borrowed and
+    /// a poisoned task is simply dropped.
+    fn run_one(&self, task: T) {
+        let run = &self.run;
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(task)));
+    }
 }
 
 impl<T: Send + 'static> Drain for Sink<T> {
@@ -70,15 +87,15 @@ impl<T: Send + 'static> Drain for Sink<T> {
         // fine, but the last one-shot before an idle period would hang.
         self.scheduled.store(false, Ordering::SeqCst);
         fence(Ordering::SeqCst);
+        // The coalesced slot held only the newest target, so a burst of
+        // `spawn_coalescing` calls since the last drain runs once here, not
+        // once per intermediate target.
+        if let Some(task) = self.coalesced.pop() {
+            self.run_one(task);
+        }
+        // FIFO tasks each run.
         while let Some(task) = self.queue.pop() {
-            // The pool is shared across instances, so a panic in one
-            // plugin's handler must not kill the worker (which would
-            // strand every other instance's tasks). Catch it, let the
-            // panic hook report it, and keep draining. `run`/`task` are
-            // effectively unwind-safe: `run` is `&`-borrowed and a
-            // poisoned task is simply dropped.
-            let run = &self.run;
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(task)));
+            self.run_one(task);
         }
     }
 }
@@ -174,6 +191,7 @@ impl<T: Send + 'static> TaskSpawner<T> {
         Self {
             sink: Arc::new(Sink {
                 queue: ArrayQueue::new(TASK_QUEUE_PREALLOC),
+                coalesced: ArrayQueue::new(1),
                 scheduled: AtomicBool::new(false),
                 run: Box::new(run),
             }),
@@ -194,12 +212,16 @@ impl<T: Send + 'static> TaskSpawner<T> {
         Ok(())
     }
 
-    /// Enqueue a task, dropping the oldest queued task if the queue is
-    /// full ("latest wins"). Wait-free. Use for coalescing requests where
-    /// only the newest target matters, e.g. rebuilding a filter as a knob
-    /// sweeps - one rebuild per worker cycle, not one per block.
+    /// Post a task into the single coalescing slot, replacing any
+    /// still-unrun target. Wait-free, never rejects. Only the newest
+    /// survives and the worker runs it at most once per drain, so a knob
+    /// sweep that outruns the handler collapses to one execution, not one
+    /// build per intermediate target. The displaced target drops on the
+    /// caller (the audio thread on the hot path), so a coalescing task
+    /// type should be cheap to drop - a small `Copy` request, not an
+    /// owned buffer.
     pub fn spawn_coalescing(&self, task: T) {
-        let _ = self.sink.queue.force_push(task);
+        let _ = self.sink.coalesced.force_push(task);
         self.arm();
     }
 
@@ -366,6 +388,29 @@ mod tests {
                 == target),
             "the newest task always runs"
         );
+    }
+
+    #[test]
+    fn coalescing_collapses_to_the_newest() {
+        let runs = Arc::new(AtomicU32::new(0));
+        let last = Arc::new(AtomicU32::new(0));
+        let (r, l) = (Arc::clone(&runs), Arc::clone(&last));
+        let spawner = TaskSpawner::<u32>::new(move |n| {
+            r.fetch_add(1, Ordering::Relaxed);
+            l.store(n, Ordering::Relaxed);
+        });
+
+        // Fill the coalescing slot repeatedly without arming the pool, so
+        // the burst collapses in the slot rather than racing a worker.
+        // Then drain once and confirm the whole burst ran a single time,
+        // as the newest target.
+        for n in 1..=1000 {
+            let _ = spawner.sink.coalesced.force_push(n);
+        }
+        spawner.sink.drain();
+
+        assert_eq!(runs.load(Ordering::Relaxed), 1, "the burst ran once");
+        assert_eq!(last.load(Ordering::Relaxed), 1000, "and it was the newest");
     }
 }
 
