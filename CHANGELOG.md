@@ -4,71 +4,30 @@ Notable changes per release.
 
 ## 4.0.0
 
-- Render-mode support: a `ProcessMode` (realtime / buffered / offline) reaches `reset` through the new `AudioConfig` and every block through `ProcessContext`, so a plugin can raise quality or relax realtime discipline during an offline bounce. Wired on every format: CLAP, VST3, VST2, LV2 (freewheel port), AU (v2 `OfflineRender` property + v3 `isRenderingOffline`), and AAX (host offline-bounce notifications).
-- Dynamic latency reporting: a plugin that changes its `latency()` return now notifies the host. Wired on CLAP, VST3, AU v2, AU v3, VST2 (best-effort), LV2's new `reportsLatency` port, and AAX (`SetSignalLatency` pushed from the host idle thread).
-- `#[persist]`: annotate a field on a `#[derive(Params)]` struct and the host saves it alongside the parameter values in every session and preset - editor-facing config (a view mode, an instance name, a file path) persists with no hand-written `save_state` / `load_state`. A `Copy` value sits in a lock-free `AtomicCell`; a `String`, `Vec`, or `#[derive(State)]` struct goes behind `RwLock` / `Mutex`. Fields are stored as a keyed list (`#[persist = "key"]`, defaulting to the field name), so loading skips unknown keys and leaves missing ones at their defaults - old sessions open in newer plugin versions and vice versa. Works inside `#[nested]` param structs and on every format, including `cargo-truce` preset files.
-- `PluginLogic` splits code from data: the trait is now a stateless descriptor, and its methods (`process`, `reset`, `latency`, `save_state`, ...) are associated functions - no `&self` - that take exactly the data they touch. That makes the three kinds of per-plugin data distinct, so a method's signature spells out which it may read or mutate:
-    - **Parameters** - `type Params`, a `#[derive(Params)]` struct of host-automatable values. Passed read-only to the audio methods as `&Self::Params`, and to the editor as `Arc<Self::Params>`.
-    - **Saved state** - the non-parameter values the host persists in a project or preset. Two routes: `save_state` / `load_state` for opaque plugin-owned bytes (with `#[derive(State)]` serializing them), or `#[persist = "key"]` on a `#[derive(Params)]` field for editor-facing config saved alongside the param values without a manual `save_state`. A `Copy` field (a persisted `f32`, small enum, or index) uses a lock-free `AtomicCell`; a `String`, `Vec`, or `#[derive(State)]` struct is wrapped in `RwLock` / `Mutex`.
-    - **DSP state** - `type DspState`, a plain struct of instance-local audio memory (filter buffers, oscillator phase, a voice pool). Neither a parameter nor saved to disk. It lives in the shell rather than the descriptor, so a hot-reload keeps it alive across a code-only swap - reverb tails and oscillator phases survive an edit-and-reload. A stateless effect has none - it implements `PurePluginLogic` instead (below).
-- `reset` is now optional and carries no params plumbing: the shell calls `params.set_sample_rate(config.sample_rate)` and `params.snap_smoothers()` before invoking it, and the method has a default no-op body. A stateless plugin drops `reset` entirely; implement it only to clear plugin-owned DSP state (existing bodies that still do the params calls keep working - both are idempotent).
-- `init` is now optional: `type DspState` requires `Default`, and the default `init` returns `Self::DspState::default()`. A state whose fresh value is all-zero derives it; one with non-zero initial fields (`sample_rate: 44100.0`, a pre-sized voice pool) hand-writes `Default`. Write `init` only when construction genuinely reads params.
-- `PurePluginLogic` (and `PurePluginLogic64`): the stateless leaf trait. A pure parameter-driven effect implements it instead of `PluginLogic` and skips the state plumbing entirely - no `type DspState`, no `init`, no `_state: &mut ()` argument on `process`. A blanket impl makes every `PurePluginLogic` a `PluginLogic` with `DspState = ()`, so `truce::plugin!`, the shells, and every format consume it unchanged. Re-exported precision-renamed from every prelude, like `PluginLogic`.
+- `PluginLogic` now separates your code from your data. The trait is a stateless descriptor and its methods (`process`, `reset`, ...) are plain functions - no `&self` - each handed exactly the data it needs. Your plugin's data falls into three kinds, and the signatures keep them straight:
+    - **Parameters** (`type Params`) - your `#[derive(Params)]` knobs. The host automates and saves them for you; you get `&Params` in `process`, `Arc<Params>` in the editor.
+    - **Saved state** - anything else the host should remember across a session or preset. Tag a `#[derive(Params)]` field `#[persist]` and it's saved next to your params with no extra code - a view mode, an instance name, a picked file path. (`Copy` values go in a lock-free `AtomicCell`, strings and vecs behind `RwLock` / `Mutex`; per-field keys let old and new sessions load each other.) For a larger or opaque blob, `save_state` / `load_state` with `#[derive(State)]` still work.
+    - **DSP state** (`type DspState`) - your filters, phase, and voices. Never saved, and it lives outside the descriptor, so hot-reload keeps reverb tails and oscillator phase alive across an edit-and-reload.
+- Far less to write: `init` and `reset` are both optional now (a `Default` state and a no-op `reset` cover most plugins), and a stateless effect implements `PurePluginLogic` instead - no `DspState`, no `init`, no state argument on `process`. Everything downstream (`truce::plugin!`, every format) treats it as an ordinary `PluginLogic`.
+- Offline-render awareness: `process` and `reset` now see a `ProcessMode` (realtime / buffered / offline), so you can raise quality or relax realtime discipline during a bounce. On every format.
+- Automatic latency updates: change what `latency()` returns and the host is told, so plugin delay compensation follows a mode switch. On every format (VST2 best-effort).
+- `truce_test::BlockRunner`: run your `process` one block at a time in a unit test - it owns the DSP state across calls and hands back the output audio and events - without spinning up the full driver.
 
 ### Breaking
 
-- `reset` takes `&AudioConfig` instead of `(sample_rate, max_block_size)`. Read `config.sample_rate` / `config.max_block_size`; branch on `config.process_mode` for offline.
-- `PluginLogic` is a stateless descriptor plus `type DspState`, and its methods are associated functions. Move `self.<dsp field>` into the `DspState` type, drop the stored params `Arc`, and take `state` / `params` explicitly instead of `&self` (e.g. `fn process(state: &mut Self::DspState, params: &Self::Params, ...)`).
-- `type DspState` must implement `Default` (that's what the default `init` returns). Derive it, or hand-write it where the fresh state has non-zero fields - the old `fn new(params: Arc<..>) -> Self` body typically becomes the `Default` impl.
+- Your plugin type is now a stateless descriptor: move its DSP fields into `type DspState`, drop the stored `params` `Arc`, and take `state` / `params` as arguments instead of `&self`.
+- `type DspState` must implement `Default` (that's the default `init`) - your old `fn new(...)` body usually becomes the `Default` impl.
+- `reset` takes `&AudioConfig` instead of `(sample_rate, max_block_size)`.
 
 ### Migrating from 3.x
 
-Every plugin makes the same three moves, whatever its state:
+Three moves, whatever your plugin does:
 
-- Move the non-params fields (filter memory, phase, voices) off the plugin - now a stateless descriptor - into `type DspState`. Parameters were already a separate `#[derive(Params)]` struct and don't move.
-- Replace `fn new(params: Arc<..>) -> Self` with a `Default` impl on the state type - derive it, or hand-write it when a fresh state has non-zero fields. (Only when construction genuinely reads params do you write `fn init(params: &Self::Params) -> Self::DspState` instead.) There's no stored `params` `Arc` anymore.
-- Give each method `state` / `params` instead of `&self`, and `reset` an `&AudioConfig` (read `config.sample_rate` / `config.max_block_size`, branch on `config.process_mode` for offline).
+- Move the non-param fields (filter memory, phase, voices) off your plugin type - now a stateless descriptor - into `type DspState`. Your `#[derive(Params)]` struct doesn't move.
+- Replace `fn new(params) -> Self` with a `Default` impl on the state type; write `fn init(params)` only if building it reads params. No more stored `params` `Arc`.
+- Give each method `state` / `params` instead of `&self`, and `reset` an `&AudioConfig`.
 
-The only choice is where the DSP state lives.
-
-**No DSP state** - a pure parameter-driven effect implements `PurePluginLogic` and the state plumbing disappears entirely:
-
-```rust
-pub struct Gain;
-
-impl PurePluginLogic for Gain {
-    type Params = GainParams;
-    fn process(params: &GainParams, buffer: &mut AudioBuffer, _events: &EventList, _ctx: &mut ProcessContext) -> ProcessStatus {
-        let g = db_to_linear(params.gain.read()); /* ... */
-    }
-}
-```
-
-**`type DspState = Self`** - a small self-contained effect keeps its DSP fields on the plugin struct, which becomes its own state. One type instead of two:
-
-```rust
-pub struct Tremolo {                   // holds the DSP fields directly...
-    phase: f64,
-    sample_rate: f64,
-}
-
-impl Default for Tremolo {             // how `init` builds a fresh state
-    fn default() -> Self {
-        Tremolo { phase: 0.0, sample_rate: 44100.0 }
-    }
-}
-
-impl PluginLogic for Tremolo {
-    type Params = TremoloParams;
-    type DspState = Self;              // ...and is its own DSP state
-    fn reset(state: &mut Self, _params: &TremoloParams, config: &AudioConfig) {
-        state.sample_rate = config.sample_rate;
-    }
-    fn process(state: &mut Self, params: &TremoloParams, /* ... */) -> ProcessStatus { /* ... */ }
-}
-```
-
-**`type DspState = MyDspState`** - a separate struct, clearest once the state grows or you want the plugin type to stay a bare marker (a synth, a voice pool). Here the three moves show as a before/after on a 3.x plugin:
+The only choice left is where your DSP state lives: a pure effect implements `PurePluginLogic` and skips it entirely; a small effect can set `type DspState = Self` and keep its fields on the plugin struct; anything bigger uses a separate struct, like this:
 
 ```diff
 -struct MyPlugin {
@@ -105,8 +64,6 @@ impl PluginLogic for Tremolo {
      // editor is unchanged - still fn editor(params: Arc<Self::Params>) (see 3.0.0)
  }
 ```
-
-`params` (read-only) and the host-saved state stay separate from `DspState` throughout - the method signatures make it unambiguous which a call may touch.
 
 ## 3.1.4
 
