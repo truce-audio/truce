@@ -27,7 +27,18 @@
 // no eventfd / self-pipe syscall: Bitwig instantiates plugins in a
 // seccomp-sandboxed process where a stray syscall is fatal, and a timer
 // needs none. Linux has no process-global main queue, so the no-editor
-// path falls back to the param-poll / edit-gesture flush, same as Windows.
+// path falls back to the param-poll / edit-gesture flush.
+#if defined(_WIN32)
+// Windows uses a null-HWND thread timer (SetTimer) created on the
+// instantiating thread: WM_TIMER is dispatched by that thread's message
+// pump, so the TIMERPROC drains a pending restart on the host UI thread
+// for the component's whole life - editor or not - like the macOS
+// dispatch source. Message queues are per-thread on Windows, so no
+// plug-frame run loop is needed.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 #define I(x) static_cast<int8_t>(x)
 
@@ -496,10 +507,23 @@ static ITimerHandlerVtbl g_restart_timer_handler_vtbl = {
 // arithmetic self-documenting, matching kPlugFrameResizeViewIndex.
 static constexpr int32_t kRunLoopRegisterTimerIndex = 5;
 static constexpr int32_t kRunLoopUnregisterTimerIndex = 6;
-// Poll interval for the restart timer. A latency re-report only needs to
-// reach the host "soon"; 30 ms is imperceptible and keeps the idle cost
-// of an open editor negligible.
+#endif
+
+#if defined(__linux__) || defined(_WIN32)
+// Poll interval for the restart timer (Linux run-loop timer, Windows
+// thread timer). A latency re-report only needs to reach the host
+// "soon"; 30 ms is imperceptible and keeps the idle cost negligible.
 static constexpr uint64_t kRestartTimerIntervalMs = 30;
+#endif
+
+#if defined(_WIN32)
+// TIMERPROC for the per-component restart timer (declared here so the
+// constructor can pass it to SetTimer; body below, once TruceComponent
+// is complete). The message pump of the thread that created the timer -
+// the host UI thread - calls it, so the flush lands where VST3 wants
+// restartComponent. It resolves the component through the live-instance
+// map by timer id, so a WM_TIMER dispatched after teardown is a no-op.
+static void CALLBACK truce_vst3_restart_timer_proc(HWND, UINT, UINT_PTR, DWORD);
 #endif
 
 class TruceComponent {
@@ -537,9 +561,17 @@ public:
     // loop calls onTimer on its UI thread, which flushes pendingRestart
     // there. `runLoop` is the host IRunLoop*, held with an addRef only
     // while the timer is registered; null when no editor is attached
-    // (fall back to the param-poll flush, same as Windows).
+    // (fall back to the param-poll flush).
     RestartTimerHandler restartTimer{&g_restart_timer_handler_vtbl, nullptr};
     void* runLoop = nullptr;
+#endif
+#if defined(_WIN32)
+    // Null-HWND thread timer id from SetTimer. Its TIMERPROC runs on the
+    // instantiating (host UI) thread's message pump and drains
+    // pendingRestart there - the editor-closed / no-param-poll path the
+    // callback hooks below can't cover. 0 if creation failed (fall back
+    // to the param-poll / edit-gesture flush).
+    UINT_PTR restartTimerId = 0;
 #endif
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
     bool stateLoaded;         // true after setState() has run (or on first process if no state chunk)
@@ -588,6 +620,16 @@ public:
                 // process makes no run-loop or kernel calls at all.
                 restartTimer.comp = this;
 #endif
+#if defined(_WIN32)
+                // Instances are created on the host UI thread, so the
+                // thread timer binds to its message queue and WM_TIMER
+                // fires from the host's pump. A pump-less scan thread
+                // just never dispatches it - harmless, the param-poll
+                // flush still covers that instance.
+                restartTimerId = SetTimer(
+                    nullptr, 0, (UINT)kRestartTimerIntervalMs,
+                    truce_vst3_restart_timer_proc);
+#endif
             }
         }
     }
@@ -624,6 +666,17 @@ public:
         // release, making this a no-op; the call covers hosts that
         // release the component without doing so.
         updateRunLoopRegistration(nullptr);
+#endif
+#if defined(_WIN32)
+        // Map unregistration above happens first, so a WM_TIMER already
+        // in the queue resolves no component and is a safe no-op. Hosts
+        // release on the creating (UI) thread, where KillTimer removes
+        // the thread timer; from any other thread it fails and the
+        // orphaned proc keeps no-oping via the map - never this instance.
+        if (restartTimerId) {
+            KillTimer(nullptr, restartTimerId);
+            restartTimerId = 0;
+        }
 #endif
         if (g_cb && ctx) g_cb->destroy(ctx);
     }
@@ -1548,6 +1601,27 @@ static void th_onTimer(void* self) {
     // atomic and returns immediately when no bits are set.
     auto* h = (RestartTimerHandler*)self;
     if (h->comp) h->comp->flushPendingRestart();
+}
+#endif
+
+#if defined(_WIN32)
+// Restart-timer TIMERPROC (declared up top). Dispatched by the message
+// pump of the thread that created the timer - the host UI thread - every
+// kRestartTimerIntervalMs for the component's whole life. Resolves the
+// component through the live-instance map by timer id (the destructor
+// unregisters from the map before KillTimer, on this same thread), so a
+// stale WM_TIMER never touches a freed instance. Cheap when idle:
+// flushPendingRestart exchanges the atomic and returns immediately when
+// no bits are set.
+static void CALLBACK truce_vst3_restart_timer_proc(
+        HWND, UINT, UINT_PTR id, DWORD) {
+    for (int i = 0; i < kMaxInstances; i++) {
+        TruceComponent* comp = g_ctx_map_comp[i];
+        if (comp && comp->restartTimerId == id) {
+            comp->flushPendingRestart();
+            return;
+        }
+    }
 }
 #endif
 
@@ -2539,11 +2613,12 @@ void truce_vst3_mark_restart(void* ctx, int32_t flags) {
     // lock-free and alloc-free, so this stays RT-safe on the audio thread.
     if (comp->restartSource) dispatch_source_merge_data(comp->restartSource, 1);
 #endif
-    // Linux does nothing more here: the audio thread only sets the atomic
-    // bit above (no syscall, unquestionably RT-safe). While an editor is
-    // open the host run-loop timer polls the bit on the UI thread within
-    // kRestartTimerIntervalMs; with no editor the param-poll / edit-gesture
-    // flush drains it, same as Windows.
+    // Linux and Windows do nothing more here: the audio thread only sets
+    // the atomic bit above (no syscall, unquestionably RT-safe). The UI
+    // thread polls the bit within kRestartTimerIntervalMs - on Linux via
+    // the host run-loop timer while an editor is open (with no editor the
+    // param-poll / edit-gesture flush drains it), on Windows via the
+    // thread timer for the component's whole life.
 }
 
 #if __APPLE__
