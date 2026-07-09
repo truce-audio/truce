@@ -33,14 +33,18 @@
 /// restores the prior FPU control word on drop. See module docs.
 #[must_use = "denormal flush state reverts when this guard is dropped"]
 pub struct DenormalGuard {
+    // Only the hardware paths save and restore a control word. Under Miri
+    // (no inline asm) or an arch without a flush register the guard is a
+    // zero-sized stub, so the field would be dead there.
+    #[cfg(all(not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
     saved: u64,
 }
 
 /// MXCSR bit 15: flush-to-zero on output denormals.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 const MXCSR_FTZ: u32 = 1 << 15;
 /// MXCSR bit 6: denormals-are-zero on input.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(miri)))]
 const MXCSR_DAZ: u32 = 1 << 6;
 
 impl DenormalGuard {
@@ -77,9 +81,9 @@ impl DenormalGuard {
                     options(nostack, preserves_flags),
                 );
             }
-            return Self {
+            Self {
                 saved: u64::from(saved),
-            };
+            }
         }
         #[cfg(all(target_arch = "aarch64", not(miri)))]
         {
@@ -99,10 +103,15 @@ impl DenormalGuard {
                     options(nomem, nostack, preserves_flags),
                 );
             }
-            return Self { saved };
+            Self { saved }
         }
-        #[allow(unreachable_code)]
-        Self { saved: 0 }
+        // No flush register to touch (Miri, or any other arch): a
+        // zero-sized stub. The three arms are mutually exclusive, so
+        // exactly one is compiled and is the function's tail expression.
+        #[cfg(not(all(not(miri), any(target_arch = "x86_64", target_arch = "aarch64"))))]
+        {
+            Self {}
+        }
     }
 }
 
