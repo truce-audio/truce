@@ -55,8 +55,24 @@ jobs:
       # the runner image ships stable as the rustup default, and the
       # toolchain action installs nightly without changing that, so a
       # bare `cargo miri` resolves to stable and finds no miri.
+      # Full leak checking. The task-pool tests are carved into their own
+      # step below (they leak worker threads by design), so leak detection
+      # stays on for every other crate and test here.
       - name: miri test (core crates)
-        run: cargo +nightly miri test -p truce-utils -p truce-params -p truce-core
+        run: |
+          cargo +nightly miri test -p truce-utils -p truce-params
+          cargo +nightly miri test -p truce-core --lib -- --skip tasks::tests
+
+      # The managed background-task pool (`truce-core::tasks`) spawns
+      # process-global worker threads that never join by design, so Miri's
+      # default check flags them as "leaked" at exit. Scope
+      # `-Zmiri-ignore-leaks` to just these tests: the pool's cross-thread
+      # handshake still runs under Miri (data-race checking, the point of
+      # running it here), while everything above keeps full leak detection.
+      - name: miri test (task pool)
+        run: cargo +nightly miri test -p truce-core --lib tasks::tests
+        env:
+          MIRIFLAGS: -Zmiri-ignore-leaks
 
       # The mediation two-thread repro across several schedules: one
       # thread write-locking the plugin per block, one doing the
