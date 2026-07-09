@@ -281,6 +281,10 @@ pub struct Vst3Callbacks {
     /// will drain the pending-state queue (active) or whether it must
     /// apply the custom-state blob synchronously (inactive).
     pub set_active: unsafe extern "C" fn(ctx: *mut c_void, active: i32),
+    /// Return the `bus_layouts()` index whose main-bus channel counts are
+    /// `(in_ch, out_ch)`, or `-1`. Static per plugin type (no `ctx`); the
+    /// shim's `setBusArrangements` uses it to accept alternate layouts.
+    pub match_bus_layout: unsafe extern "C" fn(in_ch: u32, out_ch: u32) -> i32,
 }
 
 unsafe extern "C" {

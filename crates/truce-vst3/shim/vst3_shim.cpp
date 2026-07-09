@@ -298,6 +298,10 @@ struct Vst3Callbacks {
     // deactivate; lets Rust apply a suspended-plugin state load
     // synchronously instead of stranding it in the audio-thread queue.
     void (*set_active)(void*, int32_t /*active*/);
+    // Return the `bus_layouts()` index whose main-bus channel counts are
+    // (in_ch, out_ch), or -1 if none. Static per plugin type (no ctx);
+    // `setBusArrangements` uses it to accept alternate layouts.
+    int32_t (*match_bus_layout)(uint32_t /*in_ch*/, uint32_t /*out_ch*/);
 };
 
 // ---------------------------------------------------------------------------
@@ -308,6 +312,13 @@ static const Vst3PluginDescriptor* g_desc = nullptr;
 static const Vst3Callbacks* g_cb = nullptr;
 static const Vst3ParamDescriptor* g_params = nullptr;
 static uint32_t g_num_params = 0;
+
+// Currently-selected main-bus channel counts. Initialized to the default
+// (first) layout at registration; `setBusArrangements` moves them to any
+// other layout the plugin declared in `bus_layouts()`. `getBusInfo` /
+// `getBusArrangement` report these, so a host sees the active layout.
+static uint32_t g_cur_in = 0;
+static uint32_t g_cur_out = 0;
 
 // Unit info (parameter groups) - built at registration time
 static const int kMaxUnits = 64;
@@ -771,14 +782,14 @@ public:
         if (type != kAudio) return kInvalidArgument;
         if (dir == kInput && index == 0 && g_desc->num_inputs > 0) {
             bus->mediaType = kAudio; bus->direction = kInput;
-            bus->channelCount = g_desc->num_inputs;
+            bus->channelCount = g_cur_in;
             str_to_char16(bus->name, "Input", 128);
             bus->busType = kMain; bus->flags = 1;
             return kResultOk;
         }
         if (dir == kOutput && index == 0 && g_desc->num_outputs > 0) {
             bus->mediaType = kAudio; bus->direction = kOutput;
-            bus->channelCount = g_desc->num_outputs;
+            bus->channelCount = g_cur_out;
             str_to_char16(bus->name, "Output", 128);
             bus->busType = kMain; bus->flags = 1;
             return kResultOk;
@@ -897,16 +908,23 @@ public:
         const int32 wantIns  = g_desc->num_inputs  > 0 ? 1 : 0;
         const int32 wantOuts = g_desc->num_outputs > 0 ? 1 : 0;
         if (numIns != wantIns || numOuts != wantOuts) return kResultFalse;
-        if (wantIns && (!inputs || chCount(inputs[0]) != g_desc->num_inputs))
-            return kResultFalse;
-        if (wantOuts && (!outputs || chCount(outputs[0]) != g_desc->num_outputs))
-            return kResultFalse;
-        return kResultOk;
+        // Accept any channel-count arrangement the plugin declared in
+        // bus_layouts() (mono / stereo / surround variants of the same
+        // buses), not just the default. The matched layout becomes
+        // current so getBusInfo / getBusArrangement report it.
+        uint32_t inCh  = (wantIns  && inputs)  ? chCount(inputs[0])  : 0;
+        uint32_t outCh = (wantOuts && outputs) ? chCount(outputs[0]) : 0;
+        if (g_cb && g_cb->match_bus_layout && g_cb->match_bus_layout(inCh, outCh) >= 0) {
+            g_cur_in  = inCh;
+            g_cur_out = outCh;
+            return kResultOk;
+        }
+        return kResultFalse;
     }
 
     tresult getBusArrangement(int32 dir, int32 index, uint64_t* arr) {
         if (!arr || !g_desc) return kInvalidArgument;
-        uint32_t ch = (dir == kInput) ? g_desc->num_inputs : g_desc->num_outputs;
+        uint32_t ch = (dir == kInput) ? g_cur_in : g_cur_out;
         // The index must name a bus that exists: one per direction
         // that has channels, none otherwise (mirrors getBusCount).
         // Acknowledging index 0 with an empty arrangement on a bus-less
@@ -2652,6 +2670,10 @@ void truce_vst3_register(
     g_cb = callbacks;
     g_params = params;
     g_num_params = num_params;
+    // Default arrangement = the first layout (num_inputs/num_outputs);
+    // setBusArrangements moves these to any other declared layout.
+    g_cur_in = descriptor ? descriptor->num_inputs : 0;
+    g_cur_out = descriptor ? descriptor->num_outputs : 0;
     build_unit_map();
 }
 
