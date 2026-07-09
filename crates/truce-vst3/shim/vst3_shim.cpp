@@ -538,6 +538,15 @@ class TruceComponent {
      * kOffline). Replayed into reset() at setActive; process() reads
      * the per-block ProcessData::processMode directly. */
     int32 procMode = 0;
+    /* Omitted-bus scratch (see process()): the host may drop the
+     * AudioBusBuffers for a deactivated last bus entirely, but the
+     * plug-in negotiated fixed widths - a missing input side reads
+     * from one shared zeroed block, a missing output side writes to
+     * per-channel discard blocks. Allocated in setupProcessing (off
+     * the audio thread), sized maxFrames * sizeof(double) per channel
+     * so one allocation covers both sample widths. */
+    uint8_t* silenceScratch = nullptr;
+    uint8_t* trashScratch = nullptr;
 public:
     void* componentHandler;  // IComponentHandler*, stored with addRef
     // Pending IComponentHandler::restartComponent flags (RestartFlags
@@ -678,6 +687,8 @@ public:
             restartTimerId = 0;
         }
 #endif
+        free(silenceScratch);
+        free(trashScratch);
         if (g_cb && ctx) g_cb->destroy(ctx);
     }
 
@@ -870,14 +881,43 @@ public:
 
     // --- IAudioProcessor ---
 
-    tresult setBusArrangements(uint64_t*, int32, uint64_t*, int32) { return kResultOk; }
+    /* Our bus set is fixed: one bus per direction that has channels,
+     * at the declared width. Accept a host request only when it
+     * matches that shape exactly; kResultFalse tells the host to keep
+     * querying getBusArrangement and use what we actually provide.
+     * Blanket-accepting (the old behaviour) let a host negotiate e.g.
+     * mono and then deliver buffers the plug-in never agreed to. */
+    tresult setBusArrangements(uint64_t* inputs, int32 numIns, uint64_t* outputs, int32 numOuts) {
+        if (!g_desc) return kResultFalse;
+        auto chCount = [](uint64_t arr) {
+            uint32_t c = 0;
+            for (; arr; arr >>= 1) c += (uint32_t)(arr & 1);
+            return c;
+        };
+        const int32 wantIns  = g_desc->num_inputs  > 0 ? 1 : 0;
+        const int32 wantOuts = g_desc->num_outputs > 0 ? 1 : 0;
+        if (numIns != wantIns || numOuts != wantOuts) return kResultFalse;
+        if (wantIns && (!inputs || chCount(inputs[0]) != g_desc->num_inputs))
+            return kResultFalse;
+        if (wantOuts && (!outputs || chCount(outputs[0]) != g_desc->num_outputs))
+            return kResultFalse;
+        return kResultOk;
+    }
 
     tresult getBusArrangement(int32 dir, int32 index, uint64_t* arr) {
         if (!arr || !g_desc) return kInvalidArgument;
         uint32_t ch = (dir == kInput) ? g_desc->num_inputs : g_desc->num_outputs;
-        if (index != 0) return kInvalidArgument;
-        // Stereo = 0x3, Mono = 0x1
-        *arr = (ch >= 2) ? 0x3 : (ch == 1 ? 0x1 : 0);
+        // The index must name a bus that exists: one per direction
+        // that has channels, none otherwise (mirrors getBusCount).
+        // Acknowledging index 0 with an empty arrangement on a bus-less
+        // direction invents a phantom bus for the host - same family
+        // as the Bitwig getBusCount NPE.
+        if (index != 0 || ch == 0 || ch > 63) return kInvalidArgument;
+        // Low-bits speaker mask with one bit per channel: 0x1 = mono,
+        // 0x3 = stereo, 0x3F = 5.1 (L R C Lfe Ls Rs). What hosts key
+        // on is the popcount matching getBusInfo's channelCount - the
+        // old hardcoded stereo mask under-reported any wider bus.
+        *arr = ((uint64_t)1 << ch) - 1;
         return kResultOk;
     }
 
@@ -902,6 +942,21 @@ public:
         sampleRate = setup->sampleRate;
         maxFrames = setup->maxSamplesPerBlock;
         procMode = setup->processMode;
+        // (Re)size the omitted-bus scratch for the new block bound.
+        // calloc for the input side: synthesized inputs must read as
+        // silence and are never written, so zeroing once here holds.
+        if (g_desc) {
+            size_t frameBytes = (size_t)maxFrames * sizeof(double);
+            if (g_desc->num_inputs > 0 && frameBytes > 0) {
+                free(silenceScratch);
+                silenceScratch = (uint8_t*)calloc(1, frameBytes);
+            }
+            if (g_desc->num_outputs > 0 && frameBytes > 0) {
+                uint32_t ch = g_desc->num_outputs > 32 ? 32 : g_desc->num_outputs;
+                free(trashScratch);
+                trashScratch = (uint8_t*)malloc((size_t)ch * frameBytes);
+            }
+        }
         return kResultOk;
     }
 
@@ -968,7 +1023,7 @@ public:
         }
 
         int32 numFrames = data->numSamples;
-        if (numFrames == 0) return kResultOk;
+        if (numFrames <= 0) return kResultOk;
 
         /* Parameter flush: the spec allows process() with no audio
          * buses at all (numInputs == numOutputs == 0) to push
@@ -996,17 +1051,46 @@ public:
 
         if (data->numInputs > 0 && data->inputs) {
             auto& bus = data->inputs[0];
-            numIn = bus.numChannels;
-            for (int32 c = 0; c < bus.numChannels && c < 32; c++)
+            // Clamp the count to [0, 32] (the pointer-array size), not
+            // just the fill loop - a wider count would send Rust
+            // uninitialized stack pointers for the channels past 32,
+            // and a negative one would wrap through the cast.
+            int32 nch = bus.numChannels;
+            numIn = nch <= 0 ? 0u : (nch > 32 ? 32u : (uint32_t)nch);
+            for (uint32_t c = 0; c < numIn; c++)
                 inPtrs[c] = use64 ? (const void*)bus.channelBuffers64[c]
                                   : (const void*)bus.channelBuffers32[c];
         }
         if (data->numOutputs > 0 && data->outputs) {
             auto& bus = data->outputs[0];
-            numOut = bus.numChannels;
-            for (int32 c = 0; c < bus.numChannels && c < 32; c++)
+            int32 nch = bus.numChannels;
+            numOut = nch <= 0 ? 0u : (nch > 32 ? 32u : (uint32_t)nch);
+            for (uint32_t c = 0; c < numOut; c++)
                 outPtrs[c] = use64 ? (void*)bus.channelBuffers64[c]
                                    : (void*)bus.channelBuffers32[c];
+        }
+
+        /* Deactivated trailing buses: the spec lets the host drop the
+         * AudioBusBuffers for a deactivated last bus entirely, so an
+         * effect with its input bus off arrives here as numInputs == 0
+         * with real output buffers (and mirrored for outputs). The
+         * plug-in negotiated fixed widths; feed the missing side at
+         * that width - shared read-only silence for inputs, per-channel
+         * discard scratch for outputs - instead of a layout it never
+         * agreed to. The true no-bus flush shape already returned
+         * above. Skipped if a host overruns its own maxSamplesPerBlock
+         * promise (the scratch is sized to it). */
+        if (numIn == 0 && g_desc && g_desc->num_inputs > 0 && silenceScratch
+                && (uint32_t)numFrames <= maxFrames) {
+            numIn = g_desc->num_inputs > 32 ? 32 : g_desc->num_inputs;
+            for (uint32_t c = 0; c < numIn; c++)
+                inPtrs[c] = silenceScratch;
+        }
+        if (numOut == 0 && g_desc && g_desc->num_outputs > 0 && trashScratch
+                && (uint32_t)numFrames <= maxFrames) {
+            numOut = g_desc->num_outputs > 32 ? 32 : g_desc->num_outputs;
+            for (uint32_t c = 0; c < numOut; c++)
+                outPtrs[c] = trashScratch + (size_t)c * maxFrames * sizeof(double);
         }
 
         // Copy input to output for in-place processing
