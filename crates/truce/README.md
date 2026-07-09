@@ -90,10 +90,6 @@ impl PluginLogic for MyPlugin {
 
     fn init(_params: &MyParams) -> Self::DspState {}
 
-    fn reset(_state: &mut Self::DspState, params: &MyParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
-    }
-
     fn process(
         _state: &mut Self::DspState,
         params: &MyParams,

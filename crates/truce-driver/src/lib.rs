@@ -691,8 +691,6 @@ impl<P: PluginExport> PluginDriver<P> {
             &AudioConfig::new(self.sample_rate, self.block_size)
                 .with_process_mode(self.process_mode),
         );
-        plugin.params().set_sample_rate(self.sample_rate);
-        plugin.params().snap_smoothers();
 
         // 1. State load (if any). Reads from disk here rather than at
         // builder time, so the I/O failure (if any) surfaces as a

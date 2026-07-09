@@ -216,11 +216,9 @@ impl PluginLogic for Arpeggio {
         }
     }
 
-    fn reset(state: &mut ArpeggioDspState, params: &ArpParams, config: &AudioConfig) {
+    fn reset(state: &mut ArpeggioDspState, _params: &ArpParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.held_notes.clear();
         state.last_step = None;
         state.active_note = None;

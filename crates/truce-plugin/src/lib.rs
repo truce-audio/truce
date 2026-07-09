@@ -239,11 +239,19 @@ macro_rules! plugin_logic_leaf_trait {
             /// `config.process_mode` to size buffers for an offline
             /// render (allocation belongs here, off the audio thread) -
             /// see [`AudioConfig`](truce_core::config::AudioConfig).
+            ///
+            /// Params plumbing is NOT your job: the shell calls
+            /// `params.set_sample_rate(config.sample_rate)` and
+            /// `params.snap_smoothers()` before invoking this, so the
+            /// body only handles state the plugin itself owns. Default:
+            /// no-op, right for a stateless plugin (`DspState = ()`).
             fn reset(
                 state: &mut Self::DspState,
                 params: &Self::Params,
                 config: &$crate::__plugin_logic_deps::AudioConfig,
-            );
+            ) {
+                let _ = (state, params, config);
+            }
 
             /// Process one block of audio. Real-time - no allocations,
             /// locks, or I/O. `state` is exclusively owned this block;

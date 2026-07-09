@@ -78,11 +78,9 @@ impl PluginLogic for Envelope {
         }
     }
 
-    fn reset(state: &mut EnvelopeDspState, params: &EnvelopeParams, config: &AudioConfig) {
+    fn reset(state: &mut EnvelopeDspState, _params: &EnvelopeParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.env = 0.0;
         state.last_sent = None;
     }

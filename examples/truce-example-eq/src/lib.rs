@@ -242,11 +242,9 @@ impl PluginLogic for Eq {
         })
     }
 
-    fn reset(state: &mut EqDspState, params: &EqParams, config: &AudioConfig) {
+    fn reset(state: &mut EqDspState, _params: &EqParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         for band in &mut state.bands {
             band.reset_state();
         }

@@ -128,11 +128,9 @@ impl PluginLogic for Chord {
         }
     }
 
-    fn reset(state: &mut ChordDspState, params: &ChordParams, config: &AudioConfig) {
+    fn reset(state: &mut ChordDspState, _params: &ChordParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.notes = [None; MAX_VOICES];
         state.phases = [0.0; MAX_VOICES];
         state.root = None;

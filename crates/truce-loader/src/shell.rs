@@ -230,7 +230,12 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         self.sample_rate = config.sample_rate;
         self.max_block_size = config.max_block_size;
         self.process_mode = config.process_mode;
+        // Params plumbing is the shell's job, not the plugin's: settle
+        // smoother coefficients and state before the dylib's `reset` so
+        // its body reads post-snap values. Runs even when the loader
+        // lock below is contended - params live host-side.
         self.params.set_sample_rate(config.sample_rate);
+        self.params.snap_smoothers();
 
         // CLAP / VST3 may call `reset` on the audio thread; same
         // priority-inversion concern as `process`. The watcher's hold
@@ -313,13 +318,15 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         }
 
         // Apply parameter change events to our atomic params.
-        // ParamChange values from format wrappers are PLAIN (already denormalized).
+        // ParamChange values from format wrappers are PLAIN (already
+        // denormalized). No smoother snap here: events set targets and
+        // the smoothers ramp toward them; snapping belongs to `reset`
+        // and state loads only.
         for e in events.iter() {
             if let EventBody::ParamChange { id, value } = &e.body {
                 self.params.set_plain(*id, *value);
             }
         }
-        self.params.snap_smoothers();
 
         // No sync needed - the dylib reads from the same Arc<Params>
         // via the shell's params pointer.

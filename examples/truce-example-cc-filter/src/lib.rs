@@ -87,8 +87,6 @@ impl PluginLogic for CcFilter {
     fn reset(state: &mut CcFilterDspState, params: &CcFilterParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.z1 = [0.0; 2];
         state.cutoff_hz = f64::from(params.cutoff.read());
     }

@@ -249,10 +249,8 @@ impl PluginLogic for Multiport {
         }
     }
 
-    fn reset(state: &mut MultiportDspState, params: &MultiportParams, config: &AudioConfig) {
+    fn reset(state: &mut MultiportDspState, _params: &MultiportParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.sample_rate = sample_rate;
         state.voices = [Voice::default(); NUM_VOICES];
     }

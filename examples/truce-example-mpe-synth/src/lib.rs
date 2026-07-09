@@ -267,10 +267,8 @@ impl PluginLogic for Synth {
         }
     }
 
-    fn reset(state: &mut SynthDspState, params: &SynthParams, config: &AudioConfig) {
+    fn reset(state: &mut SynthDspState, _params: &SynthParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         state.sample_rate = sample_rate;
         state.voices = [Voice::default(); NUM_VOICES];
         state.channel_bend = [0.0; 16];

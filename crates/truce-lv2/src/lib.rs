@@ -424,8 +424,6 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
         // prepare always assumes realtime; `run` carries the live mode.
         inst.plugin
             .reset(&AudioConfig::new(inst.sample_rate, LV2_MAX_PREALLOC_BLOCK));
-        inst.plugin.params().set_sample_rate(inst.sample_rate);
-        inst.plugin.params().snap_smoothers();
     }
 }
 

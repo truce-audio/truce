@@ -99,13 +99,11 @@ impl PluginLogic for StereoUtility {
 
     fn reset(
         state: &mut StereoUtilityDspState,
-        params: &StereoUtilityParams,
+        _params: &StereoUtilityParams,
         config: &AudioConfig,
     ) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
         let len = delay_line_len(sample_rate);
         state.line_len = len;
         for line in &mut state.lines {

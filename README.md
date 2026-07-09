@@ -166,10 +166,6 @@ impl PluginLogic for Gain {
 
     fn init(_params: &GainParams) {}
 
-    fn reset(_state: &mut (), params: &GainParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
-    }
-
     fn process(_state: &mut (), params: &GainParams, buffer: &mut AudioBuffer,
                _events: &EventList, _ctx: &mut ProcessContext) -> ProcessStatus {
         for i in 0..buffer.num_samples() {

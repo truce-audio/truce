@@ -396,8 +396,6 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
             let config = AudioConfig::new(sample_rate, max_frames)
                 .with_process_mode(vst3_process_mode(process_mode));
             plugin.reset(&config);
-            plugin.params().set_sample_rate(sample_rate);
-            plugin.params().snap_smoothers();
             inst.latency_cache
                 .store(plugin.latency(), Ordering::Relaxed);
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);

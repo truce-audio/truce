@@ -67,12 +67,6 @@ impl PluginLogic for Transpose {
         vec![BusLayout::new()]
     }
 
-    fn reset(_state: &mut TransposeDspState, params: &TransposeParams, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
-    }
-
     fn process(
         state: &mut TransposeDspState,
         params: &TransposeParams,

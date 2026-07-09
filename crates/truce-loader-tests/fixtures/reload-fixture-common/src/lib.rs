@@ -15,7 +15,9 @@ use truce::prelude::*;
 
 #[derive(Params)]
 pub struct FxParams {
-    #[param(id = 0, name = "Gain", range = "linear(0, 1)")]
+    /// Smoothed so shell-level tests can observe smoother behavior
+    /// (ramp vs. snap) through a real loaded dylib.
+    #[param(id = 0, name = "Gain", range = "linear(0, 1)", smooth = "exp(50)")]
     pub gain: FloatParam,
 }
 
@@ -43,10 +45,6 @@ impl PluginLogic for CounterLogic {
 
     fn init(_params: &FxParams) -> CounterState {
         CounterState { counter: 0 }
-    }
-
-    fn reset(_state: &mut CounterState, params: &FxParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
     }
 
     fn process(
@@ -93,10 +91,6 @@ impl PluginLogic for ResetLogic {
             counter: 0,
             extra: 0,
         }
-    }
-
-    fn reset(_state: &mut ResetState, params: &FxParams, config: &AudioConfig) {
-        params.set_sample_rate(config.sample_rate);
     }
 
     fn process(

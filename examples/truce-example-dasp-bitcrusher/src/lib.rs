@@ -60,10 +60,7 @@ impl PluginLogic for Bitcrusher {
         BitcrusherDspState::default()
     }
 
-    fn reset(state: &mut BitcrusherDspState, params: &BitcrusherParams, config: &AudioConfig) {
-        let sample_rate = config.sample_rate;
-        params.set_sample_rate(sample_rate);
-        params.snap_smoothers();
+    fn reset(state: &mut BitcrusherDspState, _params: &BitcrusherParams, _config: &AudioConfig) {
         state.held = [0.0; 2];
         state.hold_counter = 0;
     }

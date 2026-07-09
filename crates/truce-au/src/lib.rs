@@ -429,8 +429,6 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         {
             let mut plugin = lock_plugin(&inst.plugin);
             plugin.reset(&AudioConfig::new(sample_rate, max_frames).with_process_mode(mode));
-            plugin.params().set_sample_rate(sample_rate);
-            plugin.params().snap_smoothers();
             inst.latency_cache
                 .store(plugin.latency(), Ordering::Relaxed);
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
