@@ -95,7 +95,12 @@ mod prelude_impl {
     pub use truce_core::custom_state::{AtomicCell, State as StateTrait, StateBinding, StateField};
     pub use truce_core::sample::{Float, Sample as SampleTrait};
     pub use truce_core::state::{ForeignState, MigratedState, PluginFormat, StateLoadError};
+    // Managed background tasks: the opt-in `BackgroundTasks` trait, the
+    // `InitContext` `init` receives, and the `TaskSpawner` handle
+    // `ctx.tasks::<T>()` returns.
+    pub use truce_core::tasks::{InitContext, TaskSpawner};
     pub use truce_core::util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
+    pub use truce_plugin::BackgroundTasks;
     // `AudioBuffer` is *not* re-exported from `truce_core` here -
     // each prelude module declares its own per-precision
     // `pub type AudioBuffer<'a> = truce_core::buffer::AudioBuffer<'a, $sample>;`

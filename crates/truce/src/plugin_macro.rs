@@ -63,14 +63,23 @@ macro_rules! plugin {
         logic: $logic:ty,
         params: $params:ty $(,)?
     ) => {
-        $crate::__plugin_impl!($logic, $params);
+        $crate::__plugin_impl!($logic, $params,);
+    };
+    // Opt-in managed background tasks: `$tasks` implements
+    // `BackgroundTasks`. See the `tasks` module.
+    (
+        logic: $logic:ty,
+        params: $params:ty,
+        tasks: $tasks:ty $(,)?
+    ) => {
+        $crate::__plugin_impl!($logic, $params, tasks: $tasks,);
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __plugin_impl {
-    ($logic:ty, $params:ty) => {
+    ($logic:ty, $params:ty, $(tasks: $tasks:ty,)?) => {
         // Compile-time LV2 TTL emission. Walks the params type's
         // sidecar tree (written by `derive(Params)`) and produces
         // `manifest.ttl` / `plugin.ttl` next to it. cargo-truce's
@@ -109,6 +118,7 @@ macro_rules! __plugin_impl {
                 params: $params,
                 info: $crate::prelude::plugin_info!(),
                 logic: $logic,
+                $(tasks: $tasks,)?
             }
 
             // --- Shell mode (hot-reload) ---

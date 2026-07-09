@@ -44,7 +44,7 @@ struct Note {
 /// sample-accurate offset within the block it falls in.
 fn render_port(port: u8, notes: &[Note], total: usize) -> Vec<f32> {
     let params = MultiportParams::new();
-    let mut state = Multiport::init(&params);
+    let mut state = Multiport::init(&params, &InitContext::new(None));
     Multiport::reset(&mut state, &params, &AudioConfig::new(SR, BLOCK));
 
     let mut out = Vec::with_capacity(total);

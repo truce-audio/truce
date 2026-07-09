@@ -18,6 +18,7 @@ pub mod rt;
 pub mod screenshot;
 pub mod snapshot;
 pub mod state;
+pub mod tasks;
 pub mod transport;
 pub mod ump;
 pub mod util;

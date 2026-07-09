@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn transpose_up_octave() {
         let params = TransposeParams::new();
-        let mut state = Transpose::init(&params);
+        let mut state = Transpose::init(&params, &InitContext::new(None));
         params.octave.set_value(1);
         Transpose::reset(&mut state, &params, &AudioConfig::new(44100.0, 512));
 

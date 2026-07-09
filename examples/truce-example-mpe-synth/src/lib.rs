@@ -388,7 +388,7 @@ mod tests {
 
     fn render_full(input: &[Event]) -> (SynthDspState, Vec<f32>, Vec<f32>) {
         let params = SynthParams::new();
-        let mut state = Synth::init(&params);
+        let mut state = Synth::init(&params, &InitContext::new(None));
         Synth::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();

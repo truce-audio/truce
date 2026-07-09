@@ -91,7 +91,12 @@ macro_rules! export_plugin {
         #[unsafe(no_mangle)]
         pub fn truce_init_state(params_ptr: *const ()) -> *mut () {
             let params: &$params = unsafe { &*(params_ptr as *const $params) };
-            let state = <$logic as $crate::PluginLogicCore<Sample>>::init(params);
+            // Background tasks are not yet wired through the hot-reload
+            // dylib boundary; pass an empty context (no spawner).
+            let cx = $crate::__macro_deps::truce_core::tasks::InitContext::new(
+                ::core::option::Option::None,
+            );
+            let state = <$logic as $crate::PluginLogicCore<Sample>>::init(params, &cx);
             Box::into_raw(Box::new(state)).cast::<()>()
         }
 

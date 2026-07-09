@@ -580,7 +580,7 @@ mod tests {
         let params = SpreaderParams::new();
         params.algo.set_value(algo);
         params.channels.set_value(width);
-        let mut state = Spreader::init(&params);
+        let mut state = Spreader::init(&params, &InitContext::new(None));
         Spreader::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
@@ -704,7 +704,7 @@ mod tests {
     fn second_block(first_algo: Algo, second_algo: Algo, second_events: &[EventBody]) -> EventList {
         let params = SpreaderParams::new();
         params.algo.set_value(first_algo);
-        let mut state = Spreader::init(&params);
+        let mut state = Spreader::init(&params, &InitContext::new(None));
         Spreader::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();
