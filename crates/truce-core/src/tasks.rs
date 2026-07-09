@@ -14,7 +14,7 @@
 //! the first time any instance actually schedules a task, so a plugin
 //! that never declares a `BackgroundTask` spawns no threads.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, Thread};
 use std::time::Duration;
@@ -58,8 +58,18 @@ struct Sink<T: Send + 'static> {
 impl<T: Send + 'static> Drain for Sink<T> {
     fn drain(&self) {
         // Clear the flag before draining so a task pushed mid-drain
-        // re-arms the sink instead of being stranded.
-        self.scheduled.store(false, Ordering::Release);
+        // re-arms the sink instead of being stranded. This clear and the
+        // queue reads below form a StoreLoad pair against the producer's
+        // push + `arm` swap; Release/AcqRel don't order a store followed
+        // by a load of a *different* location, so without the SeqCst store
+        // + fence a worker could clear the flag, read the queue empty, and
+        // a concurrent producer could push a task and read the flag still
+        // `true` - stranding that task with nothing scheduled to drain it.
+        // Only SeqCst forbids that reordering. The stranded task self-heals
+        // on the sink's next `arm`, so continuous work (a knob sweep) is
+        // fine, but the last one-shot before an idle period would hang.
+        self.scheduled.store(false, Ordering::SeqCst);
+        fence(Ordering::SeqCst);
         while let Some(task) = self.queue.pop() {
             // The pool is shared across instances, so a panic in one
             // plugin's handler must not kill the worker (which would
@@ -124,15 +134,19 @@ fn worker_loop(shared: &Shared) -> ! {
 
 /// Enqueue a ready sink and wake a worker. Wait-free: `injector.push`
 /// is lock-free and `unpark` is a bounded, non-blocking wake (the same
-/// primitive the manual worker pattern uses). If the injector is full
-/// the sink is dropped from the schedule; its tasks are still drained
-/// the next time it re-arms.
-fn schedule(sink: Arc<dyn Drain>) {
+/// primitive the manual worker pattern uses). Returns `false` if the
+/// injector is full so the caller can clear `scheduled` and let a later
+/// `arm` retry, rather than leaving the sink flagged-but-unqueued.
+fn schedule(sink: Arc<dyn Drain>) -> bool {
     let pool = pool();
-    if pool.shared.injector.push(sink).is_ok() && !pool.workers.is_empty() {
+    if pool.shared.injector.push(sink).is_err() {
+        return false;
+    }
+    if !pool.workers.is_empty() {
         let i = pool.shared.next.fetch_add(1, Ordering::Relaxed) % pool.workers.len();
         pool.workers[i].unpark();
     }
+    true
 }
 
 /// A cheap-to-clone handle for scheduling background tasks onto the
@@ -191,9 +205,21 @@ impl<T: Send + 'static> TaskSpawner<T> {
 
     /// Inject this sink into the pool if it isn't already queued.
     fn arm(&self) {
-        if !self.sink.scheduled.swap(true, Ordering::AcqRel) {
+        // Pairs with the SeqCst store + fence in `Sink::drain`: the caller
+        // pushed the task just before this, and that push must be ordered
+        // before the flag swap below, or the StoreLoad race described in
+        // `drain` strands the task. The fence + SeqCst swap give the total
+        // order that Release/AcqRel can't. Still wait-free (one barrier,
+        // no lock/alloc/syscall), and `arm` runs at most once per block.
+        fence(Ordering::SeqCst);
+        if !self.sink.scheduled.swap(true, Ordering::SeqCst) {
             let sink: Arc<dyn Drain> = Arc::clone(&self.sink) as Arc<dyn Drain>;
-            schedule(sink);
+            if !schedule(sink) {
+                // Injector full: we flagged the sink but couldn't queue it.
+                // Clear the flag so the next `arm` re-attempts injection
+                // instead of skipping on a stale `true`.
+                self.sink.scheduled.store(false, Ordering::SeqCst);
+            }
         }
     }
 }
@@ -340,5 +366,68 @@ mod tests {
                 == target),
             "the newest task always runs"
         );
+    }
+}
+
+// Model-checked proof that the schedule/drain handshake can't strand a
+// task under any thread interleaving. Run with:
+//   cargo test -p truce-core --features loom loom
+//
+// loom can't see into crossbeam's `ArrayQueue`, so this models the
+// protocol directly: a one-slot queue (`item`) plus the `scheduled` flag,
+// driven through the exact SeqCst store / fence / swap sequence that
+// `Sink::drain` and `TaskSpawner::arm` use. Weakening either side to
+// Release/AcqRel (dropping the SeqCst or the fences) makes loom find the
+// stranding interleaving; the version below passes.
+#[cfg(all(test, feature = "loom"))]
+mod loom_tests {
+    use loom::sync::Arc;
+    use loom::sync::atomic::{AtomicBool, Ordering, fence};
+    use loom::thread;
+
+    #[test]
+    fn schedule_drain_never_strands_a_task() {
+        loom::model(|| {
+            // Start with a drain in flight: the sink was scheduled
+            // (`flag == true`) and a worker is about to drain an empty
+            // queue, concurrent with a producer pushing one more task.
+            let flag = Arc::new(AtomicBool::new(true));
+            let item = Arc::new(AtomicBool::new(false));
+
+            let (f, i) = (flag.clone(), item.clone());
+            let worker = thread::spawn(move || {
+                // `Sink::drain`: clear the flag, then check the queue. The
+                // presence check must be a plain load (a `pop` reading
+                // empty) - an RMW would always read the latest value in
+                // modification order and so hide the StoreLoad staleness
+                // this test exists to catch.
+                f.store(false, Ordering::SeqCst);
+                fence(Ordering::SeqCst);
+                if i.load(Ordering::Acquire) {
+                    i.store(false, Ordering::Release); // popped it
+                }
+            });
+
+            // `try_spawn` + `arm`: push the task, then flag the sink.
+            item.store(true, Ordering::Release);
+            fence(Ordering::SeqCst);
+            let was_scheduled = flag.swap(true, Ordering::SeqCst);
+            // `was_scheduled == false` => the producer injects a fresh
+            // drain (it set `flag = true`). `true` => it relies on the
+            // in-flight drain to pick the task up.
+            let _ = was_scheduled;
+
+            worker.join().unwrap();
+
+            // Safe end states: the queue is empty (some drain popped it),
+            // or a drain is still scheduled (`flag == true`) to pick it up.
+            // A pending task with `flag == false` is the stranding bug.
+            let pending = item.load(Ordering::SeqCst);
+            let scheduled = flag.load(Ordering::SeqCst);
+            assert!(
+                !pending || scheduled,
+                "task stranded: pending with scheduled == false"
+            );
+        });
     }
 }
