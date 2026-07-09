@@ -1920,6 +1920,34 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // AU v2 is single-stream in both directions and ignores the counts.
     log_midi_ports_clamped("AU", "input", info.midi_input_ports);
 
+    // Supported (in, out) channel configs from `bus_layouts()`, exposed to
+    // the host through AU v2 `SupportedNumChannels` / AU v3
+    // `channelCapabilities`. Only when there's more than one layout; a
+    // single-layout plugin keeps `num_layouts == 0`, which the shims read
+    // as "the one `(num_inputs, num_outputs)` config" (also preserving the
+    // audio-less `(2, 2)` synthesis in `default_io_channels`). The leaked
+    // arrays live for the process, like the descriptor itself.
+    let layouts = P::bus_layouts();
+    let (layout_in_channels, layout_out_channels, num_layouts) = if layouts.len() > 1 {
+        let ch = |c: u32| i16::try_from(c).unwrap_or(0);
+        let ins: Vec<i16> = layouts
+            .iter()
+            .map(|l| ch(l.total_input_channels()))
+            .collect();
+        let outs: Vec<i16> = layouts
+            .iter()
+            .map(|l| ch(l.total_output_channels()))
+            .collect();
+        let n = len_u32(ins.len());
+        (
+            Box::leak(ins.into_boxed_slice()).as_ptr(),
+            Box::leak(outs.into_boxed_slice()).as_ptr(),
+            n,
+        )
+    } else {
+        (std::ptr::null(), std::ptr::null(), 0)
+    };
+
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
         component_subtype: info.fourcc,
@@ -1936,6 +1964,9 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         midi_output_ports: u32::from(info.midi_output_ports),
         midi2_input: i32::from(info.midi_input_dialect == MidiDialect::Midi2),
         midi2_output: i32::from(info.midi_output_dialect == MidiDialect::Midi2),
+        layout_in_channels,
+        layout_out_channels,
+        num_layouts,
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {

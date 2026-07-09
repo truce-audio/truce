@@ -88,6 +88,17 @@ typedef struct {
      * 1.0 -> 2.0 promoter is 1.0 in, 2.0 out; AU v3 input and output are
      * separate self-describing streams). AU v2 ignores it. */
     int32_t midi2_output;
+    /* Supported (in, out) channel-count configs from `bus_layouts()`.
+     * `layout_in_channels[i]` / `layout_out_channels[i]` are the main-bus
+     * channel counts of layout `i`; both arrays are `num_layouts` long.
+     * AU v2 reports them through `kAudioUnitProperty_SupportedNumChannels`
+     * (one `AUChannelInfo` each) and AU v3 through `channelCapabilities`,
+     * so a host can pick any declared layout. `num_layouts == 0` means the
+     * single `(num_inputs, num_outputs)` pair is the only config (older
+     * registration path); append-only, so an out-of-date shim ignores it. */
+    const int16_t *layout_in_channels;
+    const int16_t *layout_out_channels;
+    uint32_t num_layouts;
 } AuPluginDescriptor;
 
 typedef struct {
