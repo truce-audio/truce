@@ -96,8 +96,9 @@ mod prelude_impl {
     pub use truce_core::sample::{Float, Sample as SampleTrait};
     pub use truce_core::state::{ForeignState, MigratedState, PluginFormat, StateLoadError};
     // Managed background tasks: the opt-in `BackgroundTasks` trait, the
-    // `InitContext` `init` receives, and the `TaskSpawner` handle
-    // `ctx.tasks::<T>()` returns.
+    // `InitContext` `init` receives, the `TaskSpawner` handle
+    // `ctx.tasks::<T>()` returns, and the `AudioTap` audio->worker ring.
+    pub use truce_core::audio_tap::{AudioTap, StreamWorker};
     pub use truce_core::tasks::{InitContext, TaskSpawner};
     pub use truce_core::util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
     pub use truce_plugin::BackgroundTasks;

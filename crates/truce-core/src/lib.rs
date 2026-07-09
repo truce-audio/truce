@@ -1,3 +1,4 @@
+pub mod audio_tap;
 pub mod buffer;
 pub mod bus;
 pub mod chunked_process;
