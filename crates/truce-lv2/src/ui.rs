@@ -47,6 +47,7 @@ use truce_core::editor::{
 };
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
+use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::log_missing_bus_layout;
 use truce_params::Params;
 
@@ -225,6 +226,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // via Arc clones) remain valid.
         let plugin = Box::new(P::create());
         let params_arc = plugin.params_arc();
+        let task_spawner = plugin.task_spawner();
         let param_infos = plugin.params().param_infos();
 
         let Some(layout) = crate::derive_port_layout::<P>(&plugin) else {
@@ -292,6 +294,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             transport_slot.clone(),
             parsed.touch,
             parsed.resize,
+            task_spawner,
         );
 
         // Record the editor's preferred size BEFORE `open()` - hosts that
@@ -1399,6 +1402,7 @@ fn build_editor_context<P: PluginExport>(
     transport_slot: Arc<TransportSlot>,
     touch: Option<&'static Lv2UiTouch>,
     resize: Option<&'static Lv2UiResize>,
+    tasks: Option<AnyTaskSpawner>,
 ) -> PluginContext {
     // Clone slot metadata into each closure - small vec, cheap.
     let slots_for_set: Vec<(u32, u32, truce_params::ParamRange)> = slots
@@ -1526,6 +1530,7 @@ fn build_editor_context<P: PluginExport>(
         },
         params_for_ctx,
     )
+    .with_tasks(tasks)
 }
 
 /// Build a static UI descriptor for this plugin type. Monomorphized per P.

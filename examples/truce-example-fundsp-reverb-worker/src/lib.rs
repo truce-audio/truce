@@ -19,8 +19,6 @@ use fundsp::prelude::{
     AudioUnit, Shared, U2, dc, highpass, lowpass, multipass, pass, reverb_stereo, shared, var,
 };
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::{self, JoinHandle, Thread};
 use truce::prelude::*;
 use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, meter, widgets};
@@ -86,6 +84,13 @@ pub struct FundspReverbWorkerParams {
 
     #[meter]
     pub meter_r: MeterSlot,
+
+    /// Shared cells + graph-handoff queues the rebuild task and the
+    /// audio thread both reach. A `#[skip]` field (not a parameter) so
+    /// the receiverless `run_task(task, &params)` can touch it - the
+    /// same shared-`Arc` mechanism as an audio->editor channel.
+    #[skip]
+    pub worker: Arc<WorkerShared>,
 }
 
 /// Allocates via `Box::new` + `allocate()`. The worker thread calls
@@ -125,7 +130,7 @@ fn build_graph(
 /// request so the audio thread can detect (and reject) a ready graph
 /// that was built for a stale SR after a `reset()`.
 #[derive(Copy, Clone)]
-struct RebuildRequest {
+pub struct RebuildRequest {
     sample_rate: f64,
     time_s: f32,
 }
@@ -138,153 +143,60 @@ struct ReadyGraph {
     time_s: f32,
 }
 
-/// Lock-free handoff between the audio thread and the rebuild worker.
-/// All three queues are `force_push` / `try_push` from the producer
-/// side, so neither thread ever blocks or allocates on a hot path.
-struct RebuildChannel {
-    // Audio → worker: the latest target. Capacity 1; newer overwrites
-    // older (a `RebuildRequest` is `Copy`, so the displaced value is
-    // free to drop on the audio thread).
-    requests: ArrayQueue<RebuildRequest>,
-    // Worker → audio: at most one freshly-built graph waiting. The
-    // worker overwrites a stale entry on its own thread, where
+/// Shared between the audio thread (via `&params`) and the rebuild task
+/// (via `&params`): the atomic cells the fundsp graph reads plus the
+/// lock-free graph handoff. Lives on the params as a `#[skip]` field so
+/// the receiverless `run_task` reaches it. `Default` seeds the cells
+/// with the same values `build_graph` starts from, since a `#[skip]`
+/// field is `Default`-initialized.
+pub struct WorkerShared {
+    // Atomic cells the fundsp graph reads each sample via `var()`.
+    low_cut: Shared,
+    high_cut: Shared,
+    mix: Shared,
+    // Rebuild task → audio: at most one freshly-built graph waiting.
+    // The task overwrites a stale entry on the pool thread, where
     // dropping the graph is safe.
     ready: ArrayQueue<ReadyGraph>,
-    // Audio → worker: graphs the audio thread has just swapped out.
-    // Drop runs on the worker, never on the audio thread. Capacity is
-    // padded so a slow worker can't stall the audio thread by filling
-    // the queue.
+    // Audio → rebuild task: graphs the audio thread has just swapped
+    // out. Drop runs on the pool thread, never on the audio thread.
+    // Capacity is padded so a slow task can't stall the audio thread.
     discard: ArrayQueue<Box<dyn AudioUnit>>,
-    shutdown: AtomicBool,
+}
+
+impl Default for WorkerShared {
+    fn default() -> Self {
+        Self {
+            low_cut: shared(DEFAULT_LOW_CUT_HZ),
+            high_cut: shared(DEFAULT_HIGH_CUT_HZ),
+            mix: shared(DEFAULT_REVERB_MIX),
+            ready: ArrayQueue::new(1),
+            discard: ArrayQueue::new(8),
+        }
+    }
 }
 
 /// Stateless descriptor - DSP state lives in [`FundspReverbWorkerDspState`].
 pub struct FundspReverbWorker;
 
-/// Per-instance DSP state: the live graph, the atomic cells it reads,
-/// and the lock-free channel + worker thread that rebuild it.
+/// Per-instance DSP state: just the live graph and the inputs it was
+/// built with. The `Shared` cells + rebuild handoff queues live on the
+/// params (`WorkerShared`), and the rebuild runs on the framework's
+/// shared task pool - so there is no worker thread to own here.
 pub struct FundspReverbWorkerDspState {
-    // Atomic cells the fundsp graph reads each sample via `var()`.
-    low_cut_shared: Shared,
-    high_cut_shared: Shared,
-    mix_shared: Shared,
     graph: Box<dyn AudioUnit>,
     // Inputs the current graph was built with. `reset()` skips the
     // rebuild when neither changed.
     last_built_sr: f64,
     last_built_time_s: f32,
-    rebuild: Arc<RebuildChannel>,
-    // Kept so `Drop` can join the worker. `worker_thread` is a
-    // separate handle so the audio thread can `unpark` without
-    // touching the `Option`.
-    worker_thread: Thread,
-    worker_handle: Option<JoinHandle<()>>,
 }
 
 impl Default for FundspReverbWorkerDspState {
     fn default() -> Self {
-        let low_cut_shared = shared(DEFAULT_LOW_CUT_HZ);
-        let high_cut_shared = shared(DEFAULT_HIGH_CUT_HZ);
-        let mix_shared = shared(DEFAULT_REVERB_MIX);
-
-        let rebuild = Arc::new(RebuildChannel {
-            requests: ArrayQueue::new(1),
-            ready: ArrayQueue::new(1),
-            discard: ArrayQueue::new(8),
-            shutdown: AtomicBool::new(false),
-        });
-
-        let worker_handle = spawn_rebuild_worker(
-            Arc::clone(&rebuild),
-            low_cut_shared.clone(),
-            high_cut_shared.clone(),
-            mix_shared.clone(),
-        );
-        let worker_thread = worker_handle.thread().clone();
-
         Self {
-            low_cut_shared,
-            high_cut_shared,
-            mix_shared,
             graph: Box::new(multipass::<U2>()),
             last_built_sr: 0.0,
             last_built_time_s: DEFAULT_TIME_S,
-            rebuild,
-            worker_thread,
-            worker_handle: Some(worker_handle),
-        }
-    }
-}
-
-impl FundspReverbWorkerDspState {
-    /// Synchronous rebuild path used by `reset()`, which the host
-    /// calls off the audio thread. Drains any in-flight rebuild so a
-    /// graph that's still being built for the *previous* SR can't
-    /// slip into `process()` after this returns.
-    fn rebuild_now(&mut self, sample_rate: f64, time_s: f32) {
-        self.graph = build_graph(
-            sample_rate,
-            time_s,
-            &self.low_cut_shared,
-            &self.high_cut_shared,
-            &self.mix_shared,
-        );
-        self.last_built_sr = sample_rate;
-        self.last_built_time_s = time_s;
-        while self.rebuild.requests.pop().is_some() {}
-        while self.rebuild.ready.pop().is_some() {}
-    }
-}
-
-fn spawn_rebuild_worker(
-    channel: Arc<RebuildChannel>,
-    low_cut: Shared,
-    high_cut: Shared,
-    mix: Shared,
-) -> JoinHandle<()> {
-    thread::Builder::new()
-        .name("fundsp-reverb-rebuild".into())
-        .spawn(move || {
-            loop {
-                // Drop anything the audio thread handed back. Free
-                // off-thread so the audio thread never pays for a
-                // heap free.
-                while channel.discard.pop().is_some() {}
-
-                // Coalesce: only the latest target matters. Older
-                // requests are stale by definition because the audio
-                // thread only requests once it crosses the threshold.
-                let mut latest: Option<RebuildRequest> = None;
-                while let Some(req) = channel.requests.pop() {
-                    latest = Some(req);
-                }
-                if let Some(req) = latest {
-                    let graph = build_graph(req.sample_rate, req.time_s, &low_cut, &high_cut, &mix);
-                    let ready = ReadyGraph {
-                        graph,
-                        sample_rate: req.sample_rate,
-                        time_s: req.time_s,
-                    };
-                    // `force_push` drops the previous ready graph
-                    // here on the worker - never on the audio thread.
-                    let _ = channel.ready.force_push(ready);
-                }
-
-                if channel.shutdown.load(Ordering::Acquire) {
-                    return;
-                }
-                thread::park();
-            }
-        })
-        .expect("spawn fundsp-reverb-rebuild worker")
-}
-
-impl Drop for FundspReverbWorkerDspState {
-    fn drop(&mut self) {
-        self.rebuild.shutdown.store(true, Ordering::Release);
-        self.worker_thread.unpark();
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.join();
         }
     }
 }
@@ -304,7 +216,14 @@ impl PluginLogic for FundspReverbWorker {
         let sr_changed = sample_rate.to_bits() != state.last_built_sr.to_bits();
         let time_changed = (time_s - state.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
         if sr_changed || time_changed {
-            state.rebuild_now(sample_rate, time_s);
+            // Synchronous rebuild off the audio thread (reset isn't
+            // real-time). Drop any ready graph the pool built for the
+            // previous SR so it can't slip into the next `process`.
+            let w = &params.worker;
+            state.graph = build_graph(sample_rate, time_s, &w.low_cut, &w.high_cut, &w.mix);
+            state.last_built_sr = sample_rate;
+            state.last_built_time_s = time_s;
+            while w.ready.pop().is_some() {}
         }
     }
 
@@ -315,21 +234,22 @@ impl PluginLogic for FundspReverbWorker {
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Swap in any graph the worker has finished. A ready entry
-        // built for a stale SR (one `reset()` ago) is rerouted to the
-        // discard queue so it's freed off-thread.
-        if let Some(ready) = state.rebuild.ready.pop() {
+        let w = &params.worker;
+
+        // Swap in any graph the pool has finished. A ready entry built
+        // for a stale SR (one `reset()` ago) is rerouted to the discard
+        // queue so it's freed off-thread.
+        if let Some(ready) = w.ready.pop() {
             if ready.sample_rate.to_bits() == state.last_built_sr.to_bits() {
                 let old = std::mem::replace(&mut state.graph, ready.graph);
-                // try_push: capacity 8 vs at most one swap per block,
-                // so a non-stalled worker drains long before this
-                // ever fills. On the theoretical overflow we keep the
-                // old graph live for a block rather than free on the
-                // audio thread.
-                let _ = state.rebuild.discard.push(old);
+                // push: capacity 8 vs at most one swap per block, so a
+                // non-stalled pool drains long before this ever fills.
+                // On the theoretical overflow we keep the old graph live
+                // for a block rather than free on the audio thread.
+                let _ = w.discard.push(old);
                 state.last_built_time_s = ready.time_s;
             } else {
-                let _ = state.rebuild.discard.push(ready.graph);
+                let _ = w.discard.push(ready.graph);
             }
         }
 
@@ -339,24 +259,27 @@ impl PluginLogic for FundspReverbWorker {
         // settles.
         let time_s = params.time.value();
         if (time_s - state.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
-            // Optimistic update so we don't re-request the same
-            // target every block while the worker is building. If
-            // the user moves Time again past the threshold, this
-            // diff trips and we re-request.
+            // Optimistic update so we don't re-request the same target
+            // every block while the pool is building. If the user moves
+            // Time again past the threshold, this diff trips and we
+            // re-request. `spawn_coalescing` is wait-free and keeps only
+            // the newest target, so a knob sweep is one rebuild per pool
+            // cycle, not one per block.
             state.last_built_time_s = time_s;
-            state.rebuild.requests.force_push(RebuildRequest {
-                sample_rate: state.last_built_sr,
-                time_s,
-            });
-            state.worker_thread.unpark();
+            if let Some(tasks) = context.tasks::<RebuildRequest>() {
+                tasks.spawn_coalescing(RebuildRequest {
+                    sample_rate: state.last_built_sr,
+                    time_s,
+                });
+            }
         }
 
         // `for_each_frame::<2>` transposes channel-major to stereo
         // frames so fundsp's `tick(in, out)` fits the closure.
         buffer.for_each_frame::<2, _>(|frame_in, frame_out| {
-            state.low_cut_shared.set_value(params.low_cut.read());
-            state.high_cut_shared.set_value(params.high_cut.read());
-            state.mix_shared.set_value(params.mix.read());
+            w.low_cut.set_value(params.low_cut.read());
+            w.high_cut.set_value(params.high_cut.read());
+            w.mix.set_value(params.mix.read());
             state.graph.tick(frame_in, frame_out);
         });
 
@@ -383,9 +306,42 @@ impl PluginLogic for FundspReverbWorker {
     }
 }
 
+impl BackgroundTasks for FundspReverbWorker {
+    type Params = FundspReverbWorkerParams;
+    type Task = RebuildRequest;
+
+    /// Rebuild the fundsp graph off the audio thread on the shared pool,
+    /// reaching the `Shared` cells + handoff queues through
+    /// `params.worker`. All the heavy work (`Box::new`, `allocate()`) and
+    /// the heavy drops happen here, never on the audio thread.
+    fn run_task(task: RebuildRequest, params: &FundspReverbWorkerParams) {
+        let w = &params.worker;
+        // Free graphs the audio thread swapped out - the heavy drop runs
+        // here.
+        while let Some(old) = w.discard.pop() {
+            drop(old);
+        }
+        let graph = build_graph(
+            task.sample_rate,
+            task.time_s,
+            &w.low_cut,
+            &w.high_cut,
+            &w.mix,
+        );
+        // `force_push` drops a stale ready graph here (off-thread), not
+        // on the audio thread.
+        let _ = w.ready.force_push(ReadyGraph {
+            graph,
+            sample_rate: task.sample_rate,
+            time_s: task.time_s,
+        });
+    }
+}
+
 truce::plugin! {
     logic: FundspReverbWorker,
     params: FundspReverbWorkerParams,
+    tasks: FundspReverbWorker,
 }
 
 // Install the real-time allocation checker under `--features rt-paranoid`

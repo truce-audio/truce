@@ -59,6 +59,15 @@ pub trait PluginExport: PluginRuntime + Sized {
     /// here; a hand-written impl keeps one alongside its params `Arc`.
     fn snapshot_slot(&self) -> Arc<crate::snapshot::SnapshotSlot>;
 
+    /// The plugin's background-task spawner, or `None` when the plugin
+    /// wired no `tasks:` on `plugin!`. Format wrappers stamp it into the
+    /// editor's `PluginContext` (via `PluginContext::with_tasks`) so the
+    /// GUI can schedule work, matching what the shell does for `process`.
+    /// The default suits plugins with no background tasks.
+    fn task_spawner(&self) -> Option<crate::tasks::AnyTaskSpawner> {
+        None
+    }
+
     /// A lock-free editor builder: hand it the param store and it
     /// returns the editor (or `None` for a headless plugin).
     ///

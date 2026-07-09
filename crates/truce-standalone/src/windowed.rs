@@ -25,6 +25,7 @@ use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
 use truce_core::events::EventBody;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
+use truce_core::tasks::AnyTaskSpawner;
 use truce_params::Params;
 
 use crate::audio::{self, InputController, MidiEvent, OutputController};
@@ -968,6 +969,10 @@ where
     let params_plain = Arc::clone(&params);
     let params_format = Arc::clone(&params);
     let params_for_ctx = Arc::clone(&params);
+    let task_spawner: Option<AnyTaskSpawner> = plugin
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .task_spawner();
     let plugin_meter = Arc::clone(plugin);
     let plugin_save = Arc::clone(plugin);
     let plugin_load = Arc::clone(plugin);
@@ -1014,4 +1019,5 @@ where
         },
         params_for_ctx,
     )
+    .with_tasks(task_spawner)
 }

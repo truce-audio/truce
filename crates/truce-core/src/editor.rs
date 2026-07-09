@@ -5,6 +5,7 @@ use truce_params::Params;
 use truce_params::sample::Float;
 
 use crate::events::TransportInfo;
+use crate::tasks::{AnyTaskSpawner, TaskSpawner};
 
 /// A lock-free editor factory bound to a plugin's param store.
 ///
@@ -418,6 +419,11 @@ impl EditorBridge for ClosureBridge {
 /// freely.
 pub struct PluginContext<P: ?Sized = dyn Params> {
     bridge: Arc<dyn EditorBridge>,
+    /// Background-task spawner for the plugin's `BackgroundTasks::Task`,
+    /// stamped by the format wrapper from `PluginExport::task_spawner`
+    /// when the plugin wired `tasks:`. Lets the editor schedule work via
+    /// [`Self::tasks`]. `None` for a plugin with no background tasks.
+    tasks: Option<AnyTaskSpawner>,
     params: Arc<P>,
 }
 
@@ -425,6 +431,7 @@ impl<P: ?Sized> Clone for PluginContext<P> {
     fn clone(&self) -> Self {
         Self {
             bridge: Arc::clone(&self.bridge),
+            tasks: self.tasks.clone(),
             params: Arc::clone(&self.params),
         }
     }
@@ -432,9 +439,32 @@ impl<P: ?Sized> Clone for PluginContext<P> {
 
 impl<P: ?Sized> PluginContext<P> {
     /// Build a typed context from any [`EditorBridge`] implementor and
-    /// the plugin's typed param store.
+    /// the plugin's typed param store. Add background-task scheduling
+    /// with [`Self::with_tasks`].
     pub fn new(bridge: Arc<dyn EditorBridge>, params: Arc<P>) -> Self {
-        Self { bridge, params }
+        Self {
+            bridge,
+            tasks: None,
+            params,
+        }
+    }
+
+    /// Attach the background-task spawner (from
+    /// `PluginExport::task_spawner`). Format wrappers call this when
+    /// building the editor context.
+    #[must_use]
+    pub fn with_tasks(mut self, tasks: Option<AnyTaskSpawner>) -> Self {
+        self.tasks = tasks;
+        self
+    }
+
+    /// The background-task spawner for the plugin's
+    /// `BackgroundTasks::Task`, or `None` if the plugin wired no
+    /// `tasks:`. Scheduling with it is wait-free, so it is safe from the
+    /// GUI thread.
+    #[must_use]
+    pub fn tasks<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
+        self.tasks.as_ref().and_then(AnyTaskSpawner::downcast::<T>)
     }
 
     /// Access the underlying bridge handle. Editors that want to clone
@@ -460,6 +490,7 @@ impl<P: ?Sized> PluginContext<P> {
     pub fn with_params<Q: ?Sized>(&self, params: Arc<Q>) -> PluginContext<Q> {
         PluginContext {
             bridge: Arc::clone(&self.bridge),
+            tasks: self.tasks.clone(),
             params,
         }
     }
@@ -518,6 +549,7 @@ impl PluginContext<dyn Params> {
     pub fn from_closures(bridge: ClosureBridge, params: Arc<dyn Params>) -> Self {
         Self {
             bridge: Arc::new(bridge),
+            tasks: None,
             params,
         }
     }
@@ -530,6 +562,7 @@ impl<P: Params + 'static> PluginContext<P> {
     pub fn dyn_erase(self) -> PluginContext<dyn Params> {
         PluginContext {
             bridge: self.bridge,
+            tasks: self.tasks,
             params: self.params as Arc<dyn Params>,
         }
     }

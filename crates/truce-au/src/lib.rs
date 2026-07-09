@@ -58,6 +58,7 @@ use truce_core::presets::{PresetScope, enumerate_scope, load_preset_file};
 use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
+use truce_core::tasks::AnyTaskSpawner;
 use truce_core::ump::{
     SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_sysex7_packet,
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
@@ -210,6 +211,9 @@ struct AuInstance<P: PluginExport> {
     /// into, read by `save_state` so a snapshot-capable plugin's
     /// save never takes the plugin lock. Cached outside the lock.
     snapshot: Arc<SnapshotSlot>,
+    /// Background-task spawner (`None` unless the plugin wired `tasks:`),
+    /// cached at creation so the editor schedules without the lock.
+    task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation - building
     /// the editor never takes the plugin lock (`--shell` rebuilds
     /// from the reloaded dylib, so GUI edits hot-reload).
@@ -341,6 +345,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         meter_store: plugin.meter_store(),
         snapshot: plugin.snapshot_slot(),
+        task_spawner: plugin.task_spawner(),
         editor_builder: plugin.editor_builder(),
         plugin: shared_plugin(plugin),
         latency_cache,
@@ -1634,6 +1639,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
+            let task_spawner_for_ctx = inst.task_spawner.clone();
             let pending_state_for_set = inst.pending_state.clone();
             let transport_slot = inst.transport_slot.clone();
             let ctx_for_begin = ctx_raw;
@@ -1753,7 +1759,8 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     transport: Box::new(move || transport_slot.read()),
                 },
                 params_for_ctx,
-            );
+            )
+            .with_tasks(task_spawner_for_ctx);
             #[cfg(target_os = "macos")]
             let handle = RawWindowHandle::AppKit(parent);
             #[cfg(target_os = "ios")]

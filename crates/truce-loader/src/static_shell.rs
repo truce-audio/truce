@@ -98,6 +98,13 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         Arc::clone(&self.snapshots)
     }
 
+    /// The plugin's background-task spawner (see
+    /// `PluginExport::task_spawner`). `None` unless the plugin wired
+    /// `tasks:` on `plugin!`.
+    pub fn task_spawner(&self) -> Option<AnyTaskSpawner> {
+        self.tasks.clone()
+    }
+
     /// Access the plugin's DSP state (for testing).
     pub fn state_ref(&self) -> &L::DspState {
         &self.state
@@ -434,6 +441,14 @@ macro_rules! export_static {
                 &self,
             ) -> std::sync::Arc<$crate::__macro_deps::truce_core::snapshot::SnapshotSlot> {
                 self.inner.snapshot_slot()
+            }
+
+            fn task_spawner(
+                &self,
+            ) -> ::core::option::Option<
+                $crate::__macro_deps::truce_core::tasks::AnyTaskSpawner,
+            > {
+                self.inner.task_spawner()
             }
 
             fn editor_builder(
