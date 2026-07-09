@@ -305,6 +305,7 @@ mod tests {
 
     use super::*;
     use std::sync::atomic::AtomicU32;
+    use std::sync::{Condvar, Mutex};
     use std::time::Instant;
 
     fn wait_until(deadline: Duration, mut done: impl FnMut() -> bool) -> bool {
@@ -318,26 +319,50 @@ mod tests {
         done()
     }
 
+    /// Blocking completion latch: the pool handler bumps it, the test
+    /// blocks until a count is reached. Unlike the wall-clock `wait_until`,
+    /// it has no deadline, so it stays deterministic under Miri, whose
+    /// interpreter can't run background tasks within a real-time budget.
+    /// A `Mutex`/`Condvar` (not an `mpsc::Sender`, which is `!Sync`) keeps
+    /// the handler `Fn + Send + Sync`.
+    #[derive(Default)]
+    struct Latch {
+        ran: Mutex<u32>,
+        woke: Condvar,
+    }
+
+    impl Latch {
+        fn bump(&self) {
+            *self.ran.lock().unwrap() += 1;
+            self.woke.notify_all();
+        }
+
+        fn wait_for(&self, target: u32) {
+            let mut ran = self.ran.lock().unwrap();
+            while *ran < target {
+                ran = self.woke.wait(ran).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn runs_scheduled_tasks_off_thread() {
-        let counter = Arc::new(AtomicU32::new(0));
+        let latch = Arc::new(Latch::default());
         let sum = Arc::new(AtomicU32::new(0));
-        let (c, s) = (Arc::clone(&counter), Arc::clone(&sum));
+        let (l, s) = (Arc::clone(&latch), Arc::clone(&sum));
         let spawner = TaskSpawner::<u32>::new(move |n| {
-            c.fetch_add(1, Ordering::Relaxed);
             s.fetch_add(n, Ordering::Relaxed);
+            l.bump();
         });
 
         for n in 1..=10 {
             spawner.try_spawn(n).expect("queue has room");
         }
 
-        assert!(
-            wait_until(Duration::from_secs(2), || counter.load(Ordering::Relaxed)
-                == 10),
-            "all ten tasks ran"
-        );
-        assert_eq!(sum.load(Ordering::Relaxed), 55);
+        // Block until all ten ran. The latch mutex orders every handler's
+        // `sum` write before the read below, so the Relaxed sum is exact.
+        latch.wait_for(10);
+        assert_eq!(sum.load(Ordering::Relaxed), 55, "all ten tasks ran");
     }
 
     #[test]
@@ -364,18 +389,17 @@ mod tests {
 
     #[test]
     fn panicking_task_does_not_kill_the_worker() {
-        let ran = Arc::new(AtomicU32::new(0));
-        let r = Arc::clone(&ran);
+        let latch = Arc::new(Latch::default());
+        let l = Arc::clone(&latch);
         let spawner = TaskSpawner::<bool>::new(move |should_panic| {
             assert!(!should_panic, "intentional panic, caught by the pool");
-            r.fetch_add(1, Ordering::Relaxed);
+            l.bump();
         });
         spawner.try_spawn(true).expect("queue has room"); // panics in the handler
         spawner.try_spawn(false).expect("queue has room"); // must still run
-        assert!(
-            wait_until(Duration::from_secs(2), || ran.load(Ordering::Relaxed) == 1),
-            "the worker survived the panic and ran the next task"
-        );
+        // If the panic had killed the worker, the survivor never runs and
+        // this blocks forever - surfaced as a hung test, not a false pass.
+        latch.wait_for(1);
     }
 
     #[test]
