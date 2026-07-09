@@ -81,9 +81,9 @@ Scaffold:
       Scaffold a new single-plugin project. Defaults include the
       `standalone` feature + `src/main.rs` host; pass --no-standalone
       to skip those (saves the bin entry, the dep, and the file).
-      `--pure` (default) implements `PurePluginLogic`; `--stateful`
-      implements `PluginLogic` with a `#[derive(Default)]` DSP-state
-      struct pre-wired.
+      `--stateful` (default) implements `PluginLogic` with a
+      `#[derive(Default)]` DSP-state struct pre-wired; `--pure`
+      implements the stateless `PurePluginLogic`.
       `--vendor` / `--vendor-id` populate `truce.toml` directly;
       omit them to get a `My Company` / `com.mycompany` placeholder
       to edit by hand.
@@ -98,7 +98,7 @@ Scaffold:
         --vendor-id <id>            Reverse-domain vendor ID (defaults to com.<name>)
         --instrument                Default all plugins to instrument type
         --midi                      Default all plugins to midi type
-        --pure | --stateful         PurePluginLogic (default) vs PluginLogic + DSP-state struct
+        --pure | --stateful         PurePluginLogic vs PluginLogic + DSP-state struct (default)
         --no-standalone             Skip the standalone feature + host bin in every plugin
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
@@ -321,10 +321,11 @@ Options:
   --instrument            Default plugin kind is `instrument` (synth).
   --midi                  Default plugin kind is `midi`.
   --pure                  Implement `PurePluginLogic` - params only, no
-                          DSP-state struct. This is the default.
+                          DSP-state struct.
   --stateful              Implement `PluginLogic` with a
                           `#[derive(Default)]` DSP-state struct and a
-                          `state` argument on `process`, pre-wired.
+                          `state` argument on `process`, pre-wired. This
+                          is the default.
   --no-standalone         Skip generating a standalone runner crate.
   --workspace             Multi-plugin workspace mode (positional args
                           after the name are plugin names).
@@ -369,9 +370,9 @@ struct NewArgs {
     name: String,
     plugin_names: Vec<String>,
     default_kind: PluginKind,
-    /// `PurePluginLogic` (default) vs `PluginLogic` with an explicit
-    /// DSP-state struct. Set by `--pure` / `--stateful`; applies to
-    /// every plugin in the scaffold.
+    /// `PluginLogic` with an explicit DSP-state struct (default) vs the
+    /// stateless `PurePluginLogic`. Set by `--stateful` / `--pure`;
+    /// applies to every plugin in the scaffold.
     default_statefulness: Statefulness,
     vendor_name: Option<String>,
     vendor_id: Option<String>,
@@ -392,7 +393,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
     let mut name: Option<String> = None;
     let mut plugin_names: Vec<String> = Vec::new();
     let mut default_kind = PluginKind::Effect;
-    let mut default_statefulness = Statefulness::Pure;
+    let mut default_statefulness = Statefulness::Stateful;
     let mut vendor_name: Option<String> = None;
     let mut vendor_id: Option<String> = None;
     let mut type_overrides: Vec<(String, PluginKind)> = Vec::new();

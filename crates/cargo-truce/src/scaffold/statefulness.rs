@@ -7,11 +7,12 @@
 /// Which leaf trait the scaffold's plugin implements.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Statefulness {
-    /// `impl PurePluginLogic` - no `DspState`, no `state` argument. The
-    /// default: a params-only effect is the simplest starting point.
+    /// `impl PurePluginLogic` - no `DspState`, no `state` argument, for
+    /// a params-only effect.
     Pure,
     /// `impl PluginLogic` with `type DspState = <Name>DspState` and a
-    /// `state: &mut Self::DspState` argument on `process`.
+    /// `state: &mut Self::DspState` argument on `process`. The default:
+    /// most plugins grow DSP state, so the plumbing is pre-wired.
     Stateful,
 }
 
