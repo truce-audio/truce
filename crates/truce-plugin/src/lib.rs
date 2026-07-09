@@ -663,14 +663,23 @@ pub use crate::__plugin_logic_deps::{InitContext, TaskSpawner};
 /// Opt-in managed background work. A plugin implements this *in addition
 /// to* its leaf trait to declare a `Send` task type and a handler the
 /// framework runs on a shared background-thread pool, then wires it in
-/// with the `tasks:` key on [`crate::plugin!`]. Nothing changes for a
-/// plugin that doesn't implement it.
+/// with the `tasks:` key on the `truce::plugin!` macro. Nothing changes
+/// for a plugin that doesn't implement it.
 ///
 /// `run_task` runs off the audio thread and reaches shared state through
 /// `params` (its `#[skip]` channels / atomics), exactly like the editor:
-/// it must never touch `DspState`, which is audio-thread-exclusive. It
-/// may block, allocate, and free freely; feedback to the audio thread
-/// stays the plugin's job through those `#[skip]` channels.
+/// it must never touch `DspState`, which is audio-thread-exclusive.
+/// Feedback to the audio thread stays the plugin's job through those
+/// `#[skip]` channels.
+///
+/// Keep handlers short and non-blocking. The pool is shared by every
+/// truce plugin in the host and small (`available_parallelism() - 1`
+/// threads, as few as one), so a handler that blocks on I/O (reading a
+/// sample off disk) or waits on a lock stalls background work for *every
+/// other instance too*, not just its own. Allocation and CPU-bound bursts
+/// are fine - that is what the pool is for. For work that genuinely blocks
+/// or runs long, give the plugin its own thread with
+/// `AudioTap::spawn_worker` rather than the shared pool.
 ///
 /// Schedule tasks with `ctx.tasks::<Task>()` from `process` (wait-free),
 /// the editor's `PluginContext`, or the `InitContext` passed to `init`.

@@ -8,9 +8,9 @@
 //! *construction offload* half.
 //!
 //! Two ways to drain:
-//! - a [`BackgroundTasks`] handler on the shared pool, woken by a
-//!   coalescing task each block - bounded threads, best when analysis is
-//!   bursty or coalescable.
+//! - a `BackgroundTasks` handler (in `truce_plugin`) on the shared pool,
+//!   woken by a coalescing task each block - bounded threads, best when
+//!   analysis is bursty or coalescable.
 //! - a dedicated [`StreamWorker`] via [`AudioTap::spawn_worker`] - one
 //!   owned thread that parks on the tap and drains sequentially. Consumer
 //!   state lives thread-local (no lock), and it never stalls on unrelated
@@ -26,7 +26,7 @@
 //! #[derive(Params)]
 //! struct AnalyzerParams {
 //!     #[skip]
-//!     tap: Arc<AudioTap<f32>>,        // Default builds it at the right size
+//!     tap: Arc<AudioTap<f32>>,        // Default: a stereo tap at the default capacity
 //!     // ... published spectrum atoms (also #[skip]) ...
 //! }
 //!
@@ -37,8 +37,6 @@
 //! // run_task (pool thread):
 //! params.tap.drain_with(|chunk| { /* run the FFT, publish */ });
 //! ```
-//!
-//! [`BackgroundTasks`]: crate re-export in `truce_plugin`
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -51,6 +49,14 @@ use crossbeam_queue::ArrayQueue;
 /// wakeups come from `push_frames` unparking the thread; this only bounds
 /// how long a missed unpark or a pending shutdown can go unnoticed.
 const WORKER_PARK_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Frame capacity [`AudioTap::default`] builds: 32768 stereo frames, a
+/// generous consumer-scheduling margin (~170 ms at 192 kHz, ~740 ms at
+/// 44.1 kHz). Call [`AudioTap::new`] for a different size or channel count.
+const DEFAULT_TAP_FRAMES: usize = 32 * 1024;
+/// Channel count [`AudioTap::default`] builds. Stereo is the common case;
+/// call [`AudioTap::new`] for mono or higher channel counts.
+const DEFAULT_TAP_CHANNELS: usize = 2;
 
 /// A lock-free audio tap. The audio thread is the sole producer
 /// ([`Self::push_frames`], wait-free); a background consumer drains it
@@ -71,6 +77,16 @@ pub struct AudioTap<S> {
     /// consumer wakes without polling. Unset when the tap is drained by
     /// the shared pool instead.
     waker: OnceLock<Thread>,
+}
+
+/// Builds a stereo tap at a default capacity (32768 frames, ~170 ms at
+/// 192 kHz), so a plugin can hold an `Arc<AudioTap<S>>` as a `#[skip]`
+/// field and still `#[derive(Default)]` its params. Use [`AudioTap::new`]
+/// when the size or channel count needs to differ from the default.
+impl<S: Copy + Send + 'static> Default for AudioTap<S> {
+    fn default() -> Self {
+        Self::new(DEFAULT_TAP_FRAMES, DEFAULT_TAP_CHANNELS)
+    }
 }
 
 impl<S: Copy + Send + 'static> AudioTap<S> {
@@ -164,15 +180,29 @@ impl<S: Copy + Send + 'static> AudioTap<S> {
     /// otherwise contend with unrelated pool work. It spends one thread
     /// per worker, so unlike the pool it does not bound thread growth.
     ///
+    /// Attach **at most one** worker per tap: the per-sample ring has a
+    /// single consumer, and only one thread can be registered for the
+    /// wake-on-push. Drain a tap with either a `StreamWorker` or the shared
+    /// pool, not both.
+    ///
     /// # Panics
     ///
-    /// Panics if the OS refuses to spawn the worker thread.
+    /// Panics if a worker is already attached to this tap, or if the OS
+    /// refuses to spawn the worker thread.
     #[must_use]
     pub fn spawn_worker(
         self: Arc<Self>,
         name: &str,
         mut on_drain: impl FnMut(&[S]) + Send + 'static,
     ) -> StreamWorker {
+        // Fail loud on a second attach rather than silently registering no
+        // waker (which would fall back to the park timeout and race the
+        // first worker on the drain lock). Checked before spawning so a
+        // rejected call leaks no thread.
+        assert!(
+            self.waker.get().is_none(),
+            "AudioTap already has a StreamWorker; attach at most one worker per tap",
+        );
         let tap = Arc::clone(&self);
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_thread = Arc::clone(&shutdown);
@@ -278,5 +308,24 @@ mod tests {
         }
         assert_eq!(got, vec![1, 2, 3, 4]);
         drop(worker);
+    }
+
+    #[test]
+    fn default_is_a_usable_stereo_tap() {
+        let tap = AudioTap::<f32>::default();
+        assert_eq!(tap.channels(), DEFAULT_TAP_CHANNELS);
+        tap.push_frames(&[1.0, 2.0]);
+        let mut got = Vec::new();
+        tap.drain_with(|chunk| got.extend_from_slice(chunk));
+        assert_eq!(got, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "at most one worker per tap")]
+    fn second_worker_panics() {
+        let tap = Arc::new(AudioTap::<i32>::new(16, 2));
+        let _first = tap.clone().spawn_worker("first", |_| {});
+        // A second worker on the same tap is misuse and must fail loudly.
+        let _second = tap.clone().spawn_worker("second", |_| {});
     }
 }

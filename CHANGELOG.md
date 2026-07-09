@@ -12,7 +12,25 @@ Notable changes per release.
 
 ### Breaking
 
-- `init` gains an argument: `fn init(params: &Params, cx: &InitContext) -> DspState`. Plugins that don't override `init` are unaffected.
+Only if your plugin overrides `init`.
+
+- `init` gains an argument: `fn init(params: &Params, cx: &InitContext) -> DspState`. The new `cx` is the point of the change: it carries the task spawner, so you can start background work (a first graph build, a sample load) at construction and have it ready before the first block, instead of stalling the first `process`. Plugins that don't override `init` are unaffected.
+
+### Migrating from 4.0
+
+Add the `cx: &InitContext` parameter to your `init`. If you don't schedule startup work, that's the whole change (an unused `cx` is fine); `process`, `reset`, `editor`, and the rest are untouched.
+
+```diff
+-    fn init(params: &MyParams) -> MyDspState {
++    fn init(params: &MyParams, cx: &InitContext) -> MyDspState {
+         let state = MyDspState::from(params);
++        // Optional: kick off startup work now that `cx` is available.
++        if let Some(tasks) = cx.tasks::<MyTask>() {
++            let _ = tasks.try_spawn(MyTask { /* ... */ });
++        }
+         state
+     }
+```
 
 ## 4.0.0
 

@@ -58,6 +58,8 @@ use truce_core::presets::{PresetScope, enumerate_scope, load_preset_file};
 use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
+// Only the Apple-only editor path reads the spawner (see `AuInstance`).
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::ump::{
     SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_sysex7_packet,
@@ -212,7 +214,10 @@ struct AuInstance<P: PluginExport> {
     /// save never takes the plugin lock. Cached outside the lock.
     snapshot: Arc<SnapshotSlot>,
     /// Background-task spawner (`None` unless the plugin wired `tasks:`),
-    /// cached at creation so the editor schedules without the lock.
+    /// cached at creation so the editor schedules without the lock. Only
+    /// the editor path reads it, and that path is Apple-only (`AppKit` /
+    /// `UIKit`); off-Apple the field would be dead.
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation - building
     /// the editor never takes the plugin lock (`--shell` rebuilds
@@ -345,6 +350,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         meter_store: plugin.meter_store(),
         snapshot: plugin.snapshot_slot(),
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         task_spawner: plugin.task_spawner(),
         editor_builder: plugin.editor_builder(),
         plugin: shared_plugin(plugin),
