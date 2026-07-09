@@ -13,6 +13,10 @@ description = "Core types for the truce audio plugin framework"
 # flags any allocation the audio thread makes inside `process`. Dev/test
 # only - off by default, zero-cost when off.
 rt-paranoid = ["dep:backtrace"]
+# Model-check the task pool's schedule/drain handshake with loom. Off by
+# default, so ordinary builds and CI never compile it. Run the check with:
+#   cargo test -p truce-core --features loom loom
+loom = ["dep:loom"]
 
 [dependencies]
 truce-params = { workspace = true }
@@ -35,6 +39,10 @@ crossbeam-utils = "0.8"
 # Lock-free bounded MPMC queue backing the managed background-task pool
 # (`tasks`): the audio thread pushes tasks wait-free, pool workers drain.
 crossbeam-queue = "0.3"
+
+# Model checker for the task pool's schedule/drain handshake, behind the
+# off-by-default `loom` feature (see `[features]`).
+loom = { version = "0.7", optional = true }
 
 # The mediation lock (`wrapper::PluginMutex`) is a
 # PTHREAD_PRIO_INHERIT pthread mutex on Linux - std's futex lock has
