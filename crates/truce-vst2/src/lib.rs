@@ -27,6 +27,7 @@ use truce_core::plugin::PluginRuntime;
 use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
+use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
     ParamCStrings, SharedPlugin, default_io_channels, first_bus_layout, lock_plugin,
     log_midi_ports_clamped, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
@@ -70,6 +71,9 @@ struct Vst2Instance<P: PluginExport> {
     /// into, read by `save_state` so a snapshot-capable plugin's
     /// save never takes the plugin lock. Cached outside the lock.
     snapshot: Arc<SnapshotSlot>,
+    /// Background-task spawner (`None` unless the plugin wired `tasks:`),
+    /// cached at creation so the editor schedules without the lock.
+    task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation - building
     /// the editor never takes the plugin lock (`--shell` rebuilds
     /// from the reloaded dylib, so GUI edits hot-reload).
@@ -243,6 +247,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let params_arc = plugin.params_arc();
     let meter_store = plugin.meter_store();
     let snapshot = plugin.snapshot_slot();
+    let task_spawner = plugin.task_spawner();
     let editor_builder = plugin.editor_builder();
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
@@ -250,6 +255,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin: shared_plugin(plugin),
         params_arc,
         snapshot,
+        task_spawner,
         editor_builder,
         meter_store,
         latency_cache,
@@ -1063,6 +1069,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
+            let task_spawner_for_ctx = inst.task_spawner.clone();
             let pending_state_for_set = inst.pending_state.clone();
             let transport_slot = inst.transport_slot.clone();
             let context = PluginContext::from_closures(
@@ -1126,7 +1133,8 @@ unsafe fn open_editor_inner<P: PluginExport>(
                     transport: Box::new(move || transport_slot.read()),
                 },
                 params_for_ctx,
-            );
+            )
+            .with_tasks(task_spawner_for_ctx);
             #[cfg(target_os = "macos")]
             let handle = RawWindowHandle::AppKit(parent);
             #[cfg(target_os = "windows")]

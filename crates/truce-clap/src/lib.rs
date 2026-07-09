@@ -115,6 +115,7 @@ use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::state::PluginFormat;
+use truce_core::tasks::AnyTaskSpawner;
 use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
     SharedPlugin, lock_plugin, run_audio_block_with, run_extern_callback_with, save_extra,
@@ -184,6 +185,10 @@ struct ClapPluginData<P: PluginExport> {
     /// by `save_state` so a snapshot-capable plugin's save never takes
     /// the plugin lock. Cached here, outside the lock, like `params_arc`.
     snapshot: Arc<SnapshotSlot>,
+    /// The plugin's background-task spawner (`None` unless it wired
+    /// `tasks:`), cached at creation so the editor schedules without
+    /// taking the plugin lock.
+    task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation. Building the editor
     /// through this never takes the plugin lock (`--shell` builds rebuild
     /// from the reloaded dylib, so GUI edits hot-reload).
@@ -2985,6 +2990,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let params_for_ctx = params.clone();
+        let task_spawner_for_ctx = data.task_spawner.clone();
         let pending_state_for_set = data.pending_state.clone();
         let transport_slot = data.transport_slot.clone();
         let context = PluginContext::from_closures(
@@ -3065,7 +3071,8 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 transport: Box::new(move || transport_slot.read()),
             },
             params_for_ctx,
-        );
+        )
+        .with_tasks(task_spawner_for_ctx);
 
         #[cfg(target_os = "macos")]
         let handle = RawWindowHandle::AppKit(parent_ptr);
@@ -3550,6 +3557,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
     let params_arc = instance.params_arc();
     let meter_store = instance.meter_store();
     let snapshot = instance.snapshot_slot();
+    let task_spawner = instance.task_spawner();
     let editor_builder = instance.editor_builder();
     let latency_cache = AtomicU32::new(instance.latency());
     let tail_cache = AtomicU32::new(instance.tail());
@@ -3576,6 +3584,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         params_arc,
         meter_store,
         snapshot,
+        task_spawner,
         editor_builder,
         latency_cache,
         tail_cache,

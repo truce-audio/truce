@@ -32,7 +32,7 @@ struct TaskParams {
 
 struct TaskPlugin;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Ping;
 
 impl PluginLogic for TaskPlugin {
@@ -115,4 +115,33 @@ fn background_task_runs_when_scheduled_from_process() {
         1,
         "run_task ran once, off the audio thread"
     );
+}
+
+#[test]
+fn background_task_runs_when_scheduled_from_editor_context() {
+    use truce_core::editor::{PluginContext, for_test_params};
+
+    let params = Arc::new(TaskParams::new());
+    let ran = Arc::clone(&params.ran);
+
+    let spawner = {
+        let params = Arc::clone(&params);
+        TaskSpawner::<Ping>::new(move |task| TaskPlugin::run_task(task, &params))
+    };
+    let tasks = AnyTaskSpawner::new(&spawner);
+
+    // The format wrappers stamp the spawner into the editor's context via
+    // `with_tasks`; the editor recovers it with `ctx.tasks::<T>()`.
+    let dyn_params: Arc<dyn truce_params::Params> = params;
+    let ctx: PluginContext = for_test_params(dyn_params).with_tasks(Some(tasks));
+    ctx.tasks::<Ping>()
+        .expect("editor context carries the spawner")
+        .try_spawn(Ping)
+        .expect("queue has room");
+
+    let start = Instant::now();
+    while ran.load(Ordering::Relaxed) == 0 && start.elapsed() < Duration::from_secs(2) {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(ran.load(Ordering::Relaxed), 1, "editor-scheduled task ran");
 }
