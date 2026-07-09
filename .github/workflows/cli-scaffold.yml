@@ -38,18 +38,26 @@ jobs:
           - id: effect
             new_args: "acme-fx --vendor Acme --vendor-id com.acme.test"
             project_dir: acme-fx
-          - id: pure
-            new_args: "acme-pure --pure --vendor Acme --vendor-id com.acme.test"
-            project_dir: acme-pure
-          - id: stateful
-            new_args: "acme-stateful --stateful --vendor Acme --vendor-id com.acme.test"
-            project_dir: acme-stateful
           - id: instrument
             new_args: "acme-synth --instrument --vendor Acme --vendor-id com.acme.test"
             project_dir: acme-synth
           - id: workspace-mixed
             new_args: "acme --workspace fx synth midi --type:synth=instrument --type:midi=midi --vendor Acme --vendor-id com.acme.test"
             project_dir: acme
+        # The pure / stateful axis only changes the generated lib.rs
+        # (compile + clippy), which is OS-independent, so run those two
+        # shapes on Linux only instead of across every OS.
+        include:
+          - os: ubuntu-24.04
+            shape:
+              id: pure
+              new_args: "acme-pure --pure --vendor Acme --vendor-id com.acme.test"
+              project_dir: acme-pure
+          - os: ubuntu-24.04
+            shape:
+              id: stateful
+              new_args: "acme-stateful --stateful --vendor Acme --vendor-id com.acme.test"
+              project_dir: acme-stateful
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
