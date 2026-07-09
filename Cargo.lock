@@ -4665,6 +4665,7 @@ dependencies = [
  "truce-core",
  "truce-driver",
  "truce-params",
+ "truce-plugin",
 ]
 
 [[package]]
