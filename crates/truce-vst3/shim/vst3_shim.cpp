@@ -970,6 +970,21 @@ public:
         int32 numFrames = data->numSamples;
         if (numFrames == 0) return kResultOk;
 
+        /* Parameter flush: the spec allows process() with no audio
+         * buses at all (numInputs == numOutputs == 0) to push
+         * parameter changes while the plug-in isn't being processed,
+         * and it does NOT promise numSamples == 0 for that shape -
+         * Ableton Live sends nonzero numSamples when flushing a
+         * suspended/off effect device. The parameter values were
+         * already applied above (param_set_value per queue); running
+         * DSP here would hand the plug-in a zero-channel buffer it
+         * never negotiated. Only bail when the plug-in declared audio
+         * buses: a pure-MIDI note effect (no audio buses by design)
+         * legitimately processes every block with this shape. */
+        if (g_desc && (g_desc->num_inputs > 0 || g_desc->num_outputs > 0)
+                && data->numInputs == 0 && data->numOutputs == 0)
+            return kResultOk;
+
         // Collect input/output channel pointers. channelBuffers32 /
         // channelBuffers64 are one union field; use64 records which
         // arm the negotiated sample size selects.
