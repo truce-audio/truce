@@ -457,14 +457,14 @@ impl ZooUi {
                         })
                         // iced's slider defaults `step` to 1.0, which would
                         // snap a 0..1 range to just its two ends.
-                        .step(0.01)
+                        .step(0.01_f32)
                         .width(Length::Fixed(200.0)),
                     )
                     .push(
                         vertical_slider(0.0..=1.0, self.vslider, |v| {
                             Message::Plugin(ZooMsg::VSlider(v))
                         })
-                        .step(0.01)
+                        .step(0.01_f32)
                         .height(Length::Fixed(60.0)),
                     )
                     .push(

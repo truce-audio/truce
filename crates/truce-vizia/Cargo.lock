@@ -2891,6 +2891,7 @@ dependencies = [
 name = "truce-core"
 version = "3.1.4"
 dependencies = [
+ "crossbeam-utils",
  "libc",
  "png",
  "truce-params",
@@ -3095,6 +3096,7 @@ dependencies = [
  "truce-core",
  "truce-driver",
  "truce-params",
+ "truce-plugin",
 ]
 
 [[package]]
