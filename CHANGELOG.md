@@ -2,6 +2,11 @@
 
 Notable changes per release.
 
+## 4.1.1
+
+- Three more parameter range shapes: `skewed(min, max, factor)` (power-law taper), `sym_skewed(min, max, factor, center)` (center-anchored, for pan and EQ-gain knobs), and `reversed(<range>)` (any range with its knob axis flipped).
+- Logarithmic (multiplicative) smoothing via `smooth = "log(<ms>)"` - a constant perceived rate of change, for frequency and linear-gain params.
+
 ## 4.1.0
 
 - Managed background tasks: offload work off the audio thread without hand-rolling a worker thread. Implement `BackgroundTasks` (one `run_task(task, params)` function), add `tasks: MyPlugin` to `truce::plugin!`, and schedule from `process` with `ctx.tasks::<T>()` - `try_spawn` for one-shot work, `spawn_coalescing` when only the newest request matters (a filter rebuild, a graph swap). A shared, bounded pool runs the handlers, and a panicking handler can't take the pool down.

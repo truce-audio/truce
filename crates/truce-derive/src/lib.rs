@@ -1032,6 +1032,121 @@ fn usize_lit(v: usize) -> proc_macro2::TokenStream {
     quote! { #lit }
 }
 
+/// Parse the two power-law taper shapes (`skewed(min, max, factor)` and
+/// `sym_skewed(min, max, factor, center)`). `None` when neither prefix
+/// matches; `Some(compile_error!)` on a malformed match. Split out of
+/// [`parse_range_tokens`] to keep that function under the line-length lint.
+fn parse_skew_range(range: &str) -> Option<proc_macro2::TokenStream> {
+    let bad = |msg: String| quote! { compile_error!(#msg) };
+    // Reject non-positive and NaN factors without a `!(x > 0.0)` (which
+    // clippy flags on partially-ordered floats).
+    let bad_factor = |factor: f64| factor <= 0.0 || factor.is_nan();
+
+    if let Some(inner) = range
+        .strip_prefix("skewed(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+        if parts.len() != 3 {
+            return Some(bad(format!(
+                "skewed range needs three arguments `skewed(min, max, factor)`, got `skewed({inner})`"
+            )));
+        }
+        let Ok(min) = parts[0].parse::<f64>() else {
+            return Some(bad(format!(
+                "skewed range min `{}` is not a number",
+                parts[0]
+            )));
+        };
+        let Ok(max) = parts[1].parse::<f64>() else {
+            return Some(bad(format!(
+                "skewed range max `{}` is not a number",
+                parts[1]
+            )));
+        };
+        let Ok(factor) = parts[2].parse::<f64>() else {
+            return Some(bad(format!(
+                "skewed range factor `{}` is not a number",
+                parts[2]
+            )));
+        };
+        if min >= max {
+            return Some(bad(format!(
+                "skewed range needs min < max, got `skewed({min}, {max}, {factor})`"
+            )));
+        }
+        if bad_factor(factor) {
+            return Some(bad(format!(
+                "skewed range needs a strictly positive factor, got `{factor}`"
+            )));
+        }
+        let (min, max, factor) = (f64_lit(min), f64_lit(max), f64_lit(factor));
+        return Some(quote! {
+            ::truce::params::ParamRange::Skewed { min: #min, max: #max, factor: #factor }
+        });
+    }
+    if let Some(inner) = range
+        .strip_prefix("sym_skewed(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+        if parts.len() != 4 {
+            return Some(bad(format!(
+                "sym_skewed range needs four arguments `sym_skewed(min, max, factor, center)`, \
+                 got `sym_skewed({inner})`"
+            )));
+        }
+        let Ok(min) = parts[0].parse::<f64>() else {
+            return Some(bad(format!(
+                "sym_skewed range min `{}` is not a number",
+                parts[0]
+            )));
+        };
+        let Ok(max) = parts[1].parse::<f64>() else {
+            return Some(bad(format!(
+                "sym_skewed range max `{}` is not a number",
+                parts[1]
+            )));
+        };
+        let Ok(factor) = parts[2].parse::<f64>() else {
+            return Some(bad(format!(
+                "sym_skewed range factor `{}` is not a number",
+                parts[2]
+            )));
+        };
+        let Ok(center) = parts[3].parse::<f64>() else {
+            return Some(bad(format!(
+                "sym_skewed range center `{}` is not a number",
+                parts[3]
+            )));
+        };
+        if min >= max {
+            return Some(bad(format!(
+                "sym_skewed range needs min < max, got `sym_skewed({min}, {max}, {factor}, {center})`"
+            )));
+        }
+        if bad_factor(factor) {
+            return Some(bad(format!(
+                "sym_skewed range needs a strictly positive factor, got `{factor}`"
+            )));
+        }
+        if center <= min || center >= max {
+            return Some(bad(format!(
+                "sym_skewed center must be strictly between min and max, got center={center} \
+                 for [{min}, {max}]"
+            )));
+        }
+        let (min, max, factor, center) =
+            (f64_lit(min), f64_lit(max), f64_lit(factor), f64_lit(center));
+        return Some(quote! {
+            ::truce::params::ParamRange::SymmetricalSkewed {
+                min: #min, max: #max, factor: #factor, center: #center
+            }
+        });
+    }
+    None
+}
+
 fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
     let bad = |msg: String| quote! { compile_error!(#msg) };
 
@@ -1133,8 +1248,23 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         let count = usize_lit(count);
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
+    if let Some(tokens) = parse_skew_range(range) {
+        return tokens;
+    }
+    if let Some(inner) = range
+        .strip_prefix("reversed(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        // Recursively parse the wrapped shape and flip it. The inner is a
+        // const expression, so `&` promotes it to the `&'static` the
+        // `Reversed` variant holds.
+        let inner_tokens = parse_range_tokens(inner.trim());
+        return quote! { ::truce::params::ParamRange::Reversed(&#inner_tokens) };
+    }
     bad(format!(
-        "unknown range `{range}` - supported: linear(min, max), log(min, max), discrete(min, max), enum(count)"
+        "unknown range `{range}` - supported: linear(min, max), log(min, max), \
+         skewed(min, max, factor), sym_skewed(min, max, factor, center), \
+         discrete(min, max), enum(count), reversed(<range>)"
     ))
 }
 
@@ -1214,8 +1344,21 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
             )),
         };
     }
+    if let Some(inner) = smooth
+        .strip_prefix("log(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        return match inner.trim().parse::<f64>() {
+            Ok(ms) => quote! { ::truce::params::SmoothingStyle::Logarithmic(#ms) },
+            Err(_) => bad(format!(
+                "smooth = \"log({inner})\" expects a numeric milliseconds value \
+                 (e.g. `smooth = \"log(20)\"` for multiplicative smoothing)",
+            )),
+        };
+    }
     bad(format!(
-        "unknown smoothing style `{smooth}` - supported: \"none\", \"linear(<ms>)\", \"exp(<ms>)\"",
+        "unknown smoothing style `{smooth}` - supported: \"none\", \"linear(<ms>)\", \
+         \"exp(<ms>)\", \"log(<ms>)\"",
     ))
 }
 
