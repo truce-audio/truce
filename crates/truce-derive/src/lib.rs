@@ -1584,6 +1584,30 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     }
 
+    // `#[persist]` keys and `#[nested]` field names share one keyed
+    // list in the saved state (`serialize_persist` / `load_persist`),
+    // so a duplicate key would generate two match arms for the same
+    // string and the later entry would silently never load. Bare
+    // `#[persist]` uses the unique field name, so a collision needs an
+    // explicit `#[persist = "key"]` - reject it here with the field
+    // that introduced the duplicate.
+    {
+        let mut seen_keys = HashSet::new();
+        let all_keys = persist_fields
+            .iter()
+            .map(|(ident, key)| (ident, key.clone()))
+            .chain(nested_fields.iter().map(|n| (&n.ident, n.ident.to_string())));
+        for (ident, key) in all_keys {
+            if !seen_keys.insert(key.clone()) {
+                let msg = format!(
+                    "duplicate persist key `{key}`: `#[persist]` keys and `#[nested]` \
+                     field names share one saved-state list and must be unique"
+                );
+                return syn::Error::new(ident.span(), msg).to_compile_error().into();
+            }
+        }
+    }
+
     // --- Compile-time LV2 metadata sidecar ---
     //
     // Each Params struct (root or nested, plugin crate or helper)
