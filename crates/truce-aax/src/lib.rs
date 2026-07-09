@@ -115,6 +115,12 @@ pub struct TruceAaxDescriptor {
     /// `num_legacy_chunk_ids` entries are valid.
     pub num_legacy_chunk_ids: u32,
     pub legacy_chunk_ids: [u32; MAX_LEGACY_CHUNK_IDS],
+    /// Main-bus (in, out) channel counts of each `bus_layouts()` entry;
+    /// the describe template registers one AAX stem-format config each.
+    /// `null` / `num_layouts == 0` keeps the legacy mono/stereo describe.
+    pub layout_in_channels: *const i16,
+    pub layout_out_channels: *const i16,
+    pub num_layouts: u32,
 }
 
 /// Capacity of [`TruceAaxDescriptor::legacy_chunk_ids`]; mirrors
@@ -481,6 +487,33 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             num_legacy_chunk_ids += 1;
         }
 
+        // Supported (in, out) channel configs from `bus_layouts()`, one
+        // AAX stem-format component per layout. Only when there's more
+        // than one layout; a single-layout plugin keeps `num_layouts == 0`
+        // and the legacy mono/stereo describe (which also covers the
+        // audio-less synthesis in `default_io_channels`). The leaked
+        // arrays live for the process, like the descriptor.
+        let layouts = P::bus_layouts();
+        let (layout_in_channels, layout_out_channels, num_layouts) = if layouts.len() > 1 {
+            let ch = |c: u32| i16::try_from(c).unwrap_or(0);
+            let ins: Vec<i16> = layouts
+                .iter()
+                .map(|l| ch(l.total_input_channels()))
+                .collect();
+            let outs: Vec<i16> = layouts
+                .iter()
+                .map(|l| ch(l.total_output_channels()))
+                .collect();
+            let n = len_u32(ins.len());
+            (
+                Box::leak(ins.into_boxed_slice()).as_ptr(),
+                Box::leak(outs.into_boxed_slice()).as_ptr(),
+                n,
+            )
+        } else {
+            (std::ptr::null(), std::ptr::null(), 0)
+        };
+
         let descriptor = TruceAaxDescriptor {
             name,
             vendor,
@@ -499,6 +532,9 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             bypass_param_id: u32::MAX, // filled below
             num_legacy_chunk_ids,
             legacy_chunk_ids,
+            layout_in_channels,
+            layout_out_channels,
+            num_layouts,
         };
 
         // Static metadata path: derive emits a `LazyLock`-cached

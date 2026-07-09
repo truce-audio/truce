@@ -19,6 +19,23 @@
 #include <cstdio>
 #include <cstddef>
 
+// Map a truce main-bus channel count to the AAX stem format the describe
+// registers for it. `None` for counts AAX has no single canonical stem
+// for (7/8-channel picks the DTS layouts); the caller skips `None`.
+static AAX_EStemFormat TruceStemFormat(int16_t channels) {
+    switch (channels) {
+        case 1:  return AAX_eStemFormat_Mono;
+        case 2:  return AAX_eStemFormat_Stereo;
+        case 3:  return AAX_eStemFormat_LCR;
+        case 4:  return AAX_eStemFormat_Quad;
+        case 5:  return AAX_eStemFormat_5_0;
+        case 6:  return AAX_eStemFormat_5_1;
+        case 7:  return AAX_eStemFormat_7_0_DTS;
+        case 8:  return AAX_eStemFormat_7_1_DTS;
+        default: return AAX_eStemFormat_None;
+    }
+}
+
 // Build the component descriptor by hand for one stem config.
 //
 // Replaces `AAX_CMonolithicParameters::StaticDescribe` so we can
@@ -295,6 +312,31 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         err = TruceDescribeOneConfig(desc, setupInfo,
                                       /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
                                       g_descriptor.name);
+        if (err != AAX_SUCCESS) return err;
+    }
+
+    // Additional declared bus_layouts() beyond mono/stereo (surround
+    // etc.): one component per layout, so Pro Tools offers every declared
+    // I/O width. Mono/stereo layouts are already covered by the generic
+    // configs above; `num_layouts == 0` (single-layout plugins) skips this.
+    for (uint32_t i = 0; i < g_descriptor.num_layouts; i++) {
+        AAX_EStemFormat outStem = TruceStemFormat(g_descriptor.layout_out_channels[i]);
+        if (outStem == AAX_eStemFormat_None
+            || outStem == AAX_eStemFormat_Mono
+            || outStem == AAX_eStemFormat_Stereo) {
+            continue;
+        }
+        AAX_EStemFormat inStem = TruceStemFormat(g_descriptor.layout_in_channels[i]);
+        setupInfo.mInputStemFormat =
+            inStem == AAX_eStemFormat_None ? AAX_eStemFormat_Mono : inStem;
+        setupInfo.mOutputStemFormat = outStem;
+        // Unique, order-stable plugin ID per extra config, clear of the
+        // base (mono) and base ^ 0x2 (stereo) IDs used above.
+        setupInfo.mPluginID =
+            g_descriptor.plugin_id ^ static_cast<int32_t>(0x00010000u + i);
+        err = TruceDescribeOneConfig(desc, setupInfo,
+                                     /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
+                                     g_descriptor.name);
         if (err != AAX_SUCCESS) return err;
     }
 
