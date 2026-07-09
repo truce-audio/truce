@@ -13,6 +13,12 @@
 //! set of threads, not one thread per instance) and initializes lazily
 //! the first time any instance actually schedules a task, so a plugin
 //! that never declares a `BackgroundTask` spawns no threads.
+//!
+//! Because the pool is shared and small (`available_parallelism() - 1`,
+//! as few as one thread), `run_task` handlers must stay short and
+//! non-blocking: one plugin that blocks on I/O or a lock stalls every
+//! other instance's background work. Long or blocking work belongs on a
+//! plugin's own thread (`AudioTap::spawn_worker`), not the pool.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 use std::sync::{Arc, OnceLock};
