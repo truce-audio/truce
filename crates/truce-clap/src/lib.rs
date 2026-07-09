@@ -51,6 +51,9 @@ use clap_sys::ext::audio_ports::{
     CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO, clap_audio_port_info,
     clap_plugin_audio_ports,
 };
+use clap_sys::ext::audio_ports_config::{
+    CLAP_EXT_AUDIO_PORTS_CONFIG, clap_audio_ports_config, clap_plugin_audio_ports_config,
+};
 use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_host_latency, clap_plugin_latency};
 use clap_sys::ext::note_ports::{
     CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
@@ -199,6 +202,13 @@ struct ClapPluginData<P: PluginExport> {
     /// `data.plugin`.
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
+    /// Index into `P::bus_layouts()` of the port config the host last
+    /// selected through `clap.audio-ports-config` (0 = the default first
+    /// layout). Read by the audio-ports extension so a config switch is
+    /// reflected in the ports the host sees. Set on the main thread while
+    /// the plugin is deactivated; the audio scratch is pre-sized to the
+    /// widest layout, so a wider selection never allocates in `process`.
+    selected_config: AtomicU32,
     /// Re-usable event list for converting CLAP events each process call.
     event_list: EventList,
     /// Sounding-note tracker backing wildcard `NOTE_OFF` / `NOTE_CHOKE`
@@ -2561,12 +2571,37 @@ fn make_preset_load_extension<P: PluginExport>() -> clap_plugin_preset_load {
 // Extension: audio_ports
 // ---------------------------------------------------------------------------
 
+/// The `bus_layouts()` index the host selected through
+/// `clap.audio-ports-config`, clamped in range. Falls back to 0 for a
+/// single-layout plugin or a null handle.
+unsafe fn selected_layout_index<P: PluginExport>(
+    plugin: *const clap_plugin,
+    layouts_len: usize,
+) -> usize {
+    if layouts_len <= 1 || plugin.is_null() {
+        return 0;
+    }
+    let data = unsafe { data_from_plugin::<P>(plugin) };
+    (data.selected_config.load(Ordering::Relaxed) as usize).min(layouts_len - 1)
+}
+
+/// The CLAP main-port-type string for a channel config (`null` for a
+/// custom count, which CLAP leaves untyped).
+fn clap_port_type_ptr(channels: ChannelConfig) -> *const c_char {
+    match channels {
+        ChannelConfig::Mono => CLAP_PORT_MONO.as_ptr(),
+        ChannelConfig::Stereo => CLAP_PORT_STEREO.as_ptr(),
+        ChannelConfig::Custom(_) => ptr::null(),
+    }
+}
+
 unsafe extern "C" fn audio_ports_count<P: PluginExport>(
-    _plugin: *const clap_plugin,
+    plugin: *const clap_plugin,
     is_input: bool,
 ) -> u32 {
     let layouts = P::bus_layouts();
-    let Some(layout) = layouts.first() else {
+    let idx = unsafe { selected_layout_index::<P>(plugin, layouts.len()) };
+    let Some(layout) = layouts.get(idx) else {
         return 0;
     };
     if is_input {
@@ -2577,14 +2612,15 @@ unsafe extern "C" fn audio_ports_count<P: PluginExport>(
 }
 
 unsafe extern "C" fn audio_ports_get<P: PluginExport>(
-    _plugin: *const clap_plugin,
+    plugin: *const clap_plugin,
     index: u32,
     is_input: bool,
     info: *mut clap_audio_port_info,
 ) -> bool {
     unsafe {
         let layouts = P::bus_layouts();
-        let Some(layout) = layouts.first() else {
+        let idx = selected_layout_index::<P>(plugin, layouts.len());
+        let Some(layout) = layouts.get(idx) else {
             return false;
         };
 
@@ -2629,6 +2665,83 @@ fn make_audio_ports_extension<P: PluginExport>() -> clap_plugin_audio_ports {
     clap_plugin_audio_ports {
         count: Some(audio_ports_count::<P>),
         get: Some(audio_ports_get::<P>),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Extension: audio_ports_config (switch between the plugin's bus layouts)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn audio_ports_config_count<P: PluginExport>(_plugin: *const clap_plugin) -> u32 {
+    len_u32(P::bus_layouts().len())
+}
+
+unsafe extern "C" fn audio_ports_config_get<P: PluginExport>(
+    _plugin: *const clap_plugin,
+    index: u32,
+    config: *mut clap_audio_ports_config,
+) -> bool {
+    unsafe {
+        let layouts = P::bus_layouts();
+        let Some(layout) = layouts.get(index as usize) else {
+            return false;
+        };
+        let out = &mut *config;
+        // Config id == index into `bus_layouts()`; `select` maps back.
+        out.id = index;
+        out.name = [0; CLAP_NAME_SIZE];
+        let name = format!(
+            "{} in / {} out",
+            layout.total_input_channels(),
+            layout.total_output_channels()
+        );
+        copy_str_to_buf(&mut out.name, &name);
+        out.input_port_count = len_u32(layout.inputs.len());
+        out.output_port_count = len_u32(layout.outputs.len());
+        out.has_main_input = !layout.inputs.is_empty();
+        out.main_input_channel_count = layout
+            .inputs
+            .first()
+            .map_or(0, |b| b.channels.channel_count());
+        out.main_input_port_type = layout
+            .inputs
+            .first()
+            .map_or(ptr::null(), |b| clap_port_type_ptr(b.channels));
+        out.has_main_output = !layout.outputs.is_empty();
+        out.main_output_channel_count = layout
+            .outputs
+            .first()
+            .map_or(0, |b| b.channels.channel_count());
+        out.main_output_port_type = layout
+            .outputs
+            .first()
+            .map_or(ptr::null(), |b| clap_port_type_ptr(b.channels));
+        true
+    }
+}
+
+unsafe extern "C" fn audio_ports_config_select<P: PluginExport>(
+    plugin: *const clap_plugin,
+    config_id: clap_id,
+) -> bool {
+    unsafe {
+        if (config_id as usize) >= P::bus_layouts().len() {
+            return false;
+        }
+        // Called on the main thread while deactivated; the host rescans
+        // `audio_ports` afterward, which now reports this layout.
+        data_from_plugin::<P>(plugin)
+            .selected_config
+            .store(config_id, Ordering::Relaxed);
+        true
+    }
+}
+
+fn make_audio_ports_config_extension<P: PluginExport>() -> clap_plugin_audio_ports_config {
+    clap_plugin_audio_ports_config {
+        count: Some(audio_ports_config_count::<P>),
+        get: Some(audio_ports_config_get::<P>),
+        select: Some(audio_ports_config_select::<P>),
     }
 }
 
@@ -3396,6 +3509,7 @@ struct Extensions<P: PluginExport> {
     state: clap_plugin_state,
     preset_load: clap_plugin_preset_load,
     audio_ports: clap_plugin_audio_ports,
+    audio_ports_config: clap_plugin_audio_ports_config,
     note_ports: clap_plugin_note_ports,
     gui: clap_plugin_gui,
     latency: clap_plugin_latency,
@@ -3452,6 +3566,7 @@ impl<P: PluginExport> Extensions<P> {
             state: make_state_extension::<P>(),
             preset_load: make_preset_load_extension::<P>(),
             audio_ports: make_audio_ports_extension::<P>(),
+            audio_ports_config: make_audio_ports_config_extension::<P>(),
             note_ports: make_note_ports_extension::<P>(),
             gui: make_gui_extension::<P>(),
             latency: clap_plugin_latency {
@@ -3517,6 +3632,12 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         }
         if ext_id == CLAP_EXT_AUDIO_PORTS {
             return (&raw const extensions.audio_ports).cast::<c_void>();
+        }
+        // Only advertise config switching when there's more than one
+        // layout to switch between; a single-layout plugin is fully
+        // described by `audio_ports` alone.
+        if ext_id == CLAP_EXT_AUDIO_PORTS_CONFIG && P::bus_layouts().len() > 1 {
+            return (&raw const extensions.audio_ports_config).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_NOTE_PORTS {
             return (&raw const extensions.note_ports).cast::<c_void>();
@@ -3588,6 +3709,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         editor_builder,
         latency_cache,
         tail_cache,
+        selected_config: AtomicU32::new(0),
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sounding_notes: SoundingNotes::new(info.midi_input_ports),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),

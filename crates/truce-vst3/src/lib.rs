@@ -34,8 +34,9 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, lock_plugin, log_missing_bus_layout,
-    run_audio_block, run_extern_callback_with, run_register, save_extra, shared_plugin,
+    ParamCStrings, SharedPlugin, default_io_channels, find_bus_layout, lock_plugin,
+    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, save_extra,
+    shared_plugin,
 };
 use truce_params::MidiSource;
 use truce_params::sample::{Float, Sample};
@@ -421,6 +422,13 @@ unsafe extern "C" fn cb_set_active<P: PluginExport>(ctx: *mut std::ffi::c_void, 
             .active
             .store(active != 0, Ordering::Relaxed);
     }
+}
+
+/// The `bus_layouts()` index matching `(in_ch, out_ch)`, or `-1`. The
+/// shim's `setBusArrangements` calls this to accept any declared layout.
+/// Static per plugin type - no instance context.
+unsafe extern "C" fn cb_match_bus_layout<P: PluginExport>(in_ch: u32, out_ch: u32) -> i32 {
+    find_bus_layout::<P>(in_ch, out_ch).map_or(-1, |i| i32::try_from(i).unwrap_or(-1))
 }
 
 unsafe extern "C" fn cb_process<P: PluginExport>(
@@ -2205,6 +2213,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         get_output_param_count: cb_get_output_param_count::<P>,
         get_output_param: cb_get_output_param::<P>,
         set_active: cb_set_active::<P>,
+        match_bus_layout: cb_match_bus_layout::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

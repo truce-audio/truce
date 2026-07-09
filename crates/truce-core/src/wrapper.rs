@@ -351,6 +351,20 @@ pub fn first_bus_layout<P: PluginExport>() -> Option<BusLayout> {
     P::bus_layouts().into_iter().next()
 }
 
+/// Find the `bus_layouts()` index whose total input/output channel counts
+/// match `(inputs, outputs)`. Wrappers that negotiate a layout from a
+/// host-proposed arrangement (VST3 `setBusArrangements`, AU channel-config
+/// selection, the standalone device match, VST2's fixed I/O at load) use
+/// this to map a request onto a supported layout. `None` when nothing
+/// matches; the caller then rejects the arrangement or falls back to the
+/// first layout.
+#[must_use]
+pub fn find_bus_layout<P: PluginExport>(inputs: u32, outputs: u32) -> Option<usize> {
+    P::bus_layouts()
+        .iter()
+        .position(|l| l.total_input_channels() == inputs && l.total_output_channels() == outputs)
+}
+
 /// Standard diagnostic emitted by `register_*` when [`first_bus_layout`]
 /// or [`default_io_channels`] returns `None`. Centralised so every
 /// wrapper prints the same actionable message.

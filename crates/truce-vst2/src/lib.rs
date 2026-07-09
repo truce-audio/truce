@@ -1199,6 +1199,9 @@ pub fn register_vst2<P: PluginExport>() {
     // initializer. Catch any panic so it doesn't cross the FFI
     // boundary and abort the host process.
     run_register::<P>("VST2", || {
+        // VST2 fixes `numInputs` / `numOutputs` in the `AEffect` at load
+        // and has no reliable runtime arrangement negotiation, so a
+        // multi-layout plugin exposes only its first (default) layout here.
         let Some(layout) = first_bus_layout::<P>() else {
             log_missing_bus_layout::<P>("VST2");
             return;

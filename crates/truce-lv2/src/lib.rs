@@ -245,6 +245,9 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 /// as a graceful instantiation failure (log + null) rather than
 /// panicking across the host boundary.
 pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> Option<PortLayout> {
+    // LV2 ports are fixed in the TTL and can't be reconfigured at runtime,
+    // so a multi-layout plugin exposes only its first (default) layout.
+    // Alternate layouts would need one plugin URI per layout.
     let default_layout = first_bus_layout::<P>()?;
     let params = plugin.params();
     let param_count = len_u32(params.param_infos().len());
