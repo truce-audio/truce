@@ -18,6 +18,7 @@ use truce_core::Sample;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_core::tasks::InitContext;
 use truce_plugin::PluginLogicCore;
 
 /// Output of one [`BlockRunner::run`] call.
@@ -57,7 +58,7 @@ impl<L: PluginLogicCore<S>, S: Sample> BlockRunner<L, S> {
     #[must_use]
     pub fn new(params: &L::Params) -> Self {
         Self {
-            state: L::init(params),
+            state: L::init(params, &InitContext::new(None)),
             sample_rate: 44_100.0,
             transport: TransportInfo::default(),
             out_channels: None,

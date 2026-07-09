@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn follows_level_to_cc() {
         let params = EnvelopeParams::new();
-        let mut state = Envelope::init(&params);
+        let mut state = Envelope::init(&params, &InitContext::new(None));
         Envelope::reset(&mut state, &params, &AudioConfig::new(44100.0, 256));
 
         // A half-scale constant signal → env settles at ~0.5 → CC ~63.

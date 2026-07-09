@@ -93,7 +93,7 @@ pub trait PluginLogicCore<S: Sample = f32>: 'static {
     }
 
     /// Build initial state from params. See [`PluginLogic::init`].
-    fn init(params: &Self::Params) -> Self::DspState;
+    fn init(params: &Self::Params, cx: &InitContext) -> Self::DspState;
 
     fn reset(state: &mut Self::DspState, params: &Self::Params, config: &AudioConfig);
 
@@ -249,8 +249,11 @@ macro_rules! plugin_logic_leaf_trait {
             /// construction genuinely needs to read params; a fixed
             /// initial state belongs in the state type's `Default` impl
             /// instead.
-            fn init(params: &Self::Params) -> Self::DspState {
-                let _ = params;
+            fn init(
+                params: &Self::Params,
+                cx: &$crate::__plugin_logic_deps::InitContext,
+            ) -> Self::DspState {
+                let _ = (params, cx);
                 ::core::default::Default::default()
             }
 
@@ -437,6 +440,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
     pub use truce_core::state::{ForeignState, MigratedState, StateLoadError};
+    pub use truce_core::tasks::{InitContext, TaskSpawner};
     pub use truce_params::Params;
 }
 
@@ -651,6 +655,48 @@ pure_plugin_leaf_trait! {
 }
 
 // ---------------------------------------------------------------------------
+// Background tasks - opt-in managed off-thread work
+// ---------------------------------------------------------------------------
+
+pub use crate::__plugin_logic_deps::{InitContext, TaskSpawner};
+
+/// Opt-in managed background work. A plugin implements this *in addition
+/// to* its leaf trait to declare a `Send` task type and a handler the
+/// framework runs on a shared background-thread pool, then wires it in
+/// with the `tasks:` key on [`crate::plugin!`]. Nothing changes for a
+/// plugin that doesn't implement it.
+///
+/// `run_task` runs off the audio thread and reaches shared state through
+/// `params` (its `#[skip]` channels / atomics), exactly like the editor:
+/// it must never touch `DspState`, which is audio-thread-exclusive. It
+/// may block, allocate, and free freely; feedback to the audio thread
+/// stays the plugin's job through those `#[skip]` channels.
+///
+/// Schedule tasks with `ctx.tasks::<Task>()` from `process` (wait-free),
+/// the editor's `PluginContext`, or the `InitContext` passed to `init`.
+///
+/// ```ignore
+/// impl BackgroundTasks for Reverb {
+///     type Params = ReverbParams;
+///     type Task = Rebuild;
+///     fn run_task(task: Rebuild, params: &ReverbParams) {
+///         let graph = build_graph(task.sample_rate, task.time_s);
+///         let _ = params.ready.force_push(graph);   // #[skip] handoff
+///     }
+/// }
+/// ```
+pub trait BackgroundTasks {
+    /// The plugin's parameter struct; must match the leaf trait's
+    /// `type Params`.
+    type Params: crate::__plugin_logic_deps::Params;
+    /// A unit of off-thread work. `Send` because the pool moves it across
+    /// threads; `'static` because the worker outlives any block.
+    type Task: Send + 'static;
+    /// Run one task on the pool. See the trait docs for the contract.
+    fn run_task(task: Self::Task, params: &Self::Params);
+}
+
+// ---------------------------------------------------------------------------
 // Bridges - each leaf forwards every method to PluginLogicCore<S>
 // ---------------------------------------------------------------------------
 
@@ -674,8 +720,11 @@ macro_rules! plugin_logic_bridge {
                 <Self as $leaf>::bus_layouts()
             }
 
-            fn init(params: &Self::Params) -> Self::DspState {
-                <Self as $leaf>::init(params)
+            fn init(
+                params: &Self::Params,
+                cx: &crate::__plugin_logic_deps::InitContext,
+            ) -> Self::DspState {
+                <Self as $leaf>::init(params, cx)
             }
 
             fn reset(state: &mut Self::DspState, params: &Self::Params, config: &AudioConfig) {

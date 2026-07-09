@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn cc_steers_cutoff() {
         let params = CcFilterParams::new();
-        let mut state = CcFilter::init(&params);
+        let mut state = CcFilter::init(&params, &InitContext::new(None));
         CcFilter::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let before = state.cutoff_hz;

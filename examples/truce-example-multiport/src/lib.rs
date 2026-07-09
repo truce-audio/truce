@@ -401,7 +401,7 @@ mod tests {
         // pre-reset tweaks (snapped by `reset`) worked, which is why
         // no other test caught it.
         let params = MultiportParams::new();
-        let mut state = Multiport::init(&params);
+        let mut state = Multiport::init(&params, &InitContext::new(None));
         Multiport::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let mut block = |events: &EventList| -> f32 {
@@ -450,7 +450,7 @@ mod tests {
     ) -> (MultiportDspState, Vec<f32>) {
         let params = MultiportParams::new();
         setup(&params);
-        let mut state = Multiport::init(&params);
+        let mut state = Multiport::init(&params, &InitContext::new(None));
         Multiport::reset(&mut state, &params, &AudioConfig::new(44100.0, 64));
 
         let in_refs: Vec<&[f32]> = Vec::new();

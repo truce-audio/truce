@@ -70,7 +70,7 @@ fn plain_param_not_double_denormalized() {
 
     let params = Arc::new(TestParams::new());
     let mut shell =
-        truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::from_parts(params);
+        truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::from_parts(params, None);
     shell.reset(&AudioConfig::new(44100.0, 512));
 
     let input = vec![0.5f32; 512];

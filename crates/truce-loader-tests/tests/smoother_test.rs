@@ -70,7 +70,7 @@ fn smoother_ramps_gradually() {
     let params = Arc::new(SmootherParams::new());
     let mut shell =
         truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
-            params,
+            params, None,
         );
     shell.reset(&AudioConfig::new(44100.0, 64));
 
@@ -138,6 +138,7 @@ fn static_shell_reset_snaps_smoothers() {
     let mut shell =
         truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
             Arc::clone(&params),
+            None,
         );
 
     // Target away from both the default and the smoother's current

@@ -1,5 +1,6 @@
 use crate::config::ProcessMode;
 use crate::events::{EventList, TransportInfo};
+use crate::tasks::{AnyTaskSpawner, TaskSpawner};
 
 /// Per-block context handed to `process()`. Construct via
 /// [`Self::new`] + the `with_*` builders. Marked `#[non_exhaustive]`
@@ -19,6 +20,10 @@ pub struct ProcessContext<'a> {
     pub output_events: &'a mut EventList,
     params_fn: Option<&'a dyn Fn(u32) -> f64>,
     meters_fn: Option<&'a dyn Fn(u32, f32)>,
+    /// Type-erased handle to this instance's background-task spawner,
+    /// installed by the shell when the plugin wired `tasks:` on
+    /// `plugin!`. Recover a typed spawner with [`Self::tasks`].
+    tasks: Option<&'a AnyTaskSpawner>,
 }
 
 impl<'a> ProcessContext<'a> {
@@ -36,6 +41,7 @@ impl<'a> ProcessContext<'a> {
             output_events,
             params_fn: None,
             meters_fn: None,
+            tasks: None,
         }
     }
 
@@ -59,6 +65,24 @@ impl<'a> ProcessContext<'a> {
     pub fn with_meters(mut self, f: &'a dyn Fn(u32, f32)) -> Self {
         self.meters_fn = Some(f);
         self
+    }
+
+    /// Install the background-task spawner for this block. The shell
+    /// stamps it when the plugin wired `tasks:` on `plugin!`.
+    #[must_use]
+    pub fn with_tasks(mut self, tasks: &'a AnyTaskSpawner) -> Self {
+        self.tasks = Some(tasks);
+        self
+    }
+
+    /// The background-task spawner for the plugin's
+    /// `BackgroundTasks::Task`, or `None` if the plugin wired no `tasks:`.
+    /// Scheduling with the returned spawner is wait-free (see
+    /// [`TaskSpawner::try_spawn`] / [`TaskSpawner::spawn_coalescing`]), so
+    /// it is safe to call from the audio thread.
+    #[must_use]
+    pub fn tasks<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
+        self.tasks.and_then(AnyTaskSpawner::downcast::<T>)
     }
 
     /// Read a parameter's plain value by ID.

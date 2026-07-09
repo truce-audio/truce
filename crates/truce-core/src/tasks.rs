@@ -1,0 +1,344 @@
+//! Managed background-task pool.
+//!
+//! A process-global pool of worker threads runs plugin `run_task`
+//! handlers off the audio thread. Each plugin instance owns a
+//! preallocated, wait-free inbound queue via a [`TaskSpawner`]: the
+//! audio thread (or the editor, or `init`) pushes tasks without
+//! allocating or blocking, and a pool worker drains them. Feedback to
+//! the audio thread stays the plugin's job through shared `#[skip]`
+//! channels - the pool owns only the worker threads and the inbound
+//! queue.
+//!
+//! The pool is shared across every instance in the process (one small
+//! set of threads, not one thread per instance) and initializes lazily
+//! the first time any instance actually schedules a task, so a plugin
+//! that never declares a `BackgroundTask` spawns no threads.
+
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::thread::{self, Thread};
+use std::time::Duration;
+
+use crossbeam_queue::ArrayQueue;
+
+/// Preallocated inbound-queue capacity per instance. Mirrors
+/// `EVENT_LIST_PREALLOC`: a block that schedules more tasks than this
+/// drops the overflow (`try_spawn` returns `Err`) rather than
+/// allocating on the audio thread.
+pub const TASK_QUEUE_PREALLOC: usize = 256;
+
+/// How many instances can have pending work queued in the pool at once.
+/// Sized well past any realistic simultaneous-instance count.
+const INJECTOR_CAP: usize = 4096;
+
+/// How long a worker parks before a defensive re-check. Wakes are
+/// explicit (`unpark` after a push), so this only bounds the worst case
+/// if an `unpark` is ever missed.
+const PARK_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// A drainable instance queue, type-erased so the one pool holds many
+/// task types at once.
+trait Drain: Send + Sync {
+    fn drain(&self);
+}
+
+/// Per-instance inbound queue plus the monomorphized handler. Shared
+/// (`Arc`) between the schedulers (audio thread / editor / init, via
+/// [`TaskSpawner`]) and the pool worker that drains it.
+struct Sink<T: Send + 'static> {
+    queue: ArrayQueue<T>,
+    /// Coalesces wake-ups: set when this sink is already queued in the
+    /// injector, so a burst of pushes injects it once.
+    scheduled: AtomicBool,
+    /// `run(task)` is `move |task| L::run_task(task, &params)`, built
+    /// once when the instance registers - never per task.
+    run: Box<dyn Fn(T) + Send + Sync>,
+}
+
+impl<T: Send + 'static> Drain for Sink<T> {
+    fn drain(&self) {
+        // Clear the flag before draining so a task pushed mid-drain
+        // re-arms the sink instead of being stranded.
+        self.scheduled.store(false, Ordering::Release);
+        while let Some(task) = self.queue.pop() {
+            // The pool is shared across instances, so a panic in one
+            // plugin's handler must not kill the worker (which would
+            // strand every other instance's tasks). Catch it, let the
+            // panic hook report it, and keep draining. `run`/`task` are
+            // effectively unwind-safe: `run` is `&`-borrowed and a
+            // poisoned task is simply dropped.
+            let run = &self.run;
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(task)));
+        }
+    }
+}
+
+/// Worker-visible pool state: the injector of ready sinks. Held in an
+/// `Arc` so every worker closure can reach it.
+struct Shared {
+    injector: ArrayQueue<Arc<dyn Drain>>,
+    /// Round-robin cursor for choosing which worker to wake.
+    next: AtomicUsize,
+}
+
+struct Pool {
+    shared: Arc<Shared>,
+    workers: Vec<Thread>,
+}
+
+static POOL: OnceLock<Pool> = OnceLock::new();
+
+fn pool() -> &'static Pool {
+    POOL.get_or_init(|| {
+        let shared = Arc::new(Shared {
+            injector: ArrayQueue::new(INJECTOR_CAP),
+            next: AtomicUsize::new(0),
+        });
+        // One fewer than the core count, floored at one, so the pool
+        // never starves the audio and main threads on a small machine.
+        let n = thread::available_parallelism().map_or(1, |p| p.get().saturating_sub(1).max(1));
+        let mut workers = Vec::with_capacity(n);
+        for _ in 0..n {
+            let shared = Arc::clone(&shared);
+            let handle = thread::Builder::new()
+                .name("truce-task-pool".into())
+                .spawn(move || worker_loop(&shared))
+                .expect("spawn truce task-pool worker");
+            workers.push(handle.thread().clone());
+        }
+        Pool { shared, workers }
+    })
+}
+
+fn worker_loop(shared: &Shared) -> ! {
+    loop {
+        while let Some(sink) = shared.injector.pop() {
+            sink.drain();
+        }
+        // Nothing pending: park. A concurrent push + `unpark` either
+        // beats the park (the token makes this return at once) or wakes
+        // us; `PARK_TIMEOUT` is a belt-and-suspenders re-check.
+        thread::park_timeout(PARK_TIMEOUT);
+    }
+}
+
+/// Enqueue a ready sink and wake a worker. Wait-free: `injector.push`
+/// is lock-free and `unpark` is a bounded, non-blocking wake (the same
+/// primitive the manual worker pattern uses). If the injector is full
+/// the sink is dropped from the schedule; its tasks are still drained
+/// the next time it re-arms.
+fn schedule(sink: Arc<dyn Drain>) {
+    let pool = pool();
+    if pool.shared.injector.push(sink).is_ok() && !pool.workers.is_empty() {
+        let i = pool.shared.next.fetch_add(1, Ordering::Relaxed) % pool.workers.len();
+        pool.workers[i].unpark();
+    }
+}
+
+/// A cheap-to-clone handle for scheduling background tasks onto the
+/// shared pool. Held by the shell and handed to the plugin through
+/// [`InitContext`], `ProcessContext`, and the editor's `PluginContext`.
+pub struct TaskSpawner<T: Send + 'static> {
+    sink: Arc<Sink<T>>,
+}
+
+impl<T: Send + 'static> Clone for TaskSpawner<T> {
+    fn clone(&self) -> Self {
+        Self {
+            sink: Arc::clone(&self.sink),
+        }
+    }
+}
+
+impl<T: Send + 'static> TaskSpawner<T> {
+    /// Register an instance's handler with the shared pool. `run` is the
+    /// monomorphized `move |task| L::run_task(task, &params)`, built once
+    /// by the shell. The pool itself is not started until the first task
+    /// is actually scheduled, so constructing a spawner for a plugin that
+    /// never schedules costs only the (small) inbound queue.
+    pub fn new(run: impl Fn(T) + Send + Sync + 'static) -> Self {
+        Self {
+            sink: Arc::new(Sink {
+                queue: ArrayQueue::new(TASK_QUEUE_PREALLOC),
+                scheduled: AtomicBool::new(false),
+                run: Box::new(run),
+            }),
+        }
+    }
+
+    /// Enqueue a task, running it on the pool as soon as a worker is
+    /// free. Wait-free. Returns `Err(task)` if the inbound queue is full
+    /// (the audio thread decides what to do - drop, or coalesce via
+    /// [`Self::spawn_coalescing`] - rather than block).
+    ///
+    /// # Errors
+    ///
+    /// Returns the task back when the preallocated inbound queue is full.
+    pub fn try_spawn(&self, task: T) -> Result<(), T> {
+        self.sink.queue.push(task)?;
+        self.arm();
+        Ok(())
+    }
+
+    /// Enqueue a task, dropping the oldest queued task if the queue is
+    /// full ("latest wins"). Wait-free. Use for coalescing requests where
+    /// only the newest target matters, e.g. rebuilding a filter as a knob
+    /// sweeps - one rebuild per worker cycle, not one per block.
+    pub fn spawn_coalescing(&self, task: T) {
+        let _ = self.sink.queue.force_push(task);
+        self.arm();
+    }
+
+    /// Inject this sink into the pool if it isn't already queued.
+    fn arm(&self) {
+        if !self.sink.scheduled.swap(true, Ordering::AcqRel) {
+            let sink: Arc<dyn Drain> = Arc::clone(&self.sink) as Arc<dyn Drain>;
+            schedule(sink);
+        }
+    }
+}
+
+/// A type-erased [`TaskSpawner`], so the concrete `ProcessContext` /
+/// `InitContext` (whose signatures are fixed by the leaf trait and can't
+/// name the plugin's task type) can carry the handle and hand back a
+/// typed spawner on demand via [`Self::downcast`].
+#[derive(Clone)]
+pub struct AnyTaskSpawner(Arc<dyn std::any::Any + Send + Sync>);
+
+impl AnyTaskSpawner {
+    /// Erase a typed spawner. Called by the shell when it wires tasks.
+    #[must_use]
+    pub fn new<T: Send + 'static>(spawner: &TaskSpawner<T>) -> Self {
+        Self(Arc::new(spawner.clone()) as Arc<dyn std::any::Any + Send + Sync>)
+    }
+
+    /// Recover the typed spawner. `None` if this handle was erased from a
+    /// different task type (a caller asking for the wrong `T`).
+    #[must_use]
+    pub fn downcast<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
+        self.0.downcast_ref::<TaskSpawner<T>>().cloned()
+    }
+}
+
+/// Context handed to `init` so a plugin can schedule startup background
+/// work before the first block. Concrete (not generic over the task
+/// type) because `init`'s signature lives on the leaf trait; recover the
+/// typed spawner with [`Self::tasks`]. Params arrive as the separate
+/// `init` argument.
+pub struct InitContext {
+    tasks: Option<AnyTaskSpawner>,
+}
+
+impl InitContext {
+    #[must_use]
+    pub fn new(tasks: Option<AnyTaskSpawner>) -> Self {
+        Self { tasks }
+    }
+
+    /// The task spawner for this instance's `BackgroundTasks::Task`, or
+    /// `None` if the plugin wired no `tasks:` on `plugin!`.
+    #[must_use]
+    pub fn tasks<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
+        self.tasks.as_ref().and_then(AnyTaskSpawner::downcast::<T>)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // `TASK_QUEUE_PREALLOC` is 256, so casting it to `u32` for the loop
+    // bounds is always exact.
+    #![allow(clippy::cast_possible_truncation)]
+
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+    use std::time::Instant;
+
+    fn wait_until(deadline: Duration, mut done: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < deadline {
+            if done() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        done()
+    }
+
+    #[test]
+    fn runs_scheduled_tasks_off_thread() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let sum = Arc::new(AtomicU32::new(0));
+        let (c, s) = (Arc::clone(&counter), Arc::clone(&sum));
+        let spawner = TaskSpawner::<u32>::new(move |n| {
+            c.fetch_add(1, Ordering::Relaxed);
+            s.fetch_add(n, Ordering::Relaxed);
+        });
+
+        for n in 1..=10 {
+            spawner.try_spawn(n).expect("queue has room");
+        }
+
+        assert!(
+            wait_until(Duration::from_secs(2), || counter.load(Ordering::Relaxed)
+                == 10),
+            "all ten tasks ran"
+        );
+        assert_eq!(sum.load(Ordering::Relaxed), 55);
+    }
+
+    #[test]
+    fn full_queue_returns_the_task() {
+        // Handler blocks on a gate so the queue can actually fill.
+        let gate = Arc::new(AtomicBool::new(false));
+        let g = Arc::clone(&gate);
+        let spawner = TaskSpawner::<u32>::new(move |_| {
+            while !g.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        // First task is picked up and blocks a worker; fill the rest.
+        let mut rejected = 0u32;
+        for n in 0..(TASK_QUEUE_PREALLOC as u32 + 64) {
+            if spawner.try_spawn(n).is_err() {
+                rejected += 1;
+            }
+        }
+        assert!(rejected > 0, "a full inbound queue rejects further tasks");
+        gate.store(true, Ordering::Release);
+    }
+
+    #[test]
+    fn panicking_task_does_not_kill_the_worker() {
+        let ran = Arc::new(AtomicU32::new(0));
+        let r = Arc::clone(&ran);
+        let spawner = TaskSpawner::<bool>::new(move |should_panic| {
+            assert!(!should_panic, "intentional panic, caught by the pool");
+            r.fetch_add(1, Ordering::Relaxed);
+        });
+        spawner.try_spawn(true).expect("queue has room"); // panics in the handler
+        spawner.try_spawn(false).expect("queue has room"); // must still run
+        assert!(
+            wait_until(Duration::from_secs(2), || ran.load(Ordering::Relaxed) == 1),
+            "the worker survived the panic and ran the next task"
+        );
+    }
+
+    #[test]
+    fn coalescing_never_rejects() {
+        let last = Arc::new(AtomicU32::new(0));
+        let l = Arc::clone(&last);
+        let spawner = TaskSpawner::<u32>::new(move |n| {
+            l.store(n, Ordering::Relaxed);
+        });
+        for n in 0..(TASK_QUEUE_PREALLOC as u32 * 4) {
+            spawner.spawn_coalescing(n); // never panics, never blocks
+        }
+        let target = TASK_QUEUE_PREALLOC as u32 * 4 - 1;
+        assert!(
+            wait_until(Duration::from_secs(2), || last.load(Ordering::Relaxed)
+                == target),
+            "the newest task always runs"
+        );
+    }
+}

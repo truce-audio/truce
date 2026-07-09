@@ -265,7 +265,7 @@ mod tests {
     fn emits_triad_and_plays_audio() {
         let params = ChordParams::new();
         params.gain.set_value(1.0);
-        let mut state = Chord::init(&params);
+        let mut state = Chord::init(&params, &InitContext::new(None));
         Chord::reset(&mut state, &params, &AudioConfig::new(44100.0, 256));
 
         let input_refs: Vec<&[f32]> = Vec::new();

@@ -32,6 +32,10 @@ png = "0.18"
 # genuinely atomic; larger ones fall back to a private lock.
 crossbeam-utils = "0.8"
 
+# Lock-free bounded MPMC queue backing the managed background-task pool
+# (`tasks`): the audio thread pushes tasks wait-free, pool workers drain.
+crossbeam-queue = "0.3"
+
 # The mediation lock (`wrapper::PluginMutex`) is a
 # PTHREAD_PRIO_INHERIT pthread mutex on Linux - std's futex lock has
 # no priority inheritance there (macOS/Windows stay on std).

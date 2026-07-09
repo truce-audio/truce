@@ -15,6 +15,7 @@ use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state::{ForeignState, MigratedState, StateLoadError};
+use truce_core::tasks::{AnyTaskSpawner, InitContext};
 use truce_params::Params;
 use truce_params::sample::Sample;
 use truce_plugin::PluginLogicCore;
@@ -42,6 +43,11 @@ pub struct StaticShell<P: Params, L: PluginLogicCore<S, Params = P>, S: Sample =
     /// pay nothing. A plugin that has published once stays subscribed.
     try_snapshot: bool,
     sample_rate: f64,
+    /// Background-task spawner for the plugin's `BackgroundTasks::Task`,
+    /// when the plugin wired `tasks:` on `plugin!`. Type-erased; stamped
+    /// into each block's `ProcessContext` so `ctx.tasks::<T>()` works.
+    /// `None` for a plugin with no background tasks.
+    tasks: Option<AnyTaskSpawner>,
     _sample: std::marker::PhantomData<fn() -> S>,
 }
 
@@ -60,10 +66,14 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
     StaticShell<P, L, S>
 {
     /// Build the shell from shared params, constructing the initial DSP
-    /// state via `L::init(&params)`. The descriptor `L` is a type-only
-    /// marker; the shell owns the state it produces.
-    pub fn from_parts(params: Arc<P>) -> Self {
-        let state = L::init(&params);
+    /// state via `L::init(&params, &cx)`. The descriptor `L` is a
+    /// type-only marker; the shell owns the state it produces. `tasks` is
+    /// the plugin's background-task spawner (`Some` only when the plugin
+    /// wired `tasks:` on `plugin!`); it reaches `init` through the
+    /// `InitContext` and each block through the `ProcessContext`.
+    pub fn from_parts(params: Arc<P>, tasks: Option<AnyTaskSpawner>) -> Self {
+        let init_ctx = InitContext::new(tasks.clone());
+        let state = L::init(&params, &init_ctx);
         Self {
             params,
             state,
@@ -71,6 +81,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
             snapshots: SnapshotSlot::new(),
             try_snapshot: true,
             sample_rate: 44100.0,
+            tasks,
             _sample: std::marker::PhantomData,
         }
     }
@@ -151,7 +162,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         let meters = &self.meters;
         let param_fn = |id: u32| -> f64 { params.get_plain(id).unwrap_or(0.0) };
         let meter_fn = |id: u32, v: f32| meters.write(id, v);
-        let mut ctx = ProcessContext::new(
+        let ctx = ProcessContext::new(
             context.transport,
             context.sample_rate,
             buffer.num_samples(),
@@ -160,6 +171,11 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         .with_process_mode(context.process_mode)
         .with_params(&param_fn)
         .with_meters(&meter_fn);
+        // Stamp the background-task spawner so `ctx.tasks::<T>()` works.
+        let mut ctx = match &self.tasks {
+            Some(t) => ctx.with_tasks(t),
+            None => ctx,
+        };
 
         let status = L::process(&mut self.state, &self.params, buffer, events, &mut ctx);
         publish_snapshot::<S, L>(&self.state, &self.snapshots, &mut self.try_snapshot);
@@ -275,6 +291,7 @@ macro_rules! export_static {
         params: $params:ty,
         info: $info:expr,
         logic: $logic:ty,
+        $(tasks: $tasks:ty,)?
     ) => {
         pub struct __HotShellWrapper {
             // `Sample` here resolves to the type alias the user
@@ -371,10 +388,31 @@ macro_rules! export_static {
 
             fn create() -> Self {
                 let params = std::sync::Arc::new(<$params>::new());
+                // `tasks:` on `plugin!` wires the background-task spawner;
+                // absent, the shell runs with no pool.
+                #[allow(unused_mut)]
+                let mut tasks: ::core::option::Option<
+                    $crate::__macro_deps::truce_core::tasks::AnyTaskSpawner,
+                > = ::core::option::Option::None;
+                $(
+                    let spawner = $crate::__macro_deps::truce_core::tasks::TaskSpawner::<
+                        <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::Task,
+                    >::new({
+                        let params = std::sync::Arc::clone(&params);
+                        move |task| {
+                            <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::run_task(
+                                task, &params,
+                            )
+                        }
+                    });
+                    tasks = ::core::option::Option::Some(
+                        $crate::__macro_deps::truce_core::tasks::AnyTaskSpawner::new(&spawner),
+                    );
+                )?
                 // The descriptor `$logic` is stateless; `from_parts`
-                // builds the DSP state via `<$logic>::init(&params)`.
+                // builds the DSP state via `<$logic>::init(&params, &cx)`.
                 Self {
-                    inner: $crate::static_shell::StaticShell::from_parts(params),
+                    inner: $crate::static_shell::StaticShell::from_parts(params, tasks),
                 }
             }
 
