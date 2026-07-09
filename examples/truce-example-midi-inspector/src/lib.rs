@@ -470,9 +470,8 @@ mod tests {
     #[allow(clippy::float_cmp)]
     #[test]
     fn captures_events_from_process() {
-        use truce_core::buffer::AudioBuffer;
-        use truce_core::events::{Event, EventList, TransportInfo};
-        use truce_core::process::ProcessContext;
+        use truce_core::events::{Event, EventList};
+        use truce_test::BlockRunner;
 
         let params = InspectorParams::new();
 
@@ -496,22 +495,11 @@ mod tests {
             },
         ));
 
-        // Stereo passthrough buffer of constant 0.5.
+        // Stereo passthrough buffer of constant 0.5; output shape is
+        // inferred from the two input channels.
         let input = [[0.5f32; 16], [0.5f32; 16]];
         let in_refs: [&[f32]; 2] = [&input[0], &input[1]];
-        let mut output = [[0.0f32; 16], [0.0f32; 16]];
-        let (o0, o1) = output.split_at_mut(1);
-        let mut out_refs: [&mut [f32]; 2] = [&mut o0[0], &mut o1[0]];
-        let mut buffer = AudioBuffer::from_slices_checked(&in_refs, &mut out_refs, 16);
-
-        let transport = TransportInfo::default();
-        let mut out_events = EventList::with_capacity(0);
-        let mut ctx = ProcessContext::new(&transport, 44_100.0, 16, &mut out_events);
-
-        // Qualified: the `PluginLogic` blanket impl gives `MidiInspector`
-        // a second `process` in scope.
-        <MidiInspector as PurePluginLogic>::process(&params, &mut buffer, &events, &mut ctx);
-        // `ctx`'s borrow of `out_events` ends here (last use above).
+        let out = BlockRunner::<MidiInspector>::new(&params).run(&params, &in_refs, &events);
 
         let kinds: Vec<_> = captured(&params.ring)
             .iter()
@@ -520,17 +508,18 @@ mod tests {
         assert!(kinds.contains(&"Note On"), "kinds: {kinds:?}");
         assert!(kinds.contains(&"Control Change"), "kinds: {kinds:?}");
         // Audio passed through untouched.
-        assert_eq!(output[0][0], 0.5);
+        assert_eq!(out.audio[0][0], 0.5);
         // MIDI forwarded to the output unchanged.
-        let out: Vec<_> = out_events.iter().map(|e| e.body).collect();
+        let bodies: Vec<_> = out.events.iter().map(|e| e.body).collect();
         assert!(
-            out.iter().any(|b| matches!(b, EventBody::NoteOn { .. })),
-            "out: {out:?}"
+            bodies.iter().any(|b| matches!(b, EventBody::NoteOn { .. })),
+            "out: {bodies:?}"
         );
         assert!(
-            out.iter()
+            bodies
+                .iter()
                 .any(|b| matches!(b, EventBody::ControlChange { .. })),
-            "out: {out:?}"
+            "out: {bodies:?}"
         );
     }
 

@@ -97,34 +97,21 @@ mod tests {
 
     #[test]
     fn echoes_sysex_payload() {
+        use truce_test::BlockRunner;
+
         let params = SysexEchoParams::new();
-
-        let input: Vec<Vec<f32>> = Vec::new();
-        let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();
-        let mut output: Vec<Vec<f32>> = Vec::new();
-        let mut output_refs: Vec<&mut [f32]> =
-            output.iter_mut().map(std::vec::Vec::as_mut_slice).collect();
-        let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 64) };
-
         let payload = [0x7e, 0x00, 0x06, 0x01];
         // `with_capacity` reserves the SysEx byte pool; `default()`
         // reserves none, so `push_sysex` would report a full pool.
         let mut events = EventList::with_capacity(8);
         events.push_sysex(0, &payload).expect("pool has room");
 
-        let transport = TransportInfo::default();
-        let mut output_events = EventList::with_capacity(8);
-        let mut context = ProcessContext::new(&transport, 44100.0, 64, &mut output_events);
-        // Qualified: the `PluginLogic` blanket impl gives `SysexEcho` a
-        // second `process` in scope.
-        <SysexEcho as PurePluginLogic>::process(&params, &mut buffer, &events, &mut context);
+        // MIDI effect: no audio buses, so pin an empty output shape.
+        let out = BlockRunner::<SysexEcho>::new(&params)
+            .outputs(0, 64)
+            .run(&params, &[], &events);
 
-        let echoed: Vec<&[u8]> = output_events
-            .iter()
-            .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
-            .map(|e| output_events.sysex_bytes(&e.body))
-            .collect();
-        assert_eq!(echoed, vec![&payload[..]]);
+        assert_eq!(out.sysex, vec![payload.to_vec()]);
     }
 
     // Integration test through the real sample-accurate chunking path:

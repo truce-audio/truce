@@ -53,6 +53,9 @@ pub use truce_driver::{
 
 pub mod assertions;
 
+pub mod block;
+pub use block::{BlockOutput, BlockRunner};
+
 /// Re-export of [`truce_core::editor::for_test_params`]
 /// for plugin authors who want to drive snapshot tests directly
 /// without the `assert_screenshot!` macro.
