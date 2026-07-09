@@ -29,6 +29,12 @@ Each leaf gets a blanket impl that forwards every method to
 `PluginLogicCore<S>`; the leaf-vs-leaf distinction is purely
 user-facing.
 
+One layer of sugar sits on top: `PurePluginLogic` /
+`PurePluginLogic64` for plugins with no DSP state. They drop the
+`type DspState` / `init` / `state` plumbing from the surface and
+blanket-implement the matching leaf with `DspState = ()`, so
+everything downstream consumes them unchanged.
+
 ## What this buys
 
 The `truce::prelude64` re-export aliases `PluginLogic64` as

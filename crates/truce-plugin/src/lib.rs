@@ -19,6 +19,11 @@
 //! - [`PluginLogic64`] - what plugin authors implement for `f64`-buffer plugins.
 //! - [`PluginLogicCore`] - generic-over-`S` trait the format wrappers consume.
 //!
+//! Plus one layer of sugar: [`PurePluginLogic`] / [`PurePluginLogic64`]
+//! for plugins with no DSP state, blanket-implemented into the
+//! matching leaf so everything downstream sees a normal `PluginLogic`
+//! with `DspState = ()`.
+//!
 //! The two leaf traits are stamped from one
 //! `plugin_logic_leaf_trait!` `macro_rules!` definition (further
 //! down this file) so their method surfaces stay in lock-step. Each leaf
@@ -188,14 +193,21 @@ macro_rules! plugin_logic_leaf_trait {
             type Params: $crate::__plugin_logic_deps::Params;
 
             /// The mutable per-block audio state - filter memory, voice
-            /// buffers, phase accumulators. **A distinct type from the
-            /// descriptor `Self`, never `Self`.** A plugin with no audio
-            /// state writes `type DspState = ()`; anything else is a plain
-            /// struct. Owned by the shell, so it can outlive a code swap.
+            /// buffers, phase accumulators. A plain struct, distinct from
+            /// the descriptor `Self` (except for the small-effect
+            /// `type DspState = Self` shape). A plugin with no audio state
+            /// implements the stateless leaf trait instead of this one and
+            /// never names a `DspState`. Owned by the shell, so it can
+            /// outlive a code swap.
+            /// `Default` is how the state is born: the default
+            /// [`Self::init`] returns `Self::DspState::default()`, so most
+            /// plugins never write `init` - they `#[derive(Default)]` (or
+            /// hand-write `Default` when a fresh state has non-zero fields)
+            /// and override `init` only when construction needs params.
             /// No layout trait is required - the hot-reload shell
             /// fingerprints the type at load time from its `type_name` /
             /// `size_of` / `align_of`.
-            type DspState: Send + 'static;
+            type DspState: ::core::default::Default + Send + 'static;
 
             /// Whether the hot-reload shell may preserve live DSP state
             /// across a code-only reload. Default `true`: the shell keeps
@@ -232,7 +244,15 @@ macro_rules! plugin_logic_leaf_trait {
             /// old `new` constructor: the descriptor is stateless, so
             /// state is born here and owned by the shell. Not real-time
             /// safe - allocate freely.
-            fn init(params: &Self::Params) -> Self::DspState;
+            ///
+            /// Default: `Self::DspState::default()`. Override only when
+            /// construction genuinely needs to read params; a fixed
+            /// initial state belongs in the state type's `Default` impl
+            /// instead.
+            fn init(params: &Self::Params) -> Self::DspState {
+                let _ = params;
+                ::core::default::Default::default()
+            }
 
             /// Reset for a new sample rate / block size / processing
             /// mode. Clear `state`'s filters / delay lines; read
@@ -431,34 +451,39 @@ plugin_logic_leaf_trait! {
     /// prelude keeps the audio buffer at `f32` and only switches the
     /// `param.read()` precision).
     ///
-    /// Required: [`Self::reset`], [`Self::process`], [`Self::editor`].
-    /// Everything else has a default. The editor is constructed
-    /// explicitly - layout-only plugins typically call
+    /// Required: [`Self::process`], [`Self::editor`]. Everything else
+    /// has a default: `init` builds `Self::DspState::default()` unless
+    /// construction needs params, and `reset` is a no-op. The editor is
+    /// constructed explicitly - layout-only plugins typically call
     /// `truce_gui::default_editor(params, layout())` (where `layout()`
     /// is a plain inherent method on the plugin struct, not part of the
-    /// trait).
+    /// trait). A plugin with no DSP state at all should implement
+    /// [`PurePluginLogic`] instead and skip the state plumbing entirely.
     ///
     /// ## Params vs. DSP state
     ///
-    /// The struct you implement this on holds two different kinds of
-    /// data, and the method receivers reflect the split:
+    /// The type you implement this on is a stateless descriptor; the
+    /// data lives in two places, and the method signatures reflect the
+    /// split:
     ///
-    /// - **Params** - the user-facing values in your `#[derive(Params)]`
-    ///   struct, held as `Arc<Self::Params>`. Atomic-backed and `Sync`,
-    ///   shared lock-free with the host and the editor.
-    /// - **DSP state** - everything else on the struct: filter memory,
-    ///   phase accumulators, voice buffers, delay lines. Plain and
-    ///   non-atomic, mutated every sample, exclusive to the audio thread.
+    /// - **Params** (`type Params`) - the user-facing values in your
+    ///   `#[derive(Params)]` struct, held as `Arc<Self::Params>`.
+    ///   Atomic-backed and `Sync`, shared lock-free with the host and
+    ///   the editor. Arrives read-only as `&Self::Params`.
+    /// - **DSP state** (`type DspState`) - filter memory, phase
+    ///   accumulators, voice buffers, delay lines. Plain and
+    ///   non-atomic, mutated every sample, exclusive to the audio
+    ///   thread. Owned by the shell, passed `&mut` to the methods that
+    ///   mutate it (`process` / `reset` / `load_state`) and `&` to the
+    ///   ones that read it (`save_state` / `snapshot_into`).
     ///
-    /// `process` / `reset` / `load_state` take `&mut self` because they
-    /// mutate DSP state; `save_state` / `snapshot_into` take `&self`
-    /// because they read it. `editor` takes neither - it is an
-    /// associated function over the param store, because a GUI is a
-    /// *view* that binds only params (plus lock-free meters / transport)
-    /// and never touches DSP state, so it can be built without the
-    /// plugin lock. DSP state can't move into params: making per-sample
-    /// filter memory atomic-shared would put a synchronized access on
-    /// the hottest path, and it isn't a "parameter" anyway.
+    /// `editor` takes neither - it is an associated function over the
+    /// param store, because a GUI is a *view* that binds only params
+    /// (plus lock-free meters / transport) and never touches DSP state,
+    /// so it can be built without the plugin lock. DSP state can't move
+    /// into params: making per-sample filter memory atomic-shared would
+    /// put a synchronized access on the hottest path, and it isn't a
+    /// "parameter" anyway.
     pub trait PluginLogic<sample = f32>
 }
 
@@ -473,6 +498,156 @@ plugin_logic_leaf_trait! {
     /// in `f64` end-to-end and the wrapper-boundary widen/narrow
     /// memcpy is worth the cleaner DSP code.
     pub trait PluginLogic64<sample = f64>
+}
+
+// ---------------------------------------------------------------------------
+// Pure leaf traits - stateless sugar over PluginLogic / PluginLogic64
+// ---------------------------------------------------------------------------
+
+/// Define a sample-pinned pure (stateless) leaf trait plus its blanket
+/// impl into the matching stateful leaf. Two invocations: `PurePluginLogic`
+/// over [`PluginLogic`] and [`PurePluginLogic64`] over [`PluginLogic64`].
+/// A macro for the same reason as [`plugin_logic_leaf_trait!`]: the two
+/// surfaces stay in lock-step by construction.
+macro_rules! pure_plugin_leaf_trait {
+    ($(#[$attr:meta])* $vis:vis trait $name:ident: $leaf:ident<sample = $sample:ty>) => {
+        $(#[$attr])*
+        $vis trait $name: 'static {
+            /// The plugin's parameter struct (`#[derive(Params)]`).
+            /// Shared, immutable during a block - it arrives by
+            /// reference every call from the shell, which owns the
+            /// `Arc`.
+            type Params: crate::__plugin_logic_deps::Params;
+
+            /// Opt into zero-copy in-place I/O. Same contract as the
+            /// stateful leaf's `supports_in_place`.
+            #[must_use]
+            fn supports_in_place() -> bool {
+                false
+            }
+
+            /// Supported audio bus configurations. Same contract as the
+            /// stateful leaf's `bus_layouts`. Default: stereo in,
+            /// stereo out.
+            #[must_use]
+            fn bus_layouts() -> Vec<crate::__plugin_logic_deps::BusLayout> {
+                vec![crate::__plugin_logic_deps::BusLayout::stereo()]
+            }
+
+            /// Process one block of audio as a pure function of params
+            /// and input. Same real-time contract as the stateful
+            /// leaf's `process`, minus the state argument.
+            fn process(
+                params: &Self::Params,
+                buffer: &mut crate::__plugin_logic_deps::AudioBuffer<$sample>,
+                events: &crate::__plugin_logic_deps::EventList,
+                context: &mut crate::__plugin_logic_deps::ProcessContext,
+            ) -> crate::__plugin_logic_deps::ProcessStatus;
+
+            /// Translate foreign state into truce shape. Same contract
+            /// as the stateful leaf's `migrate_state` - a stateless
+            /// plugin may still inherit params from a previous
+            /// framework's blob.
+            #[must_use]
+            fn migrate_state(
+                foreign: &crate::__plugin_logic_deps::ForeignState,
+            ) -> Option<crate::__plugin_logic_deps::MigratedState> {
+                let _ = foreign;
+                None
+            }
+
+            /// Construct the editor for this plugin. Required. Same
+            /// contract as the stateful leaf's `editor`.
+            fn editor(
+                params: ::std::sync::Arc<Self::Params>,
+            ) -> Box<dyn crate::__plugin_logic_deps::Editor>;
+        }
+
+        // The blanket that makes the sugar real: a pure plugin IS a
+        // stateful plugin with `DspState = ()`. Everything downstream
+        // (`PluginLogicCore`, `PluginEditor`, the shells, `plugin!`)
+        // binds through $leaf and never learns the difference. Methods
+        // not forwarded here (`init`, `reset`, `save_state`, `latency`,
+        // `tail`, ...) keep their $leaf defaults, which are exactly the
+        // stateless behaviors.
+        impl<T: $name> $leaf for T {
+            type Params = <T as $name>::Params;
+            type DspState = ();
+
+            fn supports_in_place() -> bool {
+                <T as $name>::supports_in_place()
+            }
+
+            fn bus_layouts() -> Vec<crate::__plugin_logic_deps::BusLayout> {
+                <T as $name>::bus_layouts()
+            }
+
+            fn process(
+                _state: &mut (),
+                params: &Self::Params,
+                buffer: &mut crate::__plugin_logic_deps::AudioBuffer<$sample>,
+                events: &crate::__plugin_logic_deps::EventList,
+                context: &mut crate::__plugin_logic_deps::ProcessContext,
+            ) -> crate::__plugin_logic_deps::ProcessStatus {
+                <T as $name>::process(params, buffer, events, context)
+            }
+
+            fn migrate_state(
+                foreign: &crate::__plugin_logic_deps::ForeignState,
+            ) -> Option<crate::__plugin_logic_deps::MigratedState> {
+                <T as $name>::migrate_state(foreign)
+            }
+
+            fn editor(
+                params: ::std::sync::Arc<Self::Params>,
+            ) -> Box<dyn crate::__plugin_logic_deps::Editor> {
+                <T as $name>::editor(params)
+            }
+        }
+    };
+}
+
+pure_plugin_leaf_trait! {
+    /// The stateless `f32` plugin trait: [`PluginLogic`] minus every
+    /// state-shaped item. For a pure parameter-driven effect - one
+    /// whose `process` is a function of params and input only - this
+    /// removes the `type DspState = ()` / `init` / `_state: &mut ()`
+    /// plumbing entirely:
+    ///
+    /// ```ignore
+    /// pub struct Gain;
+    ///
+    /// impl PurePluginLogic for Gain {
+    ///     type Params = GainParams;
+    ///     fn process(params: &GainParams, buffer: &mut AudioBuffer, events: &EventList, ctx: &mut ProcessContext) -> ProcessStatus {
+    ///         /* ... */
+    ///     }
+    ///     fn editor(params: Arc<GainParams>) -> Box<dyn Editor> { /* ... */ }
+    /// }
+    /// ```
+    ///
+    /// A blanket impl makes every `PurePluginLogic` a [`PluginLogic`] with
+    /// `DspState = ()`, so `truce::plugin!` and every shell consume it
+    /// unchanged - and implementing both traits for one type is
+    /// correctly rejected as conflicting. When the plugin grows DSP
+    /// state, switch the impl header to [`PluginLogic`] and add the
+    /// state type and arguments.
+    ///
+    /// Required: [`Self::process`], [`Self::editor`]. Optional:
+    /// [`Self::bus_layouts`], [`Self::supports_in_place`],
+    /// [`Self::migrate_state`]. Anything state-shaped (`reset`,
+    /// `save_state`, `latency`, `tail`, ...) needs state to act on -
+    /// implement [`PluginLogic`] directly if you need those.
+    pub trait PurePluginLogic: PluginLogic<sample = f32>
+}
+
+pure_plugin_leaf_trait! {
+    /// The stateless `f64` plugin trait. Same surface as
+    /// [`PurePluginLogic`] but with the audio buffer pinned to `f64`;
+    /// blanket-implements [`PluginLogic64`]. `truce::prelude64`
+    /// re-exports it as `PurePluginLogic`, so the impl header reads the
+    /// same regardless of precision.
+    pub trait PurePluginLogic64: PluginLogic64<sample = f64>
 }
 
 // ---------------------------------------------------------------------------

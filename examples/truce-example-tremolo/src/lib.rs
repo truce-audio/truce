@@ -114,19 +114,21 @@ pub struct Tremolo {
     sample_rate: f64,
 }
 
+impl Default for Tremolo {
+    fn default() -> Self {
+        Tremolo {
+            free_phase: 0.0,
+            sample_rate: 44100.0,
+        }
+    }
+}
+
 /// Rate at which `free_phase` advances when no host tempo is available.
 const FREE_LFO_HZ: f64 = 2.0;
 
 impl PluginLogic for Tremolo {
     type Params = TremoloParams;
     type DspState = Self;
-
-    fn init(_params: &TremoloParams) -> Self {
-        Tremolo {
-            free_phase: 0.0,
-            sample_rate: 44100.0,
-        }
-    }
 
     fn reset(state: &mut Self, _params: &TremoloParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;

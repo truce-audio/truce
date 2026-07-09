@@ -127,14 +127,10 @@ impl IcedPlugin<GainParams> for GainUi {
 /// Stateless descriptor - carries no DSP state, only params.
 pub struct GainIced;
 
-impl PluginLogic for GainIced {
+impl PurePluginLogic for GainIced {
     type Params = GainParams;
-    type DspState = ();
-
-    fn init(_params: &GainParams) {}
 
     fn process(
-        _state: &mut (),
         params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

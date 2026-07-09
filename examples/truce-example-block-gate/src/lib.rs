@@ -43,14 +43,10 @@ pub struct GateParams {
 /// Stateless descriptor - the gate carries no DSP state, only params.
 pub struct Gate;
 
-impl PluginLogic for Gate {
+impl PurePluginLogic for Gate {
     type Params = GateParams;
-    type DspState = ();
-
-    fn init(_params: &GateParams) {}
 
     fn process(
-        _state: &mut (),
         params: &GateParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

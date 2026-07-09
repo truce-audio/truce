@@ -23,6 +23,7 @@ struct SmootherParams {
 
 struct SmootherPlugin;
 
+#[derive(Default)]
 struct SmootherDspState {
     samples: Vec<f32>,
 }
@@ -30,12 +31,6 @@ struct SmootherDspState {
 impl PluginLogic for SmootherPlugin {
     type Params = SmootherParams;
     type DspState = SmootherDspState;
-
-    fn init(_params: &SmootherParams) -> SmootherDspState {
-        SmootherDspState {
-            samples: Vec::new(),
-        }
-    }
 
     fn process(
         state: &mut SmootherDspState,

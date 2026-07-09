@@ -167,6 +167,20 @@ pub struct SynthDspState {
     lfo_phase: f64,
 }
 
+impl Default for SynthDspState {
+    fn default() -> Self {
+        SynthDspState {
+            // Pre-sized so `process` never grows the pool on the
+            // audio thread.
+            voices: Vec::with_capacity(MAX_VOICES),
+            sample_rate: 44100.0,
+            pitch_bend_mult: 1.0,
+            mod_wheel: 0.0,
+            lfo_phase: 0.0,
+        }
+    }
+}
+
 impl SynthDspState {
     /// Map a 14-bit pitch-bend code to a frequency multiplier.
     fn pitch_bend(&mut self, value: u16) {
@@ -211,16 +225,6 @@ impl PluginLogic for Synth {
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
-    }
-
-    fn init(_params: &SynthParams) -> SynthDspState {
-        SynthDspState {
-            voices: Vec::with_capacity(MAX_VOICES),
-            sample_rate: 44100.0,
-            pitch_bend_mult: 1.0,
-            mod_wheel: 0.0,
-            lfo_phase: 0.0,
-        }
     }
 
     fn reset(state: &mut SynthDspState, _params: &SynthParams, config: &AudioConfig) {

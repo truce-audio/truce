@@ -86,6 +86,16 @@ pub struct SynthDspState {
     channel_bend: [f64; 16],
 }
 
+impl Default for SynthDspState {
+    fn default() -> Self {
+        SynthDspState {
+            sample_rate: 44100.0,
+            voices: [Voice::default(); NUM_VOICES],
+            channel_bend: [0.0; 16],
+        }
+    }
+}
+
 impl SynthDspState {
     /// Store a channel bend and retune every sounding voice on the
     /// channel so the cached `freq` tracks it.
@@ -257,14 +267,6 @@ impl PluginLogic for Synth {
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
-    }
-
-    fn init(_params: &SynthParams) -> SynthDspState {
-        SynthDspState {
-            sample_rate: 44100.0,
-            voices: [Voice::default(); NUM_VOICES],
-            channel_bend: [0.0; 16],
-        }
     }
 
     fn reset(state: &mut SynthDspState, _params: &SynthParams, config: &AudioConfig) {

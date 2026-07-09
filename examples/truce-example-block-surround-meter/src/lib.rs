@@ -73,11 +73,8 @@ const METER_IDS: [P; CHANS] = [P::ChL, P::ChR, P::ChC, P::ChLfe, P::ChLs, P::ChR
 /// "empty" on the widget.
 const METER_FLOOR_DB: f32 = -60.0;
 
-impl PluginLogic for SurroundMeter {
+impl PurePluginLogic for SurroundMeter {
     type Params = SurroundMeterParams;
-    type DspState = ();
-
-    fn init(_params: &SurroundMeterParams) {}
 
     fn bus_layouts() -> Vec<BusLayout> {
         // CHANS is a compile-time constant (6) that fits trivially
@@ -94,7 +91,6 @@ impl PluginLogic for SurroundMeter {
     }
 
     fn process(
-        _state: &mut (),
         params: &SurroundMeterParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

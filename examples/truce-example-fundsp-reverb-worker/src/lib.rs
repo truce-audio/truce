@@ -181,8 +181,8 @@ pub struct FundspReverbWorkerDspState {
     worker_handle: Option<JoinHandle<()>>,
 }
 
-impl FundspReverbWorkerDspState {
-    fn new() -> Self {
+impl Default for FundspReverbWorkerDspState {
+    fn default() -> Self {
         let low_cut_shared = shared(DEFAULT_LOW_CUT_HZ);
         let high_cut_shared = shared(DEFAULT_HIGH_CUT_HZ);
         let mix_shared = shared(DEFAULT_REVERB_MIX);
@@ -214,7 +214,9 @@ impl FundspReverbWorkerDspState {
             worker_handle: Some(worker_handle),
         }
     }
+}
 
+impl FundspReverbWorkerDspState {
     /// Synchronous rebuild path used by `reset()`, which the host
     /// calls off the audio thread. Drains any in-flight rebuild so a
     /// graph that's still being built for the *previous* SR can't
@@ -290,10 +292,6 @@ impl Drop for FundspReverbWorkerDspState {
 impl PluginLogic for FundspReverbWorker {
     type Params = FundspReverbWorkerParams;
     type DspState = FundspReverbWorkerDspState;
-
-    fn init(_params: &FundspReverbWorkerParams) -> FundspReverbWorkerDspState {
-        FundspReverbWorkerDspState::new()
-    }
 
     fn reset(
         state: &mut FundspReverbWorkerDspState,

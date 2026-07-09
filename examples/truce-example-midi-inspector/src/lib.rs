@@ -267,9 +267,8 @@ impl InspectorUi {
 /// (a `#[skip]` field), so there is no separate per-block DSP state.
 pub struct MidiInspector;
 
-impl PluginLogic for MidiInspector {
+impl PurePluginLogic for MidiInspector {
     type Params = InspectorParams;
-    type DspState = ();
 
     /// Audio effect with MIDI in/out: a stereo bus passes the track's
     /// audio through untouched while the plugin monitors and forwards
@@ -281,10 +280,7 @@ impl PluginLogic for MidiInspector {
         vec![BusLayout::stereo()]
     }
 
-    fn init(_params: &InspectorParams) {}
-
     fn process(
-        _state: &mut (),
         params: &InspectorParams,
         buffer: &mut AudioBuffer,
         events: &EventList,
@@ -512,7 +508,9 @@ mod tests {
         let mut out_events = EventList::with_capacity(0);
         let mut ctx = ProcessContext::new(&transport, 44_100.0, 16, &mut out_events);
 
-        MidiInspector::process(&mut (), &params, &mut buffer, &events, &mut ctx);
+        // Qualified: the `PluginLogic` blanket impl gives `MidiInspector`
+        // a second `process` in scope.
+        <MidiInspector as PurePluginLogic>::process(&params, &mut buffer, &events, &mut ctx);
         // `ctx`'s borrow of `out_events` ends here (last use above).
 
         let kinds: Vec<_> = captured(&params.ring)

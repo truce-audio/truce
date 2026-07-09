@@ -76,10 +76,6 @@ impl PluginLogic for CcFilter {
     type Params = CcFilterParams;
     type DspState = CcFilterDspState;
 
-    fn init(_params: &CcFilterParams) -> CcFilterDspState {
-        CcFilterDspState::default()
-    }
-
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
     }

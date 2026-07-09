@@ -21,11 +21,8 @@ pub struct SysexEchoParams {
 /// Stateless descriptor - the echo carries no DSP state, only params.
 pub struct SysexEcho;
 
-impl PluginLogic for SysexEcho {
+impl PurePluginLogic for SysexEcho {
     type Params = SysexEchoParams;
-    type DspState = ();
-
-    fn init(_params: &SysexEchoParams) {}
 
     fn bus_layouts() -> Vec<BusLayout> {
         // MIDI effect: no audio I/O.
@@ -33,7 +30,6 @@ impl PluginLogic for SysexEcho {
     }
 
     fn process(
-        _state: &mut (),
         params: &SysexEchoParams,
         _buffer: &mut AudioBuffer,
         events: &EventList,
@@ -102,8 +98,6 @@ mod tests {
     #[test]
     fn echoes_sysex_payload() {
         let params = SysexEchoParams::new();
-        SysexEcho::init(&params);
-        SysexEcho::reset(&mut (), &params, &AudioConfig::new(44100.0, 64));
 
         let input: Vec<Vec<f32>> = Vec::new();
         let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();
@@ -121,7 +115,9 @@ mod tests {
         let transport = TransportInfo::default();
         let mut output_events = EventList::with_capacity(8);
         let mut context = ProcessContext::new(&transport, 44100.0, 64, &mut output_events);
-        SysexEcho::process(&mut (), &params, &mut buffer, &events, &mut context);
+        // Qualified: the `PluginLogic` blanket impl gives `SysexEcho` a
+        // second `process` in scope.
+        <SysexEcho as PurePluginLogic>::process(&params, &mut buffer, &events, &mut context);
 
         let echoed: Vec<&[u8]> = output_events
             .iter()

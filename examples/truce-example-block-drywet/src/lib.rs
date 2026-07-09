@@ -58,14 +58,10 @@ pub struct DryWet;
 
 const MAX_BLOCK: usize = 1024;
 
-impl PluginLogic for DryWet {
+impl PurePluginLogic for DryWet {
     type Params = DryWetParams;
-    type DspState = ();
-
-    fn init(_params: &DryWetParams) {}
 
     fn process(
-        _state: &mut (),
         params: &DryWetParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

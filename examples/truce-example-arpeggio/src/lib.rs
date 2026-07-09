@@ -141,6 +141,24 @@ pub struct ArpeggioDspState {
     rng: u32,
 }
 
+impl Default for ArpeggioDspState {
+    fn default() -> Self {
+        ArpeggioDspState {
+            // Pre-size so the audio thread never reallocates: at most 128
+            // distinct held notes, and a worst-case 4-octave up-down
+            // sequence.
+            held_notes: Vec::with_capacity(128),
+            sequence: Vec::with_capacity(1024),
+            scratch_down: Vec::with_capacity(512),
+            sample_rate: 44100.0,
+            last_step: None,
+            active_note: None,
+            free_beat: 0.0,
+            rng: 12345,
+        }
+    }
+}
+
 impl ArpeggioDspState {
     /// Rebuild `self.sequence` in place from the held notes - no audio-
     /// thread allocation, since every buffer is pre-sized in `init`.
@@ -198,22 +216,6 @@ impl PluginLogic for Arpeggio {
     /// audio flows through unchanged.
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new()]
-    }
-
-    fn init(_params: &ArpParams) -> ArpeggioDspState {
-        ArpeggioDspState {
-            // Pre-size so the audio thread never reallocates: at most 128
-            // distinct held notes, and a worst-case 4-octave up-down
-            // sequence.
-            held_notes: Vec::with_capacity(128),
-            sequence: Vec::with_capacity(1024),
-            scratch_down: Vec::with_capacity(512),
-            sample_rate: 44100.0,
-            last_step: None,
-            active_note: None,
-            free_beat: 0.0,
-            rng: 12345,
-        }
     }
 
     fn reset(state: &mut ArpeggioDspState, _params: &ArpParams, config: &AudioConfig) {

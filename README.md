@@ -155,18 +155,16 @@ pub struct GainParams {
 use GainParamsParamId as P;
 
 // A stateless descriptor. Parameters live in `GainParams`; this gain
-// carries no per-instance DSP state, so `type DspState = ()`. (A plugin
-// with DSP state - filter memory, oscillator phase - names a plain
-// `struct GainDspState { .. }` here instead.)
+// carries no per-instance DSP state, so it implements `PurePluginLogic`.
+// (A plugin with DSP state - filter memory, oscillator phase - puts it
+// in a `#[derive(Default)] struct GainDspState { .. }` and implements
+// `PluginLogic` with `type DspState = GainDspState` instead.)
 pub struct Gain;
 
-impl PluginLogic for Gain {
+impl PurePluginLogic for Gain {
     type Params = GainParams;
-    type DspState = ();
 
-    fn init(_params: &GainParams) {}
-
-    fn process(_state: &mut (), params: &GainParams, buffer: &mut AudioBuffer,
+    fn process(params: &GainParams, buffer: &mut AudioBuffer,
                _events: &EventList, _ctx: &mut ProcessContext) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
             let gain = db_to_linear(params.gain.read());
