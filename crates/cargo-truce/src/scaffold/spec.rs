@@ -2,12 +2,15 @@
 //! template-rendering contexts (`scaffold::context`) so the public
 //! surface stays small + serde-free.
 
-use super::PluginKind;
+use super::{PluginKind, Statefulness};
 
 /// Per-plugin spec - the unit a template consumer thinks in.
 pub struct PluginSpec {
     pub name: String,
     pub kind: PluginKind,
+    /// Whether the plugin implements `PurePluginLogic` (params-only)
+    /// or `PluginLogic` with an explicit DSP-state struct.
+    pub statefulness: Statefulness,
 }
 
 /// How `[dependencies]` lines are written. Single-mode picks

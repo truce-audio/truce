@@ -11,8 +11,19 @@ use serde::Serialize;
 use super::case::to_pascal_case;
 use super::kind::PluginKind;
 use super::spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
+use super::statefulness::Statefulness;
 
 const REPO_URL: &str = "https://github.com/truce-audio/truce";
+
+/// Version / registry pins the `Scaffolder` threads into every
+/// per-plugin template. Grouped into one argument so the context
+/// constructors stay under the argument-count lint.
+#[derive(Clone, Copy)]
+pub(crate) struct Pins<'a> {
+    pub tag: &'a str,
+    pub version: &'a str,
+    pub use_registry: bool,
+}
 
 // ---------------------------------------------------------------------------
 // PluginScaffoldingContext - fields the per-plugin templates (Cargo.toml,
@@ -46,7 +57,17 @@ pub(crate) struct PluginScaffoldingContext {
     pub dep_args: String,
 
     pub params_struct: String,
-    pub process_body: &'static str,
+    /// Leaf trait the `impl ... for` header names (`PurePluginLogic`
+    /// or `PluginLogic`).
+    pub impl_trait: &'static str,
+    /// DSP-state struct + descriptor doc comment emitted above the
+    /// `pub struct <Name>;` line. Empty of a state struct for a pure
+    /// plugin.
+    pub descriptor_block: String,
+    /// `type DspState = ...;` line inside the impl block; empty for a
+    /// pure plugin.
+    pub dsp_state_type: String,
+    pub process_body: String,
     pub bus_layouts_method: &'static str,
     pub layout_knob: &'static str,
     pub plugin_macro: String,
@@ -56,11 +77,10 @@ impl PluginScaffoldingContext {
     pub fn new(
         crate_name: &str,
         kind: PluginKind,
+        statefulness: Statefulness,
         dep_form: DepForm,
         features: FeatureSet,
-        tag: &str,
-        version: &str,
-        use_registry: bool,
+        pins: Pins<'_>,
     ) -> Self {
         let struct_name = to_pascal_case(crate_name);
         let crate_lib = crate_name.replace('-', "_");
@@ -71,16 +91,19 @@ impl PluginScaffoldingContext {
             crate_name: crate_name.to_string(),
             crate_lib,
             upper_name,
-            tag: tag.to_string(),
-            version: version.to_string(),
-            use_registry,
+            tag: pins.tag.to_string(),
+            version: pins.version.to_string(),
+            use_registry: pins.use_registry,
             is_workspace,
             has_standalone,
             default_label: default_label(features),
             default_features: default_features(features),
-            dep_args: dep_args(dep_form, tag, version),
+            dep_args: dep_args(dep_form, pins.tag, pins.version),
             params_struct: kind.params_struct(&struct_name),
-            process_body: kind.process_body(),
+            impl_trait: statefulness.impl_trait(),
+            descriptor_block: statefulness.descriptor_block(&struct_name),
+            dsp_state_type: statefulness.dsp_state_type(&struct_name),
+            process_body: statefulness.wrap_process(kind.process_body()),
             bus_layouts_method: kind.bus_layouts_method(),
             layout_knob: kind.layout_knob(),
             plugin_macro: kind.plugin_macro(&struct_name),

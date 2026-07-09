@@ -14,7 +14,9 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use cargo_truce::scaffold::{FeatureSet, PluginKind, PluginSpec, Scaffolder, VendorInfo};
+use cargo_truce::scaffold::{
+    FeatureSet, PluginKind, PluginSpec, Scaffolder, Statefulness, VendorInfo,
+};
 
 fn main() -> ExitCode {
     // Tell objc2 to reuse an already-registered Obj-C class with the
@@ -75,10 +77,13 @@ cargo-truce - build tool for truce audio plugins
 Usage: cargo truce <command> [options]
 
 Scaffold:
-  new <name> [--instrument] [--midi] [--no-standalone] [--vendor <n>] [--vendor-id <id>]
+  new <name> [--instrument] [--midi] [--pure|--stateful] [--no-standalone] [--vendor <n>] [--vendor-id <id>]
       Scaffold a new single-plugin project. Defaults include the
       `standalone` feature + `src/main.rs` host; pass --no-standalone
       to skip those (saves the bin entry, the dep, and the file).
+      `--pure` (default) implements `PurePluginLogic`; `--stateful`
+      implements `PluginLogic` with a `#[derive(Default)]` DSP-state
+      struct pre-wired.
       `--vendor` / `--vendor-id` populate `truce.toml` directly;
       omit them to get a `My Company` / `com.mycompany` placeholder
       to edit by hand.
@@ -93,6 +98,7 @@ Scaffold:
         --vendor-id <id>            Reverse-domain vendor ID (defaults to com.<name>)
         --instrument                Default all plugins to instrument type
         --midi                      Default all plugins to midi type
+        --pure | --stateful         PurePluginLogic (default) vs PluginLogic + DSP-state struct
         --no-standalone             Skip the standalone feature + host bin in every plugin
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
@@ -294,11 +300,11 @@ fn print_new_help() {
     eprintln!(
         "\
 Usage:
-  cargo truce new <name> [--instrument] [--midi] [--no-standalone]
-                        [--vendor <name>] [--vendor-id <id>]
+  cargo truce new <name> [--instrument] [--midi] [--pure|--stateful]
+                        [--no-standalone] [--vendor <name>] [--vendor-id <id>]
   cargo truce new <workspace-name> --workspace <plugin1> [plugin2 ...]
-                                   [--instrument] [--midi] [--no-standalone]
-                                   [--vendor <name>] [--vendor-id <id>]
+                                   [--instrument] [--midi] [--pure|--stateful]
+                                   [--no-standalone] [--vendor <name>] [--vendor-id <id>]
                                    [--type:<plugin>=<kind> ...]
 
 Scaffold a new truce plugin project.
@@ -314,6 +320,11 @@ Workspace mode (--workspace):
 Options:
   --instrument            Default plugin kind is `instrument` (synth).
   --midi                  Default plugin kind is `midi`.
+  --pure                  Implement `PurePluginLogic` - params only, no
+                          DSP-state struct. This is the default.
+  --stateful              Implement `PluginLogic` with a
+                          `#[derive(Default)]` DSP-state struct and a
+                          `state` argument on `process`, pre-wired.
   --no-standalone         Skip generating a standalone runner crate.
   --workspace             Multi-plugin workspace mode (positional args
                           after the name are plugin names).
@@ -358,6 +369,10 @@ struct NewArgs {
     name: String,
     plugin_names: Vec<String>,
     default_kind: PluginKind,
+    /// `PurePluginLogic` (default) vs `PluginLogic` with an explicit
+    /// DSP-state struct. Set by `--pure` / `--stateful`; applies to
+    /// every plugin in the scaffold.
+    default_statefulness: Statefulness,
     vendor_name: Option<String>,
     vendor_id: Option<String>,
     type_overrides: Vec<(String, PluginKind)>,
@@ -377,6 +392,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
     let mut name: Option<String> = None;
     let mut plugin_names: Vec<String> = Vec::new();
     let mut default_kind = PluginKind::Effect;
+    let mut default_statefulness = Statefulness::Pure;
     let mut vendor_name: Option<String> = None;
     let mut vendor_id: Option<String> = None;
     let mut type_overrides: Vec<(String, PluginKind)> = Vec::new();
@@ -390,6 +406,8 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
             "--workspace" => workspace_mode = true,
             "--instrument" => default_kind = PluginKind::Instrument,
             "--midi" => default_kind = PluginKind::Midi,
+            "--pure" => default_statefulness = Statefulness::Pure,
+            "--stateful" => default_statefulness = Statefulness::Stateful,
             "--no-standalone" => with_standalone = false,
             "--github" => use_registry = false,
             "--vendor" => {
@@ -416,7 +434,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
 
     let name = name.ok_or(
         "Usage:\n  \
-         cargo truce new <name> [--instrument] [--midi] [--no-standalone]\n  \
+         cargo truce new <name> [--instrument] [--midi] [--pure|--stateful] [--no-standalone]\n  \
          cargo truce new <workspace-name> --workspace <plugin1> [plugin2 ...] [options]",
     )?;
 
@@ -433,6 +451,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
         name,
         plugin_names,
         default_kind,
+        default_statefulness,
         vendor_name,
         vendor_id,
         type_overrides,
@@ -470,6 +489,7 @@ fn scaffold_single(scaffolder: &Scaffolder, parsed: NewArgs, features: FeatureSe
     let plugin = PluginSpec {
         name: parsed.name.clone(),
         kind: parsed.default_kind,
+        statefulness: parsed.default_statefulness,
     };
     scaffolder.single(Path::new(&parsed.name), &plugin, features, &vendor)?;
 
@@ -537,6 +557,7 @@ fn scaffold_workspace(scaffolder: &Scaffolder, parsed: NewArgs, features: Featur
             PluginSpec {
                 name: pn.clone(),
                 kind,
+                statefulness: parsed.default_statefulness,
             }
         })
         .collect();
