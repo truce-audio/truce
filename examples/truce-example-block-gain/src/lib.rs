@@ -50,14 +50,10 @@ pub struct Gain;
 const N: usize = 32;
 const MAX_BLOCK: usize = 1024;
 
-impl PluginLogic for Gain {
+impl PurePluginLogic for Gain {
     type Params = GainParams;
-    type DspState = ();
-
-    fn init(_params: &GainParams) {}
 
     fn process(
-        _state: &mut (),
         params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

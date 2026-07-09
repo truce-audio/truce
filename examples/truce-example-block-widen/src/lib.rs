@@ -42,14 +42,10 @@ pub struct Widen;
 
 const MAX_BLOCK: usize = 1024;
 
-impl PluginLogic for Widen {
+impl PurePluginLogic for Widen {
     type Params = WidenParams;
-    type DspState = ();
-
-    fn init(_params: &WidenParams) {}
 
     fn process(
-        _state: &mut (),
         params: &WidenParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

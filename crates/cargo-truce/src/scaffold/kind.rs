@@ -147,7 +147,6 @@ pub struct {struct_name}Params {
 }"#;
 
 const EFFECT_PROCESS_BODY: &str = r"    fn process(
-        _state: &mut (),
         params: &Self::Params,
         buffer: &mut AudioBuffer,
         _events: &EventList,
@@ -164,7 +163,6 @@ const EFFECT_PROCESS_BODY: &str = r"    fn process(
     }";
 
 const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(
-        _state: &mut (),
         _params: &Self::Params,
         buffer: &mut AudioBuffer,
         events: &EventList,
@@ -197,7 +195,6 @@ const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(
     }";
 
 const MIDI_PROCESS_BODY: &str = r"    fn process(
-        _state: &mut (),
         params: &Self::Params,
         _buffer: &mut AudioBuffer,
         events: &EventList,

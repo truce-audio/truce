@@ -188,11 +188,8 @@ fn identity_coeffs() -> ::biquad::Coefficients<f64> {
     }
 }
 
-impl PluginLogic for Eq {
-    type Params = EqParams;
-    type DspState = EqDspState;
-
-    fn init(_params: &EqParams) -> EqDspState {
+impl Default for EqDspState {
+    fn default() -> Self {
         let id = identity_coeffs();
         EqDspState {
             bands: [
@@ -203,6 +200,11 @@ impl PluginLogic for Eq {
             sample_rate: 44100.0,
         }
     }
+}
+
+impl PluginLogic for Eq {
+    type Params = EqParams;
+    type DspState = EqDspState;
 
     // A hypothetical pre-truce build of this EQ saved its sessions as
     // `EQS1` + ten little-endian f64s (low/mid/high x freq/gain/q,

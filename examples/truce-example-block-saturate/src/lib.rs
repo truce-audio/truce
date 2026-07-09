@@ -51,14 +51,10 @@ pub struct Saturate;
 
 const MAX_BLOCK: usize = 1024;
 
-impl PluginLogic for Saturate {
+impl PurePluginLogic for Saturate {
     type Params = SaturateParams;
-    type DspState = ();
-
-    fn init(_params: &SaturateParams) {}
 
     fn process(
-        _state: &mut (),
         params: &SaturateParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

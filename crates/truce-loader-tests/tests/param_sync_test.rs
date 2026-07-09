@@ -20,6 +20,7 @@ struct TestParams {
 
 struct TestPlugin;
 
+#[derive(Default)]
 struct TestDspState {
     last_gain_plain: f64,
 }
@@ -27,12 +28,6 @@ struct TestDspState {
 impl PluginLogic for TestPlugin {
     type Params = TestParams;
     type DspState = TestDspState;
-
-    fn init(_params: &TestParams) -> TestDspState {
-        TestDspState {
-            last_gain_plain: 0.0,
-        }
-    }
 
     fn reset(_state: &mut TestDspState, params: &TestParams, config: &AudioConfig) {
         params.set_sample_rate(config.sample_rate);

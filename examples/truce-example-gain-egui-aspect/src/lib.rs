@@ -54,14 +54,10 @@ pub struct GainParams {
 /// Stateless descriptor - carries no DSP state, only params.
 pub struct GainEguiAspect;
 
-impl PluginLogic for GainEguiAspect {
+impl PurePluginLogic for GainEguiAspect {
     type Params = GainParams;
-    type DspState = ();
-
-    fn init(_params: &GainParams) {}
 
     fn process(
-        _state: &mut (),
         params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

@@ -41,14 +41,10 @@ pub struct GainParams {
 /// Stateless descriptor - the gain carries no DSP state, only params.
 pub struct GainVizia;
 
-impl PluginLogic for GainVizia {
+impl PurePluginLogic for GainVizia {
     type Params = GainParams;
-    type DspState = ();
-
-    fn init(_params: &GainParams) {}
 
     fn process(
-        _state: &mut (),
         params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

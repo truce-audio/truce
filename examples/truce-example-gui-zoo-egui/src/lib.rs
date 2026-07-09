@@ -106,14 +106,10 @@ pub struct ZooParams {
 /// Stateless descriptor - passthrough carries no DSP state, only params.
 pub struct ZooEgui;
 
-impl PluginLogic for ZooEgui {
+impl PurePluginLogic for ZooEgui {
     type Params = ZooParams;
-    type DspState = ();
-
-    fn init(_params: &ZooParams) {}
 
     fn process(
-        _state: &mut (),
         _params: &ZooParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

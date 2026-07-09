@@ -22,11 +22,13 @@ pub struct FxParams {
 }
 
 /// One-field state shared by keep-a and keep-b (same fingerprint).
+#[derive(Default)]
 pub struct CounterState {
     pub counter: u64,
 }
 
 /// Two-field state (distinct fingerprint from [`CounterState`]).
+#[derive(Default)]
 pub struct ResetState {
     pub counter: u64,
     pub extra: u64,
@@ -42,10 +44,6 @@ pub struct CounterLogic;
 impl PluginLogic for CounterLogic {
     type Params = FxParams;
     type DspState = CounterState;
-
-    fn init(_params: &FxParams) -> CounterState {
-        CounterState { counter: 0 }
-    }
 
     fn process(
         state: &mut CounterState,
@@ -85,13 +83,6 @@ pub struct ResetLogic;
 impl PluginLogic for ResetLogic {
     type Params = FxParams;
     type DspState = ResetState;
-
-    fn init(_params: &FxParams) -> ResetState {
-        ResetState {
-            counter: 0,
-            extra: 0,
-        }
-    }
 
     fn process(
         state: &mut ResetState,

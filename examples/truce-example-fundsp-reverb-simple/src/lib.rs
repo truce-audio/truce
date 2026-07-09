@@ -105,8 +105,8 @@ pub struct FundspReverbSimpleDspState {
     last_built_time_s: f32,
 }
 
-impl FundspReverbSimpleDspState {
-    fn new() -> Self {
+impl Default for FundspReverbSimpleDspState {
+    fn default() -> Self {
         Self {
             low_cut_shared: shared(DEFAULT_LOW_CUT_HZ),
             high_cut_shared: shared(DEFAULT_HIGH_CUT_HZ),
@@ -116,7 +116,9 @@ impl FundspReverbSimpleDspState {
             last_built_time_s: DEFAULT_TIME_S,
         }
     }
+}
 
+impl FundspReverbSimpleDspState {
     /// Allocates via `Box::new` + `allocate()`. **Called from
     /// `process()` on the audio thread when Time changes** - that's
     /// the simplification this variant exists to highlight. See the
@@ -153,10 +155,6 @@ impl FundspReverbSimpleDspState {
 impl PluginLogic for FundspReverbSimple {
     type Params = FundspReverbSimpleParams;
     type DspState = FundspReverbSimpleDspState;
-
-    fn init(_params: &FundspReverbSimpleParams) -> FundspReverbSimpleDspState {
-        FundspReverbSimpleDspState::new()
-    }
 
     fn reset(
         state: &mut FundspReverbSimpleDspState,

@@ -49,6 +49,16 @@ pub struct EnvelopeDspState {
     last_sent: Option<u8>,
 }
 
+impl Default for EnvelopeDspState {
+    fn default() -> Self {
+        EnvelopeDspState {
+            sample_rate: 44100.0,
+            env: 0.0,
+            last_sent: None,
+        }
+    }
+}
+
 /// Per-sample release coefficient for a time constant of `ms`.
 #[allow(clippy::cast_possible_truncation)]
 fn release_coeff(ms: f32, sr: f64) -> f32 {
@@ -68,14 +78,6 @@ impl PluginLogic for Envelope {
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::stereo()]
-    }
-
-    fn init(_params: &EnvelopeParams) -> EnvelopeDspState {
-        EnvelopeDspState {
-            sample_rate: 44100.0,
-            env: 0.0,
-            last_sent: None,
-        }
     }
 
     fn reset(state: &mut EnvelopeDspState, _params: &EnvelopeParams, config: &AudioConfig) {

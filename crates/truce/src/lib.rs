@@ -99,8 +99,8 @@ mod prelude_impl {
     // `AudioBuffer` is *not* re-exported from `truce_core` here -
     // each prelude module declares its own per-precision
     // `pub type AudioBuffer<'a> = truce_core::buffer::AudioBuffer<'a, $sample>;`
-    // so the `#[plugin_logic]`-rewritten user impl sees the right
-    // buffer precision through scope resolution.
+    // so the user impl sees the right buffer precision through scope
+    // resolution.
     // `PluginRuntime` (the format-wrapper-facing trait, formerly
     // `truce_core::Plugin`) is intentionally NOT re-exported here.
     // It's implemented by the macro-generated wrapper, never by
@@ -134,6 +134,8 @@ mod prelude_impl {
 //   - `$sample` - the buffer type (`f32` / `f64`)
 //   - `$leaf`   - which `PluginLogic` leaf trait to alias as
 //                  `PluginLogic` in the user's scope
+//   - `$pure`   - which `PurePluginLogic` leaf trait to alias as
+//                  `PurePluginLogic` (the stateless sugar over `$leaf`)
 //   - `$float_read` / `$ctx_read` - which precision-routed read
 //                  traits to bring in via `as _`
 //
@@ -143,7 +145,7 @@ mod prelude_impl {
 macro_rules! define_prelude {
     (
         $(#[$attr:meta])*
-        $name:ident, sample = $sample:ty, leaf = $leaf:ident,
+        $name:ident, sample = $sample:ty, leaf = $leaf:ident, pure = $pure:ident,
         float_read = $float_read:ident, ctx_read = $ctx_read:ident
     ) => {
         $(#[$attr])*
@@ -159,6 +161,11 @@ macro_rules! define_prelude {
             // means the prelude doesn't pin a dep on the renderer
             // crate just to name the leaf trait.
             pub use truce_plugin::$leaf as PluginLogic;
+            /// Stateless leaf trait, precision-renamed like
+            /// `PluginLogic`. A plugin with no DSP state implements
+            /// this instead and skips `type DspState` / `init` /
+            /// the `_state` arguments entirely.
+            pub use truce_plugin::$pure as PurePluginLogic;
             pub use truce_params::$float_read as _;
             /// Audio sample type for this prelude.
             pub type Sample = $sample;
@@ -179,7 +186,7 @@ macro_rules! define_prelude {
 define_prelude! {
     /// Default prelude. Same shape as [`prelude32`] - `f32` audio
     /// path. Use whichever name reads better at the import site.
-    prelude, sample = f32, leaf = PluginLogic,
+    prelude, sample = f32, leaf = PluginLogic, pure = PurePluginLogic,
     float_read = FloatParamReadF32, ctx_read = PluginContextReadF32
 }
 
@@ -188,7 +195,7 @@ define_prelude! {
     /// via [`FloatParamReadF32`](truce_params::FloatParamReadF32);
     /// the audio buffer is `f32` (the host wire format for nearly
     /// every plugin format).
-    prelude32, sample = f32, leaf = PluginLogic,
+    prelude32, sample = f32, leaf = PluginLogic, pure = PurePluginLogic,
     float_read = FloatParamReadF32, ctx_read = PluginContextReadF32
 }
 
@@ -204,7 +211,7 @@ define_prelude! {
     /// file** - the two `read` / `value` / `current` traits will
     /// collide on method dispatch. That collision is the right
     /// error if the file hasn't committed to a precision.
-    prelude64, sample = f64, leaf = PluginLogic64,
+    prelude64, sample = f64, leaf = PluginLogic64, pure = PurePluginLogic64,
     float_read = FloatParamReadF64, ctx_read = PluginContextReadF64
 }
 
@@ -234,6 +241,6 @@ define_prelude! {
     /// actually shows up in the profiler (very high channel counts,
     /// very small blocks); otherwise [`prelude64`] is the cleaner
     /// choice.
-    prelude64m, sample = f32, leaf = PluginLogic,
+    prelude64m, sample = f32, leaf = PluginLogic, pure = PurePluginLogic,
     float_read = FloatParamReadF64, ctx_read = PluginContextReadF64
 }

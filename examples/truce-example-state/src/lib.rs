@@ -71,14 +71,10 @@ pub struct InstanceMemo {
 /// lives in the persisted params, and the audio path is a pass-through.
 pub struct StateExample;
 
-impl PluginLogic for StateExample {
+impl PurePluginLogic for StateExample {
     type Params = StateExampleParams;
-    type DspState = ();
-
-    fn init(_params: &StateExampleParams) {}
 
     fn process(
-        _state: &mut (),
         _params: &StateExampleParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

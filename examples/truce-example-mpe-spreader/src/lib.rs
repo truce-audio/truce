@@ -154,6 +154,17 @@ pub struct SpreaderDspState {
     vibrato: Option<VibratoKind>,
 }
 
+impl Default for SpreaderDspState {
+    fn default() -> Self {
+        SpreaderDspState {
+            sample_rate: 44100.0,
+            held: [None; 128],
+            next_channel: 0,
+            vibrato: None,
+        }
+    }
+}
+
 // LFO sample -> 32-bit per-note pitch bend around centre.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn lfo_bend(depth: f64, s: f64) -> u32 {
@@ -170,15 +181,6 @@ impl PluginLogic for Spreader {
     fn bus_layouts() -> Vec<BusLayout> {
         // MIDI effect: no audio I/O.
         vec![BusLayout::new()]
-    }
-
-    fn init(_params: &SpreaderParams) -> SpreaderDspState {
-        SpreaderDspState {
-            sample_rate: 44100.0,
-            held: [None; 128],
-            next_channel: 0,
-            vibrato: None,
-        }
     }
 
     fn reset(state: &mut SpreaderDspState, _params: &SpreaderParams, config: &AudioConfig) {

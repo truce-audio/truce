@@ -56,10 +56,6 @@ impl PluginLogic for Bitcrusher {
     type Params = BitcrusherParams;
     type DspState = BitcrusherDspState;
 
-    fn init(_params: &BitcrusherParams) -> BitcrusherDspState {
-        BitcrusherDspState::default()
-    }
-
     fn reset(state: &mut BitcrusherDspState, _params: &BitcrusherParams, _config: &AudioConfig) {
         state.held = [0.0; 2];
         state.hold_counter = 0;

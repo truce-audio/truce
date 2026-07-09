@@ -168,14 +168,10 @@ pub struct ZooParams {
 /// Stateless descriptor - the zoo is a passthrough with no DSP state.
 pub struct ZooVizia;
 
-impl PluginLogic for ZooVizia {
+impl PurePluginLogic for ZooVizia {
     type Params = ZooParams;
-    type DspState = ();
-
-    fn init(_params: &ZooParams) {}
 
     fn process(
-        _state: &mut (),
         _params: &ZooParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

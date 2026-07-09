@@ -150,6 +150,15 @@ pub struct MultiportDspState {
     voices: [Voice; NUM_VOICES],
 }
 
+impl Default for MultiportDspState {
+    fn default() -> Self {
+        MultiportDspState {
+            sample_rate: 44100.0,
+            voices: [Voice::default(); NUM_VOICES],
+        }
+    }
+}
+
 impl MultiportDspState {
     fn note_on(&mut self, port: u8, channel: u8, note: u8, amp: f32) {
         // Prefer a free slot; if the pool is full, steal a voice
@@ -240,13 +249,6 @@ impl PluginLogic for Multiport {
 
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
-    }
-
-    fn init(_params: &MultiportParams) -> MultiportDspState {
-        MultiportDspState {
-            sample_rate: 44100.0,
-            voices: [Voice::default(); NUM_VOICES],
-        }
     }
 
     fn reset(state: &mut MultiportDspState, _params: &MultiportParams, config: &AudioConfig) {

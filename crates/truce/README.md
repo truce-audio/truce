@@ -82,16 +82,15 @@ pub struct MyParams {
     pub gain: FloatParam,
 }
 
+// No per-instance DSP state, so `PurePluginLogic` - a plugin with
+// filter memory / phase / voices implements `PluginLogic` with a
+// `type DspState` instead.
 pub struct MyPlugin;
 
-impl PluginLogic for MyPlugin {
+impl PurePluginLogic for MyPlugin {
     type Params = MyParams;
-    type DspState = ();
-
-    fn init(_params: &MyParams) -> Self::DspState {}
 
     fn process(
-        _state: &mut Self::DspState,
         params: &MyParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,

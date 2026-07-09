@@ -71,6 +71,17 @@ pub struct ChordDspState {
     root: Option<u8>,
 }
 
+impl Default for ChordDspState {
+    fn default() -> Self {
+        ChordDspState {
+            sample_rate: 44100.0,
+            notes: [None; MAX_VOICES],
+            phases: [0.0; MAX_VOICES],
+            root: None,
+        }
+    }
+}
+
 impl ChordDspState {
     /// Silence every sounding voice and emit a matching `NoteOff` for
     /// each, on `channel` / `group`.
@@ -117,15 +128,6 @@ impl PluginLogic for Chord {
     fn bus_layouts() -> Vec<BusLayout> {
         // Instrument: audio output only.
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
-    }
-
-    fn init(_params: &ChordParams) -> ChordDspState {
-        ChordDspState {
-            sample_rate: 44100.0,
-            notes: [None; MAX_VOICES],
-            phases: [0.0; MAX_VOICES],
-            root: None,
-        }
     }
 
     fn reset(state: &mut ChordDspState, _params: &ChordParams, config: &AudioConfig) {

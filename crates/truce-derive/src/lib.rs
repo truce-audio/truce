@@ -1596,7 +1596,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         let all_keys = persist_fields
             .iter()
             .map(|(ident, key)| (ident, key.clone()))
-            .chain(nested_fields.iter().map(|n| (&n.ident, n.ident.to_string())));
+            .chain(
+                nested_fields
+                    .iter()
+                    .map(|n| (&n.ident, n.ident.to_string())),
+            );
         for (ident, key) in all_keys {
             if !seen_keys.insert(key.clone()) {
                 let msg = format!(

@@ -32,14 +32,10 @@ pub struct GainParams {
 /// Stateless descriptor - gain carries no DSP state, only params.
 pub struct Gain;
 
-impl PluginLogic for Gain {
+impl PurePluginLogic for Gain {
     type Params = GainParams;
-    type DspState = ();
-
-    fn init(_params: &GainParams) {}
 
     fn process(
-        _state: &mut (),
         params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
@@ -121,6 +117,15 @@ mod tests {
 
     /// Enable dealloc flagging around a wrapper-glue smoke check so its
     /// count covers frees as well as allocations, then restore the setting.
+    /// Gated like its only callers, the per-format wrapper-glue tests
+    /// below.
+    #[cfg(any(
+        feature = "vst2",
+        feature = "clap",
+        feature = "vst3",
+        feature = "au",
+        feature = "aax"
+    ))]
     fn wrapper_glue_violations(smoke: impl FnOnce() -> u32) -> u32 {
         let prev = truce::rt::check_dealloc();
         truce::rt::set_check_dealloc(true);

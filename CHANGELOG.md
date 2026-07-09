@@ -10,34 +10,35 @@ Notable changes per release.
 - `PluginLogic` splits code from data: the trait is now a stateless descriptor, and its methods (`process`, `reset`, `latency`, `save_state`, ...) are associated functions - no `&self` - that take exactly the data they touch. That makes the three kinds of per-plugin data distinct, so a method's signature spells out which it may read or mutate:
     - **Parameters** - `type Params`, a `#[derive(Params)]` struct of host-automatable values. Passed read-only to the audio methods as `&Self::Params`, and to the editor as `Arc<Self::Params>`.
     - **Saved state** - the non-parameter values the host persists in a project or preset. Two routes: `save_state` / `load_state` for opaque plugin-owned bytes (with `#[derive(State)]` serializing them), or `#[persist = "key"]` on a `#[derive(Params)]` field for editor-facing config saved alongside the param values without a manual `save_state`. A `Copy` field (a persisted `f32`, small enum, or index) uses a lock-free `AtomicCell`; a `String`, `Vec`, or `#[derive(State)]` struct is wrapped in `RwLock` / `Mutex`.
-    - **DSP state** - `type DspState`, a plain struct of instance-local audio memory (filter buffers, oscillator phase, a voice pool). Neither a parameter nor saved to disk. It lives in the shell rather than the descriptor, so a hot-reload keeps it alive across a code-only swap - reverb tails and oscillator phases survive an edit-and-reload. A stateless effect writes `type DspState = ()`.
+    - **DSP state** - `type DspState`, a plain struct of instance-local audio memory (filter buffers, oscillator phase, a voice pool). Neither a parameter nor saved to disk. It lives in the shell rather than the descriptor, so a hot-reload keeps it alive across a code-only swap - reverb tails and oscillator phases survive an edit-and-reload. A stateless effect has none - it implements `PurePluginLogic` instead (below).
 - `reset` is now optional and carries no params plumbing: the shell calls `params.set_sample_rate(config.sample_rate)` and `params.snap_smoothers()` before invoking it, and the method has a default no-op body. A stateless plugin drops `reset` entirely; implement it only to clear plugin-owned DSP state (existing bodies that still do the params calls keep working - both are idempotent).
+- `init` is now optional: `type DspState` requires `Default`, and the default `init` returns `Self::DspState::default()`. A state whose fresh value is all-zero derives it; one with non-zero initial fields (`sample_rate: 44100.0`, a pre-sized voice pool) hand-writes `Default`. Write `init` only when construction genuinely reads params.
+- `PurePluginLogic` (and `PurePluginLogic64`): the stateless leaf trait. A pure parameter-driven effect implements it instead of `PluginLogic` and skips the state plumbing entirely - no `type DspState`, no `init`, no `_state: &mut ()` argument on `process`. A blanket impl makes every `PurePluginLogic` a `PluginLogic` with `DspState = ()`, so `truce::plugin!`, the shells, and every format consume it unchanged. Re-exported precision-renamed from every prelude, like `PluginLogic`.
 
 ### Breaking
 
 - `reset` takes `&AudioConfig` instead of `(sample_rate, max_block_size)`. Read `config.sample_rate` / `config.max_block_size`; branch on `config.process_mode` for offline.
-- `PluginLogic` is a stateless descriptor plus `type DspState`, and its methods are associated functions. Move `self.<dsp field>` into the `DspState` type, drop the stored params `Arc`, replace `new` with `init(params) -> Self::DspState`, and take `state` / `params` explicitly instead of `&self` (e.g. `fn process(state: &mut Self::DspState, params: &Self::Params, ...)`).
+- `PluginLogic` is a stateless descriptor plus `type DspState`, and its methods are associated functions. Move `self.<dsp field>` into the `DspState` type, drop the stored params `Arc`, and take `state` / `params` explicitly instead of `&self` (e.g. `fn process(state: &mut Self::DspState, params: &Self::Params, ...)`).
+- `type DspState` must implement `Default` (that's what the default `init` returns). Derive it, or hand-write it where the fresh state has non-zero fields - the old `fn new(params: Arc<..>) -> Self` body typically becomes the `Default` impl.
 
 ### Migrating from 3.x
 
 Every plugin makes the same three moves, whatever its state:
 
 - Move the non-params fields (filter memory, phase, voices) off the plugin - now a stateless descriptor - into `type DspState`. Parameters were already a separate `#[derive(Params)]` struct and don't move.
-- Replace `fn new(params: Arc<..>) -> Self` with `fn init(params: &Self::Params) -> Self::DspState`, which builds that state. There's no stored `params` `Arc` anymore.
+- Replace `fn new(params: Arc<..>) -> Self` with a `Default` impl on the state type - derive it, or hand-write it when a fresh state has non-zero fields. (Only when construction genuinely reads params do you write `fn init(params: &Self::Params) -> Self::DspState` instead.) There's no stored `params` `Arc` anymore.
 - Give each method `state` / `params` instead of `&self`, and `reset` an `&AudioConfig` (read `config.sample_rate` / `config.max_block_size`, branch on `config.process_mode` for offline).
 
 The only choice is where the DSP state lives.
 
-**`type DspState = ()`** - no DSP state; a pure parameter-driven effect. Step one is empty:
+**No DSP state** - a pure parameter-driven effect implements `PurePluginLogic` and the state plumbing disappears entirely:
 
 ```rust
 pub struct Gain;
 
-impl PluginLogic for Gain {
+impl PurePluginLogic for Gain {
     type Params = GainParams;
-    type DspState = ();
-    fn init(_params: &GainParams) {}
-    fn process(_state: &mut (), params: &GainParams, buffer: &mut AudioBuffer, _events: &EventList, _ctx: &mut ProcessContext) -> ProcessStatus {
+    fn process(params: &GainParams, buffer: &mut AudioBuffer, _events: &EventList, _ctx: &mut ProcessContext) -> ProcessStatus {
         let g = db_to_linear(params.gain.read()); /* ... */
     }
 }
@@ -51,12 +52,15 @@ pub struct Tremolo {                   // holds the DSP fields directly...
     sample_rate: f64,
 }
 
+impl Default for Tremolo {             // how `init` builds a fresh state
+    fn default() -> Self {
+        Tremolo { phase: 0.0, sample_rate: 44100.0 }
+    }
+}
+
 impl PluginLogic for Tremolo {
     type Params = TremoloParams;
     type DspState = Self;              // ...and is its own DSP state
-    fn init(_params: &TremoloParams) -> Self {
-        Tremolo { phase: 0.0, sample_rate: 44100.0 }
-    }
     fn reset(state: &mut Self, _params: &TremoloParams, config: &AudioConfig) {
         state.sample_rate = config.sample_rate;
     }
@@ -74,6 +78,7 @@ impl PluginLogic for Tremolo {
 -}
 +struct MyPlugin;                 // stateless descriptor
 +
++#[derive(Default)]
 +struct MyDspState {              // the former non-params fields
 +    filter: Filter,
 +    phase: f32,
@@ -85,10 +90,8 @@ impl PluginLogic for Tremolo {
 
 -    fn new(params: Arc<MyParams>) -> Self {
 -        Self { params, filter: Filter::default(), phase: 0.0 }
-+    fn init(_params: &MyParams) -> MyDspState {
-+        MyDspState { filter: Filter::default(), phase: 0.0 }
-     }
-
+-    }
+-
 -    fn reset(&mut self, sample_rate: f32, max_block_size: usize) {
 -        self.filter.set_rate(sample_rate);
 +    fn reset(state: &mut MyDspState, _params: &MyParams, config: &AudioConfig) {

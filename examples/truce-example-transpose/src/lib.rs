@@ -55,10 +55,6 @@ impl PluginLogic for Transpose {
     type Params = TransposeParams;
     type DspState = TransposeDspState;
 
-    fn init(_params: &TransposeParams) -> TransposeDspState {
-        TransposeDspState::default()
-    }
-
     /// MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
     /// AAX (which has no audio-less plugin category) auto-adds a
     /// stereo passthrough inside `truce-aax` so the DAW's track
