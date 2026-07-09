@@ -65,6 +65,20 @@ pub const TRUCE_AAX_RANGE_LINEAR: u8 = 0;
 pub const TRUCE_AAX_RANGE_LOG: u8 = 1;
 pub const TRUCE_AAX_RANGE_DISCRETE: u8 = 2;
 
+/// The AAX taper hint for a range. Skewed shapes use the linear taper -
+/// truce's own `normalize` applies the actual curve, and AAX has no
+/// matching hint. `Reversed` takes its inner shape's classification.
+fn aax_range_type(range: &ParamRange) -> u8 {
+    match range {
+        ParamRange::Linear { .. }
+        | ParamRange::Skewed { .. }
+        | ParamRange::SymmetricalSkewed { .. } => TRUCE_AAX_RANGE_LINEAR,
+        ParamRange::Logarithmic { .. } => TRUCE_AAX_RANGE_LOG,
+        ParamRange::Discrete { .. } | ParamRange::Enum { .. } => TRUCE_AAX_RANGE_DISCRETE,
+        ParamRange::Reversed(inner) => aax_range_type(inner),
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TruceAaxDescriptor {
@@ -505,11 +519,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             // Enum maps to the same shape as Discrete in AAX - both
             // get the linear taper with `SetNumberOfSteps`, which is
             // how AAX represents stepped automatable controls.
-            let range_type = match pi.range {
-                ParamRange::Linear { .. } => TRUCE_AAX_RANGE_LINEAR,
-                ParamRange::Logarithmic { .. } => TRUCE_AAX_RANGE_LOG,
-                ParamRange::Discrete { .. } | ParamRange::Enum { .. } => TRUCE_AAX_RANGE_DISCRETE,
-            };
+            let range_type = aax_range_type(&pi.range);
             let info = TruceAaxParamInfo {
                 id: pi.id,
                 name: cs.name.as_ptr(),

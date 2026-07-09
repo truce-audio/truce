@@ -6,6 +6,14 @@ pub enum SmoothingStyle {
     None,
     Linear(f64),
     Exponential(f64),
+    /// Multiplicative (log-domain) exponential smoothing over the given
+    /// milliseconds. Ramps geometrically rather than additively, so the
+    /// perceived rate of change is constant - the right choice for
+    /// frequency and linear-gain params where a fixed ratio, not a fixed
+    /// delta, reads as "smooth". Requires strictly positive endpoints; a
+    /// non-positive `current` or `target` snaps (a log ramp can't cross
+    /// or touch zero).
+    Logarithmic(f64),
 }
 
 /// Per-parameter smoother. All methods take `&self` for interior
@@ -100,6 +108,16 @@ impl Smoother {
                 }
             }
             SmoothingStyle::Exponential(_) => current + coeff * (target - current),
+            // One-pole exponential in the log domain: equivalent to
+            // `current *= (target / current)^coeff`. Undefined for a
+            // non-positive endpoint, so snap there.
+            SmoothingStyle::Logarithmic(_) => {
+                if current <= 0.0 || target <= 0.0 {
+                    target
+                } else {
+                    (current.ln() + coeff * (target.ln() - current.ln())).exp()
+                }
+            }
         };
 
         self.current.store(new_current);
@@ -132,7 +150,9 @@ impl Smoother {
     pub fn is_converged(&self, target: f64) -> bool {
         match self.style {
             SmoothingStyle::None => true,
-            SmoothingStyle::Linear(_) | SmoothingStyle::Exponential(_) => {
+            SmoothingStyle::Linear(_)
+            | SmoothingStyle::Exponential(_)
+            | SmoothingStyle::Logarithmic(_) => {
                 let current = self.current.load();
                 let threshold = (target.abs() * 1e-6).max(1e-8);
                 (target - current).abs() < threshold
@@ -198,6 +218,17 @@ impl Smoother {
                 // `target + (current - target) * (1 - coeff)^N`.
                 let decay = (1.0 - coeff).powf(n_samples as f64);
                 current = target + (current - target) * decay;
+            }
+            SmoothingStyle::Logarithmic(_) => {
+                if current <= 0.0 || target <= 0.0 {
+                    current = target;
+                } else {
+                    // Closed form of the log-domain one-pole, mirroring
+                    // the `Exponential` arm above in log space.
+                    let decay = (1.0 - coeff).powf(n_samples as f64);
+                    let log_target = target.ln();
+                    current = (log_target + (current.ln() - log_target) * decay).exp();
+                }
             }
         }
 
@@ -277,6 +308,22 @@ impl Smoother {
                     *slot = current as f32;
                 }
             }
+            SmoothingStyle::Logarithmic(_) => {
+                if current <= 0.0 || target <= 0.0 {
+                    out.fill(target as f32);
+                    current = target;
+                } else {
+                    // Step the one-pole in log space, exponentiating each
+                    // sample back to the linear value the DSP consumes.
+                    let log_target = target.ln();
+                    let mut log_current = current.ln();
+                    for slot in out.iter_mut() {
+                        log_current += coeff * (log_target - log_current);
+                        current = log_current.exp();
+                        *slot = current as f32;
+                    }
+                }
+            }
         }
 
         self.current.store(current);
@@ -296,7 +343,9 @@ fn compute_coeff(style: SmoothingStyle, sr: f64) -> f64 {
             let samples = (ms / 1000.0) * sr;
             if samples > 1.0 { 1.0 / samples } else { 1.0 }
         }
-        SmoothingStyle::Exponential(ms) => {
+        // Same one-pole coefficient as `Exponential`; `Logarithmic`
+        // applies it in the log domain (see `next`).
+        SmoothingStyle::Exponential(ms) | SmoothingStyle::Logarithmic(ms) => {
             let samples = (ms / 1000.0) * sr;
             if samples > 0.0 {
                 1.0 - (-1.0 / samples).exp()
@@ -448,6 +497,53 @@ mod tests {
         let v = s.next_after(0.99, 0);
         assert_eq!(v, before);
         assert_eq!(s.current(), before);
+    }
+
+    #[test]
+    fn logarithmic_converges_multiplicatively() {
+        let s = Smoother::new(SmoothingStyle::Logarithmic(5.0));
+        s.set_sample_rate(48_000.0);
+        s.snap(100.0);
+        // Ramp toward 1 kHz; the value stays positive the whole way and
+        // converges to the target.
+        let mut last = 0.0_f32;
+        for _ in 0..4096 {
+            last = s.next(1000.0);
+            assert!(last > 0.0, "log smoothing must stay positive, got {last}");
+        }
+        assert!((last - 1000.0).abs() < 1.0, "did not converge: {last}");
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn logarithmic_snaps_on_nonpositive_endpoint() {
+        // A log ramp can't touch or cross zero, so a non-positive current
+        // or target snaps straight to the target.
+        let s = Smoother::new(SmoothingStyle::Logarithmic(5.0));
+        s.snap(-1.0);
+        assert_eq!(s.next(2.0), 2.0);
+        s.snap(1.0);
+        assert_eq!(s.next(0.0), 0.0);
+    }
+
+    #[test]
+    fn next_after_matches_next_block_logarithmic() {
+        const N: usize = 512;
+        let stepwise = Smoother::new(SmoothingStyle::Logarithmic(20.0));
+        stepwise.set_sample_rate(48_000.0);
+        stepwise.snap(100.0);
+        let block = stepwise.next_block::<N>(2000.0);
+
+        let closed = Smoother::new(SmoothingStyle::Logarithmic(20.0));
+        closed.set_sample_rate(48_000.0);
+        closed.snap(100.0);
+        let after = closed.next_after(2000.0, N);
+
+        assert!(
+            (block[N - 1] - after).abs() < 1.0,
+            "block last = {}, after = {after}",
+            block[N - 1]
+        );
     }
 
     #[test]

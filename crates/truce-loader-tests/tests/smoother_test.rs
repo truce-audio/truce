@@ -153,7 +153,7 @@ fn static_shell_reset_snaps_smoothers() {
     );
 }
 
-/// HotShell coverage - needs the fixture dylib, so it lives behind the
+/// `HotShell` coverage - needs the fixture dylib, so it lives behind the
 /// same `shell` feature as the other dylib-loading tests. Both tests
 /// observe the shell's own `Arc<FxParams>` directly: the fixture's
 /// `process` never reads the gain param, so any movement of the smoother
