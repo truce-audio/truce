@@ -825,6 +825,17 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     override var channelCapabilities: [NSNumber]? {
         guard let d = g_descriptor?.pointee else { return nil }
+        // Multiple declared bus_layouts(): one [in, out] pair per layout,
+        // flattened, so the host can pick any supported channel config.
+        if d.num_layouts > 0, let ins = d.layout_in_channels, let outs = d.layout_out_channels {
+            var caps: [NSNumber] = []
+            caps.reserveCapacity(Int(d.num_layouts) * 2)
+            for i in 0..<Int(d.num_layouts) {
+                caps.append(NSNumber(value: ins[i]))
+                caps.append(NSNumber(value: outs[i]))
+            }
+            return caps
+        }
         // aumi (MIDI Processor, zero audio I/O): advertise 0 inputs
         // and "any" (-1) outputs - the output bus is a dummy kept
         // alive only so AUv3 can negotiate a sample rate. This

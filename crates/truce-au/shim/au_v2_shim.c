@@ -531,9 +531,11 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = sizeof(OSStatus); break;
         case kAudioUnitProperty_InPlaceProcessing:
             size = sizeof(UInt32); break;
-        case kAudioUnitProperty_SupportedNumChannels:
+        case kAudioUnitProperty_SupportedNumChannels: {
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            size = sizeof(AUChannelInfo); break;
+            UInt32 nCfg = g_descriptor->num_layouts > 0 ? g_descriptor->num_layouts : 1;
+            size = nCfg * sizeof(AUChannelInfo); break;
+        }
         case kAudioUnitProperty_CocoaUI: {
             TruceAUv2 *inst = (TruceAUv2 *)self_;
             if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_InvalidProperty;
@@ -779,12 +781,22 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
 
         case kAudioUnitProperty_SupportedNumChannels: {
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            if (*ioSize < sizeof(AUChannelInfo))
+            UInt32 nCfg = g_descriptor->num_layouts > 0 ? g_descriptor->num_layouts : 1;
+            if (*ioSize < nCfg * sizeof(AUChannelInfo))
                 return kAudioUnitErr_InvalidPropertyValue;
             AUChannelInfo *info = (AUChannelInfo *)outData;
-            info->inChannels = (SInt16)g_descriptor->num_inputs;
-            info->outChannels = (SInt16)g_descriptor->num_outputs;
-            *ioSize = sizeof(AUChannelInfo);
+            if (g_descriptor->num_layouts > 0) {
+                // One AUChannelInfo per bus_layouts() entry, so the host
+                // can pick any declared (in, out) config.
+                for (UInt32 i = 0; i < nCfg; i++) {
+                    info[i].inChannels = g_descriptor->layout_in_channels[i];
+                    info[i].outChannels = g_descriptor->layout_out_channels[i];
+                }
+            } else {
+                info[0].inChannels = (SInt16)g_descriptor->num_inputs;
+                info[0].outChannels = (SInt16)g_descriptor->num_outputs;
+            }
+            *ioSize = nCfg * sizeof(AUChannelInfo);
             return noErr;
         }
 

@@ -51,6 +51,15 @@ pub struct AuPluginDescriptor {
     /// output drain emits UMP via `midiOutputEventListBlock` when set;
     /// the framework converts it to the host's protocol. AU v2 ignores it.
     pub midi2_output: i32,
+    /// Main-bus input channel counts of each `bus_layouts()` entry.
+    /// `null`/`num_layouts == 0` falls back to the single
+    /// `(num_inputs, num_outputs)` pair.
+    pub layout_in_channels: *const i16,
+    /// Main-bus output channel counts, parallel to `layout_in_channels`.
+    pub layout_out_channels: *const i16,
+    /// Length of the two layout arrays. AU v2 reports them via
+    /// `SupportedNumChannels`, AU v3 via `channelCapabilities`.
+    pub num_layouts: u32,
 }
 
 /// Parameter descriptor for the `ObjC` shim.
