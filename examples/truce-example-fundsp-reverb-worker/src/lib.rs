@@ -262,9 +262,10 @@ impl PluginLogic for FundspReverbWorker {
             // Optimistic update so we don't re-request the same target
             // every block while the pool is building. If the user moves
             // Time again past the threshold, this diff trips and we
-            // re-request. `spawn_coalescing` is wait-free and keeps only
-            // the newest target, so a knob sweep is one rebuild per pool
-            // cycle, not one per block.
+            // re-request. `spawn_coalescing` keeps only the newest target
+            // in a single slot and runs it once per drain, so even a fast
+            // sweep that outruns this guard is one rebuild per pool cycle,
+            // not one per intermediate target.
             state.last_built_time_s = time_s;
             if let Some(tasks) = context.tasks::<RebuildRequest>() {
                 tasks.spawn_coalescing(RebuildRequest {
