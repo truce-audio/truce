@@ -29,8 +29,11 @@ extern "C" {
  *   4 → 5: offline-bounce awareness - set_render_mode export
  *           (host EnteringOfflineMode / ExitingOfflineMode).
  *   5 → 6: latency reporting - latency export (template pushes it
- *           via AAX_IController::SetSignalLatency). */
-#define TRUCE_AAX_ABI_VERSION 6u
+ *           via AAX_IController::SetSignalLatency).
+ *   6 → 7: multiple bus layouts - layout_in_channels / layout_out_channels
+ *           / num_layouts on the descriptor (one AAX stem-format config
+ *           per bus_layouts() entry). */
+#define TRUCE_AAX_ABI_VERSION 7u
 
 /* Capacity of TruceAaxDescriptor::legacy_chunk_ids. */
 #define TRUCE_AAX_MAX_LEGACY_CHUNKS 8u
@@ -75,6 +78,14 @@ typedef struct {
      * truce_aax_load_state_foreign / the plugin's migrate_state. */
     uint32_t num_legacy_chunk_ids;
     uint32_t legacy_chunk_ids[8]; /* TRUCE_AAX_MAX_LEGACY_CHUNKS */
+    /* Main-bus (in, out) channel counts of each bus_layouts() entry. The
+     * describe template maps each to an AAX stem format and registers one
+     * component config per layout, so Pro Tools offers every declared I/O
+     * width. num_layouts == 0 keeps the legacy mono/stereo-only describe
+     * (single-layout plugins); arrays are num_layouts long. */
+    const int16_t* layout_in_channels;
+    const int16_t* layout_out_channels;
+    uint32_t num_layouts;
 } TruceAaxDescriptor;
 
 /* Parameter info. */
