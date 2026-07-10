@@ -539,7 +539,9 @@ unsafe fn data_from_plugin<P: PluginExport>(
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugin) -> bool {
-    unsafe {
+    // Author `init` runs here; firewall it so a panic can't unwind across
+    // the C ABI (false = "init failed", the host then discards the plugin).
+    run_extern_callback_with::<P, bool>("CLAP", "init", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         {
             let mut instance = enter_plugin(&data.plugin);
@@ -564,7 +566,7 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
             }
         }
         true
-    }
+    })
 }
 
 unsafe extern "C" fn clap_plugin_destroy<P: PluginExport>(plugin: *const clap_plugin) {
@@ -595,7 +597,8 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
     _min_frames_count: u32,
     max_frames_count: u32,
 ) -> bool {
-    unsafe {
+    // Author `reset` runs here; firewall it (false = "activate failed").
+    run_extern_callback_with::<P, bool>("CLAP", "activate", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         data.sample_rate = sample_rate;
         let max_block = max_frames_count as usize;
@@ -655,7 +658,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
 
         data.active.store(true, Ordering::Relaxed);
         true
-    }
+    })
 }
 
 unsafe extern "C" fn clap_plugin_deactivate<P: PluginExport>(plugin: *const clap_plugin) {
@@ -677,7 +680,9 @@ unsafe extern "C" fn clap_plugin_stop_processing<P: PluginExport>(_plugin: *cons
 }
 
 unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plugin) {
-    unsafe {
+    // Author `reset` runs here; firewall it so a panic can't unwind across
+    // the C ABI.
+    run_extern_callback_with::<P, ()>("CLAP", "reset", (), || unsafe {
         let data = data_from_plugin::<P>(plugin);
         data.sounding_notes.clear_all();
         let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
@@ -690,7 +695,7 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
         data.latency_cache
             .store(instance.latency(), Ordering::Relaxed);
         data.tail_cache.store(instance.tail(), Ordering::Relaxed);
-    }
+    });
 }
 
 unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const clap_plugin) {
@@ -2345,13 +2350,11 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
     out_buffer: *mut c_char,
     out_buffer_capacity: u32,
 ) -> bool {
-    unsafe {
-        // Same `out_len == 0` / null-buffer guard the VST3/VST2/AU/AAX
-        // wrappers gained in the host-crash-fixes pass: a zero
-        // capacity makes `cap - 1` underflow (caught here by
-        // `saturating_sub`) and a null `out_buffer` plus non-zero
-        // capacity would still write the trailing NUL. Treat both as
-        // "host wants nothing" and return.
+    // Author `format_value` can panic; firewall it (false = no display text).
+    run_extern_callback_with::<P, bool>("CLAP", "value_to_text", false, || unsafe {
+        // A zero capacity makes `cap - 1` underflow and a null `out_buffer`
+        // plus non-zero capacity would still write the trailing NUL. Treat
+        // both as "host wants nothing" and return.
         if out_buffer_capacity == 0 || out_buffer.is_null() {
             return false;
         }
@@ -2367,7 +2370,7 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
             }
             None => false,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn params_text_to_value<P: PluginExport>(
@@ -2376,7 +2379,8 @@ unsafe extern "C" fn params_text_to_value<P: PluginExport>(
     param_value_text: *const c_char,
     out_value: *mut f64,
 ) -> bool {
-    unsafe {
+    // Author `parse_value` can panic; firewall it (false = "not parsed").
+    run_extern_callback_with::<P, bool>("CLAP", "text_to_value", false, || unsafe {
         if param_value_text.is_null() {
             return false;
         }
@@ -2391,7 +2395,7 @@ unsafe extern "C" fn params_text_to_value<P: PluginExport>(
             }
             None => false,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn params_flush<P: PluginExport>(
@@ -3007,7 +3011,9 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
     _api: *const c_char,
     _is_floating: bool,
 ) -> bool {
-    unsafe {
+    // The editor builder is author code; firewall its construction so a
+    // panic can't unwind across the C ABI (false = "no editor created").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_create", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         if data.gui_created {
             return true;
@@ -3018,7 +3024,7 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
         data.editor = (data.editor_builder)(data.params_arc.clone());
         data.gui_created = data.editor.is_some();
         data.gui_created
-    }
+    })
 }
 
 unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
@@ -3109,26 +3115,11 @@ unsafe extern "C" fn gui_set_parent<P: PluginExport>(
     plugin: *const clap_plugin,
     window: *const clap_window,
 ) -> bool {
-    unsafe {
-        // Wrap in catch_unwind to prevent panics from aborting the host.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            gui_set_parent_inner::<P>(plugin, window)
-        }));
-        match result {
-            Ok(v) => v,
-            Err(e) => {
-                let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                    s.to_string()
-                } else if let Some(s) = e.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "unknown panic".to_string()
-                };
-                log::error!("clap gui_set_parent panic swallowed: {msg}");
-                false
-            }
-        }
-    }
+    // `editor.open` is author GUI-construction code; firewall it so a panic
+    // can't unwind across the C ABI (false = "parenting failed").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_set_parent", false, || unsafe {
+        gui_set_parent_inner::<P>(plugin, window)
+    })
 }
 
 unsafe fn gui_set_parent_inner<P: PluginExport>(

@@ -955,10 +955,13 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
 
         let parent_wrapper = ParentWindow(parent);
 
-        let window = baseview::Window::open_parented(
-            &parent_wrapper,
-            options,
-            move |window: &mut Window| {
+        // Catch panics at the FFI boundary, like the other GUI backends:
+        // this `open` runs inside the plugin format's `extern "C"` callback,
+        // where an escaping panic aborts the host. GPU/context creation
+        // inside open_parented is the known trigger. The editor stays
+        // unopened; the host keeps running.
+        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            baseview::Window::open_parented(&parent_wrapper, options, move |window: &mut Window| {
                 // baseview spawns this closure on a new thread; Slint's
                 // set_platform is per-thread, so re-register here.
                 platform::ensure_platform();
@@ -994,8 +997,15 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     });
 
                 // Developer creates the Slint component here - it attaches
-                // to slint_window via create_window_adapter().
-                let sync_fn = setup(typed_ctx.clone());
+                // to slint_window via create_window_adapter(). This is
+                // author code; a panic would unwind across baseview's
+                // thread FFI, so return a Dead handler instead.
+                let Ok(sync_fn) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    setup(typed_ctx.clone())
+                })) else {
+                    log::error!("truce-slint: editor setup panicked; editor disabled");
+                    return SlintHandler::Dead;
+                };
 
                 SlintHandler::Live(Box::new(SlintWindowHandler::<P> {
                     slint_window,
@@ -1024,10 +1034,15 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     aspect_ratio,
                     resize_corrector: ResizeCorrector::default(),
                 }))
-            },
-        );
+            })
+        }));
 
-        self.window = Some(window);
+        match opened {
+            Ok(window) => self.window = Some(window),
+            Err(e) => {
+                log::error!("truce-slint editor failed to open: {}", panic_message(&*e));
+            }
+        }
     }
 
     fn set_scale_factor(&mut self, factor: f64) {

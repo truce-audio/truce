@@ -457,7 +457,9 @@ const LV2_MAX_PREALLOC_BLOCK: usize = 16384;
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer.
 pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
-    unsafe {
+    // Author `reset` runs here; firewall it so a panic can't unwind across
+    // the C ABI (the macro's `extern "C"` shim calls straight into this).
+    run_extern_callback_with::<P, ()>("LV2", "activate", (), || unsafe {
         let inst = &mut *handle;
         inst.max_block_size = LV2_MAX_PREALLOC_BLOCK;
         inst.scratch.ensure_capacity(
@@ -470,7 +472,7 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
         // prepare always assumes realtime; `run` carries the live mode.
         inst.plugin
             .reset(&AudioConfig::new(inst.sample_rate, LV2_MAX_PREALLOC_BLOCK));
-    }
+    });
 }
 
 /// # Safety
@@ -787,11 +789,14 @@ pub unsafe fn deactivate<P: PluginExport>(_handle: *mut Lv2Instance<P>) {
 /// `handle` must be a valid `Lv2Instance<P>` pointer. After this call the
 /// pointer is dangling and must not be used.
 pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) {
-    unsafe {
+    // Dropping the instance cascades into the author plugin's `Drop` (and
+    // any editor teardown); firewall it so a panic can't unwind across the
+    // C ABI. The instance is going away regardless, so swallowing is safe.
+    run_extern_callback_with::<P, ()>("LV2", "cleanup", (), || unsafe {
         if !handle.is_null() {
             drop(Box::from_raw(handle));
         }
-    }
+    });
 }
 
 /// A zero-event `LV2_Atom_Sequence`: just the two fixed headers, with

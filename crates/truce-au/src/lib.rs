@@ -339,62 +339,71 @@ struct AuInstance<P: PluginExport> {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
-    let mut plugin = P::create();
-    plugin.init();
-    let info = P::info();
-    let param_infos = plugin.params().param_infos();
-    let params_arc = plugin.params_arc();
-    let latency_cache = AtomicU32::new(plugin.latency());
-    let tail_cache = AtomicU32::new(plugin.tail());
-    let instance = Box::new(AuInstance::<P> {
-        params_arc,
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        meter_store: plugin.meter_store(),
-        snapshot: plugin.snapshot_slot(),
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        task_spawner: plugin.task_spawner(),
-        editor_builder: plugin.editor_builder(),
-        plugin: shared_plugin(plugin),
-        latency_cache,
-        tail_cache,
-        render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
-        #[cfg(target_os = "macos")]
-        param_notify: None,
-        event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sysex_inputs_pending: false,
-        output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        ump_drain_cursor: UmpDrainCursor::HEAD,
-        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        param_infos,
-        min_subblock_samples: info.automation.min_subblock_samples,
-        sysex_assembler: SysExAssembler::with_capacity(SYSEX_POOL_PREALLOC),
-        plugin_id_hash: state::shared_plugin_state_hash(&info),
-        sample_rate: 44100.0,
-        max_block_size: 8192,
-        prepared: false,
-        scratch: RawBufferScratch::default(),
-        editor: None,
-        transport_slot: TransportSlot::new(),
-        pending_state: Arc::new(StateLoadQueue::new(1)),
-        legacy_key_cstrings: info
-            .legacy_au_keys
-            .iter()
-            .filter_map(|k| CString::new(*k).ok())
-            .collect(),
-    });
-    let raw = Box::into_raw(instance);
-    // Spawn the param-notify thread now that the instance has its final
-    // address: the AU shim will map exactly this pointer to its
-    // component, and the notifier hands it back to the host-set FFI.
-    #[cfg(target_os = "macos")]
-    unsafe {
-        // SAFETY: `raw` is live until `cb_destroy`, which drops
-        // `param_notify` (joining the thread) before the shim frees the
-        // component; the notifier only uses the pointer as an opaque key.
-        let ctx = SendPtr::new(raw.cast::<std::ffi::c_void>().cast_const());
-        (*raw).param_notify = ParamNotifier::spawn(ctx);
-    }
-    raw.cast::<std::ffi::c_void>()
+    // `P::create` + author `init` run here; firewall them so a panic can't
+    // unwind across the C ABI (null = "instantiation failed").
+    run_extern_callback_with::<P, *mut std::ffi::c_void>(
+        "au",
+        "create",
+        std::ptr::null_mut(),
+        || {
+            let mut plugin = P::create();
+            plugin.init();
+            let info = P::info();
+            let param_infos = plugin.params().param_infos();
+            let params_arc = plugin.params_arc();
+            let latency_cache = AtomicU32::new(plugin.latency());
+            let tail_cache = AtomicU32::new(plugin.tail());
+            let instance = Box::new(AuInstance::<P> {
+                params_arc,
+                #[cfg(any(target_os = "macos", target_os = "ios"))]
+                meter_store: plugin.meter_store(),
+                snapshot: plugin.snapshot_slot(),
+                #[cfg(any(target_os = "macos", target_os = "ios"))]
+                task_spawner: plugin.task_spawner(),
+                editor_builder: plugin.editor_builder(),
+                plugin: shared_plugin(plugin),
+                latency_cache,
+                tail_cache,
+                render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
+                #[cfg(target_os = "macos")]
+                param_notify: None,
+                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sysex_inputs_pending: false,
+                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                ump_drain_cursor: UmpDrainCursor::HEAD,
+                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                param_infos,
+                min_subblock_samples: info.automation.min_subblock_samples,
+                sysex_assembler: SysExAssembler::with_capacity(SYSEX_POOL_PREALLOC),
+                plugin_id_hash: state::shared_plugin_state_hash(&info),
+                sample_rate: 44100.0,
+                max_block_size: 8192,
+                prepared: false,
+                scratch: RawBufferScratch::default(),
+                editor: None,
+                transport_slot: TransportSlot::new(),
+                pending_state: Arc::new(StateLoadQueue::new(1)),
+                legacy_key_cstrings: info
+                    .legacy_au_keys
+                    .iter()
+                    .filter_map(|k| CString::new(*k).ok())
+                    .collect(),
+            });
+            let raw = Box::into_raw(instance);
+            // Spawn the param-notify thread now that the instance has its final
+            // address: the AU shim will map exactly this pointer to its
+            // component, and the notifier hands it back to the host-set FFI.
+            #[cfg(target_os = "macos")]
+            unsafe {
+                // SAFETY: `raw` is live until `cb_destroy`, which drops
+                // `param_notify` (joining the thread) before the shim frees the
+                // component; the notifier only uses the pointer as an opaque key.
+                let ctx = SendPtr::new(raw.cast::<std::ffi::c_void>().cast_const());
+                (*raw).param_notify = ParamNotifier::spawn(ctx);
+            }
+            raw.cast::<std::ffi::c_void>()
+        },
+    )
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
@@ -424,7 +433,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     sample_rate: f64,
     max_frames: u32,
 ) {
-    unsafe {
+    // Author `reset` runs here; firewall it so a panic can't unwind across
+    // the C ABI.
+    run_extern_callback_with::<P, ()>("au", "reset", (), || unsafe {
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         // Clamp host-supplied max_frames to a sane minimum.
         let max_frames = (max_frames as usize).max(1024);
@@ -449,7 +460,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
         }
         inst.prepared = true;
-    }
+    });
 }
 
 /// Host toggled AU offline rendering. `mode` is a [`ProcessMode`]
@@ -847,7 +858,8 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
     out: *mut c_char,
     out_len: u32,
 ) -> u32 {
-    unsafe {
+    // Author `format_value` can panic; firewall it (0 = no display text).
+    run_extern_callback_with::<P, u32>("au", "format_value", 0, || unsafe {
         // `out_len == 0` would underflow on `out_len as usize - 1`
         // and let `copy_nonoverlapping` write past the host-supplied
         // buffer. Treat zero capacity as "host wants nothing".
@@ -872,7 +884,7 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
             }
             None => 0,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn cb_param_parse_value<P: PluginExport>(
@@ -881,7 +893,8 @@ unsafe extern "C" fn cb_param_parse_value<P: PluginExport>(
     text: *const c_char,
     out_plain: *mut f64,
 ) -> i32 {
-    unsafe {
+    // Author `parse_value` can panic; firewall it (0 = "not parsed").
+    run_extern_callback_with::<P, i32>("au", "parse_value", 0, || unsafe {
         if text.is_null() || out_plain.is_null() {
             return 0;
         }
@@ -898,7 +911,7 @@ unsafe extern "C" fn cb_param_parse_value<P: PluginExport>(
             }
             None => 0,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn cb_state_save<P: PluginExport>(
@@ -1560,7 +1573,9 @@ unsafe extern "C" fn cb_output_sysex_at<P: PluginExport>(
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
-    unsafe {
+    // The editor builder is author code; firewall its lazy construction so
+    // a panic there can't unwind across the C ABI (0 = "no editor").
+    run_extern_callback_with::<P, i32>("au", "gui_has_editor", 0, || unsafe {
         if ctx.is_null() {
             return 0;
         }
@@ -1572,7 +1587,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
             inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
         i32::from(inst.editor.is_some())
-    }
+    })
 }
 
 /// Used by the AU v3 Swift shim in `viewDidLayoutSubviews` to
@@ -1581,13 +1596,14 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
 /// between the host's `preferredSize` and the editor's natural
 /// size. Returns 1 / 0 mapping to "yes / no resizable".
 unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
-    unsafe {
+    // `Editor::can_resize` is author code; firewall it (0 = "not resizable").
+    run_extern_callback_with::<P, i32>("au", "gui_can_resize", 0, || unsafe {
         if ctx.is_null() {
             return 0;
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
         i32::from(inst.editor.as_ref().is_some_and(|e| e.can_resize()))
-    }
+    })
 }
 
 /// Host-driven `set_size`. The AU v2 Cocoa view's
@@ -1598,7 +1614,8 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
 /// below the editor's floor doesn't clip widgets (mirrors the
 /// CLAP and VST3 wrappers).
 unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void, w: u32, h: u32) {
-    unsafe {
+    // `Editor::set_size` / `can_resize` are author code; firewall them.
+    run_extern_callback_with::<P, ()>("au", "gui_set_size", (), || unsafe {
         if ctx.is_null() || w == 0 || h == 0 {
             return;
         }
@@ -1609,7 +1626,7 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
             let (cw, ch) = fit_logical_size(w, h, editor.as_ref());
             editor.set_size(cw, ch);
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
@@ -1617,7 +1634,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     w: *mut u32,
     h: *mut u32,
 ) {
-    unsafe {
+    // The editor builder + `Editor::size` are author code; firewall them so
+    // a panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("au", "gui_get_size", (), || unsafe {
         if ctx.is_null() {
             return;
         }
@@ -1644,163 +1663,173 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             *w = ew;
             *h = eh;
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
 ) {
-    // AU is macOS+iOS-only at runtime. Linux/Windows builds compile
-    // the wrapper crate for completeness (it's part of the workspace
-    // build matrix) but the body references AppKit / UIKit /
-    // AUEventListener APIs that don't exist off-Apple. Stubbing the
-    // body keeps the FFI table population in `register_au_inner`
-    // type-checking on every platform.
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    {
-        let _ = ctx;
-        let _ = parent;
-        let _ = std::marker::PhantomData::<P>;
-    }
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
-        if let Some(ref mut editor) = inst.editor {
-            let params = Arc::clone(&inst.params_arc);
-            let meter_store = Arc::clone(&inst.meter_store);
-            let snapshot = Arc::clone(&inst.snapshot);
-            let ctx_raw = SendPtr::new(ctx);
-            let params_for_set = params.clone();
-            let params_for_get = params.clone();
-            let params_for_plain = params.clone();
-            let params_for_fmt = params.clone();
-            let params_for_ctx = params.clone();
-            let task_spawner_for_ctx = inst.task_spawner.clone();
-            let pending_state_for_set = inst.pending_state.clone();
-            let transport_slot = inst.transport_slot.clone();
-            let ctx_for_begin = ctx_raw;
-            let ctx_for_end = ctx_raw;
-            // iOS AU v3 hosts the editor inside an .appex; v2's
-            // `AUEventListener` doesn't exist there. Parameter
-            // changes from the editor flow to the host directly
-            // through the AUParameterTree's setter (handled by the
-            // Swift shim). The begin/set/end closures are no-ops on
-            // iOS so the plugin's editor code stays platform-agnostic.
-            let context = PluginContext::from_closures(
-                ClosureBridge {
-                    #[cfg(target_os = "macos")]
-                    begin_edit: Box::new(move |id| {
-                        // Broadcasts kAudioUnitEvent_BeginParameterChangeGesture
-                        // via AUEventListenerNotify so hosts (Logic, Live,
-                        // Reaper) group subsequent set_param calls into one
-                        // undo step and one automation gesture.
-                        truce_au_v2_host_begin_param_gesture(ctx_for_begin.as_ptr().cast_mut(), id);
-                    }),
-                    #[cfg(target_os = "ios")]
-                    begin_edit: Box::new(move |_id| {
-                        let _ = ctx_for_begin;
-                    }),
-                    #[cfg(target_os = "macos")]
-                    set_param: Box::new(move |id, value| {
-                        // One combined trait dispatch (set_normalized
-                        // + get_plain) instead of two - the
-                        // `#[derive(Params)]` impl can compute both in
-                        // a single match-arm walk.
-                        let plain =
-                            f32::from_f64(params_for_set.set_normalized_returning_plain(id, value));
-                        truce_au_v2_host_set_param(ctx_raw.as_ptr().cast_mut(), id, plain);
-                    }),
-                    #[cfg(target_os = "ios")]
-                    set_param: Box::new(move |id, value| {
-                        // No host-notify on iOS; just write the
-                        // normalised value through. The Swift shim
-                        // polls the parameter tree.
-                        let _ = ctx_raw;
-                        let _ = params_for_set.set_normalized_returning_plain(id, value);
-                    }),
-                    #[cfg(target_os = "macos")]
-                    end_edit: Box::new(move |id| {
-                        // Closes the gesture started by begin_edit so the
-                        // host commits the undo group / stops automation
-                        // recording.
-                        truce_au_v2_host_end_param_gesture(ctx_for_end.as_ptr().cast_mut(), id);
-                    }),
-                    #[cfg(target_os = "ios")]
-                    end_edit: Box::new(move |_id| {
-                        let _ = ctx_for_end;
-                    }),
-                    request_resize: Box::new(move |w, h| {
-                        // AU v2 has no host-driven resize API: the
-                        // host observes the plug-in's NSView frame
-                        // via AppKit and updates its container in
-                        // response. So `ctx.request_resize` here
-                        // routes back into the editor's own
-                        // `set_size`, which resizes the baseview
-                        // NSView; AppKit propagates the frame
-                        // change to the host as a notification.
-                        //
-                        // SAFETY: `ctx_raw` points at the live
-                        // `AuInstance<P>`. The closure runs on the
-                        // GUI thread, same as `cb_gui_open` which
-                        // installed it. `editor.set_size` on the
-                        // existing backends writes to an atomic
-                        // cell only - no aliasing UB even if the
-                        // editor's own `update()` holds a borrow
-                        // higher up the stack.
-                        if w == 0 || h == 0 {
-                            return false;
-                        }
-                        let inst = &mut *ctx_raw.as_ptr().cast_mut().cast::<AuInstance<P>>();
-                        inst.editor.as_mut().is_some_and(|e| e.set_size(w, h))
-                    }),
-                    get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
-                    get_param_plain: Box::new(move |id| {
-                        params_for_plain.get_plain(id).unwrap_or(0.0)
-                    }),
-                    format_param: Box::new(move |id| {
-                        let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                        params_for_fmt
-                            .format_value(id, plain)
-                            .unwrap_or_else(|| format!("{plain:.1}"))
-                    }),
-                    get_meter: Box::new(move |id| meter_store.read(id)),
-                    get_state: Box::new(move || {
-                        // Editor state read: lock-free, reads the snapshot
-                        // the audio thread publishes each block. Never
-                        // touches the plugin, so an editor read can't
-                        // stall audio.
-                        save_extra(&snapshot)
-                    }),
-                    set_state: Box::new(move |bytes| {
-                        // The editor sends RAW custom-state bytes -
-                        // exactly what `save_state()` emits and
-                        // `get_state` above returns - NOT a full
-                        // `serialize_state` envelope. Route them to the
-                        // plugin's `load_state` on the audio thread via
-                        // the same handoff queue the host load path uses
-                        // (the queue is what avoids aliasing
-                        // `process()`'s `&mut plugin`). No params ride
-                        // along: the editor mutates params through
-                        // `set_param`.
-                        let _ = pending_state_for_set.force_push(state::DeserializedState {
-                            params: Vec::new(),
-                            extra: Some(bytes),
-                            persist: Vec::new(),
-                        });
-                    }),
-                    transport: Box::new(move || transport_slot.read()),
-                },
-                params_for_ctx,
-            )
-            .with_tasks(task_spawner_for_ctx);
-            #[cfg(target_os = "macos")]
-            let handle = RawWindowHandle::AppKit(parent);
-            #[cfg(target_os = "ios")]
-            let handle = RawWindowHandle::UiKit(parent);
-            editor.open(handle, context);
+    // `editor.open` runs author GUI-construction code that can panic;
+    // firewall it so the panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("au", "gui_open", (), || {
+        // AU is macOS+iOS-only at runtime. Linux/Windows builds compile
+        // the wrapper crate for completeness (it's part of the workspace
+        // build matrix) but the body references AppKit / UIKit /
+        // AUEventListener APIs that don't exist off-Apple. Stubbing the
+        // body keeps the FFI table population in `register_au_inner`
+        // type-checking on every platform.
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        {
+            let _ = ctx;
+            let _ = parent;
+            let _ = std::marker::PhantomData::<P>;
         }
-    }
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        unsafe {
+            let inst = &mut *ctx.cast::<AuInstance<P>>();
+            if let Some(ref mut editor) = inst.editor {
+                let params = Arc::clone(&inst.params_arc);
+                let meter_store = Arc::clone(&inst.meter_store);
+                let snapshot = Arc::clone(&inst.snapshot);
+                let ctx_raw = SendPtr::new(ctx);
+                let params_for_set = params.clone();
+                let params_for_get = params.clone();
+                let params_for_plain = params.clone();
+                let params_for_fmt = params.clone();
+                let params_for_ctx = params.clone();
+                let task_spawner_for_ctx = inst.task_spawner.clone();
+                let pending_state_for_set = inst.pending_state.clone();
+                let transport_slot = inst.transport_slot.clone();
+                let ctx_for_begin = ctx_raw;
+                let ctx_for_end = ctx_raw;
+                // iOS AU v3 hosts the editor inside an .appex; v2's
+                // `AUEventListener` doesn't exist there. Parameter
+                // changes from the editor flow to the host directly
+                // through the AUParameterTree's setter (handled by the
+                // Swift shim). The begin/set/end closures are no-ops on
+                // iOS so the plugin's editor code stays platform-agnostic.
+                let context = PluginContext::from_closures(
+                    ClosureBridge {
+                        #[cfg(target_os = "macos")]
+                        begin_edit: Box::new(move |id| {
+                            // Broadcasts kAudioUnitEvent_BeginParameterChangeGesture
+                            // via AUEventListenerNotify so hosts (Logic, Live,
+                            // Reaper) group subsequent set_param calls into one
+                            // undo step and one automation gesture.
+                            truce_au_v2_host_begin_param_gesture(
+                                ctx_for_begin.as_ptr().cast_mut(),
+                                id,
+                            );
+                        }),
+                        #[cfg(target_os = "ios")]
+                        begin_edit: Box::new(move |_id| {
+                            let _ = ctx_for_begin;
+                        }),
+                        #[cfg(target_os = "macos")]
+                        set_param: Box::new(move |id, value| {
+                            // One combined trait dispatch (set_normalized
+                            // + get_plain) instead of two - the
+                            // `#[derive(Params)]` impl can compute both in
+                            // a single match-arm walk.
+                            let plain = f32::from_f64(
+                                params_for_set.set_normalized_returning_plain(id, value),
+                            );
+                            truce_au_v2_host_set_param(ctx_raw.as_ptr().cast_mut(), id, plain);
+                        }),
+                        #[cfg(target_os = "ios")]
+                        set_param: Box::new(move |id, value| {
+                            // No host-notify on iOS; just write the
+                            // normalised value through. The Swift shim
+                            // polls the parameter tree.
+                            let _ = ctx_raw;
+                            let _ = params_for_set.set_normalized_returning_plain(id, value);
+                        }),
+                        #[cfg(target_os = "macos")]
+                        end_edit: Box::new(move |id| {
+                            // Closes the gesture started by begin_edit so the
+                            // host commits the undo group / stops automation
+                            // recording.
+                            truce_au_v2_host_end_param_gesture(ctx_for_end.as_ptr().cast_mut(), id);
+                        }),
+                        #[cfg(target_os = "ios")]
+                        end_edit: Box::new(move |_id| {
+                            let _ = ctx_for_end;
+                        }),
+                        request_resize: Box::new(move |w, h| {
+                            // AU v2 has no host-driven resize API: the
+                            // host observes the plug-in's NSView frame
+                            // via AppKit and updates its container in
+                            // response. So `ctx.request_resize` here
+                            // routes back into the editor's own
+                            // `set_size`, which resizes the baseview
+                            // NSView; AppKit propagates the frame
+                            // change to the host as a notification.
+                            //
+                            // SAFETY: `ctx_raw` points at the live
+                            // `AuInstance<P>`. The closure runs on the
+                            // GUI thread, same as `cb_gui_open` which
+                            // installed it. `editor.set_size` on the
+                            // existing backends writes to an atomic
+                            // cell only - no aliasing UB even if the
+                            // editor's own `update()` holds a borrow
+                            // higher up the stack.
+                            if w == 0 || h == 0 {
+                                return false;
+                            }
+                            let inst = &mut *ctx_raw.as_ptr().cast_mut().cast::<AuInstance<P>>();
+                            inst.editor.as_mut().is_some_and(|e| e.set_size(w, h))
+                        }),
+                        get_param: Box::new(move |id| {
+                            params_for_get.get_normalized(id).unwrap_or(0.0)
+                        }),
+                        get_param_plain: Box::new(move |id| {
+                            params_for_plain.get_plain(id).unwrap_or(0.0)
+                        }),
+                        format_param: Box::new(move |id| {
+                            let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
+                            params_for_fmt
+                                .format_value(id, plain)
+                                .unwrap_or_else(|| format!("{plain:.1}"))
+                        }),
+                        get_meter: Box::new(move |id| meter_store.read(id)),
+                        get_state: Box::new(move || {
+                            // Editor state read: lock-free, reads the snapshot
+                            // the audio thread publishes each block. Never
+                            // touches the plugin, so an editor read can't
+                            // stall audio.
+                            save_extra(&snapshot)
+                        }),
+                        set_state: Box::new(move |bytes| {
+                            // The editor sends RAW custom-state bytes -
+                            // exactly what `save_state()` emits and
+                            // `get_state` above returns - NOT a full
+                            // `serialize_state` envelope. Route them to the
+                            // plugin's `load_state` on the audio thread via
+                            // the same handoff queue the host load path uses
+                            // (the queue is what avoids aliasing
+                            // `process()`'s `&mut plugin`). No params ride
+                            // along: the editor mutates params through
+                            // `set_param`.
+                            let _ = pending_state_for_set.force_push(state::DeserializedState {
+                                params: Vec::new(),
+                                extra: Some(bytes),
+                                persist: Vec::new(),
+                            });
+                        }),
+                        transport: Box::new(move || transport_slot.read()),
+                    },
+                    params_for_ctx,
+                )
+                .with_tasks(task_spawner_for_ctx);
+                #[cfg(target_os = "macos")]
+                let handle = RawWindowHandle::AppKit(parent);
+                #[cfg(target_os = "ios")]
+                let handle = RawWindowHandle::UiKit(parent);
+                editor.open(handle, context);
+            }
+        }
+    });
 }
 
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
