@@ -136,6 +136,15 @@ typedef struct {
         void *userData;
     } listeners[32];
     uint32_t listenerCount;
+
+    // Render-notify callbacks (kAudioUnitAddRenderNotify). Invoked with
+    // kAudioUnitRenderAction_PreRender before processing and _PostRender
+    // after, which AUGraph metering / offline harnesses depend on.
+    struct {
+        AURenderCallback proc;
+        void *userData;
+    } renderNotifies[32];
+    uint32_t renderNotifyCount;
 } TruceAUv2;
 
 // ---------------------------------------------------------------------------
@@ -538,6 +547,8 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = sizeof(AudioUnitParameterValueFromString); writable = true; break;
         case kAudioUnitProperty_ParameterValueStrings:
             size = sizeof(CFArrayRef); writable = false; break;
+        case kAudioUnitProperty_ParameterClumpName:
+            size = sizeof(AudioUnitParameterNameInfo); writable = false; break;
         case kAudioUnitProperty_SetRenderCallback:
             if (scope == kAudioUnitScope_Input) { size = sizeof(AURenderCallbackStruct); writable = true; }
             else return kAudioUnitErr_InvalidScope;
@@ -620,6 +631,46 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
     if (outSize) *outSize = size;
     if (outWritable) *outWritable = writable;
     return noErr;
+}
+
+// Parameter clumps group params under a heading in the host UI. A
+// param's clumpID is the 1-based ordinal of its group among the distinct
+// non-empty group names (declaration order); 0 means ungrouped. Stable
+// across calls so a param's clumpID never changes. O(n^2), negligible for
+// real param counts.
+static uint32_t au_v2_clump_id(const char *group) {
+    if (!group || !group[0]) return 0;
+    uint32_t ordinal = 0;
+    for (uint32_t i = 0; i < g_num_params; i++) {
+        const char *g = g_param_descriptors[i].group;
+        if (!g || !g[0]) continue;
+        int first = 1;
+        for (uint32_t j = 0; j < i; j++) {
+            const char *pg = g_param_descriptors[j].group;
+            if (pg && pg[0] && strcmp(pg, g) == 0) { first = 0; break; }
+        }
+        if (first) ordinal++;
+        if (strcmp(g, group) == 0) return ordinal;
+    }
+    return 0;
+}
+
+// Reverse of au_v2_clump_id: the group name for a clumpID, for
+// kAudioUnitProperty_ParameterClumpName. NULL if the id is out of range.
+static const char *au_v2_clump_name(uint32_t clumpID) {
+    if (clumpID == 0) return NULL;
+    uint32_t ordinal = 0;
+    for (uint32_t i = 0; i < g_num_params; i++) {
+        const char *g = g_param_descriptors[i].group;
+        if (!g || !g[0]) continue;
+        int first = 1;
+        for (uint32_t j = 0; j < i; j++) {
+            const char *pg = g_param_descriptors[j].group;
+            if (pg && pg[0] && strcmp(pg, g) == 0) { first = 0; break; }
+        }
+        if (first && ++ordinal == clumpID) return g;
+    }
+    return NULL;
 }
 
 static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
@@ -740,6 +791,20 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
                                   kAudioUnitParameterFlag_HasCFNameString |
                                   kAudioUnitParameterFlag_CFNameRelease |
                                   kAudioUnitParameterFlag_ValuesHaveStrings;
+                    /* Continuous params can be ramped: au_v2_schedule_parameters
+                     * accepts ramped automation and the plugin's smoother
+                     * interpolates. Stepped (bool/enum/discrete) params step,
+                     * so they get no ramp flag. */
+                    if (pd->step_count == 0)
+                        info->flags |= kAudioUnitParameterFlag_CanRamp;
+                    /* Map the param's group to a clump so the host UI nests
+                     * grouped params under a heading (named via
+                     * kAudioUnitProperty_ParameterClumpName). */
+                    uint32_t clump = au_v2_clump_id(pd->group);
+                    if (clump != 0) {
+                        info->clumpID = clump;
+                        info->flags |= kAudioUnitParameterFlag_HasClump;
+                    }
                     *ioSize = sizeof(AudioUnitParameterInfo);
                     return noErr;
                 }
@@ -828,6 +893,20 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             /* Ownership transfers to the caller per the property's Copy rule. */
             *(CFArrayRef *)outData = arr;
             *ioSize = sizeof(CFArrayRef);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_ParameterClumpName: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (*ioSize < sizeof(AudioUnitParameterNameInfo))
+                return kAudioUnitErr_InvalidPropertyValue;
+            AudioUnitParameterNameInfo *cn = (AudioUnitParameterNameInfo *)outData;
+            /* inID is the clumpID; hand back the param group's display name. */
+            const char *name = au_v2_clump_name((uint32_t)cn->inID);
+            if (!name) return kAudioUnitErr_InvalidPropertyValue;
+            cn->outName = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
+            if (!cn->outName) return kAudioUnitErr_InvalidParameter;
+            *ioSize = sizeof(AudioUnitParameterNameInfo);
             return noErr;
         }
 
@@ -1565,6 +1644,12 @@ static void fill_transport_snapshot(TruceAUv2 *inst,
     out->valid = ok;
 }
 
+static void au_v2_fire_render_notifies(TruceAUv2 *inst,
+                                       AudioUnitRenderActionFlags action,
+                                       AudioUnitRenderActionFlags *ioFlags,
+                                       const AudioTimeStamp *ts, UInt32 bus,
+                                       UInt32 frames, AudioBufferList *ioData);
+
 static OSStatus au_v2_render(void *self_,
                               AudioUnitRenderActionFlags *ioFlags,
                               const AudioTimeStamp *inTimeStamp,
@@ -1587,6 +1672,11 @@ static OSStatus au_v2_render(void *self_,
     if (inFrameCount > inst->maxFramesPerSlice)
         return kAudioUnitErr_TooManyFramesToProcess;
 
+    // Pre-render notify (before the input pull), so a metering / offline
+    // harness observing the graph sees the block start.
+    au_v2_fire_render_notifies(inst, kAudioUnitRenderAction_PreRender,
+                               ioFlags, inTimeStamp, inBusNumber, inFrameCount, ioData);
+
 
     // Pull input for effects. Channel counts come from the negotiated
     // per-instance stream format so a multi-layout plugin runs at the
@@ -1600,8 +1690,13 @@ static OSStatus au_v2_render(void *self_,
     if (numIn + scCh > 32) scCh = numIn < 32 ? 32 - numIn : 0;
 
     if (numIn > 0) {
-        // Build a temporary ABL pointing to our buffers for the input pull
-        UInt32 pullBufCount = numIn < ioData->mNumberBuffers ? numIn : ioData->mNumberBuffers;
+        // Build a temporary ABL pointing to our buffers for the input pull.
+        // Pull all `numIn` main-input channels - do NOT clamp to
+        // ioData->mNumberBuffers (the OUTPUT width). An N-in/M-out layout
+        // with N>M (a 2->1 sum, a 4->2 downmix) would otherwise pull only M
+        // channels and leave the rest stale/aliased. `outputBuffers` is
+        // staged to max(totalIn, numOut), so there's room for all numIn.
+        UInt32 pullBufCount = numIn < 32 ? numIn : 32;
         // Use stack-allocated ABL
         char ablStorage[sizeof(AudioBufferList) + sizeof(AudioBuffer) * 31];
         AudioBufferList *pullABL = (AudioBufferList *)ablStorage;
@@ -1820,6 +1915,11 @@ static OSStatus au_v2_render(void *self_,
         ioData->mBuffers[c].mDataByteSize = inFrameCount * sizeof(float);
     }
 
+    // Post-render notify: `ioData` now holds the output the host will
+    // consume, which is what a metering tap reads.
+    au_v2_fire_render_notifies(inst, kAudioUnitRenderAction_PostRender,
+                               ioFlags, inTimeStamp, inBusNumber, inFrameCount, ioData);
+
     return noErr;
 }
 
@@ -1894,13 +1994,47 @@ static OSStatus au_v2_remove_property_listener_with_data(void *self_, AudioUnitP
 }
 
 static OSStatus au_v2_add_render_notify(void *self_, AURenderCallback proc, void *userData) {
-    (void)self_; (void)proc; (void)userData;
+    TruceAUv2 *inst = (TruceAUv2 *)self_;
+    if (!proc) return kAudioUnitErr_InvalidParameter;
+    // Ignore an exact duplicate (proc + refcon), matching the SDK.
+    for (uint32_t i = 0; i < inst->renderNotifyCount; i++)
+        if (inst->renderNotifies[i].proc == proc &&
+            inst->renderNotifies[i].userData == userData)
+            return noErr;
+    if (inst->renderNotifyCount >= 32) return kAudioUnitErr_TooManyFramesToProcess;
+    inst->renderNotifies[inst->renderNotifyCount].proc = proc;
+    inst->renderNotifies[inst->renderNotifyCount].userData = userData;
+    inst->renderNotifyCount++;
     return noErr;
 }
 
 static OSStatus au_v2_remove_render_notify(void *self_, AURenderCallback proc, void *userData) {
-    (void)self_; (void)proc; (void)userData;
+    TruceAUv2 *inst = (TruceAUv2 *)self_;
+    for (uint32_t i = 0; i < inst->renderNotifyCount; i++) {
+        if (inst->renderNotifies[i].proc == proc &&
+            inst->renderNotifies[i].userData == userData) {
+            // Compact the tail down over the removed slot.
+            for (uint32_t j = i + 1; j < inst->renderNotifyCount; j++)
+                inst->renderNotifies[j - 1] = inst->renderNotifies[j];
+            inst->renderNotifyCount--;
+            return noErr;
+        }
+    }
     return noErr;
+}
+
+// Fire every registered render-notify with `action` (PreRender / PostRender)
+// OR'd onto the current flags - the AUGraph metering / offline convention.
+static void au_v2_fire_render_notifies(TruceAUv2 *inst,
+                                       AudioUnitRenderActionFlags action,
+                                       AudioUnitRenderActionFlags *ioFlags,
+                                       const AudioTimeStamp *ts, UInt32 bus,
+                                       UInt32 frames, AudioBufferList *ioData) {
+    for (uint32_t i = 0; i < inst->renderNotifyCount; i++) {
+        AudioUnitRenderActionFlags f = (ioFlags ? *ioFlags : 0) | action;
+        inst->renderNotifies[i].proc(inst->renderNotifies[i].userData,
+                                     &f, ts, bus, frames, ioData);
+    }
 }
 
 // ---------------------------------------------------------------------------
