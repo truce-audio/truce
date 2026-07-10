@@ -87,7 +87,7 @@ pub struct FundspReverbWorkerParams {
 
     /// Shared cells + graph-handoff queues the rebuild task and the
     /// audio thread both reach. A `#[skip]` field (not a parameter) so
-    /// the receiverless `run_task(task, &params)` can touch it - the
+    /// the receiverless `run(&params)` can touch it - the
     /// same shared-`Arc` mechanism as an audio->editor channel.
     #[skip]
     pub worker: Arc<WorkerShared>,
@@ -146,7 +146,7 @@ struct ReadyGraph {
 /// Shared between the audio thread (via `&params`) and the rebuild task
 /// (via `&params`): the atomic cells the fundsp graph reads plus the
 /// lock-free graph handoff. Lives on the params as a `#[skip]` field so
-/// the receiverless `run_task` reaches it. `Default` seeds the cells
+/// the receiverless `run` reaches it. `Default` seeds the cells
 /// with the same values `build_graph` starts from, since a `#[skip]`
 /// field is `Default`-initialized.
 pub struct WorkerShared {
@@ -307,15 +307,14 @@ impl PluginLogic for FundspReverbWorker {
     }
 }
 
-impl BackgroundTasks for FundspReverbWorker {
+impl BackgroundTask for RebuildRequest {
     type Params = FundspReverbWorkerParams;
-    type Task = RebuildRequest;
 
     /// Rebuild the fundsp graph off the audio thread on the shared pool,
     /// reaching the `Shared` cells + handoff queues through
     /// `params.worker`. All the heavy work (`Box::new`, `allocate()`) and
     /// the heavy drops happen here, never on the audio thread.
-    fn run_task(task: RebuildRequest, params: &FundspReverbWorkerParams) {
+    fn run(self, params: &FundspReverbWorkerParams) {
         let w = &params.worker;
         // Free graphs the audio thread swapped out - the heavy drop runs
         // here.
@@ -323,8 +322,8 @@ impl BackgroundTasks for FundspReverbWorker {
             drop(old);
         }
         let graph = build_graph(
-            task.sample_rate,
-            task.time_s,
+            self.sample_rate,
+            self.time_s,
             &w.low_cut,
             &w.high_cut,
             &w.mix,
@@ -333,8 +332,8 @@ impl BackgroundTasks for FundspReverbWorker {
         // on the audio thread.
         let _ = w.ready.force_push(ReadyGraph {
             graph,
-            sample_rate: task.sample_rate,
-            time_s: task.time_s,
+            sample_rate: self.sample_rate,
+            time_s: self.time_s,
         });
     }
 }
@@ -342,7 +341,7 @@ impl BackgroundTasks for FundspReverbWorker {
 truce::plugin! {
     logic: FundspReverbWorker,
     params: FundspReverbWorkerParams,
-    tasks: FundspReverbWorker,
+    tasks: [RebuildRequest],
 }
 
 // Install the real-time allocation checker under `--features rt-paranoid`

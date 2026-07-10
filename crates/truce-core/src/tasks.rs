@@ -1,7 +1,8 @@
 //! Managed background-task pool.
 //!
-//! A process-global pool of worker threads runs plugin `run_task`
-//! handlers off the audio thread. Each plugin instance owns a
+//! A process-global pool of worker threads runs plugin
+//! `BackgroundTask::run` handlers off the audio thread. Each plugin
+//! instance owns a
 //! preallocated, wait-free inbound queue via a [`TaskSpawner`]: the
 //! audio thread (or the editor, or `init`) pushes tasks without
 //! allocating or blocking, and a pool worker drains them. Feedback to
@@ -14,12 +15,12 @@
 //! By default drains are **not** mutually exclusive: the stranding-
 //! avoidance handshake clears a sink's `scheduled` flag before draining,
 //! so a burst that re-arms an instance mid-drain can hand a second idle
-//! worker the same sink - `run_task` can run concurrently with itself for
+//! worker the same sink - `run` can run concurrently with itself for
 //! one instance. Handlers must therefore be reentrancy-safe: talk to the
 //! audio thread only through lock-free / atomic channels (the reverb
 //! example's MPMC handoff), or guard shared mutable state (the
 //! `AudioTap::drain_with` `try_lock` idiom). A plugin that can't meet that
-//! contract sets `BackgroundTasks::SERIALIZED = true`, and the pool then
+//! contract sets `BackgroundTask::SERIALIZED = true`, and the pool then
 //! runs that instance's handler one at a time.
 //!
 //! The pool is shared across every instance in the process (one small
@@ -28,7 +29,7 @@
 //! that never declares a `BackgroundTask` spawns no threads.
 //!
 //! Because the pool is shared and small (`available_parallelism() - 1`,
-//! as few as one thread), `run_task` handlers must stay short and
+//! as few as one thread), task handlers must stay short and
 //! non-blocking: one plugin that blocks on I/O or a lock stalls every
 //! other instance's background work. Long or blocking work belongs on a
 //! plugin's own thread (`AudioTap::spawn_worker`), not the pool.
@@ -84,7 +85,7 @@ struct Sink<T: Send + 'static> {
     /// picks up whatever the bower-out was injected for, so nothing is
     /// stranded. Unused in the concurrent (default) mode.
     draining: AtomicBool,
-    /// `run(task)` is `move |task| L::run_task(task, &params)`, built
+    /// `run(task)` is `move |task| task.run(&params)`, built
     /// once when the instance registers - never per task.
     run: Box<dyn Fn(T) + Send + Sync>,
 }
@@ -129,7 +130,7 @@ impl<T: Send + 'static> Drain for Sink<T> {
     fn drain(&self) {
         // Concurrent (default) mode: a second worker may drain this sink at
         // the same time. Handlers must be reentrancy-safe (see
-        // `BackgroundTasks::SERIALIZED`).
+        // `BackgroundTask::SERIALIZED`).
         if !self.serialized {
             self.drain_queues();
             return;
@@ -281,7 +282,7 @@ impl<T: Send + 'static> Clone for TaskSpawner<T> {
 
 impl<T: Send + 'static> TaskSpawner<T> {
     /// Register an instance's handler with the shared pool. `run` is the
-    /// monomorphized `move |task| L::run_task(task, &params)`, built once
+    /// monomorphized `move |task| task.run(&params)`, built once
     /// by the shell. The pool itself is not started until the first task
     /// is actually scheduled, so constructing a spawner for a plugin that
     /// never schedules costs only the (small) inbound queue.
@@ -294,7 +295,7 @@ impl<T: Send + 'static> TaskSpawner<T> {
 
     /// Like [`Self::new`], but the pool runs the handler for a given
     /// instance one at a time ("one-slot" mode). The shell selects this
-    /// when the plugin's `BackgroundTasks::SERIALIZED` is `true`.
+    /// when the plugin's `BackgroundTask::SERIALIZED` is `true`.
     pub fn new_serialized(run: impl Fn(T) + Send + Sync + 'static) -> Self {
         Self::with_mode(run, true)
     }
@@ -360,25 +361,70 @@ impl<T: Send + 'static> TaskSpawner<T> {
     }
 }
 
-/// A type-erased [`TaskSpawner`], so the concrete `ProcessContext` /
-/// `InitContext` (whose signatures are fixed by the leaf trait and can't
-/// name the plugin's task type) can carry the handle and hand back a
-/// typed spawner on demand via [`Self::downcast`].
+/// One type-erased lane. Each element of [`AnyTaskSpawner`] holds one
+/// `TaskSpawner<T>` for a distinct task type.
+type ErasedLane = Arc<dyn std::any::Any + Send + Sync>;
+
+/// A bundle of type-erased [`TaskSpawner`]s - one lane per declared task
+/// type - so the concrete `ProcessContext` / `InitContext` (whose
+/// signatures are fixed by the leaf trait and can't name the plugin's task
+/// types) can carry every lane and hand back the right typed spawner on
+/// demand via [`Self::downcast`]. Cheap to clone (one `Arc`).
 #[derive(Clone)]
-pub struct AnyTaskSpawner(Arc<dyn std::any::Any + Send + Sync>);
+pub struct AnyTaskSpawner(Arc<[ErasedLane]>);
 
 impl AnyTaskSpawner {
-    /// Erase a typed spawner. Called by the shell when it wires tasks.
+    /// Erase a single typed spawner into a one-lane bundle.
     #[must_use]
     pub fn new<T: Send + 'static>(spawner: &TaskSpawner<T>) -> Self {
-        Self(Arc::new(spawner.clone()) as Arc<dyn std::any::Any + Send + Sync>)
+        Self(Arc::from(vec![Arc::new(spawner.clone()) as ErasedLane]))
     }
 
-    /// Recover the typed spawner. `None` if this handle was erased from a
-    /// different task type (a caller asking for the wrong `T`).
+    /// Bundle several already-erased lanes (one per task type). The
+    /// `plugin!` macro builds the lanes with [`TaskSpawnerBundle`].
+    #[must_use]
+    pub fn from_lanes(lanes: Vec<ErasedLane>) -> Self {
+        Self(Arc::from(lanes))
+    }
+
+    /// Recover the typed spawner for task type `T`, or `None` if no lane of
+    /// that type was declared. Lanes have distinct types, so at most one
+    /// matches.
     #[must_use]
     pub fn downcast<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
-        self.0.downcast_ref::<TaskSpawner<T>>().cloned()
+        self.0
+            .iter()
+            .find_map(|lane| lane.downcast_ref::<TaskSpawner<T>>().cloned())
+    }
+}
+
+/// Builder the `plugin!` macro uses to collect one lane per declared task
+/// type into an [`AnyTaskSpawner`]. Kept separate so the macro never has to
+/// name the erased-lane type.
+#[derive(Default)]
+pub struct TaskSpawnerBundle(Vec<ErasedLane>);
+
+impl TaskSpawnerBundle {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Add one task type's spawner to the bundle.
+    pub fn push<T: Send + 'static>(&mut self, spawner: TaskSpawner<T>) {
+        self.0.push(Arc::new(spawner) as ErasedLane);
+    }
+
+    /// Finish: `Some` bundle, or `None` when no lanes were added (a plugin
+    /// that declared no tasks), matching the `Option<AnyTaskSpawner>` the
+    /// shell threads through.
+    #[must_use]
+    pub fn into_any(self) -> Option<AnyTaskSpawner> {
+        if self.0.is_empty() {
+            None
+        } else {
+            Some(AnyTaskSpawner::from_lanes(self.0))
+        }
     }
 }
 
@@ -397,8 +443,8 @@ impl InitContext {
         Self { tasks }
     }
 
-    /// The task spawner for this instance's `BackgroundTasks::Task`, or
-    /// `None` if the plugin wired no `tasks:` on `plugin!`.
+    /// The task spawner for task type `T`, or `None` if the plugin declared
+    /// no `tasks:` lane of that type on `plugin!`.
     #[must_use]
     pub fn tasks<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
         self.tasks.as_ref().and_then(AnyTaskSpawner::downcast::<T>)

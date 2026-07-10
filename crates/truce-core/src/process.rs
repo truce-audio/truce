@@ -75,9 +75,9 @@ impl<'a> ProcessContext<'a> {
         self
     }
 
-    /// The background-task spawner for the plugin's
-    /// `BackgroundTasks::Task`, or `None` if the plugin wired no `tasks:`.
-    /// Scheduling with the returned spawner is wait-free (see
+    /// The background-task spawner for task type `T`, or `None` if the
+    /// plugin declared no `tasks:` lane of that type. Scheduling with the
+    /// returned spawner is wait-free (see
     /// [`TaskSpawner::try_spawn`] / [`TaskSpawner::spawn_coalescing`]), so
     /// it is safe to call from the audio thread.
     #[must_use]

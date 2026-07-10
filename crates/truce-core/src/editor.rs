@@ -419,7 +419,7 @@ impl EditorBridge for ClosureBridge {
 /// freely.
 pub struct PluginContext<P: ?Sized = dyn Params> {
     bridge: Arc<dyn EditorBridge>,
-    /// Background-task spawner for the plugin's `BackgroundTasks::Task`,
+    /// Background-task spawner bundle (one lane per declared task type),
     /// stamped by the format wrapper from `PluginExport::task_spawner`
     /// when the plugin wired `tasks:`. Lets the editor schedule work via
     /// [`Self::tasks`]. `None` for a plugin with no background tasks.
@@ -458,10 +458,9 @@ impl<P: ?Sized> PluginContext<P> {
         self
     }
 
-    /// The background-task spawner for the plugin's
-    /// `BackgroundTasks::Task`, or `None` if the plugin wired no
-    /// `tasks:`. Scheduling with it is wait-free, so it is safe from the
-    /// GUI thread.
+    /// The background-task spawner for task type `T`, or `None` if the
+    /// plugin declared no `tasks:` lane of that type. Scheduling with it is
+    /// wait-free, so it is safe from the GUI thread.
     #[must_use]
     pub fn tasks<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
         self.tasks.as_ref().and_then(AnyTaskSpawner::downcast::<T>)

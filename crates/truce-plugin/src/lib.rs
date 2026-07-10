@@ -660,13 +660,15 @@ pure_plugin_leaf_trait! {
 
 pub use crate::__plugin_logic_deps::{InitContext, TaskSpawner};
 
-/// Opt-in managed background work. A plugin implements this *in addition
-/// to* its leaf trait to declare a `Send` task type and a handler the
-/// framework runs on a shared background-thread pool, then wires it in
-/// with the `tasks:` key on the `truce::plugin!` macro. Nothing changes
-/// for a plugin that doesn't implement it.
+/// Opt-in managed background work. Each **task type** implements this to
+/// declare its params, its concurrency mode, and the handler the framework
+/// runs on a shared background-thread pool; a plugin lists one or more task
+/// types with the `tasks:` key on `truce::plugin!` (`tasks: [Rebuild,
+/// Analyze]`). Every task type gets its own inbound queue and mode, so a
+/// serialized lane and a concurrent lane coexist in one plugin. Nothing
+/// changes for a plugin that declares no tasks.
 ///
-/// `run_task` runs off the audio thread and reaches shared state through
+/// `run` executes off the audio thread and reaches shared state through
 /// `params` (its `#[skip]` channels / atomics), exactly like the editor:
 /// it must never touch `DspState`, which is audio-thread-exclusive.
 /// Feedback to the audio thread stays the plugin's job through those
@@ -681,47 +683,49 @@ pub use crate::__plugin_logic_deps::{InitContext, TaskSpawner};
 /// or runs long, give the plugin its own thread with
 /// `AudioTap::spawn_worker` rather than the shared pool.
 ///
-/// Schedule tasks with `ctx.tasks::<Task>()` from `process` (wait-free),
-/// the editor's `PluginContext`, or the `InitContext` passed to `init`.
+/// Schedule tasks with `ctx.tasks::<Rebuild>()` from `process` (wait-free),
+/// the editor's `PluginContext`, or the `InitContext` passed to `init` -
+/// the type parameter selects the lane.
 ///
 /// ```ignore
-/// impl BackgroundTasks for Reverb {
+/// struct Rebuild { sample_rate: f64, time_s: f32 }
+/// impl BackgroundTask for Rebuild {
 ///     type Params = ReverbParams;
-///     type Task = Rebuild;
-///     fn run_task(task: Rebuild, params: &ReverbParams) {
-///         let graph = build_graph(task.sample_rate, task.time_s);
+///     const SERIALIZED: bool = true;   // non-reentrant graph build
+///     fn run(self, params: &ReverbParams) {
+///         let graph = build_graph(self.sample_rate, self.time_s);
 ///         let _ = params.ready.force_push(graph);   // #[skip] handoff
 ///     }
 /// }
+/// // truce::plugin! { logic, params, tasks: [Rebuild] }
 /// ```
-pub trait BackgroundTasks {
+pub trait BackgroundTask: Send + 'static {
     /// The plugin's parameter struct; must match the leaf trait's
-    /// `type Params`.
+    /// `type Params`. (`Send`/`'static` on the task type itself: the pool
+    /// moves it across threads and the worker outlives any block.)
     type Params: crate::__plugin_logic_deps::Params;
-    /// A unit of off-thread work. `Send` because the pool moves it across
-    /// threads; `'static` because the worker outlives any block.
-    type Task: Send + 'static;
-    /// Run `run_task` one at a time for a given instance ("one-slot" mode).
+    /// Run this lane's handler one at a time for a given instance
+    /// ("one-slot" mode).
     ///
     /// Default `false`: the pool is shared and lock-free, so a burst that
-    /// re-arms an instance while a worker is still draining it can hand a
-    /// second worker the same instance - `run_task` may run **concurrently
-    /// with itself** for one instance. A handler that only talks to the
-    /// audio thread through lock-free channels / atomics (the reverb
-    /// example's MPMC handoff) is fine that way and keeps maximum
-    /// throughput.
+    /// re-arms a lane while a worker is still draining it can hand a second
+    /// worker the same lane - `run` may run **concurrently with itself**
+    /// for one instance. A handler that only talks to the audio thread
+    /// through lock-free channels / atomics (the reverb example's MPMC
+    /// handoff) is fine that way and keeps maximum throughput.
     ///
     /// Set `true` when the handler read-modify-writes shared mutable state
     /// that isn't safe to enter re-entrantly (a scratch buffer, a
-    /// non-atomic cache): the pool then serializes drains so at most one
-    /// `run_task` for this instance runs at a time, without the author
+    /// non-atomic cache): the pool then serializes this lane's drains so at
+    /// most one `run` for this instance runs at a time, without the author
     /// needing a `try_lock` guard. Tasks are never dropped or reordered;
     /// serialization only bounds concurrency, so keep the handler short
-    /// (a long serialized handler delays this instance's later tasks).
+    /// (a long serialized handler delays this lane's later tasks). The mode
+    /// is per lane, so a concurrent lane in the same plugin is unaffected.
     const SERIALIZED: bool = false;
     /// Run one task on the pool. See the trait docs for the contract,
     /// including the concurrency note on [`Self::SERIALIZED`].
-    fn run_task(task: Self::Task, params: &Self::Params);
+    fn run(self, params: &Self::Params);
 }
 
 // ---------------------------------------------------------------------------

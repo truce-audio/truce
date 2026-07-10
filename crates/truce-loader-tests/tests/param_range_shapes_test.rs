@@ -23,14 +23,25 @@ struct ShapesParams {
     reversed: truce_params::FloatParam,
     #[param(name = "Reversed log", range = "reversed(log(20, 20000))")]
     reversed_log: truce_params::FloatParam,
-    #[param(name = "Freq", range = "log(20, 20000)", default = 440.0, smooth = "log(20)")]
+    #[param(
+        name = "Freq",
+        range = "log(20, 20000)",
+        default = 440.0,
+        smooth = "log(20)"
+    )]
     freq: truce_params::FloatParam,
 }
 
 #[test]
 fn dsl_shapes_produce_the_expected_ranges() {
     let infos = ShapesParams::new().param_infos();
-    let by_name = |n: &str| infos.iter().find(|i| i.name == n).expect("param exists").range;
+    let by_name = |n: &str| {
+        infos
+            .iter()
+            .find(|i| i.name == n)
+            .expect("param exists")
+            .range
+    };
 
     // skewed(0, 100, 0.5): the knob midpoint maps below the linear one.
     assert_eq!(by_name("Skewed").denormalize(0.5), 25.0);
@@ -49,7 +60,10 @@ fn dsl_shapes_produce_the_expected_ranges() {
     // reversed(log) still round-trips.
     let rev_log = by_name("Reversed log");
     let back = rev_log.denormalize(rev_log.normalize(2000.0));
-    assert!((back - 2000.0).abs() < 0.01, "reversed-log round trip: {back}");
+    assert!(
+        (back - 2000.0).abs() < 0.01,
+        "reversed-log round trip: {back}"
+    );
 }
 
 #[test]
@@ -88,5 +102,8 @@ fn log_smoothing_stays_positive_and_converges() {
         last = p.freq.read();
         assert!(last > 0.0, "log smoothing dipped to {last}");
     }
-    assert!((f64::from(last) - 4000.0).abs() < 1.0, "did not converge: {last}");
+    assert!(
+        (f64::from(last) - 4000.0).abs() < 1.0,
+        "did not converge: {last}"
+    );
 }

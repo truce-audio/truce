@@ -43,7 +43,7 @@ pub struct StaticShell<P: Params, L: PluginLogicCore<S, Params = P>, S: Sample =
     /// pay nothing. A plugin that has published once stays subscribed.
     try_snapshot: bool,
     sample_rate: f64,
-    /// Background-task spawner for the plugin's `BackgroundTasks::Task`,
+    /// Background-task spawner bundle (one lane per declared task type),
     /// when the plugin wired `tasks:` on `plugin!`. Type-erased; stamped
     /// into each block's `ProcessContext` so `ctx.tasks::<T>()` works.
     /// `None` for a plugin with no background tasks.
@@ -308,7 +308,7 @@ macro_rules! export_static {
         params: $params:ty,
         info: $info:expr,
         logic: $logic:ty,
-        $(tasks: $tasks:ty,)?
+        $(tasks: [$($task:ty),+],)?
     ) => {
         pub struct __HotShellWrapper {
             // `Sample` here resolves to the type alias the user
@@ -405,36 +405,34 @@ macro_rules! export_static {
 
             fn create() -> Self {
                 let params = std::sync::Arc::new(<$params>::new());
-                // `tasks:` on `plugin!` wires the background-task spawner;
-                // absent, the shell runs with no pool.
+                // Each `tasks: [..]` type gets its own lane (queue + mode).
+                // The bundle collapses to `None` when no types were listed,
+                // so a plugin with no tasks runs with no pool.
                 #[allow(unused_mut)]
-                let mut tasks: ::core::option::Option<
-                    $crate::__macro_deps::truce_core::tasks::AnyTaskSpawner,
-                > = ::core::option::Option::None;
+                let mut __task_bundle =
+                    $crate::__macro_deps::truce_core::tasks::TaskSpawnerBundle::new();
                 $(
-                    let __task_run = {
-                        let params = std::sync::Arc::clone(&params);
-                        move |task| {
-                            <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::run_task(
-                                task, &params,
-                            )
-                        }
-                    };
-                    // `SERIALIZED` picks one-slot vs concurrent draining;
-                    // the const folds the branch away at compile time.
-                    let spawner = if <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::SERIALIZED {
-                        $crate::__macro_deps::truce_core::tasks::TaskSpawner::<
-                            <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::Task,
-                        >::new_serialized(__task_run)
-                    } else {
-                        $crate::__macro_deps::truce_core::tasks::TaskSpawner::<
-                            <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::Task,
-                        >::new(__task_run)
-                    };
-                    tasks = ::core::option::Option::Some(
-                        $crate::__macro_deps::truce_core::tasks::AnyTaskSpawner::new(&spawner),
-                    );
+                    $({
+                        let __task_run = {
+                            let params = std::sync::Arc::clone(&params);
+                            move |task| {
+                                <$task as $crate::__macro_deps::truce_plugin::BackgroundTask>::run(
+                                    task, &params,
+                                )
+                            }
+                        };
+                        // `SERIALIZED` picks one-slot vs concurrent draining
+                        // for this lane; the const folds the branch at
+                        // compile time.
+                        let __spawner = if <$task as $crate::__macro_deps::truce_plugin::BackgroundTask>::SERIALIZED {
+                            $crate::__macro_deps::truce_core::tasks::TaskSpawner::<$task>::new_serialized(__task_run)
+                        } else {
+                            $crate::__macro_deps::truce_core::tasks::TaskSpawner::<$task>::new(__task_run)
+                        };
+                        __task_bundle.push(__spawner);
+                    })+
                 )?
+                let tasks = __task_bundle.into_any();
                 // The descriptor `$logic` is stateless; `from_parts`
                 // builds the DSP state via `<$logic>::init(&params, &cx)`.
                 Self {
