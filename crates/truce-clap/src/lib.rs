@@ -354,7 +354,14 @@ unsafe fn input_channel_slice<S: Sample, H: Sample>(
     scratch: &mut Vec<S>,
 ) -> &'static [S] {
     if host_ptr.is_null() {
-        return &[];
+        // Unconnected channel (an unrouted sidechain port). The plugin
+        // negotiated it, so hand back block-length silence, not an empty
+        // slice it would read out of range.
+        scratch.clear();
+        scratch.resize(num_frames, S::default());
+        // SAFETY: `scratch` outlives the returned slice (same fictional
+        // 'static convention as the non-null path).
+        return unsafe { std::slice::from_raw_parts(scratch.as_ptr(), num_frames) };
     }
     unsafe {
         if S::IS_F64 == H::IS_F64 {
@@ -385,7 +392,13 @@ unsafe fn output_channel_slice<S: Sample, H: Sample>(
     scratch: &mut Vec<S>,
 ) -> &'static mut [S] {
     if host_ptr.is_null() {
-        return &mut [];
+        // Unconnected output channel: block-length discard scratch to
+        // write into rather than an empty slice. The caller records
+        // `HostOutPtr::Null`, so the copy-back skips this slot.
+        scratch.clear();
+        scratch.resize(num_frames, S::default());
+        // SAFETY: `scratch` outlives the returned slice.
+        return unsafe { std::slice::from_raw_parts_mut(scratch.as_mut_ptr(), num_frames) };
     }
     unsafe {
         if S::IS_F64 == H::IS_F64 {
@@ -1640,7 +1653,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     let host_ptr: *const f64 = *buf.data64.add(ch as usize);
                     input_channel_slice::<P::Sample, f64>(host_ptr, num_frames, scratch)
                 } else if buf.data32.is_null() {
-                    &[]
+                    // Whole input port disconnected (null channel-pointer
+                    // array): feed this channel block-length silence.
+                    input_channel_slice::<P::Sample, f32>(std::ptr::null(), num_frames, scratch)
                 } else {
                     let host_ptr: *const f32 = *buf.data32.add(ch as usize);
                     input_channel_slice::<P::Sample, f32>(host_ptr, num_frames, scratch)
@@ -3984,6 +3999,40 @@ mod transport_tests {
         // SAFETY: see above - zeroed POD, no seconds-timeline flag.
         let t: clap_event_transport = unsafe { std::mem::zeroed() };
         assert_eq!(build_transport_info(&t, 48_000.0).position_samples, 0);
+    }
+}
+
+#[cfg(test)]
+mod channel_slice_tests {
+    use super::{input_channel_slice, output_channel_slice};
+
+    /// An unconnected CLAP input port (null channel pointer) reaches the
+    /// plugin as block-length silence, never the empty slice it would read
+    /// out of range.
+    #[test]
+    fn null_input_channel_reads_block_length_silence() {
+        let nf = 256usize;
+        let mut scratch = Vec::<f32>::new();
+        // SAFETY: the null pointer is the unconnected-port case under test;
+        // `scratch` outlives the returned slice within this call.
+        let slice = unsafe { input_channel_slice::<f32, f32>(std::ptr::null(), nf, &mut scratch) };
+        assert_eq!(slice.len(), nf);
+        assert!(slice.iter().all(|&s| s == 0.0));
+    }
+
+    /// A null output channel is a block-length discard buffer the plugin
+    /// can write without an out-of-range panic.
+    #[test]
+    fn null_output_channel_is_block_length_discard() {
+        let nf = 256usize;
+        let mut scratch = Vec::<f32>::new();
+        // SAFETY: the null pointer is the unconnected-port case under test.
+        let slice =
+            unsafe { output_channel_slice::<f32, f32>(std::ptr::null_mut(), nf, &mut scratch) };
+        assert_eq!(slice.len(), nf);
+        for s in slice.iter_mut() {
+            *s = 1.0;
+        }
     }
 }
 

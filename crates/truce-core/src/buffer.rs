@@ -524,11 +524,17 @@ pub struct RawBufferScratch<S: Sample = f32> {
     /// we widen/narrow on the way in. In either case the slice the
     /// plugin sees points into the matching slot here.
     input_copies: Vec<Vec<S>>,
-    /// Per-channel output scratch. Only populated by [`Self::build`]
-    /// when the host buffer precision differs from `S`; the wrapper
-    /// copies + casts these back to the host buffer at the end of the
-    /// block via [`Self::finish_widening`].
+    /// Per-channel output scratch. Populated by [`Self::build`] when
+    /// the host buffer precision differs from `S` (the wrapper copies +
+    /// casts these back via [`Self::finish_widening`]), and reused as
+    /// write-discard scratch for an unconnected (null) output channel.
     output_buffers: Vec<Vec<S>>,
+    /// Shared read-only silence handed to the plugin for an unconnected
+    /// (null) input channel - an unrouted sidechain, or an LV2 port the
+    /// host never connected. The plugin negotiated the channel, so it
+    /// must read block-length silence, never the out-of-range empty
+    /// slice a raw null would otherwise produce. Never written.
+    silence: Vec<S>,
 }
 
 impl<S: Sample> RawBufferScratch<S> {
@@ -547,10 +553,12 @@ impl<S: Sample> RawBufferScratch<S> {
     /// # Safety
     /// - `inputs` must point to `num_in` valid `*const H` pointers
     ///   (each non-null pointer must address at least `num_frames`
-    ///   readable samples; null is allowed and yields an empty slice).
+    ///   readable samples; a null pointer marks an unconnected channel
+    ///   and reads back as block-length silence).
     /// - `outputs` must point to `num_out` valid `*mut H` pointers
     ///   (each non-null pointer must address at least `num_frames`
-    ///   writable samples; null is allowed and yields an empty slice).
+    ///   writable samples; a null pointer marks an unconnected channel
+    ///   whose writes are discarded).
     /// - The pointed-to memory must remain valid for the lifetime of
     ///   the returned `AudioBuffer`.
     pub unsafe fn build<H: Sample>(
@@ -660,14 +668,20 @@ impl<S: Sample> RawBufferScratch<S> {
 
             // Grow per-channel scratch slots if the bus widened or
             // we're widening precision and need every channel copied.
+            // `output_buffers` grows unconditionally now: an unconnected
+            // output channel discards its writes into this scratch even in
+            // the same-precision path.
             while self.input_copies.len() < num_in_u {
                 self.input_copies.push(Vec::new());
             }
-            if !same_precision {
-                while self.output_buffers.len() < num_out_u {
-                    self.output_buffers.push(Vec::new());
-                }
+            while self.output_buffers.len() < num_out_u {
+                self.output_buffers.push(Vec::new());
             }
+            // Block-length silence for any unconnected input channel.
+            if self.silence.len() < nf {
+                self.silence.resize(nf, S::default());
+            }
+            let silence_ptr = self.silence.as_ptr();
 
             self.input_slices.clear();
             self.input_slices.reserve(num_in_u);
@@ -675,7 +689,10 @@ impl<S: Sample> RawBufferScratch<S> {
             for ch in 0..num_in_u {
                 let ptr = *inputs.add(ch);
                 let slice: &[S] = if ptr.is_null() {
-                    &[]
+                    // Unconnected channel (unrouted sidechain, unbound LV2
+                    // port). The plugin negotiated it, so hand it
+                    // block-length silence, not an out-of-range empty slice.
+                    std::slice::from_raw_parts(silence_ptr, nf)
                 } else if aliases_any_output(ptr) {
                     if ch < 64 {
                         in_place_mask |= 1 << ch;
@@ -732,7 +749,17 @@ impl<S: Sample> RawBufferScratch<S> {
             for ch in 0..num_out_u {
                 let ptr = *outputs.add(ch);
                 let slice: &mut [S] = if ptr.is_null() {
-                    &mut []
+                    // Unconnected output channel: give the plugin a
+                    // block-length discard buffer to write into rather than
+                    // an empty slice it would index out of range.
+                    // `finish_widening` skips it (null host pointer), so
+                    // nothing is copied back.
+                    let buf = &mut self.output_buffers[ch];
+                    buf.clear();
+                    buf.resize(nf, S::default());
+                    let p = buf.as_mut_ptr();
+                    let l = buf.len();
+                    std::slice::from_raw_parts_mut(p, l)
                 } else if same_precision {
                     // SAFETY: same-precision branch - host pointer is
                     // already `*mut S` modulo runtime type identity.
@@ -791,6 +818,11 @@ impl<S: Sample> RawBufferScratch<S> {
                 buf.reserve_exact(max_frames - buf.capacity());
             }
         }
+        // Shared silence for unconnected input channels, kept block-sized
+        // and zeroed so `build` never allocates it on the audio thread.
+        if self.silence.len() < max_frames {
+            self.silence.resize(max_frames, S::default());
+        }
     }
 }
 
@@ -801,6 +833,7 @@ impl<S: Sample> Default for RawBufferScratch<S> {
             output_slices: Vec::with_capacity(2),
             input_copies: Vec::with_capacity(2),
             output_buffers: Vec::with_capacity(2),
+            silence: Vec::new(),
         }
     }
 }
@@ -956,33 +989,31 @@ mod tests {
         }
     }
 
-    /// The inverse: a raw null channel pointer (what a deactivated bus
-    /// would forward without the shim's substitution) collapses to an
-    /// empty slice that cannot serve a full block - the debug assertion in
-    /// `AudioBuffer::from_slices` catches it. This is the exact hazard the
-    /// shim normalization prevents.
+    /// A raw null channel pointer is handled at the `build` layer itself:
+    /// a null input reads as block-length silence and a null output absorbs
+    /// the plugin's writes into discard scratch - so a wrapper that hands
+    /// `build` a null (a CLAP/VST2/LV2 port the host left unconnected) can
+    /// never produce the out-of-range empty slice that used to panic.
     #[test]
-    #[should_panic(expected = "exceeds input channel")]
-    #[cfg(debug_assertions)]
-    fn raw_null_sidechain_channel_is_rejected() {
+    fn raw_null_channels_read_silence_and_discard_writes() {
         let nf = 512usize;
         let main_l = vec![0.5f32; nf];
         let main_r = vec![0.5f32; nf];
         let mut out_l = vec![0.0f32; nf];
-        let mut out_r = vec![0.0f32; nf];
+        // Input channels 2/3 and output channel 1 arrive unconnected.
         let in_ptrs = [
             main_l.as_ptr(),
             main_r.as_ptr(),
             std::ptr::null(),
             std::ptr::null(),
         ];
-        let mut out_ptrs = [out_l.as_mut_ptr(), out_r.as_mut_ptr()];
+        let mut out_ptrs = [out_l.as_mut_ptr(), std::ptr::null_mut()];
         let mut scratch = RawBufferScratch::<f32>::default();
         // SAFETY: the non-null pointers address `nf` valid samples; the
-        // null channels are the deactivated-bus shape under test.
+        // null channels are the unconnected-port shape under test.
         unsafe {
             #[allow(clippy::cast_possible_truncation)]
-            let _ = scratch.build(
+            let mut buf = scratch.build(
                 in_ptrs.as_ptr(),
                 out_ptrs.as_mut_ptr(),
                 4,
@@ -990,6 +1021,17 @@ mod tests {
                 nf as u32,
                 false,
             );
+            assert_eq!(buf.num_input_channels(), 4);
+            assert_eq!(buf.num_output_channels(), 2);
+            // Null input channels read as full-length silence.
+            assert_eq!(buf.input(2).len(), nf);
+            assert!(buf.input(3).iter().all(|&s| s == 0.0));
+            // The null output channel is a full-length discard buffer: the
+            // plugin can write it without an out-of-range panic.
+            assert_eq!(buf.output(1).len(), nf);
+            for s in buf.output(1) {
+                *s = 1.0;
+            }
         }
     }
 }
