@@ -153,6 +153,8 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
     mMaxBlockSize = 8192;
     g_bridge.reset(mRustCtx, (double)sr, mMaxBlockSize);
     mSampleRate = (double)sr;
+    // Silence for unpatched/missing input channels (see mSilence).
+    mSilence.assign(mMaxBlockSize, 0.0f);
 
     // Channel counts come from the stem format this instance was
     // instantiated with, not the descriptor (which carries only the
@@ -335,6 +337,9 @@ void TruceAAX_Parameters::RenderAudio(
     if (bufferSize > 0 && (uint32_t)bufferSize > mMaxBlockSize) {
         mMaxBlockSize = (uint32_t)bufferSize;
         g_bridge.reset(mRustCtx, mSampleRate, mMaxBlockSize);
+        // Keep the silence buffer block-sized (the host already broke its
+        // own cap, so this one-off reallocation rides with the reset).
+        mSilence.assign(mMaxBlockSize, 0.0f);
     }
 
     // Build channel pointers. This instance's channel count comes from
@@ -360,16 +365,20 @@ void TruceAAX_Parameters::RenderAudio(
     // side-chain is always mono; duplicate it across the plugin's declared
     // sidechain width so a stereo-sidechain plugin gets it on both
     // channels. `*mSideChainP` is 0 when no side-chain source is patched -
-    // then numIn stays at the main width and the plugin runs dry.
-    if (g_descriptor.sidechain_in_channels > 0 && ioRenderInfo->mAudioInputs) {
+    // the plugin still negotiated the wider layout, so feed block-sized
+    // silence for the declared sidechain width rather than leaving numIn
+    // short (reading an absent sidechain channel is an out-of-range panic
+    // in the Rust bridge). The `!mSilence.empty()` guard keeps a null out
+    // of `inputs` if EffectInit never sized the buffer.
+    if (g_descriptor.sidechain_in_channels > 0 && !mSilence.empty()) {
         auto* extInfo = reinterpret_cast<TruceAaxExtendedRenderInfo*>(ioRenderInfo);
-        if (extInfo->mSideChainP && *extInfo->mSideChainP != 0) {
-            const float* scBuf = ioRenderInfo->mAudioInputs[*extInfo->mSideChainP];
-            for (uint32_t c = 0;
-                 c < g_descriptor.sidechain_in_channels && numIn < kMaxChannels;
-                 c++) {
-                inputs[numIn++] = scBuf;
-            }
+        const float* scBuf = nullptr;
+        if (ioRenderInfo->mAudioInputs && extInfo->mSideChainP && *extInfo->mSideChainP != 0)
+            scBuf = ioRenderInfo->mAudioInputs[*extInfo->mSideChainP];
+        for (uint32_t c = 0;
+             c < g_descriptor.sidechain_in_channels && numIn < kMaxChannels;
+             c++) {
+            inputs[numIn++] = scBuf ? scBuf : mSilence.data();
         }
     }
 

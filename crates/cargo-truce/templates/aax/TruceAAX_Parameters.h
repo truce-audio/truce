@@ -94,6 +94,14 @@ private:
     // this many host pointers, not the descriptor's first-layout count.
     uint32_t mNumInputChannels = 0;
     uint32_t mNumOutputChannels = 0;
+    // Block-sized zeroed buffer handed to the plugin for a declared but
+    // unpatched (or missing) input channel - chiefly a sidechain with no
+    // source routed. The plugin negotiated the wider layout, so a missing
+    // channel must read as silence rather than leave the flat channel
+    // count short (an out-of-range read in the Rust bridge). Sized in
+    // EffectInit so RenderAudio stays alloc-free; shared read-only across
+    // every silent channel.
+    std::vector<float> mSilence;
     // Last latency (samples) pushed to the host via SetSignalLatency.
     // -1 sentinel so the first TimerWakeup always reports, even if the
     // plugin's latency is 0. Touched only on the host idle thread.

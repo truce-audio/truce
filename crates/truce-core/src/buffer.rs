@@ -905,11 +905,13 @@ mod tests {
         assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
     }
 
-    /// A disconnected VST3 sidechain reaches the plugin as block-sized
-    /// silence, not a null pointer. The VST3 shim substitutes silence for
-    /// any missing or null input channel - a deactivated bus arrives with
-    /// null channel buffers, or a trailing bus is dropped from
-    /// `ProcessData` - so the flat channel array always carries the
+    /// A disconnected sidechain reaches the plugin as block-sized silence,
+    /// not a null pointer - the uniform "declared width always; missing
+    /// buses read as silence" contract every format upholds. The VST3 shim
+    /// substitutes silence for any missing or null input channel (a
+    /// deactivated bus arrives with null channel buffers, or a trailing bus
+    /// is dropped from `ProcessData`), and the AAX shim feeds silence for an
+    /// unpatched sidechain, so the flat channel array always carries the
     /// negotiated width. This pins the downstream contract: such a channel
     /// is a readable, zeroed, block-length slice, not the out-of-range
     /// empty slice a raw null would produce.
