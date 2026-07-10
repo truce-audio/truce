@@ -277,18 +277,34 @@ pub struct OutputController {
     /// plugin drive device outputs 3-4, or fold down to a mono output.
     /// Shared with the callback.
     channel_route: Arc<AtomicUsize>,
-    /// The plugin's current channel count (= the active bus layout's
-    /// width). The worker updates it after a `SetChannels` rebuild; the
-    /// Bus Layout menu reads it to mark the active entry.
-    channels: Arc<AtomicUsize>,
+    /// The plugin's active bus layout as a packed `(num_in, num_out)` (see
+    /// [`pack_layout`]). The worker updates it after a `SetLayout` rebuild;
+    /// the Bus Layout menu reads it to mark the active entry.
+    layout: Arc<AtomicUsize>,
 }
 
 enum OutputCmd {
     SetDevice(Option<String>),
-    /// Switch the plugin to a bus layout of this channel count. The
-    /// worker rebuilds the stream at the new width (if the device
-    /// supports it), so the plugin's `process` sees the new channel count.
-    SetChannels(u16),
+    /// Switch the plugin to a declared bus layout of exactly these (input,
+    /// output) channel counts. The worker rebuilds the plugin at these
+    /// dimensions and keeps the device stream at a hardware-supported width
+    /// (mapping the plugin output onto it), so an asymmetric layout or a
+    /// width the device can't open natively still works.
+    SetLayout {
+        num_in: u16,
+        num_out: u16,
+    },
+}
+
+/// Pack a plugin `(num_in, num_out)` layout into one `usize` for the
+/// lock-free share with the menus. Both counts fit in `u16`.
+fn pack_layout(num_in: usize, num_out: usize) -> usize {
+    (num_in << 16) | (num_out & 0xFFFF)
+}
+
+/// Inverse of [`pack_layout`].
+fn unpack_layout(v: usize) -> (usize, usize) {
+    (v >> 16, v & 0xFFFF)
 }
 
 impl OutputController {
@@ -314,18 +330,18 @@ impl OutputController {
         let _ = self.cmd_tx.send(OutputCmd::SetDevice(name));
     }
 
-    /// Switch the plugin to a bus layout of `channels` width. The audio
-    /// stream is torn down and rebuilt at the new channel count; on a
-    /// device that can't provide it, the previous stream stays running
-    /// (the worker logs and keeps the old width).
-    pub fn set_channels(&self, channels: u16) {
-        let _ = self.cmd_tx.send(OutputCmd::SetChannels(channels));
+    /// Switch the plugin to a declared bus layout of exactly `(num_in,
+    /// num_out)`. The plugin is rebuilt at these dimensions; the device
+    /// stream stays at a hardware-supported width and the plugin output is
+    /// mapped onto it (so a mono layout plays through a stereo-only device).
+    pub fn set_layout(&self, num_in: u16, num_out: u16) {
+        let _ = self.cmd_tx.send(OutputCmd::SetLayout { num_in, num_out });
     }
 
-    /// The plugin's current channel count (the active bus layout's width).
+    /// The plugin's active bus layout as `(num_in, num_out)`.
     #[must_use]
-    pub fn channels(&self) -> usize {
-        self.channels.load(Ordering::Relaxed)
+    pub fn current_layout(&self) -> (usize, usize) {
+        unpack_layout(self.layout.load(Ordering::Relaxed))
     }
 
     /// Currently-resolved output device name, or `None` if not
@@ -558,7 +574,11 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         .default_output_config()
         .map_err(|e| format!("could not query default config for the audio output: {e}"))?;
 
-    let requested_channels = bus_layout_channels::<P>(opts);
+    // The plugin runs a declared bus layout; the device stream tries to
+    // match its output width but falls back to the device default (the
+    // plugin output then maps onto whatever channels the device gives).
+    let (num_in, num_out) = selected_bus_layout::<P>(opts);
+    let requested_channels = u16::try_from(num_out).ok().filter(|&c| c > 0);
     let config: cpal::StreamConfig =
         resolve_config(&initial_output, &default_config, opts, requested_channels);
     let sample_format = default_config.sample_format();
@@ -642,15 +662,15 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let output_enabled = Arc::new(AtomicBool::new(opts.output_enabled.unwrap_or(true)));
 
     let output_channel_route = Arc::new(AtomicUsize::new(0));
-    // Shared plugin channel count (active bus layout width). Seeded with
-    // the launch value; the worker updates it on a `SetChannels` rebuild.
-    let output_channels_shared = Arc::new(AtomicUsize::new(channels));
+    // Shared active bus layout, packed (num_in, num_out). Seeded with the
+    // launch selection; the worker updates it on a `SetLayout` rebuild.
+    let output_layout_shared = Arc::new(AtomicUsize::new(pack_layout(num_in, num_out)));
     let output_controller = OutputController {
         enabled: Arc::clone(&output_enabled),
         cmd_tx: output_cmd_tx,
         current_name: Arc::clone(&output_current_name),
         channel_route: Arc::clone(&output_channel_route),
-        channels: Arc::clone(&output_channels_shared),
+        layout: Arc::clone(&output_layout_shared),
     };
     // Apply `--output-channels` (and its env var) once at launch. The
     // native menus override this live; on Linux (no menu) the CLI is
@@ -717,7 +737,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         current_name: Arc::clone(&output_current_name),
         input_channel_route: Arc::clone(&input_controller.channel_route),
         output_channel_route: Arc::clone(&output_channel_route),
-        channels: Arc::clone(&output_channels_shared),
+        layout: Arc::clone(&output_layout_shared),
         promised_max_frames: Arc::new(AtomicUsize::new(initial_max_frames)),
         #[cfg(feature = "playback")]
         playback: playback.clone(),
@@ -736,7 +756,8 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
                 config,
                 sample_format,
                 sample_rate,
-                channels,
+                num_in,
+                num_out,
                 is_effect,
                 res,
             );
@@ -903,10 +924,10 @@ struct OutputResources<P: PluginExport> {
     /// Output channel routing (encoded [`ChannelRoute`]). Shared with
     /// `OutputController` (menu writes it).
     output_channel_route: Arc<AtomicUsize>,
-    /// The plugin's current channel count, shared with `OutputController`
-    /// so the Bus Layout menu can mark the active entry. The worker
-    /// updates it after a `SetChannels` rebuild.
-    channels: Arc<AtomicUsize>,
+    /// The plugin's active bus layout as a packed `(num_in, num_out)`,
+    /// shared with `OutputController` so the Bus Layout menu can mark the
+    /// active entry. The worker updates it after a `SetLayout` rebuild.
+    layout: Arc<AtomicUsize>,
     /// The `max_frames` the plugin was last `reset()` with. A device
     /// switch onto a larger buffer bound must renew the promise
     /// before the new stream's first callback.
@@ -934,7 +955,11 @@ fn output_worker<P: PluginExport>(
     mut config: cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     sample_rate: f64,
-    mut channels: usize,
+    // The plugin's bus dimensions. `config.channels` is the *device* stream
+    // width, which need not equal these - a mono plugin on a stereo-only
+    // device runs `num_out == 1` but the stream stays at 2.
+    mut num_in: usize,
+    mut num_out: usize,
     is_effect: bool,
     res: OutputResources<P>,
 ) {
@@ -945,7 +970,9 @@ fn output_worker<P: PluginExport>(
         &config,
         sample_format,
         sample_rate,
-        channels,
+        config.channels as usize,
+        num_in,
+        num_out,
         is_effect,
         &res,
         &mut stream,
@@ -964,7 +991,9 @@ fn output_worker<P: PluginExport>(
                     &config,
                     sample_format,
                     sample_rate,
-                    channels,
+                    config.channels as usize,
+                    num_in,
+                    num_out,
                     is_effect,
                     &res,
                     &mut stream,
@@ -972,37 +1001,49 @@ fn output_worker<P: PluginExport>(
                     eprintln!("output device switch failed: {e}");
                 }
             }
-            OutputCmd::SetChannels(new_ch) => {
-                // Validate against the current device *before* tearing the
-                // stream down, so a width the hardware can't provide leaves
-                // the running audio intact.
+            OutputCmd::SetLayout {
+                num_in: new_in,
+                num_out: new_out,
+            } => {
                 let host = cpal::default_host();
                 let name = res.current_name.lock().ok().and_then(|g| g.clone());
                 let device = match name.as_deref() {
                     Some(n) => find_device(&host, n, true),
                     None => host.default_output_device(),
                 };
-                match device {
-                    Some(dev) if device_supports_output_channels(&dev, new_ch) => {
-                        config.channels = new_ch;
-                        channels = new_ch as usize;
-                        stream = None;
-                        if let Err(e) = open_output_stream::<P>(
-                            name.as_deref(),
-                            &config,
-                            sample_format,
-                            sample_rate,
-                            channels,
-                            is_effect,
-                            &res,
-                            &mut stream,
-                        ) {
-                            eprintln!("bus-layout switch failed: {e}");
-                        } else {
-                            res.channels.store(channels, Ordering::Relaxed);
-                        }
-                    }
-                    _ => eprintln!("bus-layout: device doesn't offer {new_ch} output channels"),
+                let Some(dev) = device else {
+                    eprintln!("bus-layout: no output device");
+                    continue;
+                };
+                // Keep the device stream at a width the hardware can open.
+                // Prefer the layout's output width (so a surround device
+                // plays surround), else keep the current stream width and
+                // map the plugin output onto it (a mono layout plays
+                // through a stereo-only device instead of being rejected).
+                config.channels = if device_supports_output_channels(&dev, new_out) {
+                    new_out
+                } else {
+                    config.channels
+                };
+                num_in = new_in as usize;
+                num_out = new_out as usize;
+                stream = None;
+                if let Err(e) = open_output_stream::<P>(
+                    name.as_deref(),
+                    &config,
+                    sample_format,
+                    sample_rate,
+                    config.channels as usize,
+                    num_in,
+                    num_out,
+                    is_effect,
+                    &res,
+                    &mut stream,
+                ) {
+                    eprintln!("bus-layout switch failed: {e}");
+                } else {
+                    res.layout
+                        .store(pack_layout(num_in, num_out), Ordering::Relaxed);
                 }
             }
         }
@@ -1016,7 +1057,11 @@ fn open_output_stream<P: PluginExport>(
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     sample_rate: f64,
+    // Device interleave stride (= `config.channels`); the plugin's bus is
+    // (`num_in`, `num_out`), mapped onto these device channels by the route.
     channels: usize,
+    num_in: usize,
+    num_out: usize,
     is_effect: bool,
     res: &OutputResources<P>,
     stream_slot: &mut Option<cpal::Stream>,
@@ -1106,7 +1151,7 @@ fn open_output_stream<P: PluginExport>(
             .expect("plugin mutex poisoned at audio setup");
         p.reset(&AudioConfig::new(sample_rate, frame_bound));
     }
-    scratch.ensure_capacity(channels, channels, frame_bound);
+    scratch.ensure_capacity(num_in, num_out, frame_bound);
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -1116,6 +1161,8 @@ fn open_output_stream<P: PluginExport>(
                     audio_callback::<P>(
                         data,
                         channels,
+                        num_in,
+                        num_out,
                         sample_rate,
                         is_effect,
                         &plugin_a,
@@ -1341,24 +1388,31 @@ fn find_device(host: &cpal::Host, name: &str, output: bool) -> Option<cpal::Devi
 /// Build the cpal `StreamConfig` honoring opts where possible. Falls
 /// back to the device's default config for any unspecified or
 /// unsupported choice.
-/// Channel count to request for a `--bus-layout <index>` selection: the
-/// wider of that layout's total input / output channels. `None` (no
-/// selection) keeps the device default. Out-of-range warns and falls back.
-fn bus_layout_channels<P: PluginExport>(opts: &Options) -> Option<u16> {
-    let idx = opts.bus_layout?;
+/// The exact `(num_in, num_out)` channel counts of the bus layout the
+/// standalone runs. `--bus-layout <index>` selects it (out-of-range warns
+/// and falls back); with no selection the plugin's first (default) layout
+/// is used. The plugin always runs a *declared* layout - never the
+/// device's default channel count.
+fn selected_bus_layout<P: PluginExport>(opts: &Options) -> (usize, usize) {
     let layouts = P::bus_layouts();
-    let Some(layout) = layouts.get(idx) else {
-        eprintln!(
-            "--bus-layout {idx}: out of range (plugin declares {} layout(s)); \
-             using the device default",
-            layouts.len()
-        );
-        return None;
+    let idx = match opts.bus_layout {
+        Some(i) if i < layouts.len() => i,
+        Some(i) => {
+            eprintln!(
+                "--bus-layout {i}: out of range (plugin declares {} layout(s)); \
+                 using the default layout",
+                layouts.len()
+            );
+            0
+        }
+        None => 0,
     };
-    let ch = layout
-        .total_output_channels()
-        .max(layout.total_input_channels());
-    u16::try_from(ch).ok().filter(|&c| c > 0)
+    layouts.get(idx).map_or((0, 0), |l| {
+        (
+            l.total_input_channels() as usize,
+            l.total_output_channels() as usize,
+        )
+    })
 }
 
 /// Whether the output device advertises a config with exactly `ch`
@@ -1378,8 +1432,9 @@ fn resolve_config(
     let mut channels = default.channels();
     // A `--bus-layout` selection runs the plugin at that layout's channel
     // count, so request it from the device. The device has to support the
-    // count (you can't get 6 channels from a stereo interface); otherwise
-    // keep the device default and warn.
+    // count so the device stream matches (a 6-channel device plays 5.1
+    // directly); otherwise keep the device default and map the plugin's
+    // output onto it - the plugin still runs its declared layout.
     if let Some(req) = requested_channels {
         if req == channels {
             // Already the default - nothing to do.
@@ -1387,8 +1442,9 @@ fn resolve_config(
             channels = req;
         } else {
             eprintln!(
-                "--bus-layout: device doesn't offer {req} output channels; \
-                 running the plugin at the device's {channels}"
+                "bus-layout: device doesn't offer {req} output channels; \
+                 keeping the {channels}-channel device stream and mapping \
+                 the plugin's output onto it"
             );
         }
     }
@@ -1448,7 +1504,19 @@ impl BufferSizeMax for cpal::StreamConfig {
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn audio_callback<P: PluginExport>(
     data: &mut [f32],
+    // Device interleave stride (the cpal stream's channel count). Kept
+    // separate from the plugin's bus dimensions so a plugin bus that
+    // doesn't match the device (a mono plugin on a stereo-only output, a
+    // mono-in/stereo-out effect) maps onto the device channels via the
+    // route rather than forcing a device stream at the plugin's width,
+    // which the hardware may not offer.
     channels: usize,
+    // The active bus layout's exact (input, output) channel counts. Input
+    // scratch is sized to `num_in`, output to `num_out`, so an asymmetric
+    // layout (1 -> 2, 2 -> 1) runs at its real dimensions instead of a
+    // single collapsed width.
+    num_in: usize,
+    num_out: usize,
     sample_rate: f64,
     is_effect: bool,
     plugin: &Arc<Mutex<P>>,
@@ -1494,35 +1562,43 @@ fn audio_callback<P: PluginExport>(
         });
     }
 
-    // Re-shape the persistent channel scratch to (channels, num_frames)
-    // and zero it. `Vec::resize` and `Vec::resize(.., 0.0)` only
-    // allocate when growing past capacity, so a stable cpal stream
-    // (fixed channels + buffer size) does not allocate after warm-up.
-    channel_bufs.resize_with(channels, Vec::new);
+    // Re-shape the plugin's output scratch to (num_out, num_frames) and
+    // zero it - the plugin writes here, and it maps onto the device buffer
+    // afterward. `Vec::resize` only allocates when growing past capacity,
+    // so a stable cpal stream (fixed layout + buffer size) doesn't allocate
+    // after warm-up.
+    channel_bufs.resize_with(num_out, Vec::new);
     for buf in channel_bufs.iter_mut() {
         buf.clear();
         buf.resize(num_frames, 0.0);
     }
 
     // Effect-only input plumbing: mic + file are independent input
-    // sources that *sum* into the plugin's bus, and the plugin reads
-    // from `input_bufs` while writing to `channel_bufs`. Three
-    // `is_effect`-gated steps live together here so the invariant
-    // ("only effects have inputs") stays in one place - instruments
-    // skip the whole block and just clear `input_bufs`.
+    // sources that *sum* into the plugin's input bus (`input_bufs`, sized
+    // `num_in`), separate from the output the plugin writes (`channel_bufs`,
+    // sized `num_out`). Instruments skip the whole block and just clear
+    // `input_bufs`.
     if is_effect {
-        // (1) Mic ring → channel_bufs (per-block sum).
+        // Input scratch: (num_in, num_frames), zeroed. Same
+        // resize-without-realloc trick as the output above.
+        input_bufs.resize_with(num_in, Vec::new);
+        for buf in input_bufs.iter_mut() {
+            buf.clear();
+            buf.resize(num_frames, 0.0);
+        }
+        // (1) Mic ring → input_bufs (per-block sum).
         if input_enabled.load(Ordering::Relaxed)
             && let Ok(mut ring) = input_ring.try_lock()
         {
             // Map device input channels onto the plugin's input bus per
-            // the selected route. `Direct` is the 1:1 default; `Stereo`
-            // pulls a chosen device pair into plugin in 0/1; `Mono`
-            // feeds one device channel into both plugin inputs. Bounds
-            // checks keep an out-of-range base (e.g. after a device
+            // the selected route. `Direct` is the 1:1 default (clamped to
+            // `num_in`, so a narrower plugin bus drops the extra device
+            // channels); `Stereo` pulls a chosen device pair into plugin in
+            // 0/1; `Mono` feeds one device channel into both plugin inputs.
+            // Bounds checks keep an out-of-range base (e.g. after a device
             // swap to fewer channels) from indexing past the frame.
             let route = ChannelRoute::decode(input_channel_route.load(Ordering::Relaxed));
-            let n_buf = channel_bufs.len();
+            let n_in = input_bufs.len();
             let needed = num_frames * channels;
             let available = ring.len().min(needed);
             for i in 0..available / channels {
@@ -1532,24 +1608,24 @@ fn audio_callback<P: PluginExport>(
                 let frame = &ring[i * channels..i * channels + channels];
                 match route {
                     ChannelRoute::Direct => {
-                        for ch in 0..channels {
-                            channel_bufs[ch][i] += frame[ch];
+                        for ch in 0..channels.min(n_in) {
+                            input_bufs[ch][i] += frame[ch];
                         }
                     }
                     ChannelRoute::Stereo { base } => {
-                        if base < channels {
-                            channel_bufs[0][i] += frame[base];
+                        if base < channels && n_in > 0 {
+                            input_bufs[0][i] += frame[base];
                         }
-                        if n_buf > 1 && base + 1 < channels {
-                            channel_bufs[1][i] += frame[base + 1];
+                        if n_in > 1 && base + 1 < channels {
+                            input_bufs[1][i] += frame[base + 1];
                         }
                     }
                     ChannelRoute::Mono { base } => {
-                        if base < channels {
+                        if base < channels && n_in > 0 {
                             let s = frame[base];
-                            channel_bufs[0][i] += s;
-                            if n_buf > 1 {
-                                channel_bufs[1][i] += s;
+                            input_bufs[0][i] += s;
+                            if n_in > 1 {
+                                input_bufs[1][i] += s;
                             }
                         }
                     }
@@ -1560,21 +1636,10 @@ fn audio_callback<P: PluginExport>(
             }
         }
 
-        // (2) Playback file → channel_bufs (per-block sum, summed on
-        // top of mic above).
+        // (2) Playback file → input_bufs (per-block sum, on top of mic).
         #[cfg(feature = "playback")]
         if let Some(src) = playback {
-            src.mix_into(channel_bufs, num_frames);
-        }
-
-        // (3) Mirror channel_bufs into input_bufs so the plugin can
-        // hold an immutable input slice and a mutable output slice
-        // pointing at independent storage. Same resize-without-realloc
-        // trick as above.
-        input_bufs.resize_with(channels, Vec::new);
-        for (dst, src) in input_bufs.iter_mut().zip(channel_bufs.iter()) {
-            dst.clear();
-            dst.extend_from_slice(src);
+            src.mix_into(input_bufs, num_frames);
         }
     } else {
         input_bufs.clear();

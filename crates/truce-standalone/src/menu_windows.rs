@@ -85,8 +85,9 @@ const MENU_CMD_INPUT_CHANNELS_BASE: u16 = 0xC300;
 const MENU_CMD_INPUT_CHANNELS_END: u16 = 0xC3FF;
 const MENU_CMD_OUTPUT_CHANNELS_BASE: u16 = 0xC400;
 const MENU_CMD_OUTPUT_CHANNELS_END: u16 = 0xC4FF;
-/// Bus Layout submenu. `MENU_CMD_BUS_LAYOUT_BASE + channel_width` per
-/// item, so the command carries the width for `set_channels`.
+/// Bus Layout submenu. `MENU_CMD_BUS_LAYOUT_BASE + layout_index` per item,
+/// so the command carries the index the handler resolves to an exact
+/// `(in, out)` for `set_layout` (256 slots cover any layout count).
 const MENU_CMD_BUS_LAYOUT_BASE: u16 = 0xC500;
 const MENU_CMD_BUS_LAYOUT_END: u16 = 0xC5FF;
 
@@ -670,11 +671,15 @@ unsafe extern "system" fn subclass_proc(
                 if !state.hmenu_bus_layout.is_null()
                     && (MENU_CMD_BUS_LAYOUT_BASE..=MENU_CMD_BUS_LAYOUT_END).contains(&cmd_id)
                 {
-                    // Command carries the target channel width; rebuild the
-                    // stream at it. The checkmark refreshes on next open.
-                    let channels = cmd_id - MENU_CMD_BUS_LAYOUT_BASE;
-                    vlog!("bus layout: {channels} channels");
-                    state.output.set_channels(channels);
+                    // Command carries the layout *index*; look up its exact
+                    // (in, out) and rebuild the plugin at those dimensions.
+                    // Index (not width) so two layouts sharing a maximum
+                    // width stay distinct. The checkmark refreshes on open.
+                    let idx = usize::from(cmd_id - MENU_CMD_BUS_LAYOUT_BASE);
+                    if let Some(&(num_in, num_out)) = state.bus_layouts.get(idx) {
+                        vlog!("bus layout: {num_in} in / {num_out} out");
+                        state.output.set_layout(num_in, num_out);
+                    }
                     return 0;
                 }
 
@@ -747,7 +752,11 @@ unsafe extern "system" fn subclass_proc(
                         MENU_CMD_OUTPUT_CHANNELS_BASE,
                     );
                 } else if !state.hmenu_bus_layout.is_null() && popup == state.hmenu_bus_layout {
-                    repopulate_bus_layout_menu(popup, &state.bus_layouts, state.output.channels());
+                    repopulate_bus_layout_menu(
+                        popup,
+                        &state.bus_layouts,
+                        state.output.current_layout(),
+                    );
                 } else if let Some(port) = state
                     .hmenu_midi_inputs
                     .iter()
@@ -916,23 +925,26 @@ unsafe fn repopulate_channel_menu(
 
 /// Rebuild the Bus Layout popup: one item per declared layout, labelled
 /// by its I/O channel counts. Each item's command ID is
-/// `MENU_CMD_BUS_LAYOUT_BASE + channel_width`; the layout whose width is
-/// the plugin's current count gets `MF_CHECKED`.
+/// `MENU_CMD_BUS_LAYOUT_BASE + index`; the layout matching the plugin's
+/// current `(in, out)` gets `MF_CHECKED`. Index (not width) so two layouts
+/// that share a maximum width stay distinct commands.
 unsafe fn repopulate_bus_layout_menu(
     popup: HMENU,
     layouts: &[(u16, u16)],
-    current_channels: usize,
+    current_layout: (usize, usize),
 ) {
     unsafe {
         let count = GetMenuItemCount(popup);
         for _ in 0..count {
             DeleteMenu(popup, 0, MF_BYPOSITION);
         }
-        for (in_ch, out_ch) in layouts {
-            let width = (*in_ch).max(*out_ch);
-            let cmd = MENU_CMD_BUS_LAYOUT_BASE.wrapping_add(width);
+        for (idx, (in_ch, out_ch)) in layouts.iter().enumerate() {
+            let Ok(idx16) = u16::try_from(idx) else {
+                break;
+            };
+            let cmd = MENU_CMD_BUS_LAYOUT_BASE.wrapping_add(idx16);
             let mut flags = MF_STRING;
-            if usize::from(width) == current_channels {
+            if (usize::from(*in_ch), usize::from(*out_ch)) == current_layout {
                 flags |= MF_CHECKED;
             }
             let text = wide(&format!("{in_ch} in / {out_ch} out"));
