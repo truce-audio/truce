@@ -79,9 +79,7 @@ pub const TRUCE_AAX_RANGE_CUSTOM: u8 = 3;
 fn aax_range_type(range: &ParamRange) -> u8 {
     match range {
         ParamRange::Linear { .. } => TRUCE_AAX_RANGE_LINEAR,
-        ParamRange::Skewed { .. } | ParamRange::SymmetricalSkewed { .. } => {
-            TRUCE_AAX_RANGE_CUSTOM
-        }
+        ParamRange::Skewed { .. } | ParamRange::SymmetricalSkewed { .. } => TRUCE_AAX_RANGE_CUSTOM,
         ParamRange::Logarithmic { .. } => TRUCE_AAX_RANGE_LOG,
         ParamRange::Discrete { .. } | ParamRange::Enum { .. } => TRUCE_AAX_RANGE_DISCRETE,
         ParamRange::Reversed(inner) => aax_range_type(inner),

@@ -246,48 +246,57 @@ impl Vst2TransportSnapshot {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
-    let mut plugin = P::create();
-    plugin.init();
-    let info = P::info();
-    let param_infos = plugin.params().param_infos();
-    let params_arc = plugin.params_arc();
-    let meter_store = plugin.meter_store();
-    let snapshot = plugin.snapshot_slot();
-    let task_spawner = plugin.task_spawner();
-    let editor_builder = plugin.editor_builder();
-    let latency_cache = AtomicU32::new(plugin.latency());
-    let tail_cache = AtomicU32::new(plugin.tail());
-    let instance = Box::new(Vst2Instance::<P> {
-        plugin: shared_plugin(plugin),
-        params_arc,
-        snapshot,
-        task_spawner,
-        editor_builder,
-        meter_store,
-        latency_cache,
-        tail_cache,
-        event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sysex_inputs_pending: false,
-        output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        param_infos,
-        min_subblock_samples: info.automation.min_subblock_samples,
-        plugin_id_hash: state::shared_plugin_state_hash(&info),
-        sample_rate: 44100.0,
-        // 8192 covers the largest block sizes mainstream DAWs use; a
-        // non-zero default keeps the process-before-prepared path
-        // from tripping the contract assert.
-        max_block_size: 8192,
-        prepared: false,
-        scratch: RawBufferScratch::default(),
-        editor: None,
-        aeffect_ptr: std::ptr::null_mut(),
-        state_loaded: false,
-        pending_editor_parent: None,
-        transport_slot: TransportSlot::new(),
-        pending_state: Arc::new(StateLoadQueue::new(1)),
-    });
-    Box::into_raw(instance).cast::<std::ffi::c_void>()
+    // `P::create` + author `init` run here; firewall them so a panic can't
+    // unwind across the C ABI (null = "instantiation failed").
+    run_extern_callback_with::<P, *mut std::ffi::c_void>(
+        "vst2",
+        "create",
+        std::ptr::null_mut(),
+        || {
+            let mut plugin = P::create();
+            plugin.init();
+            let info = P::info();
+            let param_infos = plugin.params().param_infos();
+            let params_arc = plugin.params_arc();
+            let meter_store = plugin.meter_store();
+            let snapshot = plugin.snapshot_slot();
+            let task_spawner = plugin.task_spawner();
+            let editor_builder = plugin.editor_builder();
+            let latency_cache = AtomicU32::new(plugin.latency());
+            let tail_cache = AtomicU32::new(plugin.tail());
+            let instance = Box::new(Vst2Instance::<P> {
+                plugin: shared_plugin(plugin),
+                params_arc,
+                snapshot,
+                task_spawner,
+                editor_builder,
+                meter_store,
+                latency_cache,
+                tail_cache,
+                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sysex_inputs_pending: false,
+                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                param_infos,
+                min_subblock_samples: info.automation.min_subblock_samples,
+                plugin_id_hash: state::shared_plugin_state_hash(&info),
+                sample_rate: 44100.0,
+                // 8192 covers the largest block sizes mainstream DAWs use; a
+                // non-zero default keeps the process-before-prepared path
+                // from tripping the contract assert.
+                max_block_size: 8192,
+                prepared: false,
+                scratch: RawBufferScratch::default(),
+                editor: None,
+                aeffect_ptr: std::ptr::null_mut(),
+                state_loaded: false,
+                pending_editor_parent: None,
+                transport_slot: TransportSlot::new(),
+                pending_state: Arc::new(StateLoadQueue::new(1)),
+            });
+            Box::into_raw(instance).cast::<std::ffi::c_void>()
+        },
+    )
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
@@ -315,7 +324,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     sample_rate: f64,
     max_frames: u32,
 ) {
-    unsafe {
+    // Author `reset` (and any deferred `editor.open`) run here; firewall
+    // them so a panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("vst2", "reset", (), || unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         // Clamp host-supplied max_frames to a sane minimum: hosts
         // that ignore their own setBlockSize contract can pass 0
@@ -350,7 +361,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         if let Some(parent) = inst.pending_editor_parent.take() {
             open_editor_inner(inst, parent);
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_process<P: PluginExport>(
@@ -825,7 +836,8 @@ unsafe extern "C" fn cb_param_parse<P: PluginExport>(
     id: u32,
     text: *const c_char,
 ) -> i32 {
-    unsafe {
+    // Author `parse_value` can panic; firewall it (0 = "not parsed").
+    run_extern_callback_with::<P, i32>("vst2", "parse_value", 0, || unsafe {
         if text.is_null() {
             return 0;
         }
@@ -840,7 +852,7 @@ unsafe extern "C" fn cb_param_parse<P: PluginExport>(
             }
             None => 0,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
@@ -849,7 +861,8 @@ unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
     out: *mut c_char,
     out_len: u32,
 ) -> u32 {
-    unsafe {
+    // Author `format_value` can panic; firewall it (0 = no display text).
+    run_extern_callback_with::<P, u32>("vst2", "format_value", 0, || unsafe {
         // `out_len == 0` underflows on `out_len as usize - 1`;
         // `copy_nonoverlapping` would then write the full formatted
         // string into a buffer the host claimed had zero capacity.
@@ -870,7 +883,7 @@ unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
             }
             None => 0,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn cb_state_save<P: PluginExport>(
@@ -1036,7 +1049,9 @@ unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) ->
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
-    unsafe {
+    // The editor builder is author code; firewall its lazy construction so
+    // a panic there can't unwind across the C ABI (0 = "no editor").
+    run_extern_callback_with::<P, i32>("vst2", "gui_has_editor", 0, || unsafe {
         if ctx.is_null() {
             return 0;
         }
@@ -1048,7 +1063,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
             inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
         i32::from(inst.editor.is_some())
-    }
+    })
 }
 
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
@@ -1056,7 +1071,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     w: *mut u32,
     h: *mut u32,
 ) {
-    unsafe {
+    // `Editor::size` is author code; firewall it so a panic can't unwind
+    // across the C ABI.
+    run_extern_callback_with::<P, ()>("vst2", "gui_get_size", (), || unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
         if let Some(ref editor) = inst.editor {
             // VST2 has no standardised DPI channel - hosts read back
@@ -1068,7 +1085,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             *w = ew;
             *h = eh;
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_set_effect_ptr<P: PluginExport>(
@@ -1188,23 +1205,27 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     // the same `effSetChunk → state_load → gui_open` chain. If
     // either side is ever extracted, this comment names the contract
     // to keep.
-    unsafe {
+    //
+    // `editor.open` runs author GUI-construction code that can panic;
+    // firewall it so the panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("vst2", "gui_open", (), || unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if inst.state_loaded {
             open_editor_inner(inst, parent);
         } else {
             inst.pending_editor_parent = Some(parent);
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
-    unsafe {
+    // `editor.close` runs author teardown code that can panic; firewall it.
+    run_extern_callback_with::<P, ()>("vst2", "gui_close", (), || unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if let Some(ref mut editor) = inst.editor {
             editor.close();
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------

@@ -48,7 +48,7 @@ use truce_core::editor::{
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
 use truce_core::tasks::AnyTaskSpawner;
-use truce_core::wrapper::log_missing_bus_layout;
+use truce_core::wrapper::{log_missing_bus_layout, run_extern_callback_with};
 use truce_params::Params;
 
 use crate::atom::AtomSequenceReader;
@@ -1554,23 +1554,31 @@ unsafe extern "C" fn instantiate_ui_tramp<P: PluginExport>(
     widget: *mut *mut c_void,
     features: *const *const LV2Feature,
 ) -> Lv2UiHandle {
-    unsafe {
-        instantiate_ui::<P>(
-            descriptor,
-            plugin_uri,
-            bundle_path,
-            write_function,
-            controller,
-            widget,
-            features,
-        )
-    }
+    // The editor builder + `editor.open` are author code; firewall them so
+    // a panic can't unwind across the C ABI (null = "no UI instantiated").
+    run_extern_callback_with::<P, Lv2UiHandle>(
+        "LV2",
+        "ui_instantiate",
+        std::ptr::null_mut(),
+        || unsafe {
+            instantiate_ui::<P>(
+                descriptor,
+                plugin_uri,
+                bundle_path,
+                write_function,
+                controller,
+                widget,
+                features,
+            )
+        },
+    )
 }
 
 unsafe extern "C" fn cleanup_ui_tramp<P: PluginExport>(handle: Lv2UiHandle) {
-    unsafe {
+    // `editor.close` + editor drop are author code; firewall them.
+    run_extern_callback_with::<P, ()>("LV2", "ui_cleanup", (), || unsafe {
         cleanup_ui::<P>(handle);
-    }
+    });
 }
 
 unsafe extern "C" fn port_event_tramp<P: PluginExport>(
@@ -1580,9 +1588,10 @@ unsafe extern "C" fn port_event_tramp<P: PluginExport>(
     format: u32,
     buffer: *const c_void,
 ) {
-    unsafe {
+    // Forwarding a port value can run author editor code; firewall it.
+    run_extern_callback_with::<P, ()>("LV2", "ui_port_event", (), || unsafe {
         port_event::<P>(handle, port_index, buffer_size, format, buffer);
-    }
+    });
 }
 
 unsafe extern "C" fn ui_extension_data_tramp<P: PluginExport>(uri: *const c_char) -> *const c_void {

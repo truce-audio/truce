@@ -384,7 +384,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     max_frames: u32,
     process_mode: i32,
 ) {
-    unsafe {
+    // Author `reset` can panic (allocation, DSP prep); firewall it so the
+    // panic can't unwind across the C ABI and abort the host.
+    run_extern_callback_with::<P, ()>("vst3", "reset", (), || unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         // Clamp host-supplied max_frames up to a sane minimum: hosts that
         // don't honor their own setupProcessing contract can pass 0 here,
@@ -412,7 +414,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         // route new expression to a dead (channel, note).
         inst.note_id_map.clear();
         inst.prepared = true;
-    }
+    });
 }
 
 /// `IComponent::setActive`. Tracks activation so `cb_state_load` knows
@@ -1039,7 +1041,10 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
     out: *mut c_char,
     out_len: u32,
 ) -> u32 {
-    unsafe {
+    // The author's `format_value` can panic (an `unwrap` on a host value
+    // outside the declared domain); firewall it so that can't abort the
+    // host. On panic the host sees an empty display string.
+    run_extern_callback_with::<P, u32>("vst3", "format_value", 0, || unsafe {
         // `out_len == 0` would underflow on `out_len as usize - 1`
         // and let `copy_nonoverlapping` write the full formatted
         // string into a buffer the host claimed had zero capacity.
@@ -1058,7 +1063,7 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
             }
             None => 0,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn cb_param_parse<P: PluginExport>(
@@ -1067,7 +1072,8 @@ unsafe extern "C" fn cb_param_parse<P: PluginExport>(
     text: *const c_char,
     out_plain: *mut f64,
 ) -> i32 {
-    unsafe {
+    // Author `parse_value` can panic; firewall it (0 = "not parsed").
+    run_extern_callback_with::<P, i32>("vst3", "parse_value", 0, || unsafe {
         if text.is_null() || out_plain.is_null() {
             return 0;
         }
@@ -1082,7 +1088,7 @@ unsafe extern "C" fn cb_param_parse<P: PluginExport>(
             }
             None => 0,
         }
-    }
+    })
 }
 
 unsafe extern "C" fn cb_state_save<P: PluginExport>(
@@ -1752,7 +1758,9 @@ unsafe extern "C" fn cb_get_output_param<P: PluginExport>(
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
-    unsafe {
+    // The editor builder is author code; firewall its lazy construction so
+    // a panic there can't unwind across the C ABI (0 = "no editor").
+    run_extern_callback_with::<P, i32>("vst3", "gui_has_editor", 0, || unsafe {
         if ctx.is_null() {
             return 0;
         }
@@ -1776,7 +1784,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
             }
         }
         i32::from(inst.editor.is_some())
-    }
+    })
 }
 
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
@@ -1784,7 +1792,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     w: *mut u32,
     h: *mut u32,
 ) {
-    unsafe {
+    // `Editor::size` is author code; firewall it so a panic can't unwind
+    // across the C ABI.
+    run_extern_callback_with::<P, ()>("vst3", "gui_get_size", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         if let Some(ref editor) = inst.editor {
             let (ew, eh) = editor.size();
@@ -1815,14 +1825,15 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
                 }
             }
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     scale: f64,
 ) {
-    unsafe {
+    // `Editor::set_scale_factor` is author code; firewall it.
+    run_extern_callback_with::<P, ()>("vst3", "gui_set_content_scale", (), || unsafe {
         if ctx.is_null() || !scale.is_finite() || scale <= 0.0 {
             return;
         }
@@ -1836,19 +1847,20 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
         if let Some(ref mut editor) = inst.editor {
             editor.set_scale_factor(scale);
         }
-    }
+    });
 }
 
 /// `IPlugView::canResize` callback. Returns 1 / 0 mapping to
 /// `kResultOk` / `kResultFalse` on the shim side.
 unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
-    unsafe {
+    // `Editor::can_resize` is author code; firewall it (0 = "not resizable").
+    run_extern_callback_with::<P, i32>("vst3", "gui_can_resize", 0, || unsafe {
         if ctx.is_null() {
             return 0;
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         i32::from(inst.editor.as_ref().is_some_and(|e| e.can_resize()))
-    }
+    })
 }
 
 /// `IPlugView::checkSizeConstraint` callback. Clamps the
@@ -1861,7 +1873,8 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
     w: *mut u32,
     h: *mut u32,
 ) {
-    unsafe {
+    // `Editor::can_resize` / `size` are author code; firewall them.
+    run_extern_callback_with::<P, ()>("vst3", "gui_check_size_constraint", (), || unsafe {
         if ctx.is_null() || w.is_null() || h.is_null() {
             return;
         }
@@ -1891,7 +1904,7 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
             *w = pw;
             *h = ph;
         }
-    }
+    });
 }
 
 /// `IPlugView::onSize` callback. Host committed a new size; delegate
@@ -1904,7 +1917,8 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
 /// `IPlugFrame::resizeView` from inside `onSize`, and a reentrant call
 /// judders the drag.
 unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void, w: u32, h: u32) {
-    unsafe {
+    // `Editor::set_size` / `can_resize` are author code; firewall them.
+    run_extern_callback_with::<P, ()>("vst3", "gui_set_size", (), || unsafe {
         if ctx.is_null() || w == 0 || h == 0 {
             return;
         }
@@ -1917,7 +1931,7 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
             let (cw, ch) = clamp_logical_size(lw, lh, editor.as_ref());
             editor.set_size(cw, ch);
         }
-    }
+    });
 }
 
 /// `IMidiMapping::getMidiControllerAssignment` callback. Resolves the
@@ -2000,7 +2014,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
 ) {
-    unsafe {
+    // `editor.open` runs author GUI-construction code that can panic;
+    // firewall it so the panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("vst3", "gui_open", (), || unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         if let Some(ref mut editor) = inst.editor {
             let params = Arc::clone(&inst.params_arc);
@@ -2099,16 +2115,17 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 
             editor.open(handle, context);
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
-    unsafe {
+    // `editor.close` runs author teardown code that can panic; firewall it.
+    run_extern_callback_with::<P, ()>("vst3", "gui_close", (), || unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         if let Some(ref mut editor) = inst.editor {
             editor.close();
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
