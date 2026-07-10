@@ -211,8 +211,23 @@ class TruceAUAudioUnit: AUAudioUnit {
                 throw NSError(domain: NSOSStatusErrorDomain,
                               code: Int(kAudioUnitErr_FormatNotSupported))
             }
-            let inBus = try AUAudioUnitBus(format: inputFmt)
-            _inputBusArray = AUAudioUnitBusArray(audioUnit: self, busType: .input, busses: [inBus])
+            // Bus 0 is the main input. A declared sidechain adds bus 1 so
+            // the host can route a separate source to it; the render block
+            // pulls it and concatenates its channels after the main ones.
+            let mainBus = try AUAudioUnitBus(format: inputFmt)
+            mainBus.name = "Input"
+            var inBusses = [mainBus]
+            let scChans = descriptor.pointee.sidechain_in_channels
+            if scChans > 0 {
+                guard let scFmt = truceAudioFormat(sampleRate: 44100, channels: scChans) else {
+                    throw NSError(domain: NSOSStatusErrorDomain,
+                                  code: Int(kAudioUnitErr_FormatNotSupported))
+                }
+                let scBus = try AUAudioUnitBus(format: scFmt)
+                scBus.name = "Sidechain"
+                inBusses.append(scBus)
+            }
+            _inputBusArray = AUAudioUnitBusArray(audioUnit: self, busType: .input, busses: inBusses)
         } else {
             _inputBusArray = AUAudioUnitBusArray(audioUnit: self, busType: .input, busses: [])
         }
@@ -411,6 +426,10 @@ class TruceAUAudioUnit: AUAudioUnit {
         inPtrs: UnsafeMutablePointer<UnsafePointer<Float>?>,
         outPtrs: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>,
         midiBuf: UnsafeMutablePointer<AuMidiEvent>,
+        scCh: Int,
+        scScratch: UnsafeMutablePointer<Float>?,
+        scABL: UnsafeMutableAudioBufferListPointer?,
+        scMaxFrames: Int,
         midi2Buf: UnsafeMutablePointer<AuMidi2Event>,
         paramBuf: UnsafeMutablePointer<AuParamEvent>,
         transportBuf: UnsafeMutablePointer<AuTransportSnapshot>,
@@ -509,6 +528,33 @@ class TruceAUAudioUnit: AUAudioUnit {
             outPtrs[c] = abl[c].mData?.assumingMemoryBound(to: Float.self)
         }
 
+        // Pull the sidechain input (bus 1) into scratch and append its
+        // channels after the main input, so the flat array is
+        // [main..., sidechain...]. An unconnected sidechain reads silence.
+        var scActual = 0
+        if scCh > 0, let pull = pull, let scScratch = scScratch, let scABL = scABL {
+            for c in 0..<scCh {
+                scABL[c] = AudioBuffer(
+                    mNumberChannels: 1,
+                    mDataByteSize: frameCount * UInt32(MemoryLayout<Float>.size),
+                    mData: UnsafeMutableRawPointer(scScratch.advanced(by: c * scMaxFrames)))
+            }
+            var f = AudioUnitRenderActionFlags()
+            let s = pull(&f, timestamp, frameCount, 1, scABL.unsafeMutablePointer)
+            if s != noErr {
+                for c in 0..<scCh {
+                    memset(scScratch.advanced(by: c * scMaxFrames), 0,
+                           Int(frameCount) * MemoryLayout<Float>.size)
+                }
+            }
+            let n = min(scCh, max(0, 32 - Int(actualIn)))
+            for c in 0..<n {
+                inPtrs[Int(actualIn) + c] =
+                    UnsafePointer(scABL[c].mData?.assumingMemoryBound(to: Float.self))
+            }
+            scActual = n
+        }
+
         // Fill the transport snapshot from the host-provided blocks.
         // Both are optional: hosts that don't place the plugin in a
         // musical context leave them nil.
@@ -560,7 +606,7 @@ class TruceAUAudioUnit: AUAudioUnit {
             }
         }
 
-        cb.pointee.process(ctx, inPtrs, outPtrs, actualIn, actualOut,
+        cb.pointee.process(ctx, inPtrs, outPtrs, actualIn + UInt32(scActual), actualOut,
                            frameCount, midiBuf, numMidi,
                            midi2Buf, numMidi2,
                            paramBuf, numParam,
@@ -704,6 +750,17 @@ class TruceAUAudioUnit: AUAudioUnit {
         let sysexOutScratch =
             UnsafeMutablePointer<UInt8>.allocate(capacity: sysexOutScratchCap)
 
+        // Sidechain input (bus 1) staging. The main input is pulled in
+        // place into the output ABL, so the sidechain needs its own
+        // scratch to pull into and append after the main channels. Sized
+        // once to the render-graph's max frame count.
+        let scCh = Int(g_descriptor?.pointee.sidechain_in_channels ?? 0)
+        let scMaxFrames = max(Int(self.maximumFramesToRender), 4096)
+        let scScratch: UnsafeMutablePointer<Float>? =
+            scCh > 0 ? UnsafeMutablePointer<Float>.allocate(capacity: scCh * scMaxFrames) : nil
+        let scABL: UnsafeMutableAudioBufferListPointer? =
+            scCh > 0 ? AudioBufferList.allocate(maximumBuffers: scCh) : nil
+
         // Snapshot the host blocks at render-graph compile time. AU v3
         // guarantees these are realtime-safe to call from the render
         // block; hosts may set them post-initialization, so this copy
@@ -737,6 +794,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 timestamp: timestamp, frameCount: frameCount,
                 outputData: outputData, events: events, pull: pull,
                 inPtrs: inPtrs, outPtrs: outPtrs, midiBuf: midiBuf,
+                scCh: scCh, scScratch: scScratch, scABL: scABL, scMaxFrames: scMaxFrames,
                 midi2Buf: midi2Buf,
                 paramBuf: paramBuf,
                 transportBuf: transportBuf,
