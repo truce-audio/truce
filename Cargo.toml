@@ -42,6 +42,7 @@ members = [
     "examples/truce-example-block-gate",
     "examples/truce-example-block-widen",
     "examples/truce-example-block-surround-meter",
+    "examples/truce-example-sidechain",
     "examples/truce-example-synth",
     "examples/truce-example-eq",
     "examples/truce-example-stereo-utility",
