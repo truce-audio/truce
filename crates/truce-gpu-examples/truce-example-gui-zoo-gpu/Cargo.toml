@@ -2,7 +2,7 @@
 name = "truce-example-gui-zoo-gpu"
 # Internal-only - workspace demonstrations not for crates.io.
 publish = false
-version = "5.0.1"
+version = "6.0.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
@@ -32,23 +32,23 @@ standalone-playback = ["standalone", "truce-standalone/playback"]
 shell = ["truce/shell"]
 
 [dependencies]
-truce = { version = "5.0.1", path = "../../truce", default-features = false }
-truce-core = { version = "5.0.1", path = "../../truce-core" }
-truce-params = { version = "5.0.1", path = "../../truce-params" }
-truce-clap = { version = "5.0.1", path = "../../truce-clap", optional = true }
-truce-vst3 = { version = "5.0.1", path = "../../truce-vst3", optional = true }
-truce-vst2 = { version = "5.0.1", path = "../../truce-vst2", optional = true }
-truce-aax = { version = "5.0.1", path = "../../truce-aax", optional = true }
-truce-au = { version = "5.0.1", path = "../../truce-au", optional = true }
-truce-lv2 = { version = "5.0.1", path = "../../truce-lv2", optional = true }
+truce = { version = "6.0.0", path = "../../truce", default-features = false }
+truce-core = { version = "6.0.0", path = "../../truce-core" }
+truce-params = { version = "6.0.0", path = "../../truce-params" }
+truce-clap = { version = "6.0.0", path = "../../truce-clap", optional = true }
+truce-vst3 = { version = "6.0.0", path = "../../truce-vst3", optional = true }
+truce-vst2 = { version = "6.0.0", path = "../../truce-vst2", optional = true }
+truce-aax = { version = "6.0.0", path = "../../truce-aax", optional = true }
+truce-au = { version = "6.0.0", path = "../../truce-au", optional = true }
+truce-lv2 = { version = "6.0.0", path = "../../truce-lv2", optional = true }
 clap-sys = { version = "0.5", optional = true }
-truce-standalone = { version = "5.0.1", path = "../../truce-standalone", features = ["gui"], optional = true }
-truce-gui-types = { version = "5.0.1", path = "../../truce-gui-types" }
-truce-gui = { version = "5.0.1", path = "../../truce-gui", default-features = false, features = ["gpu"] }
-truce-loader = { version = "5.0.1", path = "../../truce-loader" }
+truce-standalone = { version = "6.0.0", path = "../../truce-standalone", features = ["gui"], optional = true }
+truce-gui-types = { version = "6.0.0", path = "../../truce-gui-types" }
+truce-gui = { version = "6.0.0", path = "../../truce-gui", default-features = false, features = ["gpu"] }
+truce-loader = { version = "6.0.0", path = "../../truce-loader" }
 
 [dev-dependencies]
-truce-test = { version = "5.0.1", path = "../../truce-test" }
+truce-test = { version = "6.0.0", path = "../../truce-test" }
 
 [lints]
 workspace = true
