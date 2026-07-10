@@ -17,8 +17,24 @@ pub struct Vst3PluginDescriptor {
     pub category: *const c_char,
     /// Subcategories like "Fx" or "Instrument|Synth"
     pub subcategories: *const c_char,
+    /// Summed channel counts across all buses of the first layout. Kept
+    /// for the "does this side have any audio at all" guards and scratch
+    /// sizing; the per-bus arrays below drive bus reporting and routing.
     pub num_inputs: u32,
     pub num_outputs: u32,
+    /// Number of audio input / output buses (from the first declared
+    /// layout). The bus *structure* - how many buses and each one's
+    /// `BusKind` - is consistent across a plugin's layouts; only channel
+    /// widths vary. The shim reports one VST3 bus per entry, so a
+    /// sidechain input surfaces as its own `kBusType_Aux` bus instead of
+    /// being summed into the main bus.
+    pub num_input_buses: u32,
+    pub num_output_buses: u32,
+    /// Per-bus role, one byte per bus (`0` = Main, `1` = Sidechain/Aux),
+    /// arrays of length `num_input_buses` / `num_output_buses`. The shim
+    /// maps `1` to `kBusType_Aux` in `getBusInfo`.
+    pub input_bus_kinds: *const u8,
+    pub output_bus_kinds: *const u8,
     /// Number of MIDI output ports (event output buses). `0` disables
     /// output events entirely - the host never allocates
     /// `ProcessData::outputEvents` and the drain loop after `process()`
@@ -285,6 +301,24 @@ pub struct Vst3Callbacks {
     /// `(in_ch, out_ch)`, or `-1`. Static per plugin type (no `ctx`); the
     /// shim's `setBusArrangements` uses it to accept alternate layouts.
     pub match_bus_layout: unsafe extern "C" fn(in_ch: u32, out_ch: u32) -> i32,
+    /// Per-bus channel width of a declared layout. `layout_index` indexes
+    /// `bus_layouts()`, `is_output != 0` selects the output direction,
+    /// `bus_index` the bus within that direction. Returns the channel
+    /// count, or `0` when out of range. The shim reports `getBusInfo` /
+    /// `getBusArrangement` per bus from this and sizes its process gather.
+    pub layout_bus_channels:
+        unsafe extern "C" fn(layout_index: u32, is_output: i32, bus_index: u32) -> u32,
+    /// Match a host-proposed *per-bus* arrangement to a declared layout.
+    /// `in_channels` / `out_channels` are arrays of per-bus channel counts
+    /// (length `num_in` / `num_out`). Returns the matching `bus_layouts()`
+    /// index, or `-1`. Replaces the summed `match_bus_layout` for
+    /// `setBusArrangements` so a sidechain bus is matched independently.
+    pub match_bus_layout_perbus: unsafe extern "C" fn(
+        in_channels: *const u32,
+        num_in: u32,
+        out_channels: *const u32,
+        num_out: u32,
+    ) -> i32,
 }
 
 unsafe extern "C" {
