@@ -2,12 +2,59 @@
 
 Notable changes per release.
 
-## 4.1.1
+## 5.0.1
+
+The headline is multiple bus layouts working end-to-end on every format and background-task handlers choosing their own concurrency, plus new parameter range and smoothing shapes.
+
+### Bus layouts
+
+- Offer the host more than one channel layout: return several from `bus_layouts()` and the host picks the one its track needs. This works on every format that can renegotiate ports - CLAP (`audio-ports-config`), VST3 (`setBusArrangements`), AU (the channel-capability property, plus one AU v3 bus per layout), and AAX (one component per layout). VST2 and LV2 stay on the first layout. The standalone host selects with `--bus-layout` (`--list-bus-layouts` to enumerate) or the Settings > Bus Layout menu.
+- AU and AAX now honor every declared layout: a mono/stereo/5.1 effect or a surround meter is offered each config and passes `auval`, with no change to your plugin code. (AU had been advertising the extra configs but rejecting them at instantiation, so `auval` failed and the plugin never appeared; AU v3 crashed on surround layouts; AAX offered mono/stereo configs a surround-only plugin never declared.)
+- Declare a channel count AAX has no stem format for and you get a log line rather than the config silently vanishing from Pro Tools.
+- `BusLayout::mono()` convenience constructor, mirroring `BusLayout::stereo()`.
+
+### Parameters
 
 - Three more parameter range shapes: `skewed(min, max, factor)` (power-law taper), `sym_skewed(min, max, factor, center)` (center-anchored, for pan and EQ-gain knobs), and `reversed(<range>)` (any range with its knob axis flipped).
 - Logarithmic (multiplicative) smoothing via `smooth = "log(<ms>)"` - a constant perceived rate of change, for frequency and linear-gain params.
-- Hosts can now switch between a plugin's declared `bus_layouts()`: CLAP via `audio-ports-config`, VST3 via `setBusArrangements`, AU via the channel-capability property, and AAX by registering one component per layout. The standalone host selects with `--bus-layout` (`--list-bus-layouts` to enumerate) or the Settings > Bus Layout menu. VST2 and LV2 stay on the first layout (the formats can't renegotiate ports).
-- `BusLayout::mono()` convenience constructor, mirroring `BusLayout::stereo()`.
+
+### Background tasks
+
+- Each background-task type now chooses whether its handler may run concurrently with itself. Implement `BackgroundTask` on the task type and set `const SERIALIZED`:
+    - **`false`** (default) - the shared pool may run your handler on two workers at once when a burst re-arms it. Fastest, and correct when the handler only talks to the audio thread through lock-free channels / atomics (the reverb example's handoff).
+    - **`true`** ("one-slot") - the pool runs the handler one at a time for a given instance, so a handler that read-modify-writes a non-atomic scratch buffer or cache is safe with no `try_lock` of your own. Tasks are never dropped or reordered; only concurrency is bounded.
+- A plugin can mix lanes. List several task types - `tasks: [Rebuild, Analyze]` - and each gets its own queue and mode; `ctx.tasks::<Rebuild>()` selects the lane by type, so a serialized rebuild and a concurrent analyzer never queue behind each other.
+- The pool now warms when the plugin is instantiated, so a handler first scheduled from `process()` (a filter that only rebuilds on a knob move) no longer spawns worker threads on the audio thread. A worker-spawn failure now drops the task rather than panicking across the plugin's C boundary.
+
+### Breaking
+
+Only if your plugin uses background tasks.
+
+- The `BackgroundTasks` trait (implemented once on the plugin, with `type Task` and `run_task`) is replaced by `BackgroundTask`, implemented on each task type with `fn run(self, params)` and an optional `const SERIALIZED`. `truce::plugin!` now takes a list of task types: `tasks: [Rebuild]`.
+
+### Migrating from 4.1
+
+Move the impl from your plugin type onto the task type, and wrap the `tasks:` value in brackets. Plugins with no background tasks, and bus layouts, need no changes.
+
+```diff
+-impl BackgroundTasks for Reverb {
++impl BackgroundTask for Rebuild {
+     type Params = ReverbParams;
+-    type Task = Rebuild;
+-    fn run_task(task: Rebuild, params: &ReverbParams) {
+-        let graph = build_graph(task.sample_rate, task.time_s);
++    // const SERIALIZED: bool = true;   // add for a non-reentrant handler
++    fn run(self, params: &ReverbParams) {
++        let graph = build_graph(self.sample_rate, self.time_s);
+         let _ = params.ready.force_push(graph);
+     }
+ }
+
+-truce::plugin! { logic: Reverb, params: ReverbParams, tasks: Reverb }
++truce::plugin! { logic: Reverb, params: ReverbParams, tasks: [Rebuild] }
+```
+
+The old `task` argument becomes `self`, so `task.field` reads become `self.field`. Scheduling is unchanged: `ctx.tasks::<Rebuild>()` still returns the spawner.
 
 ## 4.1.0
 
