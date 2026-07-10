@@ -64,6 +64,19 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
     g_bridge.reset(mRustCtx, (double)sr, mMaxBlockSize);
     mSampleRate = (double)sr;
 
+    // Channel counts come from the stem format this instance was
+    // instantiated with, not the descriptor (which carries only the
+    // first layout). Fall back to the descriptor counts if the host
+    // reports no stem (older hosts / describe-time defaults).
+    AAX_EStemFormat inStem = AAX_eStemFormat_None;
+    AAX_EStemFormat outStem = AAX_eStemFormat_None;
+    Controller()->GetInputStemFormat(&inStem);
+    Controller()->GetOutputStemFormat(&outStem);
+    mNumInputChannels = inStem != AAX_eStemFormat_None
+        ? AAX_STEM_FORMAT_CHANNEL_COUNT(inStem) : g_descriptor.num_inputs;
+    mNumOutputChannels = outStem != AAX_eStemFormat_None
+        ? AAX_STEM_FORMAT_CHANNEL_COUNT(outStem) : g_descriptor.num_outputs;
+
     // Report the plugin's initial latency to the host up front (the
     // idle TimerWakeup then tracks any later changes).
     PushLatencyIfChanged();
@@ -217,16 +230,25 @@ void TruceAAX_Parameters::RenderAudio(
         g_bridge.reset(mRustCtx, mSampleRate, mMaxBlockSize);
     }
 
-    // Build channel pointers
-    const float* inputs[2] = { nullptr, nullptr };
-    float* outputs[2] = { nullptr, nullptr };
+    // Build channel pointers. This instance's channel count comes from
+    // the stem format captured in EffectInit, so a surround component
+    // wires all 6 (or up to 7.1's 8) host pointers - not a stereo-max
+    // subset. Passing more channels to Rust than the arrays hold would
+    // read past their end, so the counts and the fill loops share the
+    // same clamp.
+    constexpr uint32_t kMaxChannels = 8; // 7.1 DTS, the widest stem we register
+    const float* inputs[kMaxChannels] = {};
+    float* outputs[kMaxChannels] = {};
 
-    if (g_descriptor.num_inputs > 0 && ioRenderInfo->mAudioInputs) {
-        for (uint32_t ch = 0; ch < g_descriptor.num_inputs && ch < 2; ch++)
+    uint32_t numIn = mNumInputChannels < kMaxChannels ? mNumInputChannels : kMaxChannels;
+    uint32_t numOut = mNumOutputChannels < kMaxChannels ? mNumOutputChannels : kMaxChannels;
+
+    if (ioRenderInfo->mAudioInputs) {
+        for (uint32_t ch = 0; ch < numIn; ch++)
             inputs[ch] = ioRenderInfo->mAudioInputs[ch];
     }
     if (ioRenderInfo->mAudioOutputs) {
-        for (uint32_t ch = 0; ch < g_descriptor.num_outputs && ch < 2; ch++)
+        for (uint32_t ch = 0; ch < numOut; ch++)
             outputs[ch] = ioRenderInfo->mAudioOutputs[ch];
     }
 
@@ -395,7 +417,7 @@ void TruceAAX_Parameters::RenderAudio(
     // Call the Rust processing function
     g_bridge.process(mRustCtx,
         inputs, outputs,
-        g_descriptor.num_inputs, g_descriptor.num_outputs,
+        numIn, numOut,
         (uint32_t)bufferSize,
         midiEvents, midiCount,
         transport.valid ? &transport : nullptr);
