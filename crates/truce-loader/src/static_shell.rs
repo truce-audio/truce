@@ -15,7 +15,7 @@ use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state::{ForeignState, MigratedState, StateLoadError};
-use truce_core::tasks::{AnyTaskSpawner, InitContext};
+use truce_core::tasks::{AnyTaskSpawner, InitContext, warm_pool};
 use truce_params::Params;
 use truce_params::sample::Sample;
 use truce_plugin::PluginLogicCore;
@@ -72,6 +72,16 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
     /// wired `tasks:` on `plugin!`); it reaches `init` through the
     /// `InitContext` and each block through the `ProcessContext`.
     pub fn from_parts(params: Arc<P>, tasks: Option<AnyTaskSpawner>) -> Self {
+        // A wired spawner means the plugin may schedule background work,
+        // possibly first from `process()` (a filter that only rebuilds on a
+        // knob move, with nothing in `init` to warm the pool). Start the
+        // pool here, on the instantiation (main) thread, so the first
+        // audio-thread schedule never cold-starts worker threads inside the
+        // callback - keeping the spawner's "safe from the audio thread"
+        // guarantee true regardless of where the plugin first schedules.
+        if tasks.is_some() {
+            warm_pool();
+        }
         let init_ctx = InitContext::new(tasks.clone());
         let state = L::init(&params, &init_ctx);
         Self {

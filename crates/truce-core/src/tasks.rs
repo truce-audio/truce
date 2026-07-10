@@ -133,14 +133,37 @@ fn pool() -> &'static Pool {
         let mut workers = Vec::with_capacity(n);
         for _ in 0..n {
             let shared = Arc::clone(&shared);
-            let handle = thread::Builder::new()
+            match thread::Builder::new()
                 .name("truce-task-pool".into())
                 .spawn(move || worker_loop(&shared))
-                .expect("spawn truce task-pool worker");
-            workers.push(handle.thread().clone());
+            {
+                Ok(handle) => workers.push(handle.thread().clone()),
+                // A failed spawn (thread/memory exhaustion) must not panic:
+                // pool init can run behind an `extern "C"` boundary in a
+                // host that doesn't catch unwinds (VST3 / VST2 / AAX / LV2),
+                // where an unwind aborts the whole DAW. Keep whatever
+                // workers spawned; if none did, `schedule` drops tasks
+                // instead of queueing work nothing will drain.
+                Err(e) => {
+                    eprintln!("[truce] task-pool worker spawn failed: {e}");
+                    break;
+                }
+            }
         }
         Pool { shared, workers }
     })
+}
+
+/// Eagerly start the shared pool on the calling thread. The shell calls
+/// this at instantiation (the host/main thread) when a plugin wires a
+/// task spawner, so the worker threads exist before the audio thread ever
+/// schedules. Without it a plugin that first schedules from `process()`
+/// (the "rebuild the filter when a knob moves" pattern, with no startup
+/// work in `init` to warm the pool) would cold-start the threads inside
+/// the audio callback. Idempotent: the pool is a process-global singleton
+/// after the first call.
+pub fn warm_pool() {
+    let _ = pool();
 }
 
 fn worker_loop(shared: &Shared) -> ! {
@@ -162,13 +185,17 @@ fn worker_loop(shared: &Shared) -> ! {
 /// `arm` retry, rather than leaving the sink flagged-but-unqueued.
 fn schedule(sink: Arc<dyn Drain>) -> bool {
     let pool = pool();
+    // No workers (every spawn failed at pool init): drop the task rather
+    // than queue work nothing will ever drain, matching the "queue full ->
+    // drop" policy. The caller clears `scheduled` so a later `arm` retries.
+    if pool.workers.is_empty() {
+        return false;
+    }
     if pool.shared.injector.push(sink).is_err() {
         return false;
     }
-    if !pool.workers.is_empty() {
-        let i = pool.shared.next.fetch_add(1, Ordering::Relaxed) % pool.workers.len();
-        pool.workers[i].unpark();
-    }
+    let i = pool.shared.next.fetch_add(1, Ordering::Relaxed) % pool.workers.len();
+    pool.workers[i].unpark();
     true
 }
 
@@ -343,6 +370,18 @@ mod tests {
                 ran = self.woke.wait(ran).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn warm_pool_starts_workers_and_is_idempotent() {
+        // Warming off the audio thread is what keeps the first
+        // audio-thread schedule from cold-starting the workers inline.
+        warm_pool();
+        warm_pool();
+        assert!(
+            !pool().workers.is_empty(),
+            "warming spawns at least one worker"
+        );
     }
 
     #[test]
