@@ -464,6 +464,8 @@ class TruceAUAudioUnit: AUAudioUnit {
         scScratch: UnsafeMutablePointer<Float>?,
         scABL: UnsafeMutableAudioBufferListPointer?,
         scMaxFrames: Int,
+        mainInScratch: UnsafeMutablePointer<Float>?,
+        mainInABL: UnsafeMutableAudioBufferListPointer?,
         midi2Buf: UnsafeMutablePointer<AuMidi2Event>,
         paramBuf: UnsafeMutablePointer<AuParamEvent>,
         transportBuf: UnsafeMutablePointer<AuTransportSnapshot>,
@@ -483,8 +485,24 @@ class TruceAUAudioUnit: AUAudioUnit {
     ) -> AUAudioUnitStatus {
         if numIn > 0, let pull = pull {
             var f = AudioUnitRenderActionFlags()
-            let s = pull(&f, timestamp, frameCount, 0, outputData)
-            if s != noErr { return s }
+            if let mainInScratch = mainInScratch, let mainInABL = mainInABL {
+                // numIn > numOut: pull all input channels into the dedicated
+                // scratch, not the too-narrow output ABL (which would drop
+                // the channels past numOut).
+                for c in 0..<Int(numIn) {
+                    mainInABL[c] = AudioBuffer(
+                        mNumberChannels: 1,
+                        mDataByteSize: frameCount * UInt32(MemoryLayout<Float>.size),
+                        mData: UnsafeMutableRawPointer(
+                            mainInScratch.advanced(by: c * scMaxFrames)))
+                }
+                let s = pull(&f, timestamp, frameCount, 0, mainInABL.unsafeMutablePointer)
+                if s != noErr { return s }
+            } else {
+                // numIn <= numOut: zero-copy in-place pull into the output ABL.
+                let s = pull(&f, timestamp, frameCount, 0, outputData)
+                if s != noErr { return s }
+            }
         }
         var numMidi: UInt32 = 0
         var numMidi2: UInt32 = 0
@@ -551,12 +569,26 @@ class TruceAUAudioUnit: AUAudioUnit {
         // the negotiated bus - reflected in the buffer count - is the
         // authority. Clamp to it and hand the plugin the real widths, not
         // the descriptor's, so it never sees nil channel pointers.
-        let actualIn = numIn > 0 ? UInt32(min(Int(numIn), bufCount)) : 0
         let actualOut = UInt32(min(Int(numOut), bufCount))
         for i in 0..<32 { inPtrs[i] = nil; outPtrs[i] = nil }
-        for c in 0..<Int(actualIn) {
-            let p: UnsafeMutablePointer<Float>? = abl[c].mData?.assumingMemoryBound(to: Float.self)
-            inPtrs[c] = UnsafePointer(p)
+        let actualIn: UInt32
+        if let mainInScratch = mainInScratch {
+            // Input staged separately (numIn > numOut): hand the plugin all
+            // numIn channels from the scratch, not the narrower output ABL.
+            actualIn = min(numIn, 32)
+            for c in 0..<Int(actualIn) {
+                inPtrs[c] = UnsafePointer(mainInScratch.advanced(by: c * scMaxFrames))
+            }
+        } else {
+            // In-place: input aliases the output ABL. The negotiated bus
+            // width (bufCount) is the authority for a multi-layout plugin
+            // running narrower than its first declared layout.
+            actualIn = numIn > 0 ? UInt32(min(Int(numIn), bufCount)) : 0
+            for c in 0..<Int(actualIn) {
+                let p: UnsafeMutablePointer<Float>? =
+                    abl[c].mData?.assumingMemoryBound(to: Float.self)
+                inPtrs[c] = UnsafePointer(p)
+            }
         }
         for c in 0..<Int(actualOut) {
             outPtrs[c] = abl[c].mData?.assumingMemoryBound(to: Float.self)
@@ -795,6 +827,18 @@ class TruceAUAudioUnit: AUAudioUnit {
         let scABL: UnsafeMutableAudioBufferListPointer? =
             scCh > 0 ? AudioBufferList.allocate(maximumBuffers: scCh) : nil
 
+        // Main-input staging for N-in/M-out layouts with N>M (a 2->1 sum, a
+        // 4->2 downmix). The in-place pull writes the input into the output
+        // ABL, which is only M buffers wide, so the extra input channels
+        // would be dropped. In that case pull into a dedicated scratch of
+        // numIn channels instead; numIn<=numOut keeps the zero-copy path.
+        let mainInSeparate = numIn > numOut
+        let mainInScratch: UnsafeMutablePointer<Float>? =
+            mainInSeparate
+                ? UnsafeMutablePointer<Float>.allocate(capacity: Int(numIn) * scMaxFrames) : nil
+        let mainInABL: UnsafeMutableAudioBufferListPointer? =
+            mainInSeparate ? AudioBufferList.allocate(maximumBuffers: Int(numIn)) : nil
+
         // Snapshot the host blocks at render-graph compile time. AU v3
         // guarantees these are realtime-safe to call from the render
         // block; hosts may set them post-initialization, so this copy
@@ -829,6 +873,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 outputData: outputData, events: events, pull: pull,
                 inPtrs: inPtrs, outPtrs: outPtrs, midiBuf: midiBuf,
                 scCh: scCh, scScratch: scScratch, scABL: scABL, scMaxFrames: scMaxFrames,
+                mainInScratch: mainInScratch, mainInABL: mainInABL,
                 midi2Buf: midi2Buf,
                 paramBuf: paramBuf,
                 transportBuf: transportBuf,
@@ -948,6 +993,12 @@ class TruceAUAudioUnit: AUAudioUnit {
             }
         }
     }
+
+    // Without this the host (Logic / GarageBand) never offers "Save as
+    // user preset" and never drives the number < 0 recall branch above,
+    // so the implemented user-preset path stays dead. `fullStateForDocument`
+    // is what a user preset serializes / restores.
+    override var supportsUserPresets: Bool { true }
 
     // MARK: Capabilities
 
