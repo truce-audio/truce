@@ -203,6 +203,10 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         L::save_state(&self.state)
     }
 
+    fn republish_snapshot(&mut self) {
+        publish_snapshot::<S, L>(&self.state, &self.snapshots, &mut self.try_snapshot);
+    }
+
     fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
         let result = L::load_state(&mut self.state, data);
         // Plugin-side cache invalidation runs in the same `&mut`

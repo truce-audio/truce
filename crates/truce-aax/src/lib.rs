@@ -1448,7 +1448,7 @@ unsafe fn save_state_body<P: PluginExport>(
         let (ids, values) = inst.params_arc.collect_values();
         // Lock the plugin for the serialization; a block in flight
         // holds the lock, so this waits for the block boundary.
-        let extra = save_extra(&inst.snapshot, &inst.plugin);
+        let extra = save_extra(&inst.snapshot);
         let persist = inst.params_arc.serialize_persist();
         state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist)
     };
@@ -1677,7 +1677,6 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let params = Arc::clone(&inst.params_arc);
         let meter_store = Arc::clone(&inst.meter_store);
         let snapshot = Arc::clone(&inst.snapshot);
-        let plugin_lock = Arc::clone(&inst.plugin);
         let params_for_set = params.clone();
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
@@ -1712,14 +1711,10 @@ pub unsafe fn _editor_open<P: PluginExport>(
                 }),
                 get_meter: Box::new(move |id| meter_store.read(id)),
                 get_state: Box::new(move || {
-                    // Editor state read. Blocking here is safe and
-                    // bounded: the GUI thread holds nothing the audio
-                    // thread waits on, and the audio thread releases
-                    // the plugin lock at every block end - single-
-                    // digit ms worst case. A try_lock's empty fallback
-                    // was ambiguous with "no custom state", so a lost
-                    // race silently kept stale editor state.
-                    save_extra(&snapshot, &plugin_lock)
+                    // Editor state read: lock-free, reads the snapshot the
+                    // audio thread publishes each block. Never takes the
+                    // plugin lock, so an editor read can't stall audio.
+                    save_extra(&snapshot)
                 }),
                 set_state: Box::new(move |bytes| {
                     // The editor sends RAW custom-state bytes - exactly

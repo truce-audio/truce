@@ -862,7 +862,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // process"; impls that copy from atomic params are fine.
         // Lock the plugin for the serialization; a block in flight
         // holds the lock, so this waits for the block boundary.
-        let extra = save_extra(&inst.snapshot, &inst.plugin);
+        let extra = save_extra(&inst.snapshot);
         let persist = inst.params_arc.serialize_persist();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);
 
@@ -1062,7 +1062,6 @@ unsafe fn open_editor_inner<P: PluginExport>(
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);
             let snapshot = Arc::clone(&inst.snapshot);
-            let plugin_lock = Arc::clone(&inst.plugin);
             let effect_ptr = SendPtr::new(inst.aeffect_ptr);
             let params_for_set = params.clone();
             let params_for_get = params.clone();
@@ -1105,15 +1104,11 @@ unsafe fn open_editor_inner<P: PluginExport>(
                     }),
                     get_meter: Box::new(move |id| meter_store.read(id)),
                     get_state: Box::new(move || {
-                        // Editor state read. Blocking here is safe and
-                        // bounded: the GUI thread holds nothing the
-                        // audio thread waits on, and the audio thread
-                        // releases the plugin lock at every block end -
-                        // single-digit ms worst case. A try_lock's
-                        // empty fallback was ambiguous with "no custom
-                        // state", so a lost race silently kept stale
-                        // editor state.
-                        save_extra(&snapshot, &plugin_lock)
+                        // Editor state read: lock-free, reads the snapshot
+                        // the audio thread publishes each block. Never
+                        // takes the plugin lock, so an editor read can't
+                        // stall audio.
+                        save_extra(&snapshot)
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes - exactly

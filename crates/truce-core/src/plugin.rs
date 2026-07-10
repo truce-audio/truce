@@ -142,6 +142,18 @@ pub trait PluginRuntime: Send + 'static {
         Ok(())
     }
 
+    /// Refresh the lock-free snapshot slot from the current state.
+    ///
+    /// The audio thread publishes a fresh snapshot after every
+    /// `process` block. State that changes *outside* `process` - a host
+    /// load applied synchronously while the plugin is inactive - leaves
+    /// the slot stale until the next block, which never comes while
+    /// inactive. Wrappers call this right after such an apply so a save
+    /// that follows reads live state without taking the plugin lock.
+    /// Default no-op: a plugin the shell doesn't wrap (a test mock)
+    /// publishes nothing.
+    fn republish_snapshot(&mut self) {}
+
     /// Translate foreign state - a previous framework's blob, or a
     /// truce envelope saved under a different plugin id - into truce
     /// params + extra. Format wrappers call this when the host hands
