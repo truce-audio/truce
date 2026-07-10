@@ -24,6 +24,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use truce_core::bus::BusLayout;
 use truce_core::cast::frame_count_f64;
 use truce_core::config::ProcessMode;
 use truce_core::export::PluginExport;
@@ -70,13 +71,26 @@ where
     let sample_rate = opts
         .sample_rate
         .map_or_else(|| f64::from(file_sr), f64::from);
-    // Cap to 2 channels for v1 - most plugins are stereo;
-    // surround / mono workflows can wait for an explicit flag.
-    let channels = file_channels.clamp(1, 2);
+    // Render in a declared plugin layout and adapt the input file to that
+    // layout's MAIN width - never let the file's own width become the
+    // main-bus width. The sidechain bus is appended right after the main
+    // channels, so a file narrower or wider than the plugin's main bus
+    // would otherwise shift the sidechain to the wrong flat offset (a mono
+    // file into a stereo-main plugin would route sidechain L as the main
+    // right channel). Prefer a layout whose main width already matches the
+    // file so the common case never remixes; fall back to the first
+    // declared layout otherwise. `channels` also drives the sidechain
+    // offset and the output width.
+    let layouts = P::bus_layouts();
+    let (channels, sidechain_width) = resolve_render_layout(&layouts, file_channels)
+        .ok_or("effect plugin declares no bus layout; cannot offline-render")?;
+    if channels == 0 {
+        return Err("plugin's main input bus has no channels; cannot offline-render".into());
+    }
     let block_size = opts.buffer_size.map_or(DEFAULT_BLOCK_SIZE, |b| b as usize);
 
     eprintln!(
-        "Offline render: {} → {} ({} Hz, {} ch, block {} frames)",
+        "Offline render: {} → {} ({} Hz, {} ch main, block {} frames)",
         input_path.display(),
         output_path.display(),
         sample_rate,
@@ -88,18 +102,6 @@ where
     let total_frames = input_buf.first().map_or(0, std::vec::Vec::len);
     let duration = Duration::from_secs_f64(frame_count_f64(total_frames) / sample_rate);
 
-    // Sidechain bus width from the plugin's first layout (sum of the
-    // non-main input buses). Flat channel alignment (main L/R at 0/1,
-    // sidechain at 2/3) holds when the main file is the plugin's main
-    // width - the common stereo case; a narrower main file shifts the
-    // sidechain down, so it lands only when the widths line up.
-    let sidechain_width: usize = P::bus_layouts().first().map_or(0, |l| {
-        l.inputs
-            .iter()
-            .skip(1)
-            .map(|b| b.channels.channel_count() as usize)
-            .sum()
-    });
     let sidechain_buf = match opts.sidechain_file.as_deref() {
         Some(path) if sidechain_width > 0 => {
             eprintln!(
@@ -128,6 +130,9 @@ where
     let mut driver = PluginDriver::<P>::new()
         .sample_rate(sample_rate)
         .channels(channels)
+        // Pin the sidechain width to the layout we selected, so the
+        // driver's flat input matches even when that isn't layout 0.
+        .sidechain_channels(sidechain_width)
         .block_size(block_size)
         .duration(duration)
         .process_mode(ProcessMode::Offline)
@@ -170,6 +175,39 @@ where
     Ok(())
 }
 
+/// Channels of a layout's main (first) input bus.
+fn main_bus_width(layout: &BusLayout) -> usize {
+    layout
+        .inputs
+        .first()
+        .map_or(0, |b| b.channels.channel_count() as usize)
+}
+
+/// Summed channels of a layout's non-main (sidechain / aux) input buses.
+fn sidechain_bus_width(layout: &BusLayout) -> usize {
+    layout
+        .inputs
+        .iter()
+        .skip(1)
+        .map(|b| b.channels.channel_count() as usize)
+        .sum()
+}
+
+/// Pick the layout to render in and return `(main_width, sidechain_width)`.
+/// Prefers a declared layout whose main width already equals the file's,
+/// so the common case never up/down-mixes; falls back to the first
+/// declared layout otherwise. The file is then adapted to `main_width`, so
+/// the sidechain (appended after the main channels) always lands at the
+/// right flat offset regardless of the file's own width. `None` only when
+/// the plugin declares no layout at all.
+fn resolve_render_layout(layouts: &[BusLayout], file_channels: usize) -> Option<(usize, usize)> {
+    let layout = layouts
+        .iter()
+        .find(|l| main_bus_width(l) == file_channels)
+        .or_else(|| layouts.first())?;
+    Some((main_bus_width(layout), sidechain_bus_width(layout)))
+}
+
 /// Minimal WAV spec read - open, grab `(sample_rate, channels)`,
 /// drop. Avoids decoding the entire file just to figure out
 /// what target SR / channels to render at.
@@ -196,4 +234,68 @@ fn decode_wav_channel_major(
     let mut out: Vec<Vec<f32>> = (0..target_channels).map(|_| vec![0.0_f32; total]).collect();
     source.mix_into(&mut out, total);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_render_layout;
+    use truce_core::bus::{BusLayout, ChannelConfig};
+
+    /// A mono source into a stereo-main + stereo-sidechain plugin must
+    /// render at the plugin's declared main width (2), not the file's
+    /// width (1) - otherwise the sidechain, appended after the main
+    /// channels, would start at flat index 1 and alias the main right
+    /// channel. The main file is up-mixed to stereo; the sidechain lands
+    /// at index 2.
+    #[test]
+    fn mono_source_stereo_main_keeps_declared_width() {
+        let layouts =
+            [BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo)];
+        assert_eq!(resolve_render_layout(&layouts, 1), Some((2, 2)));
+    }
+
+    /// A stereo source into a mono-main + stereo-sidechain plugin renders
+    /// at the declared main width (1): the file is down-mixed to mono and
+    /// the sidechain starts at flat index 1, not 2.
+    #[test]
+    fn stereo_source_mono_main_keeps_declared_width() {
+        let layouts = [BusLayout::new()
+            .with_input("Main", ChannelConfig::Mono)
+            .with_output("Main", ChannelConfig::Mono)
+            .with_sidechain_input("Sidechain", ChannelConfig::Stereo)];
+        assert_eq!(resolve_render_layout(&layouts, 2), Some((1, 2)));
+    }
+
+    /// When a declared layout's main width already matches the file, it's
+    /// preferred over the first layout so the common case never remixes.
+    #[test]
+    fn prefers_layout_matching_file_width() {
+        let layouts = [
+            BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo),
+            BusLayout::new()
+                .with_input("Main", ChannelConfig::Mono)
+                .with_output("Main", ChannelConfig::Mono)
+                .with_sidechain_input("Sidechain", ChannelConfig::Mono),
+        ];
+        // Mono file matches the second layout: main 1, sidechain 1.
+        assert_eq!(resolve_render_layout(&layouts, 1), Some((1, 1)));
+        // Stereo file matches the first layout: main 2, sidechain 2.
+        assert_eq!(resolve_render_layout(&layouts, 2), Some((2, 2)));
+    }
+
+    /// No compatible layout: fall back to the first declared layout and
+    /// adapt the file to its main width.
+    #[test]
+    fn falls_back_to_first_layout() {
+        let layouts =
+            [BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo)];
+        // 6-channel file, no 6ch layout: use the first (stereo) layout.
+        assert_eq!(resolve_render_layout(&layouts, 6), Some((2, 2)));
+    }
+
+    /// No declared layout at all yields `None` (render is rejected).
+    #[test]
+    fn no_layout_is_none() {
+        assert_eq!(resolve_render_layout(&[], 2), None);
+    }
 }
