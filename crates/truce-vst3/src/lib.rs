@@ -431,6 +431,92 @@ unsafe extern "C" fn cb_match_bus_layout<P: PluginExport>(in_ch: u32, out_ch: u3
     find_bus_layout::<P>(in_ch, out_ch).map_or(-1, |i| i32::try_from(i).unwrap_or(-1))
 }
 
+/// Per-bus channel width of a declared layout, for the shim's per-bus
+/// `getBusInfo` / `getBusArrangement` and its process-time channel gather.
+/// `0` for any out-of-range index.
+unsafe extern "C" fn cb_layout_bus_channels<P: PluginExport>(
+    layout_index: u32,
+    is_output: i32,
+    bus_index: u32,
+) -> u32 {
+    let (Ok(li), Ok(bi)) = (usize::try_from(layout_index), usize::try_from(bus_index)) else {
+        return 0;
+    };
+    let layouts = P::bus_layouts();
+    let Some(layout) = layouts.get(li) else {
+        return 0;
+    };
+    let buses = if is_output != 0 {
+        &layout.outputs
+    } else {
+        &layout.inputs
+    };
+    buses.get(bi).map_or(0, |b| b.channels.channel_count())
+}
+
+/// Match a host-proposed per-bus arrangement (arrays of per-bus channel
+/// counts) to a declared `bus_layouts()` index, or `-1`. A layout matches
+/// when its per-bus widths equal the host's, direction by direction - so
+/// a sidechain bus is matched on its own width, not summed into the main.
+unsafe extern "C" fn cb_match_bus_layout_perbus<P: PluginExport>(
+    in_channels: *const u32,
+    num_in: u32,
+    out_channels: *const u32,
+    num_out: u32,
+) -> i32 {
+    // SAFETY: the shim passes arrays of the lengths it declares, or null
+    // with length 0 for a bus-less direction.
+    let ins = unsafe { slice_or_empty(in_channels, num_in) };
+    let outs = unsafe { slice_or_empty(out_channels, num_out) };
+    let widths_match = |buses: &[truce_core::bus::BusConfig], want: &[u32]| {
+        buses.len() == want.len()
+            && buses
+                .iter()
+                .zip(want)
+                .all(|(b, &w)| b.channels.channel_count() == w)
+    };
+    P::bus_layouts()
+        .iter()
+        .position(|l| widths_match(&l.inputs, ins) && widths_match(&l.outputs, outs))
+        .map_or(-1, |i| i32::try_from(i).unwrap_or(-1))
+}
+
+/// `(num_input_buses, num_output_buses, input_kinds_ptr, output_kinds_ptr)`
+/// for the descriptor, from the plugin's first declared layout. The
+/// kind-byte arrays are leaked to `'static`.
+fn descriptor_buses<P: PluginExport>() -> (u32, u32, *const u8, *const u8) {
+    let first = P::bus_layouts().into_iter().next().unwrap_or_default();
+    let ins = leak_bus_kinds(&first.inputs);
+    let outs = leak_bus_kinds(&first.outputs);
+    (
+        u32::try_from(ins.len()).unwrap_or(0),
+        u32::try_from(outs.len()).unwrap_or(0),
+        ins.as_ptr(),
+        outs.as_ptr(),
+    )
+}
+
+/// Leak the per-bus kind bytes of a bus list (`0` = Main, `1` = Sidechain)
+/// to `'static` for the descriptor's raw pointer.
+fn leak_bus_kinds(buses: &[truce_core::bus::BusConfig]) -> &'static [u8] {
+    Box::leak(
+        buses
+            .iter()
+            .map(|b| u8::from(b.kind == truce_core::bus::BusKind::Sidechain))
+            .collect::<Vec<u8>>()
+            .into_boxed_slice(),
+    )
+}
+
+/// Build a slice from a `(ptr, len)` the C++ shim handed us, or an empty
+/// slice when the pointer is null (a direction with no buses).
+unsafe fn slice_or_empty<'a>(ptr: *const u32, len: u32) -> &'a [u32] {
+    match usize::try_from(len) {
+        Ok(n) if !ptr.is_null() && n > 0 => unsafe { std::slice::from_raw_parts(ptr, n) },
+        _ => &[],
+    }
+}
+
 unsafe extern "C" fn cb_process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     inputs: *const *const f32,
@@ -2023,6 +2109,10 @@ pub fn register_vst3<P: PluginExport>() {
 /// proxy bank receives its `IMidiMapping`-resolved controllers.
 const VST3_PARAM_IS_HIDDEN: i32 = 1 << 4;
 
+// Assembles the descriptor, param descriptors, and callback table in one
+// linear pass; splitting it further would scatter the one-time registration
+// wiring across helpers that each read once.
+#[allow(clippy::too_many_lines)]
 fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let info = P::info();
     // Static metadata path: derive emits a `LazyLock`-cached
@@ -2158,6 +2248,11 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let midi_output_ports = i32::from(info.midi_output_ports);
     let midi_input_ports = i32::from(info.midi_input_ports);
 
+    // Per-bus structure from the first declared layout (bus count + kind
+    // are consistent across a plugin's layouts; only widths vary).
+    let (num_input_buses, num_output_buses, input_bus_kinds, output_bus_kinds) =
+        descriptor_buses::<P>();
+
     let descriptor = Box::leak(Box::new(Vst3PluginDescriptor {
         name: name.into_raw(),
         vendor: vendor.into_raw(),
@@ -2169,6 +2264,10 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         subcategories: subcategories.into_raw(),
         num_inputs,
         num_outputs,
+        num_input_buses,
+        num_output_buses,
+        input_bus_kinds,
+        output_bus_kinds,
         midi_output_ports,
         midi_input_ports,
         supports_f64: i32::from(<P as PluginRuntime>::Sample::IS_F64),
@@ -2211,6 +2310,8 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         get_output_param: cb_get_output_param::<P>,
         set_active: cb_set_active::<P>,
         match_bus_layout: cb_match_bus_layout::<P>,
+        layout_bus_channels: cb_layout_bus_channels::<P>,
+        match_bus_layout_perbus: cb_match_bus_layout_perbus::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

@@ -150,6 +150,17 @@ struct Vst3PluginDescriptor {
     const char* subcategories;
     uint32_t num_inputs;
     uint32_t num_outputs;
+    /* Per-bus structure of the first declared layout. The shim reports
+     * one VST3 audio bus per entry (a sidechain input becomes its own
+     * kBusType_Aux bus) instead of summing every bus into one. Bus count
+     * and kind are consistent across a plugin's layouts; only widths
+     * vary, so these describe every layout's structure. */
+    uint32_t num_input_buses;
+    uint32_t num_output_buses;
+    /* One byte per bus: 0 = Main, 1 = Sidechain/Aux. Arrays of length
+     * num_input_buses / num_output_buses. */
+    const uint8_t* input_bus_kinds;
+    const uint8_t* output_bus_kinds;
     /* Number of MIDI output ports (event output buses). Zero means the
      * host never allocates `ProcessData::outputEvents`, so the drain
      * loop after process() has nowhere to push and is a no-op. */
@@ -302,6 +313,15 @@ struct Vst3Callbacks {
     // (in_ch, out_ch), or -1 if none. Static per plugin type (no ctx);
     // `setBusArrangements` uses it to accept alternate layouts.
     int32_t (*match_bus_layout)(uint32_t /*in_ch*/, uint32_t /*out_ch*/);
+    // Per-bus channel width of a declared layout, for per-bus getBusInfo /
+    // getBusArrangement. `is_output != 0` selects the output direction.
+    uint32_t (*layout_bus_channels)(uint32_t /*layout_index*/, int32_t /*is_output*/,
+                                    uint32_t /*bus_index*/);
+    // Match a host per-bus arrangement (arrays of per-bus channel counts)
+    // to a declared layout index, or -1. Replaces match_bus_layout for
+    // setBusArrangements so a sidechain bus is matched on its own width.
+    int32_t (*match_bus_layout_perbus)(const uint32_t* /*in_channels*/, uint32_t /*num_in*/,
+                                       const uint32_t* /*out_channels*/, uint32_t /*num_out*/);
 };
 
 // ---------------------------------------------------------------------------
@@ -551,6 +571,10 @@ class TruceComponent {
      * track and a stereo track) don't clobber each other's arrangement. */
     uint32_t cur_in = g_desc ? g_desc->num_inputs : 0;
     uint32_t cur_out = g_desc ? g_desc->num_outputs : 0;
+    // Index into bus_layouts() this instance currently runs in.
+    // setBusArrangements moves it; getBusInfo / getBusArrangement read
+    // per-bus widths from it via g_cb->layout_bus_channels.
+    uint32_t cur_layout = 0;
     /* Omitted-bus scratch (see process()): the host may drop the
      * AudioBusBuffers for a deactivated last bus entirely, but the
      * plug-in negotiated fixed widths - a missing input side reads
@@ -743,8 +767,8 @@ public:
             // NPE reading the empty channel array during device load and
             // crashes. Symmetric with the input side, which already
             // guards on num_inputs.
-            return (dir == kInput) ? (g_desc->num_inputs > 0 ? 1 : 0)
-                                   : (g_desc->num_outputs > 0 ? 1 : 0);
+            return (dir == kInput) ? (int32)g_desc->num_input_buses
+                                   : (int32)g_desc->num_output_buses;
         }
         if (type == kEvent && dir == kInput) {
             return g_desc->midi_input_ports;
@@ -782,18 +806,25 @@ public:
             return kResultOk;
         }
         if (type != kAudio) return kInvalidArgument;
-        if (dir == kInput && index == 0 && g_desc->num_inputs > 0) {
-            bus->mediaType = kAudio; bus->direction = kInput;
-            bus->channelCount = cur_in;
-            str_to_char16(bus->name, "Input", 128);
-            bus->busType = kMain; bus->flags = 1;
-            return kResultOk;
-        }
-        if (dir == kOutput && index == 0 && g_desc->num_outputs > 0) {
-            bus->mediaType = kAudio; bus->direction = kOutput;
-            bus->channelCount = cur_out;
-            str_to_char16(bus->name, "Output", 128);
-            bus->busType = kMain; bus->flags = 1;
+        // One entry per declared bus. A sidechain/aux input (kind byte 1)
+        // reports kBusType_Aux so the host offers it as a separate
+        // routable input; the main bus stays kBusType_Main.
+        const uint32_t busCount = (dir == kInput) ? g_desc->num_input_buses
+                                                  : g_desc->num_output_buses;
+        const uint8_t* kinds = (dir == kInput) ? g_desc->input_bus_kinds
+                                               : g_desc->output_bus_kinds;
+        if ((dir == kInput || dir == kOutput) && index >= 0 &&
+                (uint32_t)index < busCount) {
+            bus->mediaType = kAudio; bus->direction = dir;
+            bus->channelCount = (g_cb && g_cb->layout_bus_channels)
+                ? (int32)g_cb->layout_bus_channels(cur_layout, dir == kOutput, (uint32_t)index)
+                : 0;
+            const bool aux = kinds && kinds[index] != 0;
+            const char* nm = (dir == kInput) ? (aux ? "Sidechain" : "Input")
+                                             : "Output";
+            str_to_char16(bus->name, nm, 128);
+            bus->busType = aux ? kAux : kMain;
+            bus->flags = 1;
             return kResultOk;
         }
         return kInvalidArgument;
@@ -907,32 +938,42 @@ public:
             for (; arr; arr >>= 1) c += (uint32_t)(arr & 1);
             return c;
         };
-        const int32 wantIns  = g_desc->num_inputs  > 0 ? 1 : 0;
-        const int32 wantOuts = g_desc->num_outputs > 0 ? 1 : 0;
-        if (numIns != wantIns || numOuts != wantOuts) return kResultFalse;
-        // Accept any channel-count arrangement the plugin declared in
-        // bus_layouts() (mono / stereo / surround variants of the same
-        // buses), not just the default. The matched layout becomes
-        // current so getBusInfo / getBusArrangement report it.
-        uint32_t inCh  = (wantIns  && inputs)  ? chCount(inputs[0])  : 0;
-        uint32_t outCh = (wantOuts && outputs) ? chCount(outputs[0]) : 0;
-        if (g_cb && g_cb->match_bus_layout && g_cb->match_bus_layout(inCh, outCh) >= 0) {
-            cur_in  = inCh;
-            cur_out = outCh;
-            return kResultOk;
+        // The host proposes one arrangement per declared bus. Match the
+        // full per-bus shape - so a sidechain bus is matched on its own
+        // width, not summed - and adopt the layout it names.
+        if (numIns != (int32)g_desc->num_input_buses ||
+                numOuts != (int32)g_desc->num_output_buses)
+            return kResultFalse;
+        uint32_t inCh[16] = {}, outCh[16] = {};
+        const int32 ni = numIns  < 16 ? numIns  : 16;
+        const int32 no = numOuts < 16 ? numOuts : 16;
+        for (int32 i = 0; i < ni; i++) inCh[i]  = inputs  ? chCount(inputs[i])  : 0;
+        for (int32 i = 0; i < no; i++) outCh[i] = outputs ? chCount(outputs[i]) : 0;
+        if (g_cb && g_cb->match_bus_layout_perbus) {
+            int32_t li = g_cb->match_bus_layout_perbus(inCh, (uint32_t)ni, outCh, (uint32_t)no);
+            if (li >= 0) {
+                cur_layout = (uint32_t)li;
+                // Keep the summed cur_in/cur_out in step for the scratch
+                // sizing and deactivated-bus synthesis in process().
+                uint32_t si = 0, so = 0;
+                for (int32 i = 0; i < ni; i++) si += inCh[i];
+                for (int32 i = 0; i < no; i++) so += outCh[i];
+                cur_in = si; cur_out = so;
+                return kResultOk;
+            }
         }
         return kResultFalse;
     }
 
     tresult getBusArrangement(int32 dir, int32 index, uint64_t* arr) {
         if (!arr || !g_desc) return kInvalidArgument;
-        uint32_t ch = (dir == kInput) ? cur_in : cur_out;
-        // The index must name a bus that exists: one per direction
-        // that has channels, none otherwise (mirrors getBusCount).
-        // Acknowledging index 0 with an empty arrangement on a bus-less
-        // direction invents a phantom bus for the host - same family
-        // as the Bitwig getBusCount NPE.
-        if (index != 0 || ch == 0 || ch > 63) return kInvalidArgument;
+        const uint32_t busCount = (dir == kInput) ? g_desc->num_input_buses
+                                                  : g_desc->num_output_buses;
+        if (index < 0 || (uint32_t)index >= busCount) return kInvalidArgument;
+        uint32_t ch = (g_cb && g_cb->layout_bus_channels)
+            ? g_cb->layout_bus_channels(cur_layout, dir == kOutput, (uint32_t)index)
+            : 0;
+        if (ch == 0 || ch > 63) return kInvalidArgument;
         // Low-bits speaker mask with one bit per channel: 0x1 = mono,
         // 0x3 = stereo, 0x3F = 5.1 (L R C Lfe Ls Rs). What hosts key
         // on is the popcount matching getBusInfo's channelCount - the
@@ -1069,25 +1110,31 @@ public:
         void* outPtrs[32] = {};
         uint32_t numIn = 0, numOut = 0;
 
-        if (data->numInputs > 0 && data->inputs) {
-            auto& bus = data->inputs[0];
-            // Clamp the count to [0, 32] (the pointer-array size), not
-            // just the fill loop - a wider count would send Rust
-            // uninitialized stack pointers for the channels past 32,
-            // and a negative one would wrap through the cast.
-            int32 nch = bus.numChannels;
-            numIn = nch <= 0 ? 0u : (nch > 32 ? 32u : (uint32_t)nch);
-            for (uint32_t c = 0; c < numIn; c++)
-                inPtrs[c] = use64 ? (const void*)bus.channelBuffers64[c]
-                                  : (const void*)bus.channelBuffers32[c];
+        // Concatenate every input bus's channels into one flat array in
+        // bus order - main bus first, then each sidechain/aux bus - which
+        // is exactly the flat channel indexing the plugin's AudioBuffer
+        // expects (main L/R at 0/1, sidechain L/R at 2/3, ...). Clamp the
+        // total to 32 (the pointer-array size) so a channel past the cap
+        // never sends Rust an uninitialized stack pointer.
+        if (data->inputs) {
+            for (int32 b = 0; b < data->numInputs && numIn < 32; b++) {
+                auto& bus = data->inputs[b];
+                int32 nch = bus.numChannels;
+                uint32_t bch = nch <= 0 ? 0u : (uint32_t)nch;
+                for (uint32_t c = 0; c < bch && numIn < 32; c++, numIn++)
+                    inPtrs[numIn] = use64 ? (const void*)bus.channelBuffers64[c]
+                                          : (const void*)bus.channelBuffers32[c];
+            }
         }
-        if (data->numOutputs > 0 && data->outputs) {
-            auto& bus = data->outputs[0];
-            int32 nch = bus.numChannels;
-            numOut = nch <= 0 ? 0u : (nch > 32 ? 32u : (uint32_t)nch);
-            for (uint32_t c = 0; c < numOut; c++)
-                outPtrs[c] = use64 ? (void*)bus.channelBuffers64[c]
-                                   : (void*)bus.channelBuffers32[c];
+        if (data->outputs) {
+            for (int32 b = 0; b < data->numOutputs && numOut < 32; b++) {
+                auto& bus = data->outputs[b];
+                int32 nch = bus.numChannels;
+                uint32_t bch = nch <= 0 ? 0u : (uint32_t)nch;
+                for (uint32_t c = 0; c < bch && numOut < 32; c++, numOut++)
+                    outPtrs[numOut] = use64 ? (void*)bus.channelBuffers64[c]
+                                            : (void*)bus.channelBuffers32[c];
+            }
         }
 
         /* Deactivated trailing buses: the spec lets the host drop the
