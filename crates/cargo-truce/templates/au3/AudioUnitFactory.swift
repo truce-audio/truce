@@ -336,6 +336,8 @@ class TruceAUAudioUnit: AUAudioUnit {
         // existence check and silences the unused-binding warning
         // without forcing a runtime !-unwrap here.
         guard let callbacks = g_callbacks, case .some = rustCtx else { return }
+        let rawCtx = rustCtx!
+        let cb = callbacks.pointee
         var params: [AUParameter] = []
         var groups: [String: [AUParameter]] = [:]
 
@@ -343,13 +345,33 @@ class TruceAUAudioUnit: AUAudioUnit {
             let desc = g_param_descriptors.advanced(by: Int(i)).pointee
             let name = String(cString: desc.name)
             let group = String(cString: desc.group)
+
+            // step_count is values-1: 1 => boolean-like, >=2 => an indexed
+            // list. Reporting the unit (not .generic) makes the host
+            // quantize automation to the steps and offer step navigation;
+            // valueStrings carries the per-index names from the plugin's
+            // own format_value, so an enum shows its variant names.
+            var auUnit: AudioUnitParameterUnit = .generic
+            var valueStrings: [String]? = nil
+            if desc.step_count >= 1 {
+                auUnit = desc.step_count == 1 ? .boolean : .indexed
+                var names: [String] = []
+                for step in 0...desc.step_count {
+                    let plain = desc.min + Double(step)
+                    var buf = [CChar](repeating: 0, count: 128)
+                    let len = cb.param_format_value(rawCtx, desc.id, plain, &buf, 128)
+                    names.append(len > 0 ? String(cString: buf) : "\(step)")
+                }
+                valueStrings = names
+            }
+
             let param = AUParameterTree.createParameter(
                 withIdentifier: "param\(desc.id)", name: name,
                 address: AUParameterAddress(desc.id),
                 min: AUValue(desc.min), max: AUValue(desc.max),
-                unit: .generic, unitName: nil,
+                unit: auUnit, unitName: nil,
                 flags: [.flag_IsWritable, .flag_IsReadable],
-                valueStrings: nil, dependentParameters: nil)
+                valueStrings: valueStrings, dependentParameters: nil)
             param.value = AUValue(desc.default_value)
             if group.isEmpty { params.append(param) }
             else { groups[group, default: []].append(param) }
@@ -361,8 +383,6 @@ class TruceAUAudioUnit: AUAudioUnit {
         }
         _parameterTree = AUParameterTree.createTree(withChildren: children)
 
-        let rawCtx = rustCtx!
-        let cb = callbacks.pointee
         _parameterTree?.implementorValueObserver = { [weak self] p, v in
             guard self?.isSyncingToHost != true else { return }
             cb.param_set_value(rawCtx, UInt32(p.address), Double(v))
