@@ -121,7 +121,7 @@ use truce_core::state::PluginFormat;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
-    SharedPlugin, lock_plugin, run_audio_block_with, run_extern_callback_with, save_extra,
+    SharedPlugin, enter_plugin, run_audio_block_with, run_extern_callback_with, save_extra,
     shared_plugin,
 };
 use truce_core::{Float, Sample};
@@ -168,10 +168,11 @@ type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 // ---------------------------------------------------------------------------
 
 struct ClapPluginData<P: PluginExport> {
-    /// The user's plugin instance behind the wrapper-standard
-    /// mediation lock: the audio thread locks per block, `state_save`
-    /// (host thread) locks for the serialization, the editor's
-    /// `get_state` closure blocks for the (bounded) read. See
+    /// The user's plugin instance in the wrapper-standard ownership
+    /// cell: the audio thread owns it per block, host lifecycle
+    /// callbacks own it while processing is stopped, and the two never
+    /// overlap. `state_save` and the editor's `get_state` read the
+    /// lock-free snapshot instead, so they never touch it. See
     /// `truce_core::wrapper::SharedPlugin`.
     plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
@@ -520,7 +521,7 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         {
-            let mut instance = lock_plugin(&data.plugin);
+            let mut instance = enter_plugin(&data.plugin);
             instance.init();
             data.param_infos = instance.params().param_infos();
         }
@@ -576,7 +577,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         data.max_block_size = max_block;
         let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
         {
-            let mut instance = lock_plugin(&data.plugin);
+            let mut instance = enter_plugin(&data.plugin);
             instance.reset(&AudioConfig::new(sample_rate, max_block).with_process_mode(mode));
         }
 
@@ -647,7 +648,7 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
         let data = data_from_plugin::<P>(plugin);
         data.sounding_notes.clear_all();
         let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
-        let mut instance = lock_plugin(&data.plugin);
+        let mut instance = enter_plugin(&data.plugin);
         instance.reset(
             &AudioConfig::new(data.sample_rate, data.max_block_size).with_process_mode(mode),
         );
@@ -1488,7 +1489,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // Arc clone so the guard doesn't pin a borrow of `data`
         // (later per-block work needs `&mut data`).
         let plugin_arc = Arc::clone(&data.plugin);
-        let mut instance = lock_plugin(&plugin_arc);
+        let mut instance = enter_plugin(&plugin_arc);
 
         // Apply any state-load that the host or editor handed us
         // since the last block. Runs before per-block work so the
@@ -2484,7 +2485,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             // the next activate. Apply the full state (params + extra)
             // synchronously under the plugin lock - uncontended here
             // since no audio thread is processing.
-            let mut instance = lock_plugin(&data.plugin);
+            let mut instance = enter_plugin(&data.plugin);
             state::apply_state(&mut *instance, &deserialized);
             // No `process` will publish, so refresh the snapshot slot now
             // - a save that follows while still inactive reads live state.

@@ -34,7 +34,7 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, find_bus_layout, lock_plugin,
+    ParamCStrings, SharedPlugin, default_io_channels, enter_plugin, find_bus_layout,
     log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, save_extra,
     shared_plugin,
 };
@@ -65,11 +65,11 @@ type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 const K_LATENCY_CHANGED: i32 = 8;
 
 struct Vst3Instance<P: PluginExport> {
-    /// The plugin behind the wrapper-standard mediation lock: the
-    /// audio thread locks per block, `cb_state_save` (host thread)
-    /// locks for the serialization, the editor's `get_state` closure
-    /// blocks for the (bounded) read. See
-    /// `truce_core::wrapper::SharedPlugin`.
+    /// The plugin in the wrapper-standard ownership cell: the audio
+    /// thread owns it per block, host lifecycle callbacks own it while
+    /// processing is stopped, and the two never overlap. `cb_state_save`
+    /// and the editor's `get_state` read the lock-free snapshot instead,
+    /// so they never touch it. See `truce_core::wrapper::SharedPlugin`.
     plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`cb_param_*`) read params through this
@@ -399,7 +399,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
-            let mut plugin = lock_plugin(&inst.plugin);
+            let mut plugin = enter_plugin(&inst.plugin);
             let config = AudioConfig::new(sample_rate, max_frames)
                 .with_process_mode(vst3_process_mode(process_mode));
             plugin.reset(&config);
@@ -546,7 +546,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // this is one CAS; contended only when a host/GUI state
         // callback is mid-serialization, which then delays this
         // block by the remainder of that `save_state` call.
-        let mut plugin = lock_plugin(&inst.plugin);
+        let mut plugin = enter_plugin(&inst.plugin);
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
@@ -1053,7 +1053,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // lock - uncontended here since no audio thread is
             // processing. Otherwise a `getState` before the next
             // activate would re-serialize stale custom state.
-            let mut plugin = lock_plugin(&inst.plugin);
+            let mut plugin = enter_plugin(&inst.plugin);
             state::apply_state(&mut *plugin, &deserialized);
             // No `cb_process` will publish, so refresh the snapshot slot
             // now - a `getState` while still inactive reads live state.

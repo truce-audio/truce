@@ -2,6 +2,39 @@
 
 Notable changes per release.
 
+## 6.0.0
+
+Saving your plugin's state - a host session save, a preset capture, the editor reading state back - now runs completely off the audio thread. Even large custom state (a sampler's loaded audio, big wavetables) can no longer cause an audio glitch when the host saves during playback.
+
+### Breaking
+
+Only if your plugin saves **custom** state - anything beyond parameters, like a loaded file path, a view mode, or an analysis result - by overriding `save_state`. Plugins that keep everything in parameters (including `#[persist]` fields) need no change.
+
+Custom state is now published through `snapshot_into` instead of `save_state`. `snapshot_into` writes your bytes into a buffer the framework hands you and reuses, and that is what lets a save run without ever pausing audio. `save_state` still exists and the framework still calls it (off the audio thread), but overriding it no longer reaches the host - implement `snapshot_into` instead.
+
+### Migrating from 5.x
+
+Move your `save_state` body into `snapshot_into`: write into the buffer instead of returning a `Vec`, and return `true` (or `false` for "no custom state"). `load_state` is unchanged.
+
+```diff
+-fn save_state(state: &MyDsp) -> Vec<u8> {
+-    encode(&state.extra)
+-}
++fn snapshot_into(state: &MyDsp, buf: &mut Vec<u8>) -> bool {
++    encode_into(&state.extra, buf);   // append your bytes to `buf`
++    true
++}
+```
+
+If your custom state is a `#[derive(State)]` struct, its generated `serialize_into` already has the right shape:
+
+```diff
++fn snapshot_into(state: &MyDsp, buf: &mut Vec<u8>) -> bool {
++    state.extra.serialize_into(buf);
++    true
++}
+```
+
 ## 5.0.1
 
 Multiple bus layouts working end-to-end on every format and background-task handlers choosing their own concurrency, plus new parameter range and smoothing shapes.

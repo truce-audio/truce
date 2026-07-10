@@ -586,15 +586,6 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let channels = config.channels as usize;
     let is_effect = P::info().category == PluginCategory::Effect;
 
-    // `std::sync::Mutex`, like the format wrappers' mediation lock
-    // (on macOS it sits on `os_unfair_lock`, which donates the
-    // waiting audio thread's priority to the lock owner). One
-    // difference in poison policy: the standalone runs on the
-    // developer's machine during iteration, so a panic on either
-    // side keeps the poison and the next try_lock fails loudly
-    // rather than silently handing out half-mutated state - the
-    // wrappers forgive poison (`lock_plugin`) because inside a DAW
-    // permanent silence is the worse failure.
     // Capacity 256: covers a generous MIDI burst within a single
     // audio callback period. ArrayQueue is lock-free MPMC - the MIDI
     // input thread pushes, the audio thread drains, neither blocks.

@@ -3843,7 +3843,6 @@ dependencies = [
  "backtrace",
  "crossbeam-queue",
  "crossbeam-utils",
- "libc",
  "loom",
  "png 0.18.1",
  "truce-params",
