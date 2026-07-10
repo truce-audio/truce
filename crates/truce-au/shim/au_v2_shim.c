@@ -536,6 +536,8 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = sizeof(AudioUnitParameterStringFromValue); writable = true; break;
         case kAudioUnitProperty_ParameterValueFromString:
             size = sizeof(AudioUnitParameterValueFromString); writable = true; break;
+        case kAudioUnitProperty_ParameterValueStrings:
+            size = sizeof(CFArrayRef); writable = false; break;
         case kAudioUnitProperty_SetRenderCallback:
             if (scope == kAudioUnitScope_Input) { size = sizeof(AURenderCallbackStruct); writable = true; }
             else return kAudioUnitErr_InvalidScope;
@@ -713,7 +715,18 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
                     strlcpy(info->name, pd->name, sizeof(info->name));
                     info->cfNameString = CFStringCreateWithCString(NULL, pd->name,
                                             kCFStringEncodingUTF8);
-                    info->unit = kAudioUnitParameterUnit_Generic;
+                    /* step_count is values-1: 1 => a 2-value (boolean-like)
+                     * param, >=2 => an indexed/enumerated list. Mapping the
+                     * unit (rather than leaving Generic) is what makes the
+                     * host quantize automation to the steps, offer step
+                     * navigation, and query kAudioUnitProperty_ParameterValueName
+                     * for the per-index names. Continuous params stay Generic. */
+                    if (pd->step_count == 1)
+                        info->unit = kAudioUnitParameterUnit_Boolean;
+                    else if (pd->step_count >= 2)
+                        info->unit = kAudioUnitParameterUnit_Indexed;
+                    else
+                        info->unit = kAudioUnitParameterUnit_Generic;
                     info->minValue = (AudioUnitParameterValue)pd->min;
                     info->maxValue = (AudioUnitParameterValue)pd->max;
                     info->defaultValue = (AudioUnitParameterValue)pd->default_value;
@@ -785,6 +798,36 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
              * own range - no normalize step. */
             vfs->outValue = (AudioUnitParameterValue)plain;
             *ioSize = sizeof(AudioUnitParameterValueFromString);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_ParameterValueStrings: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
+            /* `elem` is the AudioUnitParameterID. Only indexed params
+             * (step_count > 0) have a value-name list; a host reads this
+             * to build the enum's menu. Names come from the plugin's own
+             * format_value, so an enum shows "Sine"/"Square". */
+            const AuParamDescriptor *pd = NULL;
+            for (uint32_t i = 0; i < g_num_params; i++)
+                if (g_param_descriptors[i].id == elem) { pd = &g_param_descriptors[i]; break; }
+            if (!pd || pd->step_count == 0) return kAudioUnitErr_InvalidProperty;
+            if (*ioSize < sizeof(CFArrayRef)) return kAudioUnitErr_InvalidPropertyValue;
+            /* step_count is values-1, so there are step_count + 1 values. */
+            CFMutableArrayRef arr = CFArrayCreateMutable(NULL, pd->step_count + 1,
+                                                         &kCFTypeArrayCallBacks);
+            if (!arr) return kAudioUnitErr_InvalidParameter;
+            for (uint32_t i = 0; i <= pd->step_count; i++) {
+                char buf[128];
+                uint32_t len = g_callbacks->param_format_value(
+                    inst->rustCtx, elem, pd->min + (double)i, buf, sizeof(buf));
+                CFStringRef s = CFStringCreateWithCString(
+                    NULL, len > 0 ? buf : "", kCFStringEncodingUTF8);
+                if (s) { CFArrayAppendValue(arr, s); CFRelease(s); }
+            }
+            /* Ownership transfers to the caller per the property's Copy rule. */
+            *(CFArrayRef *)outData = arr;
+            *ioSize = sizeof(CFArrayRef);
             return noErr;
         }
 

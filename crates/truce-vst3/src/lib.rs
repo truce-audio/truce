@@ -41,7 +41,7 @@ use truce_core::wrapper::{
 };
 use truce_params::MidiSource;
 use truce_params::sample::{Float, Sample};
-use truce_params::{ParamInfo, ParamRange, Params};
+use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
@@ -2128,11 +2128,18 @@ pub fn register_vst3<P: PluginExport>() {
     });
 }
 
-/// VST3 `ParameterInfo::kIsHidden` (SDK 3.7+): the parameter is not
-/// shown in generic editors or automation pickers. Hosts still write
-/// to hidden ids through `IParameterChanges`, which is how the MIDI
-/// proxy bank receives its `IMidiMapping`-resolved controllers.
+// VST3 `ParameterInfo::ParameterFlags`. Only these bits are defined by
+// the SDK (3.7); the previous code set a reserved `1 << 8`, which no host
+// interprets, and left the read-only / hidden / list bits unmapped.
+const VST3_PARAM_CAN_AUTOMATE: i32 = 1 << 0;
+const VST3_PARAM_IS_READ_ONLY: i32 = 1 << 1;
+const VST3_PARAM_IS_LIST: i32 = 1 << 3;
+/// `kIsHidden` (SDK 3.7+): the parameter is not shown in generic editors
+/// or automation pickers. Hosts still write to hidden ids through
+/// `IParameterChanges`, which is how the MIDI proxy bank receives its
+/// `IMidiMapping`-resolved controllers.
 const VST3_PARAM_IS_HIDDEN: i32 = 1 << 4;
+const VST3_PARAM_IS_BYPASS: i32 = 1 << 16;
 
 // Assembles the descriptor, param descriptors, and callback table in one
 // linear pass; splitting it further would scatter the one-time registration
@@ -2154,16 +2161,27 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         let cs = ParamCStrings::from_info(pi);
 
         let mut flags: i32 = 0;
-        if pi.flags.contains(truce_params::ParamFlags::AUTOMATABLE) {
-            flags |= 1;
+        if pi.flags.contains(ParamFlags::AUTOMATABLE) {
+            flags |= VST3_PARAM_CAN_AUTOMATE;
         }
-        if pi.flags.contains(truce_params::ParamFlags::IS_BYPASS) {
-            flags |= 1 << 16;
+        if pi.flags.contains(ParamFlags::READONLY) {
+            flags |= VST3_PARAM_IS_READ_ONLY;
+        }
+        if pi.flags.contains(ParamFlags::HIDDEN) {
+            flags |= VST3_PARAM_IS_HIDDEN;
+        }
+        if pi.flags.contains(ParamFlags::IS_BYPASS) {
+            flags |= VST3_PARAM_IS_BYPASS;
+        }
+        // An enum is a named, indexed value list: `kIsList` makes the host
+        // render a value dropdown (populated via `getParamStringByValue`)
+        // instead of a knob. Discreteness for int / discrete-float params
+        // is carried by the `step_count` descriptor field below, which is
+        // what VST3 reads for step navigation - there's no separate flag.
+        if matches!(pi.range, ParamRange::Enum { .. }) {
+            flags |= VST3_PARAM_IS_LIST;
         }
         let step_count = pi.range.step_count();
-        if step_count.is_some() {
-            flags |= 1 << 8;
-        }
 
         param_descs.push(Vst3ParamDescriptor {
             id: pi.id,

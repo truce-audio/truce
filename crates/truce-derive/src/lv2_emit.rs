@@ -144,14 +144,24 @@ pub(crate) fn write_struct_sidecar(
 /// Without this the fallback range collapsed to `enum(0)`, rendering an
 /// invalid `lv2:maximum 0` / `lv2:default 1` port that REAPER rejects.
 /// Best-effort, mirroring [`write_struct_sidecar`].
-pub(crate) fn write_enum_sidecar(enum_name: &syn::Ident, variant_count: usize) {
+pub(crate) fn write_enum_sidecar(enum_name: &syn::Ident, variant_names: &[String]) {
     let Some(out_dir) = sidecar_dir() else {
         return;
     };
     if std::fs::create_dir_all(&out_dir).is_err() {
         return;
     }
-    let buf = format!("count = {variant_count}\n");
+    let mut buf = format!("count = {}\n", variant_names.len());
+    // Record the display names in index order so the LV2 emitter can
+    // render each enum value's `lv2:scalePoint` label.
+    buf.push_str("names = [");
+    for (i, name) in variant_names.iter().enumerate() {
+        if i > 0 {
+            buf.push_str(", ");
+        }
+        let _ = write!(buf, "\"{}\"", toml_escape(name));
+    }
+    buf.push_str("]\n");
     let _ = std::fs::write(out_dir.join(format!("{enum_name}.enum.toml")), buf);
 }
 
@@ -423,6 +433,15 @@ fn parse_param_entry(v: &toml::Value, sidecar_dir: &std::path::Path) -> Result<L
     let flags = v.get("flags").and_then(|x| x.as_str()).unwrap_or("");
     let enum_type = v.get("enum_type").and_then(|x| x.as_str()).unwrap_or("");
     let range = parse_range_value(range_str, kind, enum_type, sidecar_dir)?;
+    // Enum value names drive the port's `lv2:scalePoint` labels. Empty
+    // for non-enums, or an enum whose `<T>.enum.toml` sidecar the
+    // aggregator can't reach (cross-crate) - the port still renders, just
+    // without named values.
+    let enum_names = if matches!(range, truce_build::lv2::Lv2Range::Enum { .. }) {
+        enum_variant_names(enum_type, sidecar_dir)
+    } else {
+        Vec::new()
+    };
     // Match `truce-derive::gen_param_info_literal`'s implicit default
     // (`a.default.unwrap_or(0.0)`) so the LV2 TTL agrees with the
     // ParamInfo VST3 / standalone read at runtime. The defensive
@@ -438,6 +457,7 @@ fn parse_param_entry(v: &toml::Value, sidecar_dir: &std::path::Path) -> Result<L
         unit: parse_unit_value(unit),
         flags: parse_flags_value(flags),
         midi: parse_midi_binding(v),
+        enum_names,
     })
 }
 
@@ -533,6 +553,33 @@ fn enum_variant_count(enum_type: &str, sidecar_dir: &std::path::Path) -> Option<
         .get("count")
         .and_then(toml::Value::as_integer)
         .and_then(|c| u32::try_from(c).ok())
+}
+
+/// Look up a `ParamEnum`'s variant display names from the same
+/// `<Enum>.enum.toml` sidecar (the `names` array, in index order).
+/// Empty when the type isn't recorded or the sidecar is absent /
+/// nameless (an older sidecar without the array) - the caller then emits
+/// an enum port with no `lv2:scalePoint` labels, which still loads.
+fn enum_variant_names(enum_type: &str, sidecar_dir: &std::path::Path) -> Vec<String> {
+    if enum_type.is_empty() {
+        return Vec::new();
+    }
+    let path = sidecar_dir.join(format!("{enum_type}.enum.toml"));
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(table) = content.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    table
+        .get("names")
+        .and_then(toml::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_pair_f64(s: &str) -> Result<(f64, f64), String> {

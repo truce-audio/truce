@@ -92,6 +92,11 @@ pub struct Lv2Param {
     /// `midi:binding`. `None` when the param declares no `midi_cc` /
     /// `midi_source`.
     pub midi: Option<Lv2MidiBinding>,
+    /// Display names for an `Enum` range's values, in index order.
+    /// Emitted as `lv2:scalePoint` labels so a host shows an enum's
+    /// variant names instead of bare indices. Empty for non-enum params
+    /// (or an enum whose names couldn't be resolved from the sidecar).
+    pub enum_names: Vec<String>,
 }
 
 /// A parsed `#[param(midi_cc / midi_source / midi_channel)]` binding,
@@ -295,6 +300,10 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
     let _ = writeln!(
         f,
         "@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> ."
+    );
+    let _ = writeln!(
+        f,
+        "@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> ."
     );
     let _ = writeln!(f, "@prefix doap:  <http://usefulinc.com/ns/doap#> .");
     let _ = writeln!(f, "@prefix foaf:  <http://xmlns.com/foaf/0.1/> .");
@@ -538,6 +547,15 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
         }
         Lv2Range::Enum { .. } => {
             let _ = writeln!(f, "        lv2:portProperty lv2:integer, lv2:enumeration ;");
+            // Named values: a host renders these as the enum's dropdown
+            // labels. Index order matches the plain value (0..count-1).
+            for (i, label) in p.enum_names.iter().enumerate() {
+                let _ = writeln!(
+                    f,
+                    "        lv2:scalePoint [ rdfs:label \"{}\" ; rdf:value {i} ] ;",
+                    escape_turtle(label)
+                );
+            }
         }
         Lv2Range::Logarithmic { .. } => {
             let _ = writeln!(f, "        lv2:portProperty pprop:logarithmic ;");
@@ -837,6 +855,10 @@ mod tests {
             unit: Lv2Unit::None,
             flags: Lv2Flags::default(),
             midi: None,
+            enum_names: ["Sine", "Square", "Saw", "Noise"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         }
     }
 
@@ -941,6 +963,23 @@ mod tests {
         let mut p = enum_param();
         p.default_plain = 99.0;
         assert!((p.clamped_default() - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn enum_port_emits_named_scale_points() {
+        let (_m, ttl) = render_ttls(
+            &bundle(Lv2Category::Effect, false, vec![enum_param()]),
+            "x.so",
+        );
+        assert!(
+            ttl.contains("@prefix rdf:"),
+            "rdf: prefix declared for scale points:\n{ttl}"
+        );
+        // Each variant is a named scale point at its index.
+        for (i, label) in ["Sine", "Square", "Saw", "Noise"].iter().enumerate() {
+            let want = format!("lv2:scalePoint [ rdfs:label \"{label}\" ; rdf:value {i} ] ;");
+            assert!(ttl.contains(&want), "missing scale point `{want}`:\n{ttl}");
+        }
     }
 
     #[test]

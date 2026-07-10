@@ -2676,12 +2676,6 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
 
     let count = variants.len();
 
-    // Record the variant count so the LV2 aggregator can resolve
-    // `EnumParam<#enum_name>` ports that carry no explicit
-    // `#[param(range = "enum(N)")]`. The count is only knowable here, at
-    // the enum's own derive; the params sidecar references it by name.
-    lv2_emit::write_enum_sidecar(enum_name, count);
-
     let variant_idents: Vec<_> = variants.iter().map(|v| &v.ident).collect();
 
     // Parse #[name = "..."] attributes, falling back to the variant ident
@@ -2704,6 +2698,13 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
             v.ident.to_string()
         })
         .collect();
+
+    // Record the variant count + display names so the LV2 aggregator can
+    // resolve `EnumParam<#enum_name>` ports that carry no explicit
+    // `#[param(range = "enum(N)")]` and render each value's scale-point
+    // label. Only knowable here, at the enum's own derive; the params
+    // sidecar references it by name.
+    lv2_emit::write_enum_sidecar(enum_name, &variant_names);
 
     // from_index match arms
     let from_index_arms: Vec<_> = variant_idents

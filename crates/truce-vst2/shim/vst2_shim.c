@@ -276,6 +276,30 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             return 1;
         }
 
+        case effGetParameterProperties: {
+            /* index = param index, ptr = VstParameterProperties*. Advertise
+             * discreteness so a host's generic editor steps a bool / enum /
+             * discrete param instead of sweeping it like a knob. VST2 has no
+             * enum-name list, so value labels still come from
+             * effGetParamDisplay; this only conveys the step structure.
+             * step_count is values-1: 1 => a switch, >=1 => integer steps. */
+            if (!ptr || index < 0 || (uint32_t)index >= g_vst2_num_params) return 0;
+            VstParameterProperties* props = (VstParameterProperties*)ptr;
+            memset(props, 0, sizeof(*props));
+            const Vst2ParamDescriptor* pd = &g_vst2_params[index];
+            strncpy(props->label, pd->name, sizeof(props->label) - 1);
+            strncpy(props->shortLabel, pd->name, sizeof(props->shortLabel) - 1);
+            if (pd->step_count > 0) {
+                props->flags = kVstParameterUsesIntStep | kVstParameterUsesIntegerMinMax;
+                props->minInteger = 0;
+                props->maxInteger = (int32_t)pd->step_count;
+                props->stepInteger = 1;
+                props->largeStepInteger = 1;
+                if (pd->step_count == 1) props->flags |= kVstParameterIsSwitch;
+            }
+            return 1;
+        }
+
         case effCanDo: {
             if (!ptr) return 0;
             const char* s = (const char*)ptr;

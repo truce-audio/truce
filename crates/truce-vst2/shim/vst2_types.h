@@ -52,10 +52,16 @@
 #define effEndSetProgram    68
 #define effGetInputProperties  33
 #define effGetOutputProperties 34
+#define effGetParameterProperties 56
 
 /* VstPinProperties.flags */
 #define kVstPinIsActive  (1 << 0)
 #define kVstPinIsStereo  (1 << 1)
+
+/* VstParameterProperties.flags */
+#define kVstParameterIsSwitch          (1 << 0)
+#define kVstParameterUsesIntegerMinMax (1 << 1)
+#define kVstParameterUsesIntStep       (1 << 3)
 
 /* audioMaster opcodes (host callbacks) */
 #define audioMasterAutomate 0
@@ -239,6 +245,28 @@ typedef struct {
     char shortLabel[8];
     char future[48];
 } VstPinProperties;
+
+/* Host-allocated parameter descriptor filled by
+ * effGetParameterProperties. Matches the VST 2.4 layout so a host
+ * reading the trailing fields stays in bounds. */
+typedef struct {
+    float stepFloat;
+    float smallStepFloat;
+    float largeStepFloat;
+    char label[64];
+    int32_t flags;
+    int32_t minInteger;
+    int32_t maxInteger;
+    int32_t stepInteger;
+    int32_t largeStepInteger;
+    char shortLabel[8];
+    int16_t displayIndex;
+    int16_t category;
+    int16_t numParametersInCategory;
+    int16_t reserved;
+    char categoryLabel[24];
+    char future[16];
+} VstParameterProperties;
 
 typedef struct {
     uint8_t component_type[4];

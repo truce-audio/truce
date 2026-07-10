@@ -186,7 +186,12 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
         }
 
         param->SetNumberOfSteps(info.step_count > 0 ? info.step_count : 128);
-        param->SetType(AAX_eParameterType_Continuous);
+        // A stepped param (bool / enum / discrete int) is Discrete so Pro
+        // Tools quantizes automation to the steps and offers step
+        // navigation instead of treating it as a continuous knob. Its
+        // per-step names come from the display delegate (format_value).
+        param->SetType(info.step_count > 0 ? AAX_eParameterType_Discrete
+                                           : AAX_eParameterType_Continuous);
 
         AAX_IParameter* rawParam = param.release();
         mParameterManager.AddParameter(rawParam);
