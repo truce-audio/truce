@@ -112,8 +112,7 @@ pub struct Vst2Callbacks {
     /// `effString2Parameter`. Returns `1` on success, `0` when the text
     /// can't be parsed. The parse + set happen Rust-side (VST2 has no
     /// plain<->normalized callback for the shim to bridge).
-    pub param_parse:
-        unsafe extern "C" fn(ctx: *mut c_void, id: u32, text: *const c_char) -> i32,
+    pub param_parse: unsafe extern "C" fn(ctx: *mut c_void, id: u32, text: *const c_char) -> i32,
     /// Number of *encodable* plugin → host MIDI events queued by the
     /// last `process()` call. Unsupported event types (MIDI 2.0,
     /// `ParamChange`, Transport) are filtered out so the C shim can

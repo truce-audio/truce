@@ -653,7 +653,13 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_den: t.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
                 position_samples: sample_pos_i64(t.position_samples),
-                position_seconds: 0.0,
+                // Derived from samples for a consistent cross-format value
+                // (CLAP fills it directly). Guard the pre-reset zero SR.
+                position_seconds: if inst.sample_rate > 0.0 {
+                    t.position_samples / inst.sample_rate
+                } else {
+                    0.0
+                },
                 position_beats: t.position_beats,
                 bar_start_beats: t.bar_start_beats,
                 loop_active: t.loop_active != 0,
