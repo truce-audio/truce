@@ -140,6 +140,29 @@ func forwardMIDIEventList(
     return (midiCount - midiStart, midi2Count - midi2Start)
 }
 
+// A deinterleaved float32 format for `channels`. `standardFormat` only
+// defines mono/stereo layouts and returns nil for wider counts, so a
+// surround bus (declared via a multi-entry `bus_layouts()`) needs an
+// explicit channel layout or the force-unwrap would trap at init and the
+// host would see the appex fail to open (OpenAComponent 4097).
+func truceAudioFormat(sampleRate: Double, channels: AVAudioChannelCount) -> AVAudioFormat? {
+    if channels <= 2 {
+        return AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels)
+    }
+    let tag: AudioChannelLayoutTag
+    switch channels {
+    case 3: tag = kAudioChannelLayoutTag_MPEG_3_0_A
+    case 4: tag = kAudioChannelLayoutTag_Quadraphonic
+    case 5: tag = kAudioChannelLayoutTag_MPEG_5_0_A
+    case 6: tag = kAudioChannelLayoutTag_MPEG_5_1_A
+    case 7: tag = kAudioChannelLayoutTag_MPEG_6_1_A
+    case 8: tag = kAudioChannelLayoutTag_MPEG_7_1_A
+    default: return nil
+    }
+    guard let layout = AVAudioChannelLayout(layoutTag: tag) else { return nil }
+    return AVAudioFormat(standardFormatWithSampleRate: sampleRate, channelLayout: layout)
+}
+
 // MARK: - AUAudioUnit subclass
 
 class TruceAUAudioUnit: AUAudioUnit {
@@ -184,7 +207,10 @@ class TruceAUAudioUnit: AUAudioUnit {
         let numOut = descriptor.pointee.num_outputs
 
         if numIn > 0 {
-            let inputFmt = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: numIn)!
+            guard let inputFmt = truceAudioFormat(sampleRate: 44100, channels: numIn) else {
+                throw NSError(domain: NSOSStatusErrorDomain,
+                              code: Int(kAudioUnitErr_FormatNotSupported))
+            }
             let inBus = try AUAudioUnitBus(format: inputFmt)
             _inputBusArray = AUAudioUnitBusArray(audioUnit: self, busType: .input, busses: [inBus])
         } else {
@@ -203,7 +229,10 @@ class TruceAUAudioUnit: AUAudioUnit {
         // for stale data.
         // (numOut=0 in `render()` skips the output pointer setup).
         let outChans = numOut > 0 ? numOut : 2
-        let outputFmt = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: outChans)!
+        guard let outputFmt = truceAudioFormat(sampleRate: 44100, channels: outChans) else {
+            throw NSError(domain: NSOSStatusErrorDomain,
+                          code: Int(kAudioUnitErr_FormatNotSupported))
+        }
         let outBus = try AUAudioUnitBus(format: outputFmt)
         _outputBusArray = AUAudioUnitBusArray(audioUnit: self, busType: .output, busses: [outBus])
 
@@ -464,12 +493,19 @@ class TruceAUAudioUnit: AUAudioUnit {
         }
         let abl = UnsafeMutableAudioBufferListPointer(outputData)
         let bufCount = abl.count
+        // The host may run a multi-layout plugin at a narrower width than
+        // its first declared layout (the descriptor's numIn / numOut), so
+        // the negotiated bus - reflected in the buffer count - is the
+        // authority. Clamp to it and hand the plugin the real widths, not
+        // the descriptor's, so it never sees nil channel pointers.
+        let actualIn = numIn > 0 ? UInt32(min(Int(numIn), bufCount)) : 0
+        let actualOut = UInt32(min(Int(numOut), bufCount))
         for i in 0..<32 { inPtrs[i] = nil; outPtrs[i] = nil }
-        for c in 0..<min(Int(numIn), bufCount) {
+        for c in 0..<Int(actualIn) {
             let p: UnsafeMutablePointer<Float>? = abl[c].mData?.assumingMemoryBound(to: Float.self)
             inPtrs[c] = UnsafePointer(p)
         }
-        for c in 0..<min(Int(numOut), bufCount) {
+        for c in 0..<Int(actualOut) {
             outPtrs[c] = abl[c].mData?.assumingMemoryBound(to: Float.self)
         }
 
@@ -524,7 +560,7 @@ class TruceAUAudioUnit: AUAudioUnit {
             }
         }
 
-        cb.pointee.process(ctx, inPtrs, outPtrs, numIn, numOut,
+        cb.pointee.process(ctx, inPtrs, outPtrs, actualIn, actualOut,
                            frameCount, midiBuf, numMidi,
                            midi2Buf, numMidi2,
                            paramBuf, numParam,
