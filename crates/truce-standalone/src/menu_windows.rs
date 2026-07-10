@@ -1092,11 +1092,22 @@ unsafe fn get_menu_string(hmenu: HMENU, cmd_id: u32) -> Option<String> {
         if written <= 0 {
             return None;
         }
-        Some(String::from_utf16_lossy(&buf[..written as usize]))
+        // Collapse the mnemonic escaping `wide` applied on insert so
+        // callers see the original label, not the menu encoding.
+        Some(String::from_utf16_lossy(&buf[..written as usize]).replace("&&", "&"))
     }
 }
 
-/// UTF-8 → null-terminated UTF-16 (Win32's `W` APIs).
+/// UTF-8 → null-terminated UTF-16 (Win32's `W` APIs), with `&`
+/// doubled on the way in: every string this module converts is a menu
+/// string, and Win32 menus render a lone `&` as a mnemonic marker
+/// (underline the next character) instead of a literal ampersand -
+/// "Channels 1 & 2" and any device / preset name containing `&` would
+/// display wrong. [`get_menu_string`] undoes the doubling so labels
+/// read back verbatim for the name-keyed device / preset lookups.
 fn wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
+    s.replace('&', "&&")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect()
 }

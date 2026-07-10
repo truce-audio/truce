@@ -1490,12 +1490,21 @@ impl BufferSizeMax for cpal::StreamConfig {
             // `Default` leaves the callback size to the device: bound
             // by the size range the device itself reports, so `reset`
             // and the scratch pre-grow cover whatever it delivers. A
-            // device that reports no range gets the same generous
-            // fallback the VST3 wrapper uses for hosts that skip
-            // `setupProcessing`.
+            // device that reports no usable range gets the same
+            // generous fallback the VST3 wrapper uses for hosts that
+            // skip `setupProcessing`. "Usable" matters: cpal's WASAPI
+            // backend reports `Range { min: 0, max: u32::MAX }` (not
+            // `Unknown`) whenever `GetBufferSizeLimits` is unsupported
+            // - every software audio stack - and sizing per-channel
+            // scratch to that bound is a 17 GB allocation. Anything
+            // beyond a plausible hardware maximum routes to the
+            // fallback instead.
             cpal::BufferSize::Default => match supported.buffer_size() {
-                cpal::SupportedBufferSize::Range { max, .. } => *max as usize,
-                cpal::SupportedBufferSize::Unknown => 8192,
+                cpal::SupportedBufferSize::Range {
+                    max: max @ 1..=32_768,
+                    ..
+                } => *max as usize,
+                _ => 8192,
             },
         }
     }
