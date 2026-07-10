@@ -29,6 +29,11 @@ pub struct Vst2PluginDescriptor {
     /// through `process_f64` so the plugin reads/writes host memory
     /// directly with no precision conversion.
     pub supports_f64: i32,
+    /// Sidechain (non-main) input width from the first bus layout. VST2
+    /// has no separate-bus concept, so the sidechain rides the last
+    /// `sidechain_in_channels` of `num_inputs`; the shim labels those
+    /// pins "Sidechain N" via `effGetInputProperties`.
+    pub sidechain_in_channels: u32,
 }
 
 #[repr(C)]

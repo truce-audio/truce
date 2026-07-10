@@ -1237,6 +1237,14 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         accepts_midi_in: i32::from(info.accepts_midi_in),
         emits_midi: i32::from(info.emits_midi),
         supports_f64: i32::from(<P as PluginRuntime>::Sample::IS_F64),
+        // Non-main input buses ride the tail of `num_inputs`; the shim
+        // names those pins so a host can route its sidechain to them.
+        sidechain_in_channels: layout
+            .inputs
+            .iter()
+            .skip(1)
+            .map(|b| b.channels.channel_count())
+            .sum(),
     }));
 
     let callbacks = Box::leak(Box::new(Vst2Callbacks {
