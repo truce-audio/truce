@@ -2389,7 +2389,7 @@ unsafe extern "C" fn state_save<P: PluginExport>(
         // holds the lock, so this waits for the block boundary and
         // `save_state` never runs concurrently with `process` - plain
         // (non-atomic) plugin fields are safe to read here.
-        let extra = save_extra(&data.snapshot, &data.plugin);
+        let extra = save_extra(&data.snapshot);
         let persist = data.params_arc.serialize_persist();
         let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, &extra, &persist);
 
@@ -2486,6 +2486,9 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             // since no audio thread is processing.
             let mut instance = lock_plugin(&data.plugin);
             state::apply_state(&mut *instance, &deserialized);
+            // No `process` will publish, so refresh the snapshot slot now
+            // - a save that follows while still inactive reads live state.
+            instance.republish_snapshot();
         }
 
         if let Some(ref mut editor) = data.editor {
@@ -3078,7 +3081,6 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
 
         let params = Arc::clone(&data.params_arc);
         let meter_store = Arc::clone(&data.meter_store);
-        let plugin_lock = Arc::clone(&data.plugin);
         let snapshot = Arc::clone(&data.snapshot);
         let gui_changes = data.gui_changes.clone();
         let gui_changes2 = data.gui_changes.clone();
@@ -3164,13 +3166,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 }),
                 get_meter: Box::new(move |id| meter_store.read(id)),
                 get_state: Box::new(move || {
-                    // Prefer the lock-free snapshot; a snapshot-capable
-                    // plugin's editor read never touches the plugin lock.
-                    // The fallback lock is safe and bounded: the GUI
-                    // thread holds nothing the audio thread waits on, and
-                    // the audio thread releases the plugin lock at every
-                    // block end - single-digit ms worst case.
-                    save_extra(&snapshot, &plugin_lock)
+                    // Editor state read: lock-free, reads the snapshot the
+                    // audio thread publishes each block. Never takes the
+                    // plugin lock, so an editor read can't stall audio.
+                    save_extra(&snapshot)
                 }),
                 set_state: Box::new(move |bytes| {
                     // The editor sends RAW custom-state bytes - exactly

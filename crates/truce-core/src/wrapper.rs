@@ -95,20 +95,18 @@ pub fn try_lock_plugin<P>(plugin: &PluginMutex<P>) -> Option<PluginGuard<'_, P>>
 
 /// Read the plugin's custom-state blob for a host state save.
 ///
-/// Prefers the lock-free [`SnapshotSlot`](crate::snapshot::SnapshotSlot)
-/// the audio thread publishes each block; only when the plugin doesn't
-/// opt into snapshots (nothing published) does it fall back to locking
-/// the plugin and calling `save_state()`. So a snapshot-capable plugin's
-/// host save never touches the plugin lock and never waits on an
-/// in-flight audio block. Params are serialized separately (lock-free),
-/// so this is the only piece of a save that could contend the lock.
-pub fn save_extra<P: crate::plugin::PluginRuntime>(
-    snapshot: &crate::snapshot::SnapshotSlot,
-    plugin: &PluginMutex<P>,
-) -> Vec<u8> {
-    snapshot
-        .read()
-        .unwrap_or_else(|| lock_plugin(plugin).save_state())
+/// Reads the lock-free [`SnapshotSlot`](crate::snapshot::SnapshotSlot)
+/// the audio thread publishes each block, and never takes the plugin
+/// lock: a host save must not stall the audio thread, which holds that
+/// lock for the whole block. A plugin with custom state publishes it
+/// through `snapshot_into`; one that publishes nothing has no custom
+/// state to save, so an empty blob is correct. The wrapper republishes
+/// the snapshot after any state change applied outside `process` (an
+/// inactive load), so an inactive save still returns live state. Params
+/// are serialized separately (also lock-free).
+#[must_use]
+pub fn save_extra(snapshot: &crate::snapshot::SnapshotSlot) -> Vec<u8> {
+    snapshot.read().unwrap_or_default()
 }
 
 /// std-backed [`PluginMutex`]: macOS (`os_unfair_lock` donates the

@@ -993,7 +993,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // allocator must not appear on either side. (VST2 uses the
         // Rust global allocator for both save + free; do not cross
         // wires when refactoring `_save_state` paths together.)
-        let extra = save_extra(&inst.snapshot, &inst.plugin);
+        let extra = save_extra(&inst.snapshot);
         let persist = inst.params_arc.serialize_persist();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);
         let len = blob.len();
@@ -1055,6 +1055,9 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // activate would re-serialize stale custom state.
             let mut plugin = lock_plugin(&inst.plugin);
             state::apply_state(&mut *plugin, &deserialized);
+            // No `cb_process` will publish, so refresh the snapshot slot
+            // now - a `getState` while still inactive reads live state.
+            plugin.republish_snapshot();
         }
         if let Some(ref mut editor) = inst.editor {
             editor.state_changed();
@@ -1886,7 +1889,6 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);
             let snapshot = Arc::clone(&inst.snapshot);
-            let plugin_lock = Arc::clone(&inst.plugin);
             let ctx_raw = SendPtr::new(ctx);
             let params_for_set = params.clone();
             let params_for_get = params.clone();
@@ -1943,15 +1945,11 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     }),
                     get_meter: Box::new(move |id| meter_store.read(id)),
                     get_state: Box::new(move || {
-                        // Editor state read. Blocking here is safe and
-                        // bounded: the GUI thread holds nothing the
-                        // audio thread waits on, and the audio thread
-                        // releases the plugin lock at every block end -
-                        // single-digit ms worst case. A try_lock's
-                        // empty fallback was ambiguous with "no custom
-                        // state", so a lost race silently kept stale
-                        // editor state.
-                        save_extra(&snapshot, &plugin_lock)
+                        // Editor state read: lock-free, reads the snapshot
+                        // the audio thread publishes each block. Never
+                        // takes the plugin lock, so an editor read can't
+                        // stall audio.
+                        save_extra(&snapshot)
                     }),
                     set_state: Box::new(move |bytes| {
                         // The editor sends RAW custom-state bytes -

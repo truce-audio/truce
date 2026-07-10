@@ -61,8 +61,9 @@ impl PluginLogic for CounterLogic {
         as_u32(state.counter)
     }
 
-    fn save_state(state: &CounterState) -> Vec<u8> {
-        state.counter.to_le_bytes().to_vec()
+    fn snapshot_into(state: &CounterState, buf: &mut Vec<u8>) -> bool {
+        buf.extend_from_slice(&state.counter.to_le_bytes());
+        true
     }
 
     fn load_state(state: &mut CounterState, data: &[u8]) -> Result<(), StateLoadError> {

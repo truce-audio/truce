@@ -380,6 +380,21 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         loader.save_state(self.state.cast_const())
     }
 
+    fn republish_snapshot(&mut self) {
+        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+            return;
+        };
+        if self.state.is_null() {
+            return;
+        }
+        let state = self.state.cast_const();
+        crate::static_shell::publish_snapshot_with(
+            &self.snapshots,
+            &mut self.try_snapshot,
+            |buf| loader.snapshot_into(state, buf),
+        );
+    }
+
     fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
         // Same trade-off as `save_state`: bounded wait keeps the UI
         // thread from blocking through a reload. On timeout we report
