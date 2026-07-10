@@ -4,7 +4,14 @@ use crate::types::AtomicF64;
 #[derive(Clone, Copy, Debug)]
 pub enum SmoothingStyle {
     None,
+    /// Straight-line ramp over the given milliseconds: a constant
+    /// per-sample delta that reaches the target in exactly that time,
+    /// whatever the distance. The predictable choice for click-free gain
+    /// fades and crossfades where a fixed-length ramp is what you want.
     Linear(f64),
+    /// One-pole exponential over the given milliseconds: fast at first,
+    /// asymptotic near the target (it lands only within the snap
+    /// threshold, never exactly). The natural feel for most controls.
     Exponential(f64),
     /// Multiplicative (log-domain) exponential smoothing over the given
     /// milliseconds. Ramps geometrically rather than additively, so the
@@ -36,11 +43,26 @@ pub enum SmoothingStyle {
 /// pair or the new one, never a mid-update split. The stored
 /// `sample_rate` field is informational; it isn't read in the audio
 /// path, only by future writers as a freshness check.
+///
+/// **Linear ramp state.** `Linear` needs a *constant* per-sample
+/// increment to trace a straight line, but this smoother is handed the
+/// target afresh each call rather than owning it, so it caches the
+/// increment (`ramp_step`) and the target it was armed for
+/// (`ramp_target`). A step re-arms only when the incoming target differs
+/// from `ramp_target`, so a ramp spanning several blocks stays straight;
+/// `snap` / `set_sample_rate` store `NaN` into `ramp_target` to force a
+/// re-arm. These are touched only by the stepping methods (audio thread)
+/// and invalidated from the writer thread - a lost race just re-arms one
+/// step later, the same benign outcome as a lost `snap`.
 pub struct Smoother {
     style: SmoothingStyle,
     current: AtomicF64,
     coeff: AtomicF64,
     sample_rate: AtomicF64,
+    /// Constant per-sample increment for the active `Linear` ramp.
+    ramp_step: AtomicF64,
+    /// Target `ramp_step` was armed against; `NaN` forces a re-arm.
+    ramp_target: AtomicF64,
 }
 
 impl Smoother {
@@ -57,6 +79,9 @@ impl Smoother {
             current: AtomicF64::new(0.0),
             coeff: AtomicF64::new(coeff),
             sample_rate: AtomicF64::new(44100.0),
+            ramp_step: AtomicF64::new(0.0),
+            // NaN so the first Linear step arms the ramp from live state.
+            ramp_target: AtomicF64::new(f64::NAN),
         }
     }
 
@@ -70,11 +95,45 @@ impl Smoother {
         let new_coeff = compute_coeff(self.style, sr);
         self.sample_rate.store(sr);
         self.coeff.store(new_coeff);
+        // The coefficient (and thus the Linear step size) just changed;
+        // force the next step to re-arm the ramp against the new rate.
+        self.ramp_target.store(f64::NAN);
     }
 
     /// Snap to a value immediately (used on reset/init).
     pub fn snap(&self, value: f64) {
         self.current.store(value);
+        // Jumping `current` invalidates any in-flight Linear ramp: the
+        // next step must re-arm from the new position, not keep the old
+        // increment (which was sized for a different start).
+        self.ramp_target.store(f64::NAN);
+    }
+
+    /// Arm (or re-arm) the `Linear` ramp toward `target` and return its
+    /// constant per-sample increment.
+    ///
+    /// A straight-line ramp adds a fixed amount `(target - start) / N`
+    /// each sample (`coeff == 1/N`), where `start` is where the ramp
+    /// began - *not* the shrinking `diff * coeff`, which decays
+    /// geometrically and is indistinguishable from `Exponential`. The
+    /// increment is cached in `ramp_step` and reused until the target
+    /// changes (or `snap` / `set_sample_rate` store `NaN` into
+    /// `ramp_target`), so a ramp that spans several process blocks stays
+    /// straight and still lands on `target` in `N` samples total.
+    #[inline]
+    fn arm_linear_ramp(&self, target: f64, current: f64, coeff: f64) -> f64 {
+        // Exact compare on purpose: an unchanged target is bit-identical
+        // across calls, and a `NaN` armed target never matches, forcing
+        // the re-arm.
+        #[allow(clippy::float_cmp)]
+        if self.ramp_target.load() == target {
+            self.ramp_step.load()
+        } else {
+            let step = (target - current) * coeff;
+            self.ramp_step.store(step);
+            self.ramp_target.store(target);
+            step
+        }
     }
 
     /// Get next smoothed value, advancing one sample.
@@ -89,23 +148,14 @@ impl Smoother {
         let new_current = match self.style {
             SmoothingStyle::None => target,
             SmoothingStyle::Linear(_) => {
-                let diff = target - current;
                 // Scale the snap threshold to the value magnitude so
                 // very-small-range params don't snap prematurely and
                 // very-large-range params (e.g. 20 kHz cutoffs) don't
                 // burn cycles on differences they can't perceive.
                 // Floor at 1e-8 for targets near zero.
                 let threshold = (target.abs() * 1e-6).max(1e-8);
-                if diff.abs() < threshold {
-                    target
-                } else {
-                    let step = diff * coeff;
-                    if step.abs() >= diff.abs() {
-                        target
-                    } else {
-                        current + step
-                    }
-                }
+                let step = self.arm_linear_ramp(target, current, coeff);
+                linear_advance(current, target, step, threshold)
             }
             SmoothingStyle::Exponential(_) => current + coeff * (target - current),
             // One-pole exponential in the log domain: equivalent to
@@ -207,22 +257,14 @@ impl Smoother {
                 current = target;
             }
             SmoothingStyle::Linear(_) => {
-                // Same per-step math as `next_block`, including the
-                // snap-when-close-enough check. Looped because the
-                // snap branch wrecks any closed-form derivation.
+                // Same per-step math as `next_block`: a constant increment
+                // (armed once, since the target is fixed across the call)
+                // added each sample, snapping on the final step. Looped
+                // because the snap check wrecks any closed-form derivation.
                 let threshold = (target.abs() * 1e-6).max(1e-8);
+                let step = self.arm_linear_ramp(target, current, coeff);
                 for _ in 0..n_samples {
-                    let diff = target - current;
-                    if diff.abs() < threshold {
-                        current = target;
-                        break;
-                    }
-                    let step = diff * coeff;
-                    current = if step.abs() >= diff.abs() {
-                        target
-                    } else {
-                        current + step
-                    };
+                    current = linear_advance(current, target, step, threshold);
                 }
             }
             SmoothingStyle::Exponential(_) => {
@@ -294,21 +336,14 @@ impl Smoother {
                 current = target;
             }
             SmoothingStyle::Linear(_) => {
-                // Threshold matches `next()`'s per-step floor. Hoisted
-                // out of the loop because it depends only on `target`.
+                // Threshold matches `next()`'s per-step floor. Armed once
+                // (target is fixed across the block), then a constant
+                // increment per sample - a straight line, not the geometric
+                // decay a re-derived `diff * coeff` would trace.
                 let threshold = (target.abs() * 1e-6).max(1e-8);
+                let step = self.arm_linear_ramp(target, current, coeff);
                 for slot in out.iter_mut() {
-                    let diff = target - current;
-                    if diff.abs() < threshold {
-                        current = target;
-                    } else {
-                        let step = diff * coeff;
-                        current = if step.abs() >= diff.abs() {
-                            target
-                        } else {
-                            current + step
-                        };
-                    }
+                    current = linear_advance(current, target, step, threshold);
                     *slot = current as f32;
                 }
             }
@@ -340,6 +375,22 @@ impl Smoother {
         }
 
         self.current.store(current);
+    }
+}
+
+/// One `Linear` step: add the constant `step` toward `target`, landing
+/// exactly on `target` on the final step - once the remaining distance no
+/// longer exceeds one step - or once within the convergence `threshold`.
+/// The overshoot clamp is what terminates the ramp on `target` instead of
+/// stepping past it, and (with a constant `step`) is the guard the geometric
+/// version could never trip.
+#[inline]
+fn linear_advance(current: f64, target: f64, step: f64, threshold: f64) -> f64 {
+    let diff = target - current;
+    if diff.abs() < threshold || step.abs() >= diff.abs() {
+        target
+    } else {
+        current + step
     }
 }
 
@@ -494,6 +545,78 @@ mod tests {
         assert!(
             (last - after).abs() < 1e-6,
             "stepwise = {last}, after = {after}"
+        );
+    }
+
+    #[test]
+    fn linear_ramp_is_straight_and_settles_on_time() {
+        // 10 ms at 48 kHz = 480 samples. A true linear ramp 0 -> 1 traces
+        // a straight line (constant per-sample delta), passes 0.5 at the
+        // half-way sample, and lands on the target at ~480 samples - not
+        // the geometric one-pole the shrinking `diff * coeff` used to
+        // produce (midpoint ~0.63, and settling ~14x later).
+        let s = Smoother::new(SmoothingStyle::Linear(10.0));
+        s.set_sample_rate(48_000.0);
+        s.snap(0.0);
+
+        let vals: Vec<f64> = (0..480).map(|_| f64::from(s.next(1.0))).collect();
+
+        // Midpoint is linear (~0.5), decisively not the exponential ~0.63.
+        let mid = vals[239];
+        assert!(
+            (mid - 0.5).abs() < 0.01,
+            "midpoint {mid} should be ~0.5 (linear), not ~0.63 (exponential)"
+        );
+
+        // Every consecutive delta is the same constant ~1/480.
+        let expected = 1.0 / 480.0;
+        for w in vals.windows(2) {
+            let d = w[1] - w[0];
+            assert!(
+                (d - expected).abs() < 1e-4,
+                "step {d} not constant ~{expected}"
+            );
+        }
+
+        // Reaches the target by the declared time, and stays.
+        assert!(
+            (vals[479] - 1.0).abs() < 1e-3,
+            "should reach target by ~480 samples, got {}",
+            vals[479]
+        );
+    }
+
+    #[test]
+    fn linear_ramp_stays_straight_across_blocks() {
+        // Regression guard for the constant-step cache: two 100-sample
+        // blocks of a 480-sample ramp must continue the same straight
+        // line, not re-arm a fresh 480-sample ramp from each block's
+        // start value (which would bend the slope at the boundary and
+        // stretch the total time).
+        let s = Smoother::new(SmoothingStyle::Linear(10.0));
+        s.set_sample_rate(48_000.0);
+        s.snap(0.0);
+
+        let mut b1 = [0.0_f32; 100];
+        let mut b2 = [0.0_f32; 100];
+        s.next_into(1.0, &mut b1);
+        s.next_into(1.0, &mut b2);
+
+        // After 200 samples the value is ~200/480, i.e. the ramp kept
+        // going rather than restarting.
+        let after_200 = f64::from(b2[99]);
+        assert!(
+            (after_200 - 200.0 / 480.0).abs() < 1e-3,
+            "after 200 samples got {after_200}, expected {}",
+            200.0 / 480.0
+        );
+
+        // Slope is unchanged across the block boundary.
+        let last_b1 = f64::from(b1[99] - b1[98]);
+        let first_b2 = f64::from(b2[0] - b1[99]);
+        assert!(
+            (last_b1 - first_b2).abs() < 1e-4,
+            "slope changed at block boundary: {last_b1} vs {first_b2}"
         );
     }
 
