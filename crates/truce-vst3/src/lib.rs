@@ -12,6 +12,7 @@ use std::slice;
 
 use truce_core::TransportSlot;
 use truce_core::buffer::RawBufferScratch;
+use truce_core::bus::{BusConfig, BusKind};
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
@@ -468,7 +469,7 @@ unsafe extern "C" fn cb_match_bus_layout_perbus<P: PluginExport>(
     // with length 0 for a bus-less direction.
     let ins = unsafe { slice_or_empty(in_channels, num_in) };
     let outs = unsafe { slice_or_empty(out_channels, num_out) };
-    let widths_match = |buses: &[truce_core::bus::BusConfig], want: &[u32]| {
+    let widths_match = |buses: &[BusConfig], want: &[u32]| {
         buses.len() == want.len()
             && buses
                 .iter()
@@ -498,11 +499,11 @@ fn descriptor_buses<P: PluginExport>() -> (u32, u32, *const u8, *const u8) {
 
 /// Leak the per-bus kind bytes of a bus list (`0` = Main, `1` = Sidechain)
 /// to `'static` for the descriptor's raw pointer.
-fn leak_bus_kinds(buses: &[truce_core::bus::BusConfig]) -> &'static [u8] {
+fn leak_bus_kinds(buses: &[BusConfig]) -> &'static [u8] {
     Box::leak(
         buses
             .iter()
-            .map(|b| u8::from(b.kind == truce_core::bus::BusKind::Sidechain))
+            .map(|b| u8::from(b.kind == BusKind::Sidechain))
             .collect::<Vec<u8>>()
             .into_boxed_slice(),
     )

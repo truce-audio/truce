@@ -60,6 +60,12 @@ pub struct AuPluginDescriptor {
     /// Length of the two layout arrays. AU v2 reports them via
     /// `SupportedNumChannels`, AU v3 via `channelCapabilities`.
     pub num_layouts: u32,
+    /// Channel count of the sidechain input bus (the second input bus),
+    /// or `0` when the plugin declares no sidechain. Non-zero makes the
+    /// shim expose a second `kAudioUnitScope_Input` element the host can
+    /// route a separate source to. `num_inputs` stays the **main** input
+    /// bus width (element 0).
+    pub sidechain_in_channels: u32,
 }
 
 /// Parameter descriptor for the `ObjC` shim.

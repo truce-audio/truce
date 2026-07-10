@@ -40,6 +40,7 @@ use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr}
 // struct references on every target, so this import can't be apple-gated.
 use truce_core::TransportSlot;
 use truce_core::buffer::RawBufferScratch;
+use truce_core::bus::BusLayout;
 use truce_core::editor::fit_logical_size;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -1922,12 +1923,13 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // audio-less `(2, 2)` synthesis in `default_io_channels`). The leaked
     // arrays live for the process, like the descriptor itself.
     let layouts = P::bus_layouts();
+    // The channel capability describes the *main* bus; a sidechain is a
+    // separate input element, not summed into the main width. The main
+    // input bus is the first input bus of a layout.
+    let main_in_of = |l: &BusLayout| l.inputs.first().map_or(0, |b| b.channels.channel_count());
     let (layout_in_channels, layout_out_channels, num_layouts) = if layouts.len() > 1 {
         let ch = |c: u32| i16::try_from(c).unwrap_or(0);
-        let ins: Vec<i16> = layouts
-            .iter()
-            .map(|l| ch(l.total_input_channels()))
-            .collect();
+        let ins: Vec<i16> = layouts.iter().map(|l| ch(main_in_of(l))).collect();
         let outs: Vec<i16> = layouts
             .iter()
             .map(|l| ch(l.total_output_channels()))
@@ -1941,6 +1943,18 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     } else {
         (std::ptr::null(), std::ptr::null(), 0)
     };
+
+    // Main input bus width (element 0) and the summed width of any
+    // sidechain input buses (element 1). `num_inputs` is the main width;
+    // a plain effect (one input bus) leaves `sidechain_in` at 0.
+    let num_inputs = layouts.first().map_or(num_inputs, main_in_of);
+    let sidechain_in: u32 = layouts.first().map_or(0, |l| {
+        l.inputs
+            .iter()
+            .skip(1)
+            .map(|b| b.channels.channel_count())
+            .sum()
+    });
 
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
@@ -1961,6 +1975,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         layout_in_channels,
         layout_out_channels,
         num_layouts,
+        sidechain_in_channels: sidechain_in,
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {

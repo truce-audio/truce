@@ -71,6 +71,16 @@ typedef struct {
     AudioUnit sourceUnit;
     UInt32 sourceOutputBus;
 
+    // Sidechain input element (kAudioUnitScope_Input element 1), present
+    // only when g_descriptor->sidechain_in_channels > 0. Its own stream
+    // format and callback / connection, pulled after the main input and
+    // concatenated onto the flat channel array handed to cb_process.
+    AudioStreamBasicDescription sidechainFormat;
+    AURenderCallback sidechainInputCallback;
+    void *sidechainInputCallbackRefCon;
+    AudioUnit sidechainSourceUnit;
+    UInt32 sidechainSourceOutputBus;
+
     // MIDI buffer (for instruments)
     AuMidiEvent midiBuffer[256];
     uint32_t midiCount;
@@ -386,6 +396,9 @@ static OSStatus au_v2_open(void *self_, AudioComponentInstance instance) {
         build_asbd(&inst->outputFormat, inst->sampleRate, g_descriptor->num_outputs);
     if (g_descriptor->num_inputs > 0)
         build_asbd(&inst->inputFormat, inst->sampleRate, g_descriptor->num_inputs);
+    if (g_descriptor->sidechain_in_channels > 0)
+        build_asbd(&inst->sidechainFormat, inst->sampleRate,
+                   g_descriptor->sidechain_in_channels);
 
     // Default preset. presetNumber = -1 is Apple's "no factory preset
     // selected, this is a user / default state" sentinel. The name is
@@ -450,8 +463,11 @@ static OSStatus au_v2_initialize(void *self_) {
     // Allocate internal buffers for the negotiated channel count (a
     // multi-layout plugin may run at any declared width, not just the
     // first layout's num_outputs). These stage the input pull as well as
-    // the output, so size to whichever direction is wider.
-    uint32_t numBuf = numIn > numOut ? numIn : numOut;
+    // the output, so size to whichever direction is wider - and the input
+    // side spans the main bus plus any sidechain channels, which stage
+    // into buffers past the main ones.
+    uint32_t totalIn = numIn + g_descriptor->sidechain_in_channels;
+    uint32_t numBuf = totalIn > numOut ? totalIn : numOut;
     for (uint32_t c = 0; c < numBuf && c < 32; c++) {
         free(inst->outputBuffers[c]);
         inst->outputBuffers[c] = (float *)calloc(inst->maxFramesPerSlice, sizeof(float));
@@ -619,7 +635,15 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             } else if (scope == kAudioUnitScope_Input) {
                 if (g_descriptor->num_inputs == 0)
                     return kAudioUnitErr_InvalidElement;
-                *asbd = inst->inputFormat;
+                if (elem == 1) {
+                    if (g_descriptor->sidechain_in_channels == 0)
+                        return kAudioUnitErr_InvalidElement;
+                    *asbd = inst->sidechainFormat;
+                } else if (elem == 0) {
+                    *asbd = inst->inputFormat;
+                } else {
+                    return kAudioUnitErr_InvalidElement;
+                }
             } else {
                 return kAudioUnitErr_InvalidScope;
             }
@@ -630,7 +654,10 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
         case kAudioUnitProperty_ElementCount: {
             UInt32 *count = (UInt32 *)outData;
             if (scope == kAudioUnitScope_Input)
-                *count = (g_descriptor->num_inputs > 0) ? 1 : 0;
+                // One element for the main input, a second for the
+                // sidechain when the plugin declares one.
+                *count = (g_descriptor->num_inputs > 0)
+                    ? (g_descriptor->sidechain_in_channels > 0 ? 2 : 1) : 0;
             else if (scope == kAudioUnitScope_Output)
                 *count = (g_descriptor->num_outputs > 0) ? 1 : 0;
             else if (scope == kAudioUnitScope_Global)
@@ -1030,7 +1057,6 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
                                     AudioUnitScope scope, AudioUnitElement elem,
                                     const void *inData, UInt32 inSize) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
-    (void)elem;
 
     switch (prop) {
         case kAudioUnitProperty_StreamFormat: {
@@ -1053,9 +1079,20 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             } else if (scope == kAudioUnitScope_Input) {
                 if (g_descriptor->num_inputs == 0)
                     return kAudioUnitErr_InvalidElement;
-                if (!channel_count_supported(asbd->mChannelsPerFrame, scope))
-                    return kAudioUnitErr_FormatNotSupported;
-                inst->inputFormat = *asbd;
+                if (elem == 1) {
+                    if (g_descriptor->sidechain_in_channels == 0)
+                        return kAudioUnitErr_InvalidElement;
+                    // The sidechain element is fixed at its declared width.
+                    if (asbd->mChannelsPerFrame != g_descriptor->sidechain_in_channels)
+                        return kAudioUnitErr_FormatNotSupported;
+                    inst->sidechainFormat = *asbd;
+                } else if (elem == 0) {
+                    if (!channel_count_supported(asbd->mChannelsPerFrame, scope))
+                        return kAudioUnitErr_FormatNotSupported;
+                    inst->inputFormat = *asbd;
+                } else {
+                    return kAudioUnitErr_InvalidElement;
+                }
             } else {
                 return kAudioUnitErr_InvalidScope;
             }
@@ -1066,6 +1103,7 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             inst->sampleRate = *(const Float64 *)inData;
             inst->outputFormat.mSampleRate = inst->sampleRate;
             inst->inputFormat.mSampleRate = inst->sampleRate;
+            inst->sidechainFormat.mSampleRate = inst->sampleRate;
             return noErr;
         }
 
@@ -1092,19 +1130,36 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
         case kAudioUnitProperty_SetRenderCallback: {
             if (scope != kAudioUnitScope_Input) return kAudioUnitErr_InvalidScope;
             const AURenderCallbackStruct *cb = (const AURenderCallbackStruct *)inData;
-            inst->inputCallback = cb->inputProc;
-            inst->inputCallbackRefCon = cb->inputProcRefCon;
-            inst->sourceUnit = NULL;
+            if (elem == 1) {
+                if (g_descriptor->sidechain_in_channels == 0)
+                    return kAudioUnitErr_InvalidElement;
+                inst->sidechainInputCallback = cb->inputProc;
+                inst->sidechainInputCallbackRefCon = cb->inputProcRefCon;
+                inst->sidechainSourceUnit = NULL;
+            } else {
+                inst->inputCallback = cb->inputProc;
+                inst->inputCallbackRefCon = cb->inputProcRefCon;
+                inst->sourceUnit = NULL;
+            }
             return noErr;
         }
 
         case kAudioUnitProperty_MakeConnection: {
             if (scope != kAudioUnitScope_Input) return kAudioUnitErr_InvalidScope;
             const AudioUnitConnection *conn = (const AudioUnitConnection *)inData;
-            inst->sourceUnit = conn->sourceAudioUnit;
-            inst->sourceOutputBus = conn->sourceOutputNumber;
-            inst->inputCallback = NULL;
-            inst->inputCallbackRefCon = NULL;
+            if (elem == 1) {
+                if (g_descriptor->sidechain_in_channels == 0)
+                    return kAudioUnitErr_InvalidElement;
+                inst->sidechainSourceUnit = conn->sourceAudioUnit;
+                inst->sidechainSourceOutputBus = conn->sourceOutputNumber;
+                inst->sidechainInputCallback = NULL;
+                inst->sidechainInputCallbackRefCon = NULL;
+            } else {
+                inst->sourceUnit = conn->sourceAudioUnit;
+                inst->sourceOutputBus = conn->sourceOutputNumber;
+                inst->inputCallback = NULL;
+                inst->inputCallbackRefCon = NULL;
+            }
             return noErr;
         }
 
@@ -1468,6 +1523,10 @@ static OSStatus au_v2_render(void *self_,
     // keeps 0 inputs even though its output format is a stereo dummy.
     uint32_t numIn = g_descriptor->num_inputs > 0 ? inst->inputFormat.mChannelsPerFrame : 0;
     uint32_t numOut = inst->outputFormat.mChannelsPerFrame;
+    // Sidechain channels stage into the buffers past the main input, so
+    // the flat array is [main..., sidechain...]. Clamp to the buffer array.
+    uint32_t scCh = g_descriptor->sidechain_in_channels;
+    if (numIn + scCh > 32) scCh = numIn < 32 ? 32 - numIn : 0;
 
     if (numIn > 0) {
         // Build a temporary ABL pointing to our buffers for the input pull
@@ -1511,6 +1570,37 @@ static OSStatus au_v2_render(void *self_,
         }
     }
 
+    // Pull the sidechain input element (element 1) into the buffers just
+    // past the main channels. An unconnected sidechain reads as silence.
+    if (scCh > 0) {
+        char scAblStorage[sizeof(AudioBufferList) + sizeof(AudioBuffer) * 31];
+        AudioBufferList *scABL = (AudioBufferList *)scAblStorage;
+        scABL->mNumberBuffers = scCh;
+        for (UInt32 c = 0; c < scCh; c++) {
+            scABL->mBuffers[c].mNumberChannels = 1;
+            scABL->mBuffers[c].mDataByteSize = inFrameCount * sizeof(float);
+            scABL->mBuffers[c].mData = inst->outputBuffers[numIn + c];
+        }
+        AudioUnitRenderActionFlags scFlags = 0;
+        OSStatus scErr = -1;
+        if (inst->sidechainInputCallback)
+            scErr = inst->sidechainInputCallback(inst->sidechainInputCallbackRefCon,
+                &scFlags, inTimeStamp, 1, inFrameCount, scABL);
+        else if (inst->sidechainSourceUnit)
+            scErr = AudioUnitRender(inst->sidechainSourceUnit, &scFlags,
+                inTimeStamp, inst->sidechainSourceOutputBus, inFrameCount, scABL);
+        if (scErr == noErr) {
+            for (UInt32 c = 0; c < scCh; c++)
+                if (scABL->mBuffers[c].mData != inst->outputBuffers[numIn + c])
+                    memcpy(inst->outputBuffers[numIn + c], scABL->mBuffers[c].mData,
+                           inFrameCount * sizeof(float));
+        } else {
+            // No source connected (or the pull failed): feed silence.
+            for (uint32_t c = 0; c < scCh; c++)
+                memset(inst->outputBuffers[numIn + c], 0, inFrameCount * sizeof(float));
+        }
+    }
+
     // Save host's original buffer pointers - we MUST write back to these
     void *hostBufs[32] = {0};
     for (uint32_t c = 0; c < ioData->mNumberBuffers && c < 32; c++)
@@ -1522,6 +1612,9 @@ static OSStatus au_v2_render(void *self_,
 
     for (uint32_t c = 0; c < numIn && c < 32; c++)
         inPtrs[c] = (const float *)inst->outputBuffers[c];
+    // Sidechain channels follow the main ones in the flat array.
+    for (uint32_t c = 0; c < scCh && numIn + c < 32; c++)
+        inPtrs[numIn + c] = (const float *)inst->outputBuffers[numIn + c];
     for (uint32_t c = 0; c < numOut && c < 32; c++)
         outPtrs[c] = inst->outputBuffers[c];
 
@@ -1550,7 +1643,7 @@ static OSStatus au_v2_render(void *self_,
      * cb_process as EventBody::ParamChange rows, matching VST3 / AU v3
      * and driving the editor's automation follow. */
     g_callbacks->process(inst->rustCtx, inPtrs, outPtrs,
-                         numIn, numOut, inFrameCount,
+                         numIn + scCh, numOut, inFrameCount,
                          inst->midiBuffer, inst->midiCount,
                          NULL, 0,
                          inst->paramEvents, inst->paramEventCount,
