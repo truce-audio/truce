@@ -142,20 +142,33 @@ impl Smoother {
     /// on `target`; the threshold gates "close enough that any
     /// further step is denormal-territory".
     ///
+    /// `Logarithmic` is multiplicative, so it converges on a *ratio*:
+    /// the log-domain distance `|ln(current) - ln(target)|` against the
+    /// same `1e-6` relative tolerance (equivalent to the linear check
+    /// near convergence, but in the spirit of the log-domain step). It
+    /// falls back to the linear threshold for a non-positive endpoint,
+    /// which `next()` snaps rather than steps.
+    ///
     /// Costs one atomic load. Plugin authors typically reach this
     /// through [`crate::types::FloatParam::is_smoothing`] which
     /// loads the target and inverts the answer.
     #[inline]
     #[must_use]
     pub fn is_converged(&self, target: f64) -> bool {
+        let current = self.current.load();
+        let linear_converged = || {
+            let threshold = (target.abs() * 1e-6).max(1e-8);
+            (target - current).abs() < threshold
+        };
         match self.style {
             SmoothingStyle::None => true,
-            SmoothingStyle::Linear(_)
-            | SmoothingStyle::Exponential(_)
-            | SmoothingStyle::Logarithmic(_) => {
-                let current = self.current.load();
-                let threshold = (target.abs() * 1e-6).max(1e-8);
-                (target - current).abs() < threshold
+            SmoothingStyle::Linear(_) | SmoothingStyle::Exponential(_) => linear_converged(),
+            SmoothingStyle::Logarithmic(_) => {
+                if current > 0.0 && target > 0.0 {
+                    (current.ln() - target.ln()).abs() < 1e-6
+                } else {
+                    linear_converged()
+                }
             }
         }
     }
