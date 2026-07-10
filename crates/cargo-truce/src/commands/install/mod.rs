@@ -322,10 +322,21 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // and silently downgrades AAX / AU v3 / Windows-VST2 to system
     // scope, emitting a one-line note (printed at most once per
     // message via `note_once`).
+    // Only these formats re-envelope the loop's factory presets. AU v3
+    // loads its own (after building its framework, so its sidecar exists),
+    // and vst2 / aax have no preset support yet - so an au3-only (or vst2 /
+    // aax-only) install must not read the param-manifest sidecar here,
+    // which for `--au3` after a clean hasn't been built yet.
+    let needs_loop_presets = clap || vst3 || lv2 || au2;
+
     for p in &plugins {
         // Parsed once per plugin; each format re-envelopes the same
         // canonical state blobs into its native preset files.
-        let factory_presets = presets::load_factory_presets(&root, p, &config)?;
+        let factory_presets = if needs_loop_presets {
+            presets::load_factory_presets(&root, p, &config)?
+        } else {
+            None
+        };
         let fp = factory_presets.as_ref();
         if clap {
             let s = scope_for(Format::Clap, cli_scope);
