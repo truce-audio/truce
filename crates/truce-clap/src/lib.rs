@@ -73,7 +73,7 @@ use clap_sys::ext::render::{
     CLAP_EXT_RENDER, CLAP_RENDER_OFFLINE, clap_plugin_render, clap_plugin_render_mode,
 };
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_plugin_state};
-use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_plugin_tail};
+use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_host_tail, clap_plugin_tail};
 use clap_sys::factory::preset_discovery::{
     CLAP_PRESET_DISCOVERY_LOCATION_FILE, clap_preset_discovery_location_kind,
 };
@@ -82,8 +82,9 @@ use clap_sys::host::clap_host;
 use clap_sys::id::{CLAP_INVALID_ID, clap_id};
 use clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
 use clap_sys::plugin_features::{
-    CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_INSTRUMENT,
-    CLAP_PLUGIN_FEATURE_NOTE_EFFECT, CLAP_PLUGIN_FEATURE_SYNTHESIZER,
+    CLAP_PLUGIN_FEATURE_ANALYZER, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
+    CLAP_PLUGIN_FEATURE_INSTRUMENT, CLAP_PLUGIN_FEATURE_NOTE_EFFECT,
+    CLAP_PLUGIN_FEATURE_SYNTHESIZER, CLAP_PLUGIN_FEATURE_UTILITY,
 };
 use clap_sys::process::{
     CLAP_PROCESS_CONTINUE, CLAP_PROCESS_CONTINUE_IF_NOT_QUIET, CLAP_PROCESS_ERROR,
@@ -198,7 +199,8 @@ struct ClapPluginData<P: PluginExport> {
     /// from the reloaded dylib, so GUI edits hot-reload).
     editor_builder: EditorBuilder<P::Params>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
-    /// `tail()`. Updated by the audio thread (or `init`/`reset`) so
+    /// `tail()`. Refreshed at `activate` / `reset` (from the real,
+    /// resolved sample rate) and after every process block, so
     /// `latency_get` / `tail_get` read the value without touching
     /// `data.plugin`.
     latency_cache: AtomicU32,
@@ -246,10 +248,17 @@ struct ClapPluginData<P: PluginExport> {
     /// Host latency extension (for `changed`). Null if the host doesn't
     /// expose `clap.latency`.
     host_latency: *const clap_host_latency,
+    /// Host tail extension (for `changed`). Null if the host doesn't
+    /// expose `clap.tail`.
+    host_tail: *const clap_host_tail,
     /// Set on the audio thread when `latency()` changes; drained on the
     /// main thread, which notifies the host. Coalesces a burst of
     /// changes into one host notification per main-thread callback.
     latency_dirty: AtomicBool,
+    /// Set on the audio thread when `tail()` changes; drained on the main
+    /// thread, which calls `clap_host_tail::changed`. Same coalescing as
+    /// `latency_dirty` (a tail change needs no restart, only `changed`).
+    tail_dirty: AtomicBool,
     /// Queue of GUI-initiated parameter changes to emit as output events.
     gui_changes: Arc<GuiChangeQueue>,
     /// Bounded SPSC handoff for state loads. Host (`state_load`) and
@@ -435,8 +444,15 @@ impl DescriptorHolder {
                 ]
             }
             PluginCategory::NoteEffect => vec![CLAP_PLUGIN_FEATURE_NOTE_EFFECT],
-            PluginCategory::Effect | PluginCategory::Analyzer | PluginCategory::Tool => {
-                vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT]
+            PluginCategory::Effect => vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT],
+            // Analyzer / Tool still process audio (passthrough), so keep
+            // AUDIO_EFFECT for insert menus, but lead with the specific
+            // feature so a feature-filtered browser surfaces them.
+            PluginCategory::Analyzer => {
+                vec![CLAP_PLUGIN_FEATURE_ANALYZER, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT]
+            }
+            PluginCategory::Tool => {
+                vec![CLAP_PLUGIN_FEATURE_UTILITY, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT]
             }
         };
 
@@ -537,6 +553,10 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
             if !lat_ext.is_null() {
                 data.host_latency = lat_ext.cast::<clap_host_latency>();
             }
+            let tail_ext = get_ext(data.host, CLAP_EXT_TAIL.as_ptr());
+            if !tail_ext.is_null() {
+                data.host_tail = tail_ext.cast::<clap_host_tail>();
+            }
         }
         true
     }
@@ -579,6 +599,14 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         {
             let mut instance = enter_plugin(&data.plugin);
             instance.reset(&AudioConfig::new(sample_rate, max_block).with_process_mode(mode));
+            // Refresh the caches from the freshly-reset instance so the
+            // host reads the real latency/tail before the first block -
+            // not the placeholder-rate value from create. No dirty flag:
+            // this is the baseline the host reads at activate, not a
+            // mid-session change needing changed() / request_restart.
+            data.latency_cache
+                .store(instance.latency(), Ordering::Relaxed);
+            data.tail_cache.store(instance.tail(), Ordering::Relaxed);
         }
 
         // Pre-grow the widening / narrowing scratch so no host wire /
@@ -652,6 +680,11 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
         instance.reset(
             &AudioConfig::new(data.sample_rate, data.max_block_size).with_process_mode(mode),
         );
+        // Same baseline refresh as `activate` (no dirty flag): keep the
+        // caches consistent with the reset instance.
+        data.latency_cache
+            .store(instance.latency(), Ordering::Relaxed);
+        data.tail_cache.store(instance.tail(), Ordering::Relaxed);
     }
 }
 
@@ -681,6 +714,16 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             {
                 req_restart(data.host);
             }
+        }
+
+        // Tail changed on the audio thread: notify the host off it. A
+        // tail change (unlike latency) needs no restart - `changed()`
+        // just refreshes the host's bounce end-time bookkeeping.
+        if data.tail_dirty.swap(false, Ordering::Relaxed)
+            && !data.host_tail.is_null()
+            && let Some(changed) = (*data.host_tail).changed
+        {
+            changed(data.host);
         }
     }
 }
@@ -1725,7 +1768,16 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         {
             req_cb(data.host);
         }
-        data.tail_cache.store(instance.tail(), Ordering::Relaxed);
+        // Same coalesced main-thread notification for tail: a shrinking
+        // reverb tail must reach the host so its bounce end-time is right.
+        let new_tail = instance.tail();
+        if data.tail_cache.swap(new_tail, Ordering::Relaxed) != new_tail
+            && !data.tail_dirty.swap(true, Ordering::Relaxed)
+            && !data.host.is_null()
+            && let Some(req_cb) = (*data.host).request_callback
+        {
+            req_cb(data.host);
+        }
 
         // Flush GUI-initiated param changes to host output events
         flush_gui_changes::<P>(data, proc.out_events);
@@ -2548,7 +2600,17 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
         };
 
         state::apply_params(&*data.params_arc, &deserialized);
-        let _ = data.pending_state.force_push(deserialized);
+        // Same active/inactive split as `state_load`: while inactive no
+        // `process` drains `pending_state`, so a synchronous apply is what
+        // keeps offline preset browsing from stranding the custom-state
+        // blob (sample buffers, wavetables) on the queue.
+        if data.active.load(Ordering::Relaxed) {
+            let _ = data.pending_state.force_push(deserialized);
+        } else {
+            let mut instance = enter_plugin(&data.plugin);
+            state::apply_state(&mut *instance, &deserialized);
+            instance.republish_snapshot();
+        }
         if let Some(ref mut editor) = data.editor {
             editor.state_changed();
         }
@@ -3729,7 +3791,9 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         host,
         host_params: ptr::null(),
         host_latency: ptr::null(),
+        host_tail: ptr::null(),
         latency_dirty: AtomicBool::new(false),
+        tail_dirty: AtomicBool::new(false),
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         pending_state: Arc::new(StateLoadQueue::new(1)),
         active: AtomicBool::new(false),
