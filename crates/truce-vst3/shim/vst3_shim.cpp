@@ -77,10 +77,28 @@ typedef uint64_t TSize;
 typedef int8_t TUID[16];
 typedef const char* FIDString;
 
-static const tresult kResultOk = 0;
-static const tresult kResultFalse = 1;
-static const tresult kInvalidArgument = 5;
-static const tresult kNotImplemented = 2;
+// tresult result codes. Like the IIDs above, the values differ between
+// the Windows COM (HRESULT) ABI and the sequential enum every other
+// platform uses - guard them the same way MAKE_IID is guarded. Getting
+// these wrong makes a host misread codes: the old shim had
+// kInvalidArgument=5 (the SDK's kNotInitialized) and kNotImplemented=2
+// (the SDK's kInvalidArgument), and defined no kNoInterface. On Windows
+// the small positive values are worse - SUCCEEDED(hr) treats any hr >= 0
+// as success, so a "not implemented" or a partial-getState failure would
+// read as OK and the host could consume an unwritten out-param.
+#if defined(_WIN32)
+static const tresult kNoInterface     = (tresult)0x80004002L; // E_NOINTERFACE
+static const tresult kResultOk        = (tresult)0x00000000L; // S_OK
+static const tresult kResultFalse     = (tresult)0x00000001L; // S_FALSE
+static const tresult kInvalidArgument = (tresult)0x80070057L; // E_INVALIDARG
+static const tresult kNotImplemented  = (tresult)0x80004001L; // E_NOTIMPL
+#else
+static const tresult kNoInterface     = -1;
+static const tresult kResultOk        = 0;
+static const tresult kResultFalse     = 1;
+static const tresult kInvalidArgument = 2;
+static const tresult kNotImplemented  = 3;
+#endif
 
 // IIDs from the official Steinberg VST3 SDK (via vst3 crate bindings).
 // Byte layout differs between Windows (COM) and macOS/Linux - MAKE_IID handles this.
@@ -1789,7 +1807,7 @@ static tresult th_queryInterface(void* self, const TUID iid, void** obj) {
         return kResultOk;
     }
     *obj = nullptr;
-    return kResultFalse;
+    return kNoInterface;
 }
 static uint32 th_addRef(void*) { return 1; }
 static uint32 th_release(void*) { return 1; }
@@ -1892,7 +1910,7 @@ static tresult pv_queryInterface(void* s, const TUID iid, void** obj) {
         return kResultOk;
     }
     *obj = nullptr;
-    return kResultFalse;
+    return kNoInterface;
 }
 static uint32 pv_addRef(void* s) { return ++((TrucePlugView*)s)->refCount; }
 static uint32 pv_release(void* s) {
@@ -2289,7 +2307,7 @@ tresult TruceComponent::queryInterface(void* comBase, const TUID iid, void** obj
         return kResultOk;
     }
     *obj = nullptr;
-    return kResultFalse;
+    return kNoInterface;
 }
 
 // Helper to get TruceComponentCOM from any vtable pointer
@@ -2611,7 +2629,7 @@ static tresult factory_qi(void* self, const TUID iid, void** obj) {
         return kResultOk;
     }
     *obj = nullptr;
-    return kResultFalse;
+    return kNoInterface;
 }
 
 static uint32 factory_addRef(void* self) {
