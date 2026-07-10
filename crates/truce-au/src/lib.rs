@@ -501,11 +501,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             return;
         }
 
-        // Lock the plugin for the whole block. Uncontended this is
-        // one CAS; contended only when a host/GUI state callback is
-        // mid-serialization, which then delays this block by the
-        // remainder of that `save_state` call. Lock through a local
-        // Arc clone so the guard doesn't pin a borrow of `inst`.
+        // Take ownership of the plugin for the whole block: an
+        // uncontended `Acquire`, never a wait, since the host contract
+        // keeps `process` from overlapping a lifecycle callback and host
+        // saves read the snapshot instead of the plugin. Enter through a
+        // local Arc clone so the guard doesn't pin a borrow of `inst`.
         let plugin_arc = Arc::clone(&inst.plugin);
         let mut plugin = enter_plugin(&plugin_arc);
 
@@ -883,17 +883,13 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     run_extern_callback_with::<P, ()>("au", "save_state", (), || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         let (ids, values) = inst.params_arc.collect_values();
-        // `plugin.save_state()` reads through the plugin reference: a
-        // user impl that mutates non-atomic state from `process` while
-        // also reading it from `save_state` races here. The contract
-        // is "save_state must be safe to call concurrently with
-        // process"; impls that copy from atomic params are fine.
+        // Read the custom state from the lock-free snapshot the audio
+        // thread publishes each block. Never touches the plugin, so it
+        // neither stalls a block in flight nor races `process`.
         //
         // Allocator pin: this wrapper allocates with libc `malloc` and
         // the AU shim frees with libc `free`. The Rust global allocator
         // must not appear on either side; mixing allocators is UB.
-        // Lock the plugin for the serialization; a block in flight
-        // holds the lock, so this waits for the block boundary.
         let extra = save_extra(&inst.snapshot);
         let persist = inst.params_arc.serialize_persist();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);

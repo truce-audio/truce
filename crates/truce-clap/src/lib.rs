@@ -1482,11 +1482,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             return CLAP_PROCESS_CONTINUE;
         }
 
-        // Lock the plugin for the whole block. Uncontended this is
-        // one CAS; contended only when a host/GUI state callback is
-        // mid-serialization, which then delays this block by the
-        // remainder of that `save_state` call. Lock through a local
-        // Arc clone so the guard doesn't pin a borrow of `data`
+        // Take ownership of the plugin for the whole block: an
+        // uncontended `Acquire`, never a wait, since the host contract
+        // keeps `process` from overlapping a lifecycle callback and host
+        // saves read the snapshot instead of the plugin. Enter through a
+        // local Arc clone so the guard doesn't pin a borrow of `data`
         // (later per-block work needs `&mut data`).
         let plugin_arc = Arc::clone(&data.plugin);
         let mut instance = enter_plugin(&plugin_arc);
@@ -2386,10 +2386,9 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     run_extern_callback_with::<P, bool>("CLAP", "save_state", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let (ids, values) = data.params_arc.collect_values();
-        // Lock the plugin for the serialization: a block in flight
-        // holds the lock, so this waits for the block boundary and
-        // `save_state` never runs concurrently with `process` - plain
-        // (non-atomic) plugin fields are safe to read here.
+        // Read the custom state from the lock-free snapshot the audio
+        // thread publishes each block. Never touches the plugin, so it
+        // can't stall a block in flight.
         let extra = save_extra(&data.snapshot);
         let persist = data.params_arc.serialize_persist();
         let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, &extra, &persist);

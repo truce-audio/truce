@@ -542,10 +542,10 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             return;
         }
 
-        // Write-lock the plugin for the whole block. Uncontended
-        // this is one CAS; contended only when a host/GUI state
-        // callback is mid-serialization, which then delays this
-        // block by the remainder of that `save_state` call.
+        // Take ownership of the plugin for the whole block: an
+        // uncontended `Acquire`, never a wait, since the host contract
+        // keeps `process` from overlapping a lifecycle callback and host
+        // saves read the snapshot instead of the plugin.
         let mut plugin = enter_plugin(&inst.plugin);
 
         // Apply any pending state-load before per-block work so the
@@ -983,10 +983,9 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     run_extern_callback_with::<P, ()>("vst3", "save_state", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let (ids, values) = inst.params_arc.collect_values();
-        // Lock the plugin for the serialization. A block in flight
-        // holds the lock, so this waits for the block boundary (and
-        // the *next* block waits for `save_state`) - bounded, rare,
-        // and the price of `&mut` exclusivity.
+        // Read the custom state from the lock-free snapshot the audio
+        // thread publishes each block. Never touches the plugin, so it
+        // can't stall a block in flight.
         //
         // Allocator pin: this wrapper allocates with `libc_malloc` and
         // the C++ shim frees with `libc::free`. The Rust global

@@ -1011,11 +1011,11 @@ pub unsafe fn _process<P: PluginExport>(
             return;
         }
 
-        // Lock the plugin for the whole block. Uncontended this is
-        // one CAS; contended only when a host/GUI state callback is
-        // mid-serialization, which then delays this block by the
-        // remainder of that `save_state` call. Lock through a local
-        // Arc clone so the guard doesn't pin a borrow of `inst`.
+        // Take ownership of the plugin for the whole block: an
+        // uncontended `Acquire`, never a wait, since the host contract
+        // keeps `process` from overlapping a lifecycle callback and host
+        // saves read the snapshot instead of the plugin. Enter through a
+        // local Arc clone so the guard doesn't pin a borrow of `inst`.
         let plugin_arc = Arc::clone(&inst.plugin);
         let mut plugin = enter_plugin(&plugin_arc);
 
@@ -1446,8 +1446,9 @@ unsafe fn save_state_body<P: PluginExport>(
     //      call re-serializes.
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
         let (ids, values) = inst.params_arc.collect_values();
-        // Lock the plugin for the serialization; a block in flight
-        // holds the lock, so this waits for the block boundary.
+        // Read the custom state from the lock-free snapshot the audio
+        // thread publishes each block. Never touches the plugin, so it
+        // can't stall a block in flight.
         let extra = save_extra(&inst.snapshot);
         let persist = inst.params_arc.serialize_persist();
         state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist)
