@@ -6,6 +6,7 @@ Notable changes per release.
 
 - Three more parameter range shapes: `skewed(min, max, factor)` (power-law taper), `sym_skewed(min, max, factor, center)` (center-anchored, for pan and EQ-gain knobs), and `reversed(<range>)` (any range with its knob axis flipped).
 - Logarithmic (multiplicative) smoothing via `smooth = "log(<ms>)"` - a constant perceived rate of change, for frequency and linear-gain params.
+- Hosts can now switch between a plugin's declared `bus_layouts()`: CLAP via `audio-ports-config`, VST3 via `setBusArrangements`, AU via the channel-capability property, and AAX by registering one component per layout. The standalone host selects with `--bus-layout` (`--list-bus-layouts` to enumerate) or the Settings > Bus Layout menu. VST2 and LV2 stay on the first layout (the formats can't renegotiate ports).
 
 ## 4.1.0
 

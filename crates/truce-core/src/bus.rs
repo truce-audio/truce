@@ -8,7 +8,7 @@
 /// `BusConfig::kind` lets call-sites that need it ask the bus
 /// directly rather than re-deriving the convention.
 ///
-/// Construct via [`Self::new`] / [`Self::stereo`] + the `with_*`
+/// Construct via [`Self::new`] / [`Self::mono`] / [`Self::stereo`] + the `with_*`
 /// builders rather than struct literal - `#[non_exhaustive]` so
 /// pre-1.0 future fields don't break downstream.
 #[derive(Clone, Debug, Default)]
@@ -61,6 +61,13 @@ impl BusLayout {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn mono() -> Self {
+        Self::new()
+            .with_input("Main", ChannelConfig::Mono)
+            .with_output("Main", ChannelConfig::Mono)
     }
 
     #[must_use]
