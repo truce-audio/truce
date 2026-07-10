@@ -231,9 +231,9 @@ pub fn install(
         }
 
         // Bus Layout submenu - only when the plugin declares more than
-        // one layout. Selecting one rebuilds the audio stream at that
-        // width (its `set_channels` command). The select action moves the
-        // checkmark; the count is otherwise session-stable like the
+        // one layout. Selecting one rebuilds the plugin at that exact
+        // (in, out) (its `set_layout` command). The select action moves the
+        // checkmark; the layout is otherwise session-stable like the
         // channel menus above.
         if bus_layouts.len() > 1 {
             let sep3: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
@@ -245,7 +245,7 @@ pub fn install(
                 bus_menu,
                 target,
                 bus_layouts,
-                output.channels(),
+                output.current_layout(),
                 sel!(selectBusLayoutAction:),
             );
             let _: () = msg_send![bus_item, setSubmenu: bus_menu];
@@ -580,20 +580,22 @@ unsafe fn populate_channel_menu(
 
 /// Populate the Bus Layout submenu: one item per declared layout,
 /// labelled by its I/O channel counts and tagged by its channel width
-/// so `selectBusLayoutAction:` can hand the width to `set_channels`.
+/// so `selectBusLayoutAction:` can hand the exact `(in, out)` to
+/// `set_layout`. Each item's tag packs `(in << 16) | out`, so two layouts
+/// that share a maximum width still get distinct tags (and checkmarks).
 unsafe fn populate_bus_layout_menu(
     menu: *mut Object,
     target: *mut Object,
     layouts: &[(u16, u16)],
-    current_channels: usize,
+    current_layout: (usize, usize),
     action: Sel,
 ) {
     unsafe {
-        let current_tag = i64::try_from(current_channels).unwrap_or(0);
+        let current_tag = i64::try_from(current_layout.0 << 16 | current_layout.1).unwrap_or(-1);
         for (in_ch, out_ch) in layouts {
-            let width = (*in_ch).max(*out_ch);
             let label = format!("{in_ch} in / {out_ch} out");
-            add_tagged_item(menu, target, action, &label, i64::from(width), current_tag);
+            let tag = i64::from(*in_ch) << 16 | i64::from(*out_ch);
+            add_tagged_item(menu, target, action, &label, tag, current_tag);
         }
     }
 }
@@ -958,17 +960,18 @@ fn ensure_class() -> &'static Class {
             select_output_channels_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
-        // Bus layout chosen (tag = the layout's channel width). Rebuilds
-        // the audio stream at that width and moves the checkmark.
+        // Bus layout chosen (tag packs `(in << 16) | out`). Rebuilds the
+        // plugin at that exact layout and moves the checkmark.
         extern "C" fn select_bus_layout_action(this: &Object, _: Sel, sender: *mut Object) {
             unsafe {
                 let Some(state) = state_from(this) else {
                     return;
                 };
                 let tag: i64 = msg_send![sender, tag];
-                let channels = u16::try_from(tag).unwrap_or(2);
-                vlog!("bus layout: {channels} channels");
-                state.output.set_channels(channels);
+                let num_in = u16::try_from((tag >> 16) & 0xFFFF).unwrap_or(0);
+                let num_out = u16::try_from(tag & 0xFFFF).unwrap_or(0);
+                vlog!("bus layout: {num_in} in / {num_out} out");
+                state.output.set_layout(num_in, num_out);
                 let menu: *mut Object = msg_send![sender, menu];
                 update_channel_checkmarks(menu, tag);
             }
