@@ -35,8 +35,10 @@ extern "C" {
  *           per bus_layouts() entry).
  *   7 → 8: sidechain input - sidechain_in_channels on the descriptor; the
  *           template registers an AAX mono side-chain port (AddSideChainIn)
- *           and appends it after the main input channels. */
-#define TRUCE_AAX_ABI_VERSION 8u
+ *           and appends it after the main input channels.
+ *   8 → 9: parameter text entry - truce_aax_parse_param, routing the
+ *           display delegate's StringToValue to the plugin's parse_value. */
+#define TRUCE_AAX_ABI_VERSION 9u
 
 /* Capacity of TruceAaxDescriptor::legacy_chunk_ids. */
 #define TRUCE_AAX_MAX_LEGACY_CHUNKS 8u
@@ -233,6 +235,10 @@ double truce_aax_get_param(void* ctx, uint32_t id);
 void   truce_aax_set_param(void* ctx, uint32_t id, double value);
 void   truce_aax_format_param(void* ctx, uint32_t id, double value,
                                char* out, uint32_t out_len);
+/* Parse host text-entry into a plain value. Returns 1 and writes
+ * out_plain on success, 0 when the text isn't parseable for the param. */
+int32_t truce_aax_parse_param(void* ctx, uint32_t id, const char* text,
+                               double* out_plain);
 
 /* State serialization. */
 uint32_t truce_aax_save_state(void* ctx, uint8_t** out_data);

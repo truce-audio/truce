@@ -176,6 +176,15 @@ pub struct Vst3Callbacks {
         out: *mut c_char,
         out_len: u32,
     ) -> u32,
+    /// Parse host-entered UTF-8 `text` into a plain param value. Returns
+    /// `1` and writes `out_plain` on success, `0` when the text can't be
+    /// parsed (the shim then reports `kResultFalse` to the host).
+    pub param_parse: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        id: u32,
+        text: *const c_char,
+        out_plain: *mut f64,
+    ) -> i32,
     pub state_save:
         unsafe extern "C" fn(ctx: *mut c_void, out_data: *mut *mut u8, out_len: *mut u32),
     /// Returns `1` when the blob was accepted (truce envelope, or

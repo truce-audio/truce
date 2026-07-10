@@ -135,6 +135,29 @@ static void str_to_char8(char8* dst, const char* src, int maxLen) {
     dst[i] = 0;
 }
 
+// UTF-16 -> UTF-8, the reverse of `str_to_char16`. Encodes the BMP
+// (surrogate pairs are dropped - parameter entry text is effectively
+// always in the BMP). `maxLen` bounds the output including the NUL.
+static void char16_to_str(char* dst, const char16* src, int maxLen) {
+    int o = 0;
+    for (int i = 0; src[i] && o < maxLen - 1; i++) {
+        unsigned int c = (unsigned int)(uint16_t)src[i];
+        if (c < 0x80) {
+            dst[o++] = (char)c;
+        } else if (c < 0x800) {
+            if (o + 2 > maxLen - 1) break;
+            dst[o++] = (char)(0xC0 | (c >> 6));
+            dst[o++] = (char)(0x80 | (c & 0x3F));
+        } else {
+            if (o + 3 > maxLen - 1) break;
+            dst[o++] = (char)(0xE0 | (c >> 12));
+            dst[o++] = (char)(0x80 | ((c >> 6) & 0x3F));
+            dst[o++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    dst[o] = 0;
+}
+
 // ---------------------------------------------------------------------------
 // FFI types (must match Rust ffi.rs)
 // ---------------------------------------------------------------------------
@@ -247,6 +270,7 @@ struct Vst3Callbacks {
     double (*param_normalize)(void*, uint32_t, double);
     double (*param_denormalize)(void*, uint32_t, double);
     uint32_t (*param_format)(void*, uint32_t, double, char*, uint32_t);
+    int32_t (*param_parse)(void*, uint32_t, const char*, double*);
     void (*state_save)(void*, uint8_t**, uint32_t*);
     /* Returns 1 when the blob was accepted (truce envelope, or the
      * plugin's migrate_state translated it), 0 when the load failed -
@@ -1654,7 +1678,15 @@ public:
         return kResultOk;
     }
 
-    tresult getParamValueByString(uint32, char16*, double*) { return kNotImplemented; }
+    tresult getParamValueByString(uint32 id, char16* string, double* valueNormalized) {
+        if (!string || !valueNormalized || !g_cb || !ctx) return kInvalidArgument;
+        char utf8[256];
+        char16_to_str(utf8, string, sizeof(utf8));
+        double plain = 0.0;
+        if (!g_cb->param_parse(ctx, id, utf8, &plain)) return kResultFalse;
+        *valueNormalized = g_cb->param_normalize(ctx, id, plain);
+        return kResultOk;
+    }
 
     double normalizedParamToPlain(uint32 id, double normalized) {
         return (g_cb && ctx) ? g_cb->param_denormalize(ctx, id, normalized) : normalized;
