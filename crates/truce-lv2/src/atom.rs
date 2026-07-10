@@ -334,25 +334,38 @@ impl<'a> AtomSequenceReader<'a> {
                     }
                 })
                 .unwrap_or(4.0);
+            // LV2 reports beats in the host's *beat unit* (the time-sig
+            // denominator), but truce's canonical `position_beats` is in
+            // quarter notes - matching VST3's `projectTimeMusic` and CLAP.
+            // Convert with 4/beatUnit, so 6/8 yields 7.5 quarter beats, not
+            // 15 eighth beats (which diverged 2x from every other format).
+            // `beatUnit` defaults to 4 (an x/4 meter), giving factor 1.
+            let beat_unit = if info.time_sig_den > 0 {
+                f64::from(info.time_sig_den)
+            } else {
+                4.0
+            };
+            let q_factor = 4.0 / beat_unit;
             // Precedence: spec-canonical `bar` + `barBeat` wins, then
             // `bar` alone, then non-standard `time:beat`, then `barBeat`
             // alone (legacy fallback).
             if let Some(b) = bar {
-                info.bar_start_beats = b * bpb;
+                let bar_start = b * bpb;
+                info.bar_start_beats = bar_start * q_factor;
                 if let Some(bb) = bar_beat {
-                    info.position_beats = info.bar_start_beats + bb;
+                    info.position_beats = (bar_start + bb) * q_factor;
                 } else if let Some(bd) = beat_direct {
-                    info.position_beats = bd;
+                    info.position_beats = bd * q_factor;
                 } else {
                     info.position_beats = info.bar_start_beats;
                 }
             } else if let Some(bd) = beat_direct {
-                info.position_beats = bd;
+                info.position_beats = bd * q_factor;
             } else if let Some(bb) = bar_beat {
                 // No bar field - best we can do is surface the intra-bar
                 // offset as the position, matching our previous behavior
                 // for hosts that only emit `time:barBeat`.
-                info.position_beats = bb;
+                info.position_beats = bb * q_factor;
             }
 
             true
@@ -678,11 +691,20 @@ pub unsafe fn write_time_position_sequence(
         } else {
             4.0
         };
-        // `bar_start_beats / bpb` is a small bar count (rarely > 10⁵
+        // Inverse of the reader's 4/beatUnit: truce beats are quarter
+        // notes; LV2 wants the host's beat unit, so scale back by
+        // beatUnit/4 before deriving the bar index / intra-bar beat.
+        let beat_unit = if info.time_sig_den > 0 {
+            f64::from(info.time_sig_den)
+        } else {
+            4.0
+        };
+        let inv = beat_unit / 4.0;
+        // `bar_start_beats * inv / bpb` is a small bar count (rarely > 10⁵
         // for a normal session); the cast is provably lossless here.
         #[allow(clippy::cast_possible_truncation)]
-        let bar_index = (info.bar_start_beats / bpb).round() as i64;
-        let bar_beat = info.position_beats - info.bar_start_beats;
+        let bar_index = ((info.bar_start_beats * inv) / bpb).round() as i64;
+        let bar_beat = (info.position_beats - info.bar_start_beats) * inv;
         // Bail at the first overflow so the partial atom-object we'd
         // otherwise emit (with a body.size derived from `prop_offset`
         // but missing later properties) doesn't end up in the wire
@@ -822,6 +844,48 @@ mod tests {
         assert_eq!(decoded.position_samples, source.position_samples);
         assert_eq!(decoded.time_sig_num, source.time_sig_num);
         assert_eq!(decoded.time_sig_den, source.time_sig_den);
+    }
+
+    #[test]
+    fn compound_meter_position_stays_in_quarter_notes() {
+        // 6/8: one bar = 6 eighth beats = 3 quarter notes. truce's
+        // canonical position is quarter notes (like VST3 / CLAP), so a
+        // position 1.5 quarter beats into bar index 1 is 4.5 - not the 9
+        // eighth-beats an un-rescaled mapping produced. The reader/writer
+        // convert through the LV2 beat-unit wire; pinning the quarter-note
+        // figures guards against either side dropping the 4/beatUnit factor.
+        let urid = test_urid_map();
+        let mut buf = vec![0u8; 4096];
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+        unsafe {
+            (*seq).atom.size = len_u32(buf.len() - core::mem::size_of::<Atom>());
+        }
+        let source = TransportInfo {
+            playing: true,
+            recording: false,
+            tempo: 120.0,
+            time_sig_num: 6,
+            time_sig_den: 8,
+            position_samples: 0,
+            position_seconds: 0.0,
+            position_beats: 4.5,
+            bar_start_beats: 3.0,
+            loop_active: false,
+            loop_start_beats: 0.0,
+            loop_end_beats: 0.0,
+        };
+        unsafe {
+            write_time_position_sequence(seq, &source, &urid);
+        }
+        let mut decoded = TransportInfo::default();
+        let reader = AtomSequenceReader::new(seq.cast_const(), &urid);
+        assert!(reader.apply_time_position(&mut decoded));
+        assert!(
+            (decoded.position_beats - 4.5).abs() < 1e-9,
+            "6/8 position must be quarter notes, got {}",
+            decoded.position_beats
+        );
+        assert!((decoded.bar_start_beats - 3.0).abs() < 1e-9);
     }
 
     /// Encode a small MIDI stream through `write_midi_out_sequence`,

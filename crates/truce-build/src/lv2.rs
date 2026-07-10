@@ -470,8 +470,15 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
         let _ = writeln!(f, "        lv2:minimum 0.0 ;");
         let _ = writeln!(f, "        lv2:maximum 192000.0 ;");
         let _ = writeln!(f, "        lv2:default 0.0 ;");
-        let _ = writeln!(f, "        lv2:designation lv2:reportsLatency ;");
-        let _ = writeln!(f, "        lv2:portProperty lv2:integer, pprop:notOnGUI ;");
+        // `lv2:reportsLatency` is a PortProperty, not a designation - lilv's
+        // lilv_plugin_get_latency_port_index (Ardour / Carla / jalv / Mixbus)
+        // only recognizes a latency port through this property (or a
+        // `lv2:designation lv2:latency`). The bogus designation meant no host
+        // ever read the port and no delay compensation was applied.
+        let _ = writeln!(
+            f,
+            "        lv2:portProperty lv2:reportsLatency, lv2:integer, pprop:notOnGUI ;"
+        );
     }
 }
 
@@ -516,6 +523,9 @@ fn emit_midi_out_port(f: &mut String, index: u32, port: u32) {
         let _ = writeln!(f, "        lv2:symbol \"midi_out_{port}\" ;");
         let _ = writeln!(f, "        lv2:name \"MIDI Out {}\" ;", port + 1);
     }
+    // Ask the host for a buffer big enough that a dense MIDI-generator
+    // block isn't truncated - the input / notify atom ports already do.
+    let _ = writeln!(f, "        rsz:minimumSize 4096 ;");
 }
 
 fn emit_meter_port(f: &mut String, index: u32, slot: usize, id: u32) {
@@ -563,14 +573,14 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
         Lv2Range::Linear { .. } => {}
     }
     if p.flags.is_bypass {
-        // LV2's `lv2:enabled` designation has inverted semantics:
-        // `1` = active, `0` = bypassed. truce's IS_BYPASS is `1` =
-        // bypassed; the comment warns hosts wiring host bypass.
-        let _ = writeln!(f, "        lv2:designation lv2:enabled ;");
-        let _ = writeln!(
-            f,
-            "        rdfs:comment \"truce IS_BYPASS - `1` is bypassed (inverse of lv2:enabled)\" ;"
-        );
+        // Deliberately NOT `lv2:designation lv2:enabled`: that designation
+        // has inverse polarity (1 = active) to truce's IS_BYPASS (1 =
+        // bypassed), and mapping it without inversion made host-managed
+        // bypass run backwards. Exposing the bypass as a plain toggle
+        // param - 1 = bypassed, same as every other format - keeps the
+        // polarity and default (0 = active) correct; the host drives it as
+        // an ordinary automatable control.
+        let _ = writeln!(f, "        lv2:portProperty lv2:toggled ;");
     }
     if p.flags.readonly {
         let _ = writeln!(f, "        lv2:portProperty pprop:notAutomatic ;");
@@ -941,10 +951,15 @@ mod tests {
     }
 
     #[test]
-    fn latency_port_is_emitted_with_designation() {
+    fn latency_port_reports_latency_via_port_property() {
         let (_m, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
         assert!(ttl.contains("lv2:symbol \"latency\""));
-        assert!(ttl.contains("lv2:designation lv2:reportsLatency"));
+        // Must be a PortProperty (what lilv reads), not a designation.
+        assert!(
+            ttl.contains("lv2:portProperty lv2:reportsLatency"),
+            "latency port needs the reportsLatency PortProperty:\n{ttl}"
+        );
+        assert!(!ttl.contains("lv2:designation lv2:reportsLatency"));
     }
 
     /// A range-less enum resolves to a concrete count upstream; here we
