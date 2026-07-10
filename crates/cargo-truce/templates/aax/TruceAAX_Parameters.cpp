@@ -7,6 +7,7 @@
 #include "AAX_CBinaryTaperDelegate.h"
 #include "AAX_CBinaryDisplayDelegate.h"
 #include "AAX_IDisplayDelegate.h"
+#include "AAX_ITaperDelegate.h"
 #include "AAX_IMIDINode.h"
 #include "AAX_IController.h"
 #include "AAX_ITransport.h"
@@ -65,6 +66,44 @@ public:
 private:
     void* mCtx;
     uint32_t mParamID;
+};
+
+// Routes AAX's coefficient<->plain mapping through the plugin's own
+// ParamRange (truce_aax_normalize / _denormalize) for skewed shapes AAX
+// has no native taper for. Without it, AAX reproduces a skewed param with
+// a linear taper while truce's editor uses the skew curve - the two
+// disagree, so the knob jumps and recorded automation reads back wrong.
+class TruceAAXTaperDelegate : public AAX_ITaperDelegate<float> {
+public:
+    TruceAAXTaperDelegate(void* ctx, uint32_t paramID, float minV, float maxV)
+        : mCtx(ctx), mParamID(paramID), mMin(minV), mMax(maxV) {}
+
+    AAX_ITaperDelegate<float>* Clone() const AAX_OVERRIDE {
+        return new TruceAAXTaperDelegate(*this);
+    }
+    float GetMinimumValue() const AAX_OVERRIDE { return mMin; }
+    float GetMaximumValue() const AAX_OVERRIDE { return mMax; }
+    float ConstrainRealValue(float value) const AAX_OVERRIDE {
+        const float lo = mMin < mMax ? mMin : mMax;
+        const float hi = mMin < mMax ? mMax : mMin;
+        return value < lo ? lo : (value > hi ? hi : value);
+    }
+    float NormalizedToReal(double n) const AAX_OVERRIDE {
+        if (!g_bridge_loaded || !mCtx || !g_bridge.denormalize)
+            return (float)(mMin + n * (mMax - mMin));
+        return (float)g_bridge.denormalize(mCtx, mParamID, n);
+    }
+    double RealToNormalized(float real) const AAX_OVERRIDE {
+        if (!g_bridge_loaded || !mCtx || !g_bridge.normalize)
+            return mMax != mMin ? (double)((real - mMin) / (mMax - mMin)) : 0.0;
+        return g_bridge.normalize(mCtx, mParamID, (double)real);
+    }
+
+private:
+    void* mCtx;
+    uint32_t mParamID;
+    float mMin;
+    float mMax;
 };
 
 // ---------------------------------------------------------------------------
@@ -164,7 +203,18 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
         // display + text entry through the plugin (no SDK number/unit
         // decorator, which would double the unit).
         TruceAAXDisplayDelegate display(mRustCtx, info.id);
-        if (info.range_type == TRUCE_AAX_RANGE_LOG) {
+        if (info.range_type == TRUCE_AAX_RANGE_CUSTOM) {
+            // Skewed shapes: route the taper through truce's ParamRange so
+            // AAX's coefficient<->plain matches the editor exactly.
+            param.reset(new AAX_CParameter<float>(
+                paramID,
+                AAX_CString(info.name),
+                (float)info.default_value,
+                TruceAAXTaperDelegate(mRustCtx, info.id,
+                                      (float)info.min, (float)info.max),
+                display,
+                true));
+        } else if (info.range_type == TRUCE_AAX_RANGE_LOG) {
             param.reset(new AAX_CParameter<float>(
                 paramID,
                 AAX_CString(info.name),
