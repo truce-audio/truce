@@ -64,15 +64,24 @@ pub use truce_aax_bridge::{BRIDGE_HEADER, TRUCE_AAX_ABI_VERSION};
 pub const TRUCE_AAX_RANGE_LINEAR: u8 = 0;
 pub const TRUCE_AAX_RANGE_LOG: u8 = 1;
 pub const TRUCE_AAX_RANGE_DISCRETE: u8 = 2;
+/// Opaque taper: the C++ shim uses a custom `AAX_ITaperDelegate` that
+/// routes normalize/denormalize back through `truce_aax_normalize` /
+/// `truce_aax_denormalize` (this param's `ParamRange`), so AAX's
+/// coefficient<->plain mapping matches truce's curve exactly - the only
+/// faithful option for skew shapes AAX has no native taper for.
+pub const TRUCE_AAX_RANGE_CUSTOM: u8 = 3;
 
-/// The AAX taper hint for a range. Skewed shapes use the linear taper -
-/// truce's own `normalize` applies the actual curve, and AAX has no
-/// matching hint. `Reversed` takes its inner shape's classification.
+/// The AAX taper hint for a range. Skewed shapes have no native AAX
+/// taper, so they use `CUSTOM` - a linear taper (the old fallback) would
+/// map the knob linearly while truce's editor maps it through the skew,
+/// making the knob fight the user and recording wrong automation.
+/// `Reversed` takes its inner shape's classification.
 fn aax_range_type(range: &ParamRange) -> u8 {
     match range {
-        ParamRange::Linear { .. }
-        | ParamRange::Skewed { .. }
-        | ParamRange::SymmetricalSkewed { .. } => TRUCE_AAX_RANGE_LINEAR,
+        ParamRange::Linear { .. } => TRUCE_AAX_RANGE_LINEAR,
+        ParamRange::Skewed { .. } | ParamRange::SymmetricalSkewed { .. } => {
+            TRUCE_AAX_RANGE_CUSTOM
+        }
         ParamRange::Logarithmic { .. } => TRUCE_AAX_RANGE_LOG,
         ParamRange::Discrete { .. } | ParamRange::Enum { .. } => TRUCE_AAX_RANGE_DISCRETE,
         ParamRange::Reversed(inner) => aax_range_type(inner),
@@ -765,6 +774,22 @@ macro_rules! export_aax {
                 ::truce_aax::_parse_param::<$plugin_type>(ctx, id, text, out_plain)
             }
             #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_normalize(
+                ctx: *mut ::std::ffi::c_void,
+                id: u32,
+                plain: f64,
+            ) -> f64 {
+                ::truce_aax::_normalize::<$plugin_type>(ctx, id, plain)
+            }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_denormalize(
+                ctx: *mut ::std::ffi::c_void,
+                id: u32,
+                normalized: f64,
+            ) -> f64 {
+                ::truce_aax::_denormalize::<$plugin_type>(ctx, id, normalized)
+            }
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_save_state(
                 ctx: *mut ::std::ffi::c_void,
                 out_data: *mut *mut u8,
@@ -1441,6 +1466,40 @@ pub unsafe fn _parse_param<P: PluginExport>(
         }
         None => 0,
     }
+}
+
+/// Normalize a plain value to `[0,1]` through the param's `ParamRange`
+/// (the `CUSTOM` taper's `RealToNormalized`). Falls back to the plain
+/// value for an unknown id. UI-rate, so the linear scan is fine.
+///
+/// # Safety
+/// `ctx` must be a live `AaxInstance<P>`.
+#[must_use]
+pub unsafe fn _normalize<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, plain: f64) -> f64 {
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    inst.param_infos
+        .iter()
+        .find(|pi| pi.id == id)
+        .map_or(plain, |pi| pi.range.normalize(plain))
+}
+
+/// Denormalize `[0,1]` to a plain value through the param's `ParamRange`
+/// (the `CUSTOM` taper's `NormalizedToReal`). Falls back to the input
+/// for an unknown id.
+///
+/// # Safety
+/// `ctx` must be a live `AaxInstance<P>`.
+#[must_use]
+pub unsafe fn _denormalize<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    id: u32,
+    normalized: f64,
+) -> f64 {
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    inst.param_infos
+        .iter()
+        .find(|pi| pi.id == id)
+        .map_or(normalized, |pi| pi.range.denormalize(normalized))
 }
 
 pub unsafe fn _save_state<P: PluginExport>(

@@ -118,6 +118,8 @@ bool TruceBridge_Load(TruceBridge* bridge, const char* bundle_path) {
     RESOLVE(set_param);
     RESOLVE(format_param);
     RESOLVE(parse_param);
+    RESOLVE(normalize);
+    RESOLVE(denormalize);
     RESOLVE(save_state);
     RESOLVE(load_state);
     RESOLVE(free_state);

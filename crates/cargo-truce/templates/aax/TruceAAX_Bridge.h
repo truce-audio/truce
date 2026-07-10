@@ -28,6 +28,8 @@ typedef double (*fn_get_param)(void*, uint32_t);
 typedef void   (*fn_set_param)(void*, uint32_t, double);
 typedef void   (*fn_format_param)(void*, uint32_t, double, char*, uint32_t);
 typedef int32_t (*fn_parse_param)(void*, uint32_t, const char*, double*);
+typedef double (*fn_normalize)(void*, uint32_t, double);
+typedef double (*fn_denormalize)(void*, uint32_t, double);
 typedef uint32_t (*fn_save_state)(void*, uint8_t**);
 typedef void     (*fn_load_state)(void*, const uint8_t*, uint32_t);
 typedef void     (*fn_free_state)(uint8_t*, uint32_t);
@@ -59,6 +61,8 @@ struct TruceBridge {
     fn_set_param           set_param;
     fn_format_param        format_param;
     fn_parse_param         parse_param;
+    fn_normalize           normalize;
+    fn_denormalize         denormalize;
     fn_save_state          save_state;
     fn_load_state          load_state;
     fn_free_state          free_state;

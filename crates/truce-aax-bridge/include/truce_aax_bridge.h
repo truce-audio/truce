@@ -37,8 +37,11 @@ extern "C" {
  *           template registers an AAX mono side-chain port (AddSideChainIn)
  *           and appends it after the main input channels.
  *   8 → 9: parameter text entry - truce_aax_parse_param, routing the
- *           display delegate's StringToValue to the plugin's parse_value. */
-#define TRUCE_AAX_ABI_VERSION 9u
+ *           display delegate's StringToValue to the plugin's parse_value.
+ *   9 → 10: custom taper - truce_aax_normalize / truce_aax_denormalize
+ *           route a skewed param's coefficient<->plain mapping through the
+ *           plugin's ParamRange (AAX has no native skew taper). */
+#define TRUCE_AAX_ABI_VERSION 10u
 
 /* Capacity of TruceAaxDescriptor::legacy_chunk_ids. */
 #define TRUCE_AAX_MAX_LEGACY_CHUNKS 8u
@@ -52,6 +55,10 @@ extern "C" {
 #define TRUCE_AAX_RANGE_LINEAR   0u
 #define TRUCE_AAX_RANGE_LOG      1u
 #define TRUCE_AAX_RANGE_DISCRETE 2u
+/* Opaque taper: the shim uses a custom AAX_ITaperDelegate that routes
+ * normalize/denormalize through truce_aax_normalize / _denormalize, for
+ * skewed shapes AAX has no native taper for. */
+#define TRUCE_AAX_RANGE_CUSTOM   3u
 
 /* Plugin descriptor - read once at load time. */
 typedef struct {
@@ -239,6 +246,10 @@ void   truce_aax_format_param(void* ctx, uint32_t id, double value,
  * out_plain on success, 0 when the text isn't parseable for the param. */
 int32_t truce_aax_parse_param(void* ctx, uint32_t id, const char* text,
                                double* out_plain);
+/* Custom-taper coefficient<->plain mapping through the param's ParamRange
+ * (for range_type CUSTOM - skewed shapes AAX has no native taper for). */
+double truce_aax_normalize(void* ctx, uint32_t id, double plain);
+double truce_aax_denormalize(void* ctx, uint32_t id, double normalized);
 
 /* State serialization. */
 uint32_t truce_aax_save_state(void* ctx, uint8_t** out_data);
