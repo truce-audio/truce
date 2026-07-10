@@ -73,7 +73,7 @@ struct Vst3Instance<P: PluginExport> {
     plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`cb_param_*`) read params through this
-    /// handle so a param query never contends on the plugin lock.
+    /// handle so a param query never touches the plugin.
     /// Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
     /// Shared meter storage, set once at instance creation. The
@@ -82,13 +82,13 @@ struct Vst3Instance<P: PluginExport> {
     meter_store: Arc<MeterStore>,
     /// Lock-free custom-state slot the audio thread publishes
     /// into, read by `save_state` so a snapshot-capable plugin's
-    /// save never takes the plugin lock. Cached outside the lock.
+    /// save never touches the plugin. Cached on the instance.
     snapshot: Arc<SnapshotSlot>,
     /// Background-task spawner (`None` unless the plugin wired `tasks:`),
-    /// cached at creation so the editor schedules without the lock.
+    /// cached at creation so the editor schedules without touching the plugin.
     task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation - building
-    /// the editor never takes the plugin lock (`--shell` rebuilds
+    /// the editor never touches the plugin (`--shell` rebuilds
     /// from the reloaded dylib, so GUI edits hot-reload).
     editor_builder: EditorBuilder<P::Params>,
     event_list: EventList,
@@ -780,7 +780,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             .finish_widening(outputs, num_output_channels, len_u32(num_frames));
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to take the plugin lock. On an actual
+        // queries don't have to touch the plugin. On an actual
         // latency change, flag a restart: `mark_restart` only sets an
         // atomic bit (RT-safe), and the shim calls `restartComponent` on
         // the next host main-thread callback.
@@ -1641,7 +1641,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         if inst.editor.is_none() {
             // Built from the lock-free param store the wrapper already
-            // holds outside the plugin lock, so opening the GUI never
+            // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
             inst.editor = (inst.editor_builder)(inst.params_arc.clone());
             // Replay a content scale the host reported before the editor
@@ -1946,7 +1946,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     get_state: Box::new(move || {
                         // Editor state read: lock-free, reads the snapshot
                         // the audio thread publishes each block. Never
-                        // takes the plugin lock, so an editor read can't
+                        // touches the plugin, so an editor read can't
                         // stall audio.
                         save_extra(&snapshot)
                     }),

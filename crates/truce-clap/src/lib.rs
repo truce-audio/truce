@@ -178,7 +178,7 @@ struct ClapPluginData<P: PluginExport> {
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`params_get_value`, `params_value_to_text`,
     /// `params_text_to_value`) read params through this handle so a
-    /// param query never contends on the plugin lock. Params are
+    /// param query never touches the plugin. Params are
     /// atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
     /// Shared meter storage, set once at instance creation. The
@@ -186,15 +186,15 @@ struct ClapPluginData<P: PluginExport> {
     /// of the plugin instance.
     meter_store: Arc<MeterStore>,
     /// Lock-free custom-state slot the audio thread publishes into, read
-    /// by `save_state` so a snapshot-capable plugin's save never takes
-    /// the plugin lock. Cached here, outside the lock, like `params_arc`.
+    /// by `save_state` so a snapshot-capable plugin's save never touches
+    /// the plugin. Cached here on the instance, like `params_arc`.
     snapshot: Arc<SnapshotSlot>,
     /// The plugin's background-task spawner (`None` unless it wired
     /// `tasks:`), cached at creation so the editor schedules without
-    /// taking the plugin lock.
+    /// touching the plugin.
     task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation. Building the editor
-    /// through this never takes the plugin lock (`--shell` builds rebuild
+    /// through this never touches the plugin (`--shell` builds rebuild
     /// from the reloaded dylib, so GUI edits hot-reload).
     editor_builder: EditorBuilder<P::Params>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
@@ -1713,7 +1713,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         }
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to take the plugin lock. On an actual
+        // queries don't have to touch the plugin. On an actual
         // latency change, flag it and wake the main thread, which
         // notifies the host (`clap.latency` requires the call off the
         // audio thread).
@@ -2482,7 +2482,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             // Inactive: no `process` will run, so the queue would never
             // drain and the plugin's custom state would stay stale until
             // the next activate. Apply the full state (params + extra)
-            // synchronously under the plugin lock - uncontended here
+            // synchronously under exclusive plugin ownership - uncontended here
             // since no audio thread is processing.
             let mut instance = enter_plugin(&data.plugin);
             state::apply_state(&mut *instance, &deserialized);
@@ -3167,8 +3167,8 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 get_meter: Box::new(move |id| meter_store.read(id)),
                 get_state: Box::new(move || {
                     // Editor state read: lock-free, reads the snapshot the
-                    // audio thread publishes each block. Never takes the
-                    // plugin lock, so an editor read can't stall audio.
+                    // audio thread publishes each block. Never touches the
+                    // plugin, so an editor read can't stall audio.
                     save_extra(&snapshot)
                 }),
                 set_state: Box::new(move |bytes| {

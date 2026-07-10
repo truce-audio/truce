@@ -235,8 +235,8 @@ struct AaxInstance<P: PluginExport> {
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`_get_param`, `_set_param`,
     /// `_format_value`, `_save_state`'s param walk) read params
-    /// through this handle so a param query never contends on the
-    /// plugin lock. Params are atomic-backed and `Sync`.
+    /// through this handle so a param query never touches the
+    /// plugin. Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
     /// Shared meter storage, set once at instance creation. The
     /// editor's `get_meter` closure reads these atomic slots instead
@@ -244,13 +244,13 @@ struct AaxInstance<P: PluginExport> {
     meter_store: Arc<MeterStore>,
     /// Lock-free custom-state slot the audio thread publishes
     /// into, read by `save_state` so a snapshot-capable plugin's
-    /// save never takes the plugin lock. Cached outside the lock.
+    /// save never touches the plugin. Cached on the instance.
     snapshot: Arc<SnapshotSlot>,
     /// Background-task spawner (`None` unless the plugin wired `tasks:`),
-    /// cached at creation so the editor schedules without the lock.
+    /// cached at creation so the editor schedules without touching the plugin.
     task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation - building
-    /// the editor never takes the plugin lock (`--shell` rebuilds
+    /// the editor never touches the plugin (`--shell` rebuilds
     /// from the reloaded dylib, so GUI edits hot-reload).
     editor_builder: EditorBuilder<P::Params>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
@@ -969,7 +969,7 @@ pub unsafe fn _set_render_mode<P: PluginExport>(ctx: *mut std::ffi::c_void, mode
 
 /// Current plugin latency in samples, for host delay compensation.
 /// Reads the audio-thread-updated cache, so the template's idle-thread
-/// `TimerWakeup` poll never contends on the plugin lock. The template
+/// `TimerWakeup` poll never touches the plugin. The template
 /// pushes changes to Pro Tools via `AAX_IController::SetSignalLatency`.
 ///
 /// # Safety
@@ -1130,7 +1130,7 @@ pub unsafe fn _process<P: PluginExport>(
                 .finish_widening(outputs, num_out, len_u32(num_frames));
 
             // Refresh latency / tail caches so the host's main-thread
-            // queries don't have to take the plugin lock.
+            // queries don't have to touch the plugin.
             inst.latency_cache
                 .store(plugin.latency(), Ordering::Relaxed);
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
@@ -1621,7 +1621,7 @@ pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceA
     unsafe {
         let inst = &mut *ctx.cast::<AaxInstance<P>>();
         // Built from the lock-free param store the wrapper already
-        // holds outside the plugin lock, so opening the GUI never
+        // holds outside the plugin, so opening the GUI never
         // stalls the audio thread.
         inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         let info = match &inst.editor {
@@ -1713,8 +1713,8 @@ pub unsafe fn _editor_open<P: PluginExport>(
                 get_meter: Box::new(move |id| meter_store.read(id)),
                 get_state: Box::new(move || {
                     // Editor state read: lock-free, reads the snapshot the
-                    // audio thread publishes each block. Never takes the
-                    // plugin lock, so an editor read can't stall audio.
+                    // audio thread publishes each block. Never touches the
+                    // plugin, so an editor read can't stall audio.
                     save_extra(&snapshot)
                 }),
                 set_state: Box::new(move |bytes| {

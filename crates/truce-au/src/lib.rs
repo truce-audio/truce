@@ -200,7 +200,7 @@ struct AuInstance<P: PluginExport> {
     plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`cb_param_*`) read params through this
-    /// handle so a param query never contends on the plugin lock.
+    /// handle so a param query never touches the plugin.
     /// Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
     /// Shared meter storage, set once at instance creation. The
@@ -211,16 +211,16 @@ struct AuInstance<P: PluginExport> {
     meter_store: Arc<MeterStore>,
     /// Lock-free custom-state slot the audio thread publishes
     /// into, read by `save_state` so a snapshot-capable plugin's
-    /// save never takes the plugin lock. Cached outside the lock.
+    /// save never touches the plugin. Cached on the instance.
     snapshot: Arc<SnapshotSlot>,
     /// Background-task spawner (`None` unless the plugin wired `tasks:`),
-    /// cached at creation so the editor schedules without the lock. Only
+    /// cached at creation so the editor schedules without touching the plugin. Only
     /// the editor path reads it, and that path is Apple-only (`AppKit` /
     /// `UIKit`); off-Apple the field would be dead.
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     task_spawner: Option<AnyTaskSpawner>,
     /// Lock-free editor factory, cached at creation - building
-    /// the editor never takes the plugin lock (`--shell` rebuilds
+    /// the editor never touches the plugin (`--shell` rebuilds
     /// from the reloaded dylib, so GUI edits hot-reload).
     editor_builder: EditorBuilder<P::Params>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
@@ -719,7 +719,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         }
 
         // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to take the plugin lock. On an actual
+        // queries don't have to touch the plugin. On an actual
         // change, wake the notifier thread to broadcast a
         // `kAudioUnitProperty_Latency` change (AU v2 / macOS). AU v3
         // (iOS) has no Rust->appex notify path; its host re-reads the
@@ -1228,7 +1228,7 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
 
 /// Plugin latency in samples, for the host's delay compensation.
 /// Reads the atomic cache the audio thread refreshes each block (and
-/// `cb_reset` / `cb_create` seed) rather than taking the plugin lock,
+/// `cb_reset` / `cb_create` seed) rather than touching the plugin,
 /// so a host's main-thread property query never contends with render.
 unsafe extern "C" fn cb_latency_samples<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
@@ -1534,7 +1534,7 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
             // Built from the lock-free param store the wrapper already
-            // holds outside the plugin lock, so opening the GUI never
+            // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
             inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
@@ -1598,7 +1598,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
             // Built from the lock-free param store the wrapper already
-            // holds outside the plugin lock, so opening the GUI never
+            // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
             inst.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
@@ -1735,7 +1735,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     get_state: Box::new(move || {
                         // Editor state read: lock-free, reads the snapshot
                         // the audio thread publishes each block. Never
-                        // takes the plugin lock, so an editor read can't
+                        // touches the plugin, so an editor read can't
                         // stall audio.
                         save_extra(&snapshot)
                     }),
