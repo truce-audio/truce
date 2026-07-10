@@ -82,13 +82,14 @@ pub trait PluginRuntime: Send + 'static {
     where
         Self: Sized;
 
-    /// Supported bus layouts. The host picks one.
+    /// Supported bus layouts. The host picks one. Default: the standard
+    /// audio effect - stereo and mono.
     #[must_use]
     fn bus_layouts() -> Vec<BusLayout>
     where
         Self: Sized,
     {
-        vec![BusLayout::stereo()]
+        BusLayout::stereo_and_mono()
     }
 
     /// Called once after construction. Not real-time safe.

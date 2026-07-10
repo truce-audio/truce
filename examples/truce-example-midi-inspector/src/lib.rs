@@ -276,10 +276,6 @@ impl PurePluginLogic for MidiInspector {
     /// audio-centric hosts (Ableton, Reaper) that don't host MIDI-only
     /// plug-ins - the trade-off is it's no longer an `aumi` MIDI
     /// processor for the hosts (Logic, AUM) that do.
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::stereo()]
-    }
-
     fn process(
         params: &InspectorParams,
         buffer: &mut AudioBuffer,

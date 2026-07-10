@@ -76,10 +76,6 @@ impl PluginLogic for CcFilter {
     type Params = CcFilterParams;
     type DspState = CcFilterDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::stereo()]
-    }
-
     fn reset(state: &mut CcFilterDspState, params: &CcFilterParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;

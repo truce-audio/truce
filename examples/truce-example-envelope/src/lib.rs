@@ -76,10 +76,6 @@ impl PluginLogic for Envelope {
     type Params = EnvelopeParams;
     type DspState = EnvelopeDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::stereo()]
-    }
-
     fn reset(state: &mut EnvelopeDspState, _params: &EnvelopeParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;
         state.sample_rate = sample_rate;

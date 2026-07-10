@@ -89,10 +89,6 @@ impl PluginLogic for StereoUtility {
     type Params = StereoUtilityParams;
     type DspState = StereoUtilityDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::stereo()]
-    }
-
     fn reset(
         state: &mut StereoUtilityDspState,
         _params: &StereoUtilityParams,

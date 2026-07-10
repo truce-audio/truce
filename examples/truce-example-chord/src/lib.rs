@@ -126,8 +126,7 @@ impl PluginLogic for Chord {
     type DspState = ChordDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
-        // Instrument: audio output only.
-        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
+        BusLayout::stereo_and_mono_output()
     }
 
     fn reset(state: &mut ChordDspState, _params: &ChordParams, config: &AudioConfig) {
@@ -197,7 +196,9 @@ impl PluginLogic for Chord {
             }
             sample *= gain;
             buffer.output(0)[i] = sample;
-            buffer.output(1)[i] = sample;
+            if buffer.num_output_channels() > 1 {
+                buffer.output(1)[i] = sample;
+            }
         }
 
         ProcessStatus::Normal
