@@ -313,13 +313,6 @@ static const Vst3Callbacks* g_cb = nullptr;
 static const Vst3ParamDescriptor* g_params = nullptr;
 static uint32_t g_num_params = 0;
 
-// Currently-selected main-bus channel counts. Initialized to the default
-// (first) layout at registration; `setBusArrangements` moves them to any
-// other layout the plugin declared in `bus_layouts()`. `getBusInfo` /
-// `getBusArrangement` report these, so a host sees the active layout.
-static uint32_t g_cur_in = 0;
-static uint32_t g_cur_out = 0;
-
 // Unit info (parameter groups) - built at registration time
 static const int kMaxUnits = 64;
 struct UnitEntry { int32 id; int32 parentId; char name[128]; };
@@ -549,6 +542,15 @@ class TruceComponent {
      * kOffline). Replayed into reset() at setActive; process() reads
      * the per-block ProcessData::processMode directly. */
     int32 procMode = 0;
+    /* Currently-selected main-bus channel counts for THIS instance.
+     * Seeded to the default (first) layout; setBusArrangements moves them
+     * to any other layout the plugin declared in bus_layouts(), and
+     * getBusInfo / getBusArrangement report them so the host sees this
+     * instance's active layout. Per-instance, not a file-scope global, so
+     * two instances of one plugin negotiated to different widths (a 5.1
+     * track and a stereo track) don't clobber each other's arrangement. */
+    uint32_t cur_in = g_desc ? g_desc->num_inputs : 0;
+    uint32_t cur_out = g_desc ? g_desc->num_outputs : 0;
     /* Omitted-bus scratch (see process()): the host may drop the
      * AudioBusBuffers for a deactivated last bus entirely, but the
      * plug-in negotiated fixed widths - a missing input side reads
@@ -782,14 +784,14 @@ public:
         if (type != kAudio) return kInvalidArgument;
         if (dir == kInput && index == 0 && g_desc->num_inputs > 0) {
             bus->mediaType = kAudio; bus->direction = kInput;
-            bus->channelCount = g_cur_in;
+            bus->channelCount = cur_in;
             str_to_char16(bus->name, "Input", 128);
             bus->busType = kMain; bus->flags = 1;
             return kResultOk;
         }
         if (dir == kOutput && index == 0 && g_desc->num_outputs > 0) {
             bus->mediaType = kAudio; bus->direction = kOutput;
-            bus->channelCount = g_cur_out;
+            bus->channelCount = cur_out;
             str_to_char16(bus->name, "Output", 128);
             bus->busType = kMain; bus->flags = 1;
             return kResultOk;
@@ -915,8 +917,8 @@ public:
         uint32_t inCh  = (wantIns  && inputs)  ? chCount(inputs[0])  : 0;
         uint32_t outCh = (wantOuts && outputs) ? chCount(outputs[0]) : 0;
         if (g_cb && g_cb->match_bus_layout && g_cb->match_bus_layout(inCh, outCh) >= 0) {
-            g_cur_in  = inCh;
-            g_cur_out = outCh;
+            cur_in  = inCh;
+            cur_out = outCh;
             return kResultOk;
         }
         return kResultFalse;
@@ -924,7 +926,7 @@ public:
 
     tresult getBusArrangement(int32 dir, int32 index, uint64_t* arr) {
         if (!arr || !g_desc) return kInvalidArgument;
-        uint32_t ch = (dir == kInput) ? g_cur_in : g_cur_out;
+        uint32_t ch = (dir == kInput) ? cur_in : cur_out;
         // The index must name a bus that exists: one per direction
         // that has channels, none otherwise (mirrors getBusCount).
         // Acknowledging index 0 with an empty arrangement on a bus-less
@@ -2670,10 +2672,9 @@ void truce_vst3_register(
     g_cb = callbacks;
     g_params = params;
     g_num_params = num_params;
-    // Default arrangement = the first layout (num_inputs/num_outputs);
-    // setBusArrangements moves these to any other declared layout.
-    g_cur_in = descriptor ? descriptor->num_inputs : 0;
-    g_cur_out = descriptor ? descriptor->num_outputs : 0;
+    // Each TruceComponent seeds its own cur_in/cur_out to this default
+    // (first) layout at construction; setBusArrangements moves that
+    // instance to any other declared layout.
     build_unit_map();
 }
 
