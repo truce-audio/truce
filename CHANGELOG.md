@@ -2,6 +2,17 @@
 
 Notable changes per release.
 
+## 6.0.1
+
+Sidechain and aux inputs now reach your plugin as separate buses instead of collapsing into one summed main bus, so a `with_sidechain_input(...)` layout gives the host a real sidechain to route into.
+
+- VST3, AU (v2/v3), and AAX advertise the sidechain as its own bus/port; the plugin sees main channels first, then sidechain. AAX uses Pro Tools' mono side-chain, duplicated across the declared width.
+- VST2 exposes the sidechain as extra input pins, now labeled "Input N" / "Sidechain N" so hosts can route to them.
+- Standalone `--sidechain-file <path>` feeds the sidechain bus, independent of `--input-file` (main bus); works live and offline.
+- Test driver: `PluginDriver::sidechain(InputSource)` drives the sidechain independently of the main input, width auto-detected from the layout.
+- New `truce-example-sidechain`: stereo main + stereo sidechain with IN/SC meters and a Mix knob.
+- LV2 sidechain plugins run main-only for now (the TTL is generated from the plugin category and can't declare the sidechain ports yet); a one-time log notes the dropped sidechain.
+
 ## 6.0.0
 
 Saving your plugin's state - a host session save, a preset capture, the editor reading state back - now runs completely off the audio thread. Even large custom state (a sampler's loaded audio, big wavetables) can no longer cause an audio glitch when the host saves during playback.
