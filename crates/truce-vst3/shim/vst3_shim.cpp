@@ -14,6 +14,7 @@
 #include <cmath>
 #include <atomic>
 #include <new>
+#include <vector>
 #if __APPLE__
 // libdispatch: an event-driven bridge that marshals a pending
 // restartComponent onto the host's main run loop, so a latency change
@@ -76,6 +77,12 @@ typedef uint64_t TSize;
 
 typedef int8_t TUID[16];
 typedef const char* FIDString;
+
+// Per-direction channel-pointer capacity in process() (fixed - it's the
+// audio callback). Registration rejects any plugin whose widest declared
+// layout exceeds this, so an accepted descriptor never overruns or
+// truncates. Keep in step with `VST3_MAX_CHANNELS_PER_DIRECTION` in lib.rs.
+static constexpr uint32_t kMaxProcChannels = 32;
 
 // tresult result codes. Like the IIDs above, the values differ between
 // the Windows COM (HRESULT) ABI and the sequential enum every other
@@ -986,20 +993,27 @@ public:
         if (numIns != (int32)g_desc->num_input_buses ||
                 numOuts != (int32)g_desc->num_output_buses)
             return kResultFalse;
-        uint32_t inCh[16] = {}, outCh[16] = {};
-        const int32 ni = numIns  < 16 ? numIns  : 16;
-        const int32 no = numOuts < 16 ? numOuts : 16;
-        for (int32 i = 0; i < ni; i++) inCh[i]  = inputs  ? chCount(inputs[i])  : 0;
-        for (int32 i = 0; i < no; i++) outCh[i] = outputs ? chCount(outputs[i]) : 0;
+        // Per-bus widths for the FULL declared bus count. Heap-sized, not
+        // a fixed [16] the matcher would receive truncated - Rust requires
+        // an exact bus-count match, so a plugin declaring more buses than a
+        // local cap would advertise them yet reject every arrangement. This
+        // is not the audio callback, so the allocation is free. The count
+        // check above guarantees numIns/numOuts equal the descriptor's bus
+        // counts.
+        std::vector<uint32_t> inCh(numIns  > 0 ? (size_t)numIns  : 0);
+        std::vector<uint32_t> outCh(numOuts > 0 ? (size_t)numOuts : 0);
+        for (int32 i = 0; i < numIns;  i++) inCh[i]  = inputs  ? chCount(inputs[i])  : 0;
+        for (int32 i = 0; i < numOuts; i++) outCh[i] = outputs ? chCount(outputs[i]) : 0;
         if (g_cb && g_cb->match_bus_layout_perbus) {
-            int32_t li = g_cb->match_bus_layout_perbus(inCh, (uint32_t)ni, outCh, (uint32_t)no);
+            int32_t li = g_cb->match_bus_layout_perbus(
+                inCh.data(), (uint32_t)numIns, outCh.data(), (uint32_t)numOuts);
             if (li >= 0) {
                 cur_layout = (uint32_t)li;
                 // Keep the summed cur_in/cur_out in step for the scratch
                 // sizing and deactivated-bus synthesis in process().
                 uint32_t si = 0, so = 0;
-                for (int32 i = 0; i < ni; i++) si += inCh[i];
-                for (int32 i = 0; i < no; i++) so += outCh[i];
+                for (int32 i = 0; i < numIns;  i++) si += inCh[i];
+                for (int32 i = 0; i < numOuts; i++) so += outCh[i];
                 cur_in = si; cur_out = so;
                 return kResultOk;
             }
@@ -1055,7 +1069,9 @@ public:
                 silenceScratch = (uint8_t*)calloc(1, frameBytes);
             }
             if (g_desc->num_outputs > 0 && frameBytes > 0) {
-                uint32_t ch = g_desc->num_outputs > 32 ? 32 : g_desc->num_outputs;
+                uint32_t ch = g_desc->num_outputs > kMaxProcChannels
+                                  ? kMaxProcChannels
+                                  : g_desc->num_outputs;
                 free(trashScratch);
                 trashScratch = (uint8_t*)malloc((size_t)ch * frameBytes);
             }
@@ -1148,32 +1164,33 @@ public:
         // arm the negotiated sample size selects.
         const bool use64 = (procSampleSize == kSample64);
         const size_t sampleBytes = use64 ? sizeof(double) : sizeof(float);
-        const void* inPtrs[32] = {};
-        void* outPtrs[32] = {};
+        const void* inPtrs[kMaxProcChannels] = {};
+        void* outPtrs[kMaxProcChannels] = {};
         uint32_t numIn = 0, numOut = 0;
 
         // Concatenate every input bus's channels into one flat array in
         // bus order - main bus first, then each sidechain/aux bus - which
         // is exactly the flat channel indexing the plugin's AudioBuffer
         // expects (main L/R at 0/1, sidechain L/R at 2/3, ...). Clamp the
-        // total to 32 (the pointer-array size) so a channel past the cap
-        // never sends Rust an uninitialized stack pointer.
+        // total to the pointer-array size so a channel past the cap never
+        // sends Rust an uninitialized stack pointer (registration already
+        // rejects layouts wider than this, so the clamp never bites).
         if (data->inputs) {
-            for (int32 b = 0; b < data->numInputs && numIn < 32; b++) {
+            for (int32 b = 0; b < data->numInputs && numIn < kMaxProcChannels; b++) {
                 auto& bus = data->inputs[b];
                 int32 nch = bus.numChannels;
                 uint32_t bch = nch <= 0 ? 0u : (uint32_t)nch;
-                for (uint32_t c = 0; c < bch && numIn < 32; c++, numIn++)
+                for (uint32_t c = 0; c < bch && numIn < kMaxProcChannels; c++, numIn++)
                     inPtrs[numIn] = use64 ? (const void*)bus.channelBuffers64[c]
                                           : (const void*)bus.channelBuffers32[c];
             }
         }
         if (data->outputs) {
-            for (int32 b = 0; b < data->numOutputs && numOut < 32; b++) {
+            for (int32 b = 0; b < data->numOutputs && numOut < kMaxProcChannels; b++) {
                 auto& bus = data->outputs[b];
                 int32 nch = bus.numChannels;
                 uint32_t bch = nch <= 0 ? 0u : (uint32_t)nch;
-                for (uint32_t c = 0; c < bch && numOut < 32; c++, numOut++)
+                for (uint32_t c = 0; c < bch && numOut < kMaxProcChannels; c++, numOut++)
                     outPtrs[numOut] = use64 ? (void*)bus.channelBuffers64[c]
                                             : (void*)bus.channelBuffers32[c];
             }
@@ -1196,19 +1213,20 @@ public:
          * sized to it). */
         if ((uint32_t)numFrames <= maxFrames) {
             if (g_desc && cur_in > 0 && silenceScratch) {
-                const uint32_t wantIn = cur_in > 32 ? 32 : cur_in;
+                const uint32_t wantIn = cur_in > kMaxProcChannels ? kMaxProcChannels : cur_in;
                 for (uint32_t c = 0; c < numIn; c++)
                     if (!inPtrs[c]) inPtrs[c] = silenceScratch;
                 for (; numIn < wantIn; numIn++)
                     inPtrs[numIn] = silenceScratch;
             }
             if (g_desc && cur_out > 0 && trashScratch) {
-                const uint32_t wantOut = cur_out > 32 ? 32 : cur_out;
+                const uint32_t wantOut = cur_out > kMaxProcChannels ? kMaxProcChannels : cur_out;
                 // Distinct discard blocks allocated in setupProcessing,
                 // sized to the descriptor's output width. Clamp the slot
                 // so a layout wider than that still stays in bounds - an
                 // aliased discard is harmless since trash is never read.
-                const uint32_t trashCh = g_desc->num_outputs > 32 ? 32 : g_desc->num_outputs;
+                const uint32_t trashCh =
+                    g_desc->num_outputs > kMaxProcChannels ? kMaxProcChannels : g_desc->num_outputs;
                 for (uint32_t c = 0; c < numOut; c++)
                     if (!outPtrs[c]) {
                         const uint32_t slot = (trashCh && c < trashCh) ? c : (trashCh ? trashCh - 1 : 0);

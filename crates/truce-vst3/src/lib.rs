@@ -12,7 +12,7 @@ use std::slice;
 
 use truce_core::TransportSlot;
 use truce_core::buffer::RawBufferScratch;
-use truce_core::bus::{BusConfig, BusKind};
+use truce_core::bus::{BusConfig, BusKind, BusLayout};
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
@@ -2139,6 +2139,28 @@ fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
     resolve_name_override(info.vst3_name, info.name)
 }
 
+/// Per-direction channel-pointer capacity of the shim's `process()`
+/// arrays (`kMaxProcChannels` in `vst3_shim.cpp`). That path is the
+/// audio callback, so the arrays are fixed rather than heap-sized; a
+/// plugin whose widest declared layout exceeds this can't be rendered
+/// without silently truncating channels. Registration rejects it here
+/// rather than advertise a layout the audio path can't honor. Bus
+/// *counts* have no such limit - `setBusArrangements()` sizes its
+/// per-bus arrays dynamically.
+const VST3_MAX_CHANNELS_PER_DIRECTION: u32 = 32;
+
+/// Largest total input and output channel counts across all declared
+/// layouts - the widest the host can negotiate, hence the widest the
+/// process path must handle.
+fn max_layout_channels(layouts: &[BusLayout]) -> (u32, u32) {
+    layouts.iter().fold((0, 0), |(mi, mo), l| {
+        (
+            mi.max(l.total_input_channels()),
+            mo.max(l.total_output_channels()),
+        )
+    })
+}
+
 pub fn register_vst3<P: PluginExport>() {
     // Called from the export macro's `extern "C" fn init()` static
     // initializer. Catch any panic so it doesn't cross the FFI
@@ -2148,6 +2170,16 @@ pub fn register_vst3<P: PluginExport>() {
             log_missing_bus_layout::<P>("VST3");
             return;
         };
+        let (max_in, max_out) = max_layout_channels(&P::bus_layouts());
+        if max_in > VST3_MAX_CHANNELS_PER_DIRECTION || max_out > VST3_MAX_CHANNELS_PER_DIRECTION {
+            eprintln!(
+                "[truce VST3] {} declares up to {max_in} input / {max_out} output channels, \
+                 exceeding the shim's {VST3_MAX_CHANNELS_PER_DIRECTION}-channel-per-direction \
+                 process limit - plugin will not register.",
+                std::any::type_name::<P>(),
+            );
+            return;
+        }
         register_vst3_inner::<P>(num_inputs, num_outputs);
     });
 }
@@ -2568,6 +2600,56 @@ mod midi_proxy_tests {
         assert!((midi_proxy_default(MIDI_PROXY_PITCH_BEND) - 0.5).abs() < f64::EPSILON);
         assert!(midi_proxy_default(0).abs() < f64::EPSILON);
         assert!(midi_proxy_default(MIDI_PROXY_PRESSURE).abs() < f64::EPSILON);
+    }
+}
+
+#[cfg(test)]
+mod channel_limit_tests {
+    use super::{VST3_MAX_CHANNELS_PER_DIRECTION, max_layout_channels};
+    use truce_core::bus::{BusLayout, ChannelConfig};
+
+    #[test]
+    fn widest_layout_wins() {
+        let layouts = [BusLayout::stereo(), BusLayout::mono()];
+        assert_eq!(max_layout_channels(&layouts), (2, 2));
+    }
+
+    #[test]
+    fn sums_channels_across_buses() {
+        // Main stereo + stereo sidechain = 4 input channels, 2 output.
+        let layouts =
+            [BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo)];
+        assert_eq!(max_layout_channels(&layouts), (4, 2));
+    }
+
+    #[test]
+    fn many_mono_buses_stay_within_limit() {
+        // 17 mono input buses = 17 channels, under the 32-channel cap - so a
+        // high bus count alone never trips the guard, and (with the dynamic
+        // setBusArrangements arrays) such a plugin negotiates all its buses.
+        let mut layout = BusLayout::new()
+            .with_input("Main", ChannelConfig::Mono)
+            .with_output("Main", ChannelConfig::Mono);
+        for _ in 1..17 {
+            layout = layout.with_sidechain_input("Aux", ChannelConfig::Mono);
+        }
+        let (max_in, _) = max_layout_channels(&[layout]);
+        assert_eq!(max_in, 17);
+        assert!(max_in <= VST3_MAX_CHANNELS_PER_DIRECTION);
+    }
+
+    #[test]
+    fn oversized_layout_exceeds_limit() {
+        // 17 stereo buses = 34 channels > 32: registration rejects this.
+        let mut layout = BusLayout::new()
+            .with_input("Main", ChannelConfig::Stereo)
+            .with_output("Main", ChannelConfig::Stereo);
+        for _ in 1..17 {
+            layout = layout.with_sidechain_input("Aux", ChannelConfig::Stereo);
+        }
+        let (max_in, _) = max_layout_channels(&[layout]);
+        assert_eq!(max_in, 34);
+        assert!(max_in > VST3_MAX_CHANNELS_PER_DIRECTION);
     }
 }
 
