@@ -6,6 +6,7 @@
 #include "AAX_CUnitDisplayDelegateDecorator.h"
 #include "AAX_CBinaryTaperDelegate.h"
 #include "AAX_CBinaryDisplayDelegate.h"
+#include "AAX_IDisplayDelegate.h"
 #include "AAX_IMIDINode.h"
 #include "AAX_IController.h"
 #include "AAX_ITransport.h"
@@ -15,6 +16,56 @@
 #include <cstdio>
 #include <sstream>
 #include <memory>
+
+// ---------------------------------------------------------------------------
+// Display delegate
+// ---------------------------------------------------------------------------
+
+// Routes AAX parameter display *and* text entry through the plugin's own
+// formatter/parser (truce format_value / parse_value) instead of the
+// SDK's generic number delegate, so custom units, dB "-inf", enum names,
+// etc. round-trip both ways. Captures the instance ctx + param id; AAX
+// clones the delegate into each AAX_CParameter, so a stack-local at
+// registration is fine.
+class TruceAAXDisplayDelegate : public AAX_IDisplayDelegate<float> {
+public:
+    TruceAAXDisplayDelegate(void* ctx, uint32_t paramID)
+        : mCtx(ctx), mParamID(paramID) {}
+
+    AAX_IDisplayDelegate<float>* Clone() const AAX_OVERRIDE {
+        return new TruceAAXDisplayDelegate(*this);
+    }
+
+    bool ValueToString(float value, AAX_CString* valueString) const AAX_OVERRIDE {
+        if (!g_bridge_loaded || !mCtx || !valueString) return false;
+        char buf[128];
+        buf[0] = 0;
+        g_bridge.format_param(mCtx, mParamID, (double)value, buf, sizeof(buf));
+        if (buf[0] == 0) return false;
+        *valueString = AAX_CString(buf);
+        return true;
+    }
+
+    bool ValueToString(float value, int32_t /*maxNumChars*/,
+                       AAX_CString* valueString) const AAX_OVERRIDE {
+        // truce's formatted strings are already compact; the width hint
+        // isn't needed to keep them within Pro Tools' field.
+        return ValueToString(value, valueString);
+    }
+
+    bool StringToValue(const AAX_CString& valueString, float* value) const AAX_OVERRIDE {
+        if (!g_bridge_loaded || !mCtx || !value || !g_bridge.parse_param) return false;
+        double plain = 0.0;
+        if (!g_bridge.parse_param(mCtx, mParamID, valueString.Get(), &plain))
+            return false;
+        *value = (float)plain;
+        return true;
+    }
+
+private:
+    void* mCtx;
+    uint32_t mParamID;
+};
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -109,9 +160,10 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
         // the next render block writes back a different plain
         // value than the editor just stored.
         std::unique_ptr<AAX_IParameter> param;
-        AAX_CUnitDisplayDelegateDecorator<float> display(
-            AAX_CNumberDisplayDelegate<float>(),
-            AAX_CString(info.unit));
+        // truce's format_value already includes the unit, so this routes
+        // display + text entry through the plugin (no SDK number/unit
+        // decorator, which would double the unit).
+        TruceAAXDisplayDelegate display(mRustCtx, info.id);
         if (info.range_type == TRUCE_AAX_RANGE_LOG) {
             param.reset(new AAX_CParameter<float>(
                 paramID,

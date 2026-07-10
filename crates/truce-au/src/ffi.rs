@@ -104,8 +104,8 @@ pub struct AuParamDescriptor {
 /// unreleased tail callback's signature); a test asserts they match.
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
 /// argument. v3: appended `latency_samples` / `tail_samples`. v4:
-/// appended `set_render_mode`.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7504;
+/// appended `set_render_mode`. v5: appended `param_parse_value`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7505;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -289,6 +289,17 @@ pub struct AuCallbacks {
     /// Appended per the append-only rule (gate on `abi_version`
     /// cross-binary).
     pub set_render_mode: unsafe extern "C" fn(ctx: *mut c_void, mode: u32),
+    /// Parse host text-entry (UTF-8) into a plain param value. Returns
+    /// `1` and writes `out_plain` on success, `0` when unparseable.
+    /// Backs `kAudioUnitProperty_ParameterValueFromString` (v2) and the
+    /// v3 appex's `implementorValueFromStringCallback`. Appended per the
+    /// append-only rule (gate on `abi_version` cross-binary).
+    pub param_parse_value: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        id: u32,
+        text: *const c_char,
+        out_plain: *mut f64,
+    ) -> i32,
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

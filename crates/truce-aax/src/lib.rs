@@ -10,7 +10,7 @@
 // uniformly repetitive without adding information.
 #![allow(clippy::missing_safety_doc)]
 
-use std::ffi::{CString, c_void};
+use std::ffi::{CStr, CString, c_void};
 use std::mem;
 use std::os::raw::c_char;
 use std::ptr;
@@ -756,6 +756,15 @@ macro_rules! export_aax {
                 ::truce_aax::_format_param::<$plugin_type>(ctx, id, value, out, out_len);
             }
             #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_parse_param(
+                ctx: *mut ::std::ffi::c_void,
+                id: u32,
+                text: *const ::std::os::raw::c_char,
+                out_plain: *mut f64,
+            ) -> i32 {
+                ::truce_aax::_parse_param::<$plugin_type>(ctx, id, text, out_plain)
+            }
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_save_state(
                 ctx: *mut ::std::ffi::c_void,
                 out_data: *mut *mut u8,
@@ -1402,6 +1411,35 @@ pub unsafe fn _format_param<P: PluginExport>(
             ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
             *out.add(len) = 0;
         }
+    }
+}
+
+/// Parse host text-entry (UTF-8) into a plain param value. Returns `1`
+/// and writes `out_plain` on success, `0` when the text isn't parseable
+/// (the shim's display delegate then leaves the value unchanged).
+///
+/// # Safety
+/// `ctx` must be a live `AaxInstance<P>`; `text` a NUL-terminated C
+/// string; `out_plain` a writable `f64`.
+pub unsafe fn _parse_param<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    id: u32,
+    text: *const c_char,
+    out_plain: *mut f64,
+) -> i32 {
+    if text.is_null() || out_plain.is_null() {
+        return 0;
+    }
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    let Ok(text) = (unsafe { CStr::from_ptr(text) }).to_str() else {
+        return 0;
+    };
+    match inst.params_arc.parse_value(id, text) {
+        Some(v) => {
+            unsafe { *out_plain = v };
+            1
+        }
+        None => 0,
     }
 }
 

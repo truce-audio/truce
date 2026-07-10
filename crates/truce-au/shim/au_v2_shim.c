@@ -534,6 +534,8 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = sizeof(AudioUnitParameterInfo); break;
         case kAudioUnitProperty_ParameterStringFromValue:
             size = sizeof(AudioUnitParameterStringFromValue); writable = true; break;
+        case kAudioUnitProperty_ParameterValueFromString:
+            size = sizeof(AudioUnitParameterValueFromString); writable = true; break;
         case kAudioUnitProperty_SetRenderCallback:
             if (scope == kAudioUnitScope_Input) { size = sizeof(AURenderCallbackStruct); writable = true; }
             else return kAudioUnitErr_InvalidScope;
@@ -757,6 +759,32 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             if (!str) return kAudioUnitErr_InvalidParameter;
             sfv->outString = str;
             *ioSize = sizeof(AudioUnitParameterStringFromValue);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_ParameterValueFromString: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (*ioSize < sizeof(AudioUnitParameterValueFromString))
+                return kAudioUnitErr_InvalidPropertyValue;
+            if (!g_callbacks || !g_callbacks->param_parse_value || !inst->rustCtx)
+                return kAudioUnitErr_Uninitialized;
+            AudioUnitParameterValueFromString *vfs =
+                (AudioUnitParameterValueFromString *)outData;
+            if (!vfs->inString) return kAudioUnitErr_InvalidParameter;
+            /* AU hands us a CFString; the Rust parser wants UTF-8. A
+             * plain-numeric or enum-name entry fits well under 256. */
+            char buf[256];
+            if (!CFStringGetCString(vfs->inString, buf, sizeof(buf),
+                                    kCFStringEncodingUTF8))
+                return kAudioUnitErr_InvalidParameter;
+            double plain = 0.0;
+            if (!g_callbacks->param_parse_value(inst->rustCtx, vfs->inParamID,
+                                                buf, &plain))
+                return kAudioUnitErr_InvalidParameter;
+            /* AU parameter values are plain (Float32) in the param's
+             * own range - no normalize step. */
+            vfs->outValue = (AudioUnitParameterValue)plain;
+            *ioSize = sizeof(AudioUnitParameterValueFromString);
             return noErr;
         }
 

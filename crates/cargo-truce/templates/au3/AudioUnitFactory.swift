@@ -376,6 +376,20 @@ class TruceAUAudioUnit: AUAudioUnit {
             let len = cb.param_format_value(rawCtx, UInt32(p.address), Double(val), &buf, 128)
             return len > 0 ? String(cString: buf) : String(format: "%.2f", val)
         }
+        _parameterTree?.implementorValueFromStringCallback = { p, str in
+            // `param_parse_value` is an ABI v5 tail callback: on an older
+            // plugin binary the pointer is past its tail, so gate on the
+            // version and fall back to a plain float parse (what AU does
+            // by default) rather than calling through it.
+            if truceAbiTailVersion(callbacks) >= 5 {
+                var plain = 0.0
+                let ok = str.withCString { cstr in
+                    cb.param_parse_value(rawCtx, UInt32(p.address), cstr, &plain)
+                }
+                if ok != 0 { return AUValue(plain) }
+            }
+            return AUValue(Float(str) ?? p.value)
+        }
     }
 
     // MARK: Render

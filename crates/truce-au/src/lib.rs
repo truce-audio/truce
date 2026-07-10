@@ -6,7 +6,7 @@
 
 pub mod ffi;
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
@@ -863,6 +863,32 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
                 std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
                 len_u32(len)
+            }
+            None => 0,
+        }
+    }
+}
+
+unsafe extern "C" fn cb_param_parse_value<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    id: u32,
+    text: *const c_char,
+    out_plain: *mut f64,
+) -> i32 {
+    unsafe {
+        if text.is_null() || out_plain.is_null() {
+            return 0;
+        }
+        let Ok(text) = CStr::from_ptr(text).to_str() else {
+            return 0;
+        };
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        // AU parameter values are plain (min..max), so `parse_value`'s
+        // result goes straight through - no normalize step like VST3.
+        match inst.params_arc.parse_value(id, text) {
+            Some(v) => {
+                *out_plain = v;
+                1
             }
             None => 0,
         }
@@ -2013,6 +2039,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         latency_samples: cb_latency_samples::<P>,
         tail_samples: cb_tail_samples::<P>,
         set_render_mode: cb_set_render_mode::<P>,
+        param_parse_value: cb_param_parse_value::<P>,
     }));
 
     let param_descs = param_descs.leak();

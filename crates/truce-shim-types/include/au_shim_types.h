@@ -41,9 +41,11 @@
 // query them on a pre-v3 binary (the pointers would be past its tail).
 // v4: appended `set_render_mode`; a shim must not push a render-mode
 // change into a pre-v4 binary (the pointer would be past its tail).
+// v5: appended `param_parse_value`; a shim must not call it on a pre-v5
+// binary (the pointer would be past its tail).
 #define TRUCE_AU_ABI_MAGIC_MASK 0xFFFFFF00u
 #define TRUCE_AU_ABI_MAGIC 0x54417500u
-#define TRUCE_AU_ABI_VERSION 0x54417504u
+#define TRUCE_AU_ABI_VERSION 0x54417505u
 
 typedef struct {
     uint8_t component_type[4];
@@ -338,6 +340,15 @@ typedef struct {
      * that `reset` and every `process` block read. Appended per the
      * append-only rule; gate on abi_version (>= v4) before calling. */
     void (*set_render_mode)(void *ctx, uint32_t mode);
+    /* Host text entry -> plain param value. The shim converts the host's
+     * CFString (v2 `kAudioUnitProperty_ParameterValueFromString`, v3
+     * `implementorValueFromStringCallback`) to UTF-8 and calls this;
+     * returns 1 and writes `out_plain` on a successful parse, 0 when the
+     * text isn't valid for the param (the shim then leaves the value
+     * unchanged). Appended per the append-only rule; gate on abi_version
+     * (>= v5) before calling. */
+    int32_t (*param_parse_value)(void *ctx, uint32_t id, const char *text,
+                                 double *out_plain);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

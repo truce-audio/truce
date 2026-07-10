@@ -6,7 +6,7 @@
 
 pub mod ffi;
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
@@ -1048,6 +1048,30 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
                 std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
                 len_u32(len)
+            }
+            None => 0,
+        }
+    }
+}
+
+unsafe extern "C" fn cb_param_parse<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    id: u32,
+    text: *const c_char,
+    out_plain: *mut f64,
+) -> i32 {
+    unsafe {
+        if text.is_null() || out_plain.is_null() {
+            return 0;
+        }
+        let Ok(text) = CStr::from_ptr(text).to_str() else {
+            return 0;
+        };
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        match inst.params_arc.parse_value(id, text) {
+            Some(v) => {
+                *out_plain = v;
+                1
             }
             None => 0,
         }
@@ -2286,6 +2310,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         param_normalize: cb_param_normalize::<P>,
         param_denormalize: cb_param_denormalize::<P>,
         param_format: cb_param_format::<P>,
+        param_parse: cb_param_parse::<P>,
         state_save: cb_state_save::<P>,
         state_load: cb_state_load::<P>,
         state_free: cb_state_free,
