@@ -626,6 +626,17 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             }
         }
 
+        // Derive position_seconds from samples for a consistent
+        // cross-format value (CLAP fills it directly; the LV2 time:Position
+        // atom carries no seconds field). Guard the pre-activate zero SR.
+        if inst.sample_rate > 0.0 {
+            // Sample positions stay well below 2^52 for any real session.
+            #[allow(clippy::cast_precision_loss)]
+            {
+                transport.position_seconds = transport.position_samples as f64 / inst.sample_rate;
+            }
+        }
+
         // The per-port loops above append each atom port's events as
         // separate runs (port 0 patch:Set, port 0 MIDI, port 1 MIDI,
         // ...), so the merged list isn't offset-ordered. The chunker's

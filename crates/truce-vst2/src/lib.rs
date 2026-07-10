@@ -174,7 +174,7 @@ struct Vst2TransportSnapshot {
 }
 
 impl Vst2TransportSnapshot {
-    fn to_transport_info(&self) -> TransportInfo {
+    fn to_transport_info(&self, sample_rate: f64) -> TransportInfo {
         // Default-init hosts hand us `tempo == 0.0`, which downstream
         // consumers (LFOs synced to BPM, beat-grid math) divide
         // through. Fall back to 120 BPM, matching CLAP's
@@ -196,7 +196,13 @@ impl Vst2TransportSnapshot {
             time_sig_num,
             time_sig_den,
             position_samples: sample_pos_i64(self.position_samples),
-            position_seconds: 0.0,
+            // Derived from samples for a consistent cross-format value
+            // (CLAP fills it directly). Guard the pre-reset zero SR.
+            position_seconds: if sample_rate > 0.0 {
+                self.position_samples / sample_rate
+            } else {
+                0.0
+            },
             position_beats: self.position_beats,
             bar_start_beats: self.bar_start_beats,
             loop_active: self.loop_active != 0,
@@ -511,7 +517,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             let mut snap = Vst2TransportSnapshot::default();
             truce_vst2_host_get_time(inst.aeffect_ptr, &raw mut snap);
             if snap.valid != 0 {
-                snap.to_transport_info()
+                snap.to_transport_info(inst.sample_rate)
             } else {
                 TransportInfo::default()
             }

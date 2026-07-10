@@ -826,7 +826,14 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_den: t.time_sig_den as u8,
                 position_samples: sample_pos_i64(t.position_samples),
-                position_seconds: 0.0,
+                // Derived from samples so a plugin reading
+                // `position_seconds` gets the same value on every format
+                // (CLAP populates it directly). Guard the pre-reset zero SR.
+                position_seconds: if inst.sample_rate > 0.0 {
+                    t.position_samples / inst.sample_rate
+                } else {
+                    0.0
+                },
                 position_beats: t.position_beats,
                 bar_start_beats: t.bar_start_beats,
                 loop_active: t.cycle_active != 0,
