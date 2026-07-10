@@ -205,6 +205,16 @@ impl PluginLogic for FundspReverbWorker {
     type Params = FundspReverbWorkerParams;
     type DspState = FundspReverbWorkerDspState;
 
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![
+            BusLayout::stereo(),
+            // Mono in, stereo out: a mono source through the stereo reverb.
+            BusLayout::new()
+                .with_input("Main", ChannelConfig::Mono)
+                .with_output("Main", ChannelConfig::Stereo),
+        ]
+    }
+
     fn reset(
         state: &mut FundspReverbWorkerDspState,
         params: &FundspReverbWorkerParams,
@@ -273,6 +283,30 @@ impl PluginLogic for FundspReverbWorker {
                     time_s,
                 });
             }
+        }
+
+        // Mono in, stereo out: the graph is stereo, so feed the mono sample
+        // to both graph inputs and write both graph outputs.
+        if buffer.num_input_channels() < 2 {
+            for i in 0..buffer.num_samples() {
+                w.low_cut.set_value(params.low_cut.read());
+                w.high_cut.set_value(params.high_cut.read());
+                w.mix.set_value(params.mix.read());
+                let mono = buffer.input(0)[i];
+                let mut frame_out = [0.0_f32; 2];
+                state.graph.tick(&[mono, mono], &mut frame_out);
+                buffer.output(0)[i] = frame_out[0];
+                if buffer.num_output_channels() >= 2 {
+                    buffer.output(1)[i] = frame_out[1];
+                }
+            }
+            if buffer.num_output_channels() >= 1 {
+                context.set_meter(P::MeterL, buffer.output_peak(0));
+            }
+            if buffer.num_output_channels() >= 2 {
+                context.set_meter(P::MeterR, buffer.output_peak(1));
+            }
+            return ProcessStatus::Normal;
         }
 
         // `for_each_frame::<2>` transposes channel-major to stereo

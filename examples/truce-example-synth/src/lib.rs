@@ -224,7 +224,7 @@ impl PluginLogic for Synth {
     type DspState = SynthDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
+        BusLayout::stereo_and_mono_output()
     }
 
     fn reset(state: &mut SynthDspState, _params: &SynthParams, config: &AudioConfig) {

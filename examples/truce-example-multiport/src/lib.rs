@@ -248,7 +248,7 @@ impl PluginLogic for Multiport {
     type DspState = MultiportDspState;
 
     fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
+        BusLayout::stereo_and_mono_output()
     }
 
     fn reset(state: &mut MultiportDspState, _params: &MultiportParams, config: &AudioConfig) {
@@ -318,7 +318,9 @@ impl PluginLogic for Multiport {
 
             let s = mix.clamp(-1.0, 1.0);
             buffer.output(0)[i] = s;
-            buffer.output(1)[i] = s;
+            if buffer.num_output_channels() > 1 {
+                buffer.output(1)[i] = s;
+            }
         }
 
         if state.voices.iter().any(|v| v.active) {

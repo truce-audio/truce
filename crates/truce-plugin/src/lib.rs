@@ -87,9 +87,12 @@ pub trait PluginLogicCore<S: Sample = f32>: 'static {
         false
     }
 
+    /// Supported audio bus configurations. The host picks one. Default:
+    /// the standard audio effect - stereo and mono - so it appears on
+    /// both track widths. Override for instruments, surround, sidechains.
     #[must_use]
     fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::stereo()]
+        BusLayout::stereo_and_mono()
     }
 
     /// Build initial state from params. See [`PluginLogic::init`].
@@ -234,10 +237,11 @@ macro_rules! plugin_logic_leaf_trait {
 
             /// Supported audio bus configurations. The host picks one;
             /// the others are rejected at bus-config time before
-            /// `process` is ever called. Default: stereo in, stereo out.
+            /// `process` is ever called. Default: the standard audio
+            /// effect - stereo and mono - so it shows on both track widths.
             #[must_use]
             fn bus_layouts() -> Vec<$crate::__plugin_logic_deps::BusLayout> {
-                vec![$crate::__plugin_logic_deps::BusLayout::stereo()]
+                $crate::__plugin_logic_deps::BusLayout::stereo_and_mono()
             }
 
             /// Build the initial audio state from params. Replaces the
@@ -531,11 +535,11 @@ macro_rules! pure_plugin_leaf_trait {
             }
 
             /// Supported audio bus configurations. Same contract as the
-            /// stateful leaf's `bus_layouts`. Default: stereo in,
-            /// stereo out.
+            /// stateful leaf's `bus_layouts`. Default: the standard audio
+            /// effect - stereo and mono.
             #[must_use]
             fn bus_layouts() -> Vec<crate::__plugin_logic_deps::BusLayout> {
-                vec![crate::__plugin_logic_deps::BusLayout::stereo()]
+                crate::__plugin_logic_deps::BusLayout::stereo_and_mono()
             }
 
             /// Process one block of audio as a pure function of params

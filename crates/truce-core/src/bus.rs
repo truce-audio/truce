@@ -77,6 +77,30 @@ impl BusLayout {
             .with_output("Main", ChannelConfig::Stereo)
     }
 
+    /// The default audio-effect layout set: stereo and mono (stereo
+    /// first, so it's the default width). Return this from `bus_layouts()`
+    /// for an ordinary in/out effect and the host offers it on both stereo
+    /// and mono tracks, instead of a stereo-only effect that's hidden on
+    /// mono ones. The effect's `process` must handle either width - loop
+    /// over `buffer.channels()` rather than assuming two.
+    #[must_use]
+    pub fn stereo_and_mono() -> Vec<Self> {
+        vec![Self::stereo(), Self::mono()]
+    }
+
+    /// The output-only counterpart of [`Self::stereo_and_mono`]: stereo and
+    /// mono output buses with no input, for an instrument that produces
+    /// audio from MIDI. Offered on both stereo and mono tracks. The
+    /// instrument's `process` must handle either output width - guard any
+    /// write past the first channel with `buffer.num_output_channels()`.
+    #[must_use]
+    pub fn stereo_and_mono_output() -> Vec<Self> {
+        vec![
+            Self::new().with_output("Main", ChannelConfig::Stereo),
+            Self::new().with_output("Main", ChannelConfig::Mono),
+        ]
+    }
+
     /// Append a main audio input bus. First call → main audio in;
     /// subsequent calls → sidechain inputs (use [`Self::with_sidechain_input`]
     /// if you prefer to be explicit).
