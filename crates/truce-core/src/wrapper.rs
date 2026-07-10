@@ -25,72 +25,45 @@ use truce_params::ParamInfo;
 use crate::bus::BusLayout;
 use crate::export::PluginExport;
 
-pub use plugin_mutex::{PluginGuard, PluginMutex};
+pub use plugin_cell::{PluginCell, PluginGuard};
 
-/// The mediation lock every format wrapper puts around its plugin
-/// instance. The audio thread holds the lock for the duration of a
-/// block (`process`, `reset`, the queued state apply); host-thread
-/// state callbacks and the editor's `get_state` closure block for
-/// the read - safe in that direction, and bounded by the block the
-/// audio thread is finishing. Meters ride the lock-free `MeterStore`
-/// instead, so per-frame GUI paints never touch this lock.
+/// The ownership cell every format wrapper puts around its plugin
+/// instance. The audio thread owns the plugin while the host is
+/// processing (`process`, the queued state apply); the host thread owns
+/// it while processing is stopped (`init`, `reset`, an inactive state
+/// load). The host contract makes those two mutually exclusive in time -
+/// a spec-compliant host never overlaps `process` with a lifecycle
+/// callback - so [`PluginCell`] holds no OS lock and the audio thread
+/// never waits. Ownership handoff carries a release-acquire edge (each
+/// owner observes the previous owner's writes), not mutual exclusion.
 ///
-/// The lock is only as strong as the scheduler behind it, so
-/// [`PluginMutex`] picks per platform:
-/// - **macOS**: `std::sync::Mutex` sits on `os_unfair_lock`, which
-///   donates the waiter's priority to the owner - a GUI thread
-///   preempted mid-`save_state` gets boosted to the waiting audio
-///   thread's priority.
-/// - **Linux**: a `PTHREAD_PRIO_INHERIT` pthread mutex; std's
-///   futex-based lock has no priority inheritance there.
-/// - **Windows**: `std::sync::Mutex` (SRWLOCK). User space has no
-///   priority-inheriting primitive, so the defense is the short
-///   hold - non-audio holders only span `save_state` / `editor()`.
+/// A host state save no longer touches the plugin at all: it reads the
+/// lock-free [`SnapshotSlot`](crate::snapshot::SnapshotSlot) the audio
+/// thread publishes each block (see [`save_extra`]). Meters ride the
+/// lock-free `MeterStore`, and params are atomic. So nothing on a
+/// non-audio thread contends with `process` on the hot path.
 ///
-/// (`parking_lot` inherits priority nowhere, which is why it isn't
-/// used. Uncontended cost is a CAS on every platform.)
-/// A panic while holding the guard unlocks on unwind; std's poison
-/// is forgiven (see [`lock_plugin`]).
-///
-/// A `Mutex` rather than an `RwLock`: the only non-audio accessors
-/// are a host state save and an editor preset capture - both rare -
-/// so reader parallelism buys nothing, and `Mutex<P>: Sync` needs
-/// only `P: Send` (an `RwLock` would force `Sync` onto every plugin
-/// type).
-///
-/// The `Arc` is what makes GUI closures sound: they clone the handle
-/// instead of stashing a raw pointer into the instance struct (whose
-/// `&mut` the audio thread holds during callbacks).
-pub type SharedPlugin<P> = Arc<PluginMutex<P>>;
+/// The soundness rests on the host's process/lifecycle exclusion
+/// contract; a debug-build overlap detector trips if a host ever
+/// violates it. The `Arc` is what makes GUI closures sound: they clone
+/// the handle instead of stashing a raw pointer into the instance
+/// struct.
+pub type SharedPlugin<P> = Arc<PluginCell<P>>;
 
-/// Wrap a freshly created plugin in the wrapper-standard mediation
-/// lock. See [`SharedPlugin`].
+/// Wrap a freshly created plugin in the wrapper-standard ownership
+/// cell. See [`SharedPlugin`].
 pub fn shared_plugin<P>(plugin: P) -> SharedPlugin<P> {
-    let shared = Arc::new(PluginMutex::new(plugin));
-    // Warm the lock off the audio thread: the std-backed variant (macOS
-    // boxes a `pthread_mutex_t`) lazily allocates the OS mutex on first
-    // lock, which would otherwise land on the first audio callback that
-    // takes the mediation lock. Locking here forces that one-time init at
-    // creation. No-op on the Linux pthread variant (its mutex is built in
-    // `new`) and on Windows (SRWLOCK is inline).
-    drop(shared.lock());
-    shared
+    Arc::new(PluginCell::new(plugin))
 }
 
-/// Lock the mediation lock, forgiving poison. A poisoned lock means a
-/// panic already escaped somewhere and was reported by the wrapper's
-/// panic guard; refusing every later block would turn one bad block
-/// into permanent silence, and the plugin's state is no more suspect
-/// than after any other caught panic. (The Linux pthread lock has no
-/// poison to forgive; unwind simply unlocks.)
-pub fn lock_plugin<P>(plugin: &PluginMutex<P>) -> PluginGuard<'_, P> {
-    plugin.lock()
-}
-
-/// [`lock_plugin`]'s non-blocking twin: `None` only when the lock is
-/// genuinely held (poison is forgiven, same rationale).
-pub fn try_lock_plugin<P>(plugin: &PluginMutex<P>) -> Option<PluginGuard<'_, P>> {
-    plugin.try_lock()
+/// Take ownership of the plugin for the current callback. Never blocks:
+/// the audio thread owns the plugin while active, the host thread while
+/// inactive, and the host contract keeps the two from overlapping, so
+/// there is nothing to wait on. The returned guard's `&mut` is exclusive
+/// by that contract; the `Acquire` inside observes the previous owner's
+/// writes.
+pub fn enter_plugin<P>(plugin: &PluginCell<P>) -> PluginGuard<'_, P> {
+    plugin.enter()
 }
 
 /// Read the plugin's custom-state blob for a host state save.
@@ -109,174 +82,104 @@ pub fn save_extra(snapshot: &crate::snapshot::SnapshotSlot) -> Vec<u8> {
     snapshot.read().unwrap_or_default()
 }
 
-/// std-backed [`PluginMutex`]: macOS (`os_unfair_lock` donates the
-/// waiter's priority) and Windows (SRWLOCK; no user-space priority
-/// inheritance exists). Miri also lands here - it has no shim for
-/// `pthread_mutexattr_setprotocol`, and the std lock gives it full
-/// visibility.
-#[cfg(any(not(target_os = "linux"), miri))]
-mod plugin_mutex {
-    use std::ops::{Deref, DerefMut};
-    use std::sync::{Mutex, MutexGuard, PoisonError, TryLockError};
-
-    /// See [`super::SharedPlugin`] for the per-platform lock choice.
-    pub struct PluginMutex<T>(Mutex<T>);
-
-    /// Guard handing out the exclusive `&mut T`; unlocks on drop.
-    pub struct PluginGuard<'a, T>(MutexGuard<'a, T>);
-
-    impl<T> PluginMutex<T> {
-        pub fn new(value: T) -> Self {
-            Self(Mutex::new(value))
-        }
-
-        /// Block until the lock is held. Poison is forgiven (see
-        /// [`super::lock_plugin`]).
-        pub fn lock(&self) -> PluginGuard<'_, T> {
-            PluginGuard(self.0.lock().unwrap_or_else(PoisonError::into_inner))
-        }
-
-        /// `None` only when the lock is genuinely held.
-        pub fn try_lock(&self) -> Option<PluginGuard<'_, T>> {
-            match self.0.try_lock() {
-                Ok(guard) => Some(PluginGuard(guard)),
-                Err(TryLockError::Poisoned(poisoned)) => Some(PluginGuard(poisoned.into_inner())),
-                Err(TryLockError::WouldBlock) => None,
-            }
-        }
-    }
-
-    impl<T> Deref for PluginGuard<'_, T> {
-        type Target = T;
-        fn deref(&self) -> &T {
-            &self.0
-        }
-    }
-
-    impl<T> DerefMut for PluginGuard<'_, T> {
-        fn deref_mut(&mut self) -> &mut T {
-            &mut self.0
-        }
-    }
-}
-
-/// Linux [`PluginMutex`]: a `PTHREAD_PRIO_INHERIT` pthread mutex.
-/// std's futex-based lock has no priority inheritance, so a
-/// low-priority GUI thread preempted mid-`save_state` would stall
-/// the audio thread at the scheduler's mercy; with PI the holder
-/// inherits the waiting audio thread's priority for the remainder
-/// of the hold.
-#[cfg(all(target_os = "linux", not(miri)))]
-mod plugin_mutex {
+/// Lock-free plugin ownership cell, uniform across platforms. Holds no
+/// OS mutex: the audio thread owns the plugin while processing, the host
+/// thread while stopped, and a spec-compliant host never overlaps the
+/// two. Ownership handoff is a release-acquire edge, not a lock, so
+/// `enter` never blocks and there is no poison, no priority inversion,
+/// and no per-platform variant.
+mod plugin_cell {
     use std::cell::UnsafeCell;
     use std::marker::PhantomData;
     use std::ops::{Deref, DerefMut};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    /// See [`super::SharedPlugin`] for the per-platform lock choice.
-    pub struct PluginMutex<T> {
-        /// Boxed: a pthread mutex must not move once initialized,
-        /// and `Arc::new(PluginMutex::new(..))` moves the struct.
-        raw: Box<UnsafeCell<libc::pthread_mutex_t>>,
+    pub struct PluginCell<T> {
         data: UnsafeCell<T>,
+        /// Release-acquire handoff counter. Each owner `Acquire`s on
+        /// entry (observing the previous owner's writes) and `Release`s
+        /// on exit (publishing its own), carrying the happens-before edge
+        /// between the audio thread and the host thread. Mutual exclusion
+        /// comes from the host contract - `process` never overlaps a
+        /// lifecycle callback - not from this counter.
+        handoff: AtomicU64,
+        /// Debug-only overlap detector: trips if two owners ever hold the
+        /// cell at once (a host contract violation). Compiled out in
+        /// release, where the contract is trusted.
+        #[cfg(debug_assertions)]
+        held: std::sync::atomic::AtomicBool,
     }
 
-    // SAFETY: the pthread mutex serializes all access to `data`, so
-    // sharing the container across threads hands `T` to one thread
-    // at a time - the same bound (`T: Send`) std's `Mutex` requires.
-    unsafe impl<T: Send> Send for PluginMutex<T> {}
-    // SAFETY: as above - `&PluginMutex` only reaches `T` through the
-    // lock, so `Sync` needs only `T: Send`.
-    unsafe impl<T: Send> Sync for PluginMutex<T> {}
+    // SAFETY: `T` is reached only through a guard, and the host contract
+    // hands it to one owner at a time - the same guarantee `Mutex<T>`
+    // leans on, so `Send`/`Sync` need only `T: Send`.
+    unsafe impl<T: Send> Send for PluginCell<T> {}
+    unsafe impl<T: Send> Sync for PluginCell<T> {}
 
-    impl<T> PluginMutex<T> {
+    impl<T> PluginCell<T> {
         pub fn new(value: T) -> Self {
-            let raw = Box::new(UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER));
-            // SAFETY: `raw` is freshly allocated and unshared; the
-            // attr is initialized before use and destroyed after.
-            unsafe {
-                let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
-                if libc::pthread_mutexattr_init(&raw mut attr) == 0 {
-                    // Best effort: a libc refusing PI still leaves a
-                    // valid default-protocol attr, and init below
-                    // yields an ordinary mutex.
-                    let _ = libc::pthread_mutexattr_setprotocol(
-                        &raw mut attr,
-                        libc::PTHREAD_PRIO_INHERIT,
-                    );
-                    let _ = libc::pthread_mutex_init(raw.get(), &raw const attr);
-                    let _ = libc::pthread_mutexattr_destroy(&raw mut attr);
-                }
-            }
             Self {
-                raw,
                 data: UnsafeCell::new(value),
+                handoff: AtomicU64::new(0),
+                #[cfg(debug_assertions)]
+                held: std::sync::atomic::AtomicBool::new(false),
             }
         }
 
-        /// Block until the lock is held. A panicking previous holder
-        /// unlocked on unwind (guard drop); there is no poison state.
-        pub fn lock(&self) -> PluginGuard<'_, T> {
-            // SAFETY: the mutex was initialized in `new` and outlives
-            // the returned guard's borrow.
-            unsafe {
-                libc::pthread_mutex_lock(self.raw.get());
-            }
+        /// Take ownership. Never blocks: the previous owner has already
+        /// released, by the host contract. The `Acquire` observes its
+        /// writes.
+        #[allow(
+            clippy::missing_panics_doc,
+            reason = "the only panic is the debug-only overlap detector, compiled out in release"
+        )]
+        pub fn enter(&self) -> PluginGuard<'_, T> {
+            self.handoff.load(Ordering::Acquire);
+            #[cfg(debug_assertions)]
+            assert!(
+                !self.held.swap(true, Ordering::Relaxed),
+                "plugin ownership cell entered while already held: the host \
+                 overlapped process() with a lifecycle callback"
+            );
             PluginGuard {
-                lock: self,
+                cell: self,
                 _not_send: PhantomData,
-            }
-        }
-
-        /// `None` when the lock is held elsewhere.
-        pub fn try_lock(&self) -> Option<PluginGuard<'_, T>> {
-            // SAFETY: as in `lock`.
-            (unsafe { libc::pthread_mutex_trylock(self.raw.get()) } == 0).then_some(PluginGuard {
-                lock: self,
-                _not_send: PhantomData,
-            })
-        }
-    }
-
-    impl<T> Drop for PluginMutex<T> {
-        fn drop(&mut self) {
-            // SAFETY: `&mut self` proves no guard is alive, so the
-            // mutex is unlocked and safe to destroy.
-            unsafe {
-                libc::pthread_mutex_destroy(self.raw.get());
             }
         }
     }
 
-    /// Guard handing out the exclusive `&mut T`; unlocks on drop.
+    /// Guard handing out the exclusive `&mut T`; releases the handoff on
+    /// drop so the next owner's `Acquire` sees this owner's writes.
     pub struct PluginGuard<'a, T> {
-        lock: &'a PluginMutex<T>,
-        /// PI mutexes must be unlocked by the locking thread; the
-        /// raw-pointer marker strips `Send` so the guard can't cross.
+        cell: &'a PluginCell<T>,
+        /// The acquiring thread must also release, for the handoff edge
+        /// to mean anything - so the guard can't cross threads.
         _not_send: PhantomData<*const ()>,
     }
 
     impl<T> Deref for PluginGuard<'_, T> {
         type Target = T;
         fn deref(&self) -> &T {
-            // SAFETY: this guard holds the lock.
-            unsafe { &*self.lock.data.get() }
+            // SAFETY: this thread solely owns the cell for the guard's
+            // lifetime (host exclusion contract), so no other reference
+            // to `data` exists.
+            unsafe { &*self.cell.data.get() }
         }
     }
 
     impl<T> DerefMut for PluginGuard<'_, T> {
         fn deref_mut(&mut self) -> &mut T {
-            // SAFETY: this guard holds the lock exclusively.
-            unsafe { &mut *self.lock.data.get() }
+            // SAFETY: as in `deref` - sole owner, so this `&mut` is unique.
+            unsafe { &mut *self.cell.data.get() }
         }
     }
 
     impl<T> Drop for PluginGuard<'_, T> {
         fn drop(&mut self) {
-            // SAFETY: this guard holds the lock; unlock happens on
-            // the locking thread (the guard is `!Send`).
-            unsafe {
-                libc::pthread_mutex_unlock(self.lock.raw.get());
-            }
+            #[cfg(debug_assertions)]
+            self.cell.held.store(false, Ordering::Relaxed);
+            // Release: publish this owner's writes to the next `Acquire`.
+            self.cell.handoff.fetch_add(1, Ordering::Release);
         }
     }
 }
@@ -524,61 +427,58 @@ fn extract_panic_msg(payload: &Box<dyn std::any::Any + Send>) -> &str {
 }
 
 #[cfg(test)]
-mod plugin_mutex_tests {
+mod plugin_cell_tests {
     use std::sync::Arc;
 
-    use super::{lock_plugin, shared_plugin, try_lock_plugin};
+    use super::{enter_plugin, shared_plugin};
 
     #[test]
     fn lock_round_trips_data() {
         let plugin = shared_plugin(41);
-        *lock_plugin(&plugin) += 1;
-        assert_eq!(*lock_plugin(&plugin), 42);
+        *enter_plugin(&plugin) += 1;
+        assert_eq!(*enter_plugin(&plugin), 42);
     }
 
     #[test]
-    fn try_lock_reports_contention() {
-        let plugin = shared_plugin(0u32);
-        let held = lock_plugin(&plugin);
-        assert!(try_lock_plugin(&plugin).is_none());
-        drop(held);
-        assert!(try_lock_plugin(&plugin).is_some());
-    }
-
-    #[test]
-    fn excludes_across_threads() {
-        // Unsynchronized increments would lose updates; the final
-        // count proves the guard serializes every access.
+    fn repeated_ownership_publishes_writes() {
+        // Models the audio thread owning the cell block after block:
+        // each release-acquire cycle observes the previous cycle's write.
         let plugin = shared_plugin(0u64);
-        let threads: Vec<_> = (0..4)
-            .map(|_| {
-                let plugin = Arc::clone(&plugin);
-                std::thread::spawn(move || {
-                    for _ in 0..10_000 {
-                        *lock_plugin(&plugin) += 1;
-                    }
-                })
-            })
-            .collect();
-        for t in threads {
-            t.join().unwrap();
+        for _ in 0..1000 {
+            *enter_plugin(&plugin) += 1;
         }
-        assert_eq!(*lock_plugin(&plugin), 40_000);
+        assert_eq!(*enter_plugin(&plugin), 1000);
     }
 
     #[test]
-    fn panicking_holder_does_not_wedge_the_lock() {
-        // One bad block must not turn into permanent silence: a
-        // panicking holder unlocks on unwind (std poison forgiven,
-        // pthread unlocked by the guard drop).
+    fn handoff_carries_writes_across_a_thread() {
+        // A non-overlapping handoff (the host contract): the worker owns
+        // the cell, writes, and releases; only after it joins does the
+        // main thread acquire. The cell's `Acquire` makes the worker's
+        // write visible - no overlap, so the detector never trips.
+        let plugin = shared_plugin(0u32);
+        let worker = {
+            let plugin = Arc::clone(&plugin);
+            std::thread::spawn(move || {
+                *enter_plugin(&plugin) = 99;
+            })
+        };
+        worker.join().unwrap();
+        assert_eq!(*enter_plugin(&plugin), 99);
+    }
+
+    #[test]
+    fn panicking_owner_does_not_wedge_the_cell() {
+        // A panic in an owner unwinds through the guard's `Drop`, which
+        // releases the handoff (and clears the debug overlap flag), so
+        // the cell stays usable - one bad block can't wedge it.
         let plugin = shared_plugin(7);
         let for_panic = Arc::clone(&plugin);
         let _ = std::thread::spawn(move || {
-            let _guard = lock_plugin(&for_panic);
+            let _guard = enter_plugin(&for_panic);
             panic!("wedge attempt");
         })
         .join();
-        assert_eq!(*lock_plugin(&plugin), 7);
-        assert!(try_lock_plugin(&plugin).is_some());
+        assert_eq!(*enter_plugin(&plugin), 7);
     }
 }

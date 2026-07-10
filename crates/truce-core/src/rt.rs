@@ -671,18 +671,18 @@ mod tests {
     }
 
     #[test]
-    fn shared_plugin_warms_the_mediation_lock() {
+    fn plugin_cell_ownership_is_allocation_free() {
         use super::imp::count_allocs;
-        use crate::wrapper::{lock_plugin, shared_plugin};
+        use crate::wrapper::{enter_plugin, shared_plugin};
 
-        // `shared_plugin` locks once at construction so the first lock on
-        // the audio thread doesn't allocate (macOS std `Mutex` boxes its
-        // `pthread_mutex_t` lazily). Taking the lock here must be clean.
+        // The audio thread takes plugin ownership every block, so that
+        // must never allocate. The ownership cell holds no OS mutex - a
+        // lock is a bare atomic load with nothing to lazily initialize.
         let shared = shared_plugin(vec![0u8; 16]);
         let n = count_allocs(|| {
-            drop(lock_plugin(&shared));
+            drop(enter_plugin(&shared));
         });
-        assert_eq!(n, 0, "the mediation lock's first lock must be warmed");
+        assert_eq!(n, 0, "taking plugin ownership must be allocation-free");
     }
 
     #[test]

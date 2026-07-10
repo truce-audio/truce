@@ -37,7 +37,7 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, first_bus_layout, lock_plugin, log_midi_ports_clamped,
+    ParamCStrings, SharedPlugin, enter_plugin, first_bus_layout, log_midi_ports_clamped,
     log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
     run_register, save_extra, shared_plugin,
 };
@@ -226,11 +226,11 @@ pub struct TruceAaxTransportSnapshot {
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct AaxInstance<P: PluginExport> {
-    /// The plugin behind the wrapper-standard mediation lock: the
-    /// audio thread locks per block, `_save_state` (host thread)
-    /// locks for the serialization, the editor's `get_state` closure
-    /// blocks for the (bounded) read. See
-    /// `truce_core::wrapper::SharedPlugin`.
+    /// The plugin in the wrapper-standard ownership cell: the audio
+    /// thread owns it per block, host lifecycle callbacks own it while
+    /// processing is stopped, and the two never overlap. `_save_state`
+    /// and the editor's `get_state` read the lock-free snapshot instead,
+    /// so they never touch it. See `truce_core::wrapper::SharedPlugin`.
     plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`_get_param`, `_set_param`,
@@ -945,7 +945,7 @@ pub unsafe fn _reset<P: PluginExport>(
     // `ExitingOfflineMode` notifications (forwarded by the template).
     let mode = ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed));
     {
-        let mut plugin = lock_plugin(&inst.plugin);
+        let mut plugin = enter_plugin(&inst.plugin);
         plugin.reset(&AudioConfig::new(sample_rate, max_frames).with_process_mode(mode));
         inst.latency_cache
             .store(plugin.latency(), Ordering::Relaxed);
@@ -1017,7 +1017,7 @@ pub unsafe fn _process<P: PluginExport>(
         // remainder of that `save_state` call. Lock through a local
         // Arc clone so the guard doesn't pin a borrow of `inst`.
         let plugin_arc = Arc::clone(&inst.plugin);
-        let mut plugin = lock_plugin(&plugin_arc);
+        let mut plugin = enter_plugin(&plugin_arc);
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the entire

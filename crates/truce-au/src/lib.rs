@@ -66,7 +66,7 @@ use truce_core::ump::{
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, lock_plugin, log_midi_ports_clamped,
+    ParamCStrings, SharedPlugin, default_io_channels, enter_plugin, log_midi_ports_clamped,
     log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
     run_register, save_extra, shared_plugin,
 };
@@ -192,11 +192,11 @@ impl Drop for ParamNotifier {
 }
 
 struct AuInstance<P: PluginExport> {
-    /// The plugin behind the wrapper-standard mediation lock: the
-    /// audio thread locks per block, `cb_state_save` (host thread)
-    /// locks for the serialization, the editor's `get_state` closure
-    /// blocks for the (bounded) read. See
-    /// `truce_core::wrapper::SharedPlugin`.
+    /// The plugin in the wrapper-standard ownership cell: the audio
+    /// thread owns it per block, host lifecycle callbacks own it while
+    /// processing is stopped, and the two never overlap. `cb_state_save`
+    /// and the editor's `get_state` read the lock-free snapshot instead,
+    /// so they never touch it. See `truce_core::wrapper::SharedPlugin`.
     plugin: SharedPlugin<P>,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`cb_param_*`) read params through this
@@ -441,7 +441,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         // host is about to drive.
         let mode = ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed));
         {
-            let mut plugin = lock_plugin(&inst.plugin);
+            let mut plugin = enter_plugin(&inst.plugin);
             plugin.reset(&AudioConfig::new(sample_rate, max_frames).with_process_mode(mode));
             inst.latency_cache
                 .store(plugin.latency(), Ordering::Relaxed);
@@ -507,7 +507,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // remainder of that `save_state` call. Lock through a local
         // Arc clone so the guard doesn't pin a borrow of `inst`.
         let plugin_arc = Arc::clone(&inst.plugin);
-        let mut plugin = lock_plugin(&plugin_arc);
+        let mut plugin = enter_plugin(&plugin_arc);
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the

@@ -44,11 +44,5 @@ crossbeam-queue = "0.3"
 # off-by-default `loom` feature (see `[features]`).
 loom = { version = "0.7", optional = true }
 
-# The mediation lock (`wrapper::PluginMutex`) is a
-# PTHREAD_PRIO_INHERIT pthread mutex on Linux - std's futex lock has
-# no priority inheritance there (macOS/Windows stay on std).
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
-
 [lints]
 workspace = true
