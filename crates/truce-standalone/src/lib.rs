@@ -229,6 +229,16 @@ where
         presets::print_list::<P>(opts.presets_dir.as_deref());
         return;
     }
+    if opts.list_bus_layouts {
+        for (i, layout) in P::bus_layouts().iter().enumerate() {
+            println!(
+                "{i}: {} in / {} out",
+                layout.total_input_channels(),
+                layout.total_output_channels()
+            );
+        }
+        return;
+    }
 
     // `--output-file` always forces headless: opening a window
     // during a render burns GPU/CPU on a UI nobody is watching,

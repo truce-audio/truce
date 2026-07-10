@@ -536,7 +536,9 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         .default_output_config()
         .map_err(|e| format!("could not query default config for the audio output: {e}"))?;
 
-    let config: cpal::StreamConfig = resolve_config(&initial_output, &default_config, opts);
+    let requested_channels = bus_layout_channels::<P>(opts);
+    let config: cpal::StreamConfig =
+        resolve_config(&initial_output, &default_config, opts, requested_channels);
     let sample_format = default_config.sample_format();
     let sample_rate = f64::from(config.sample_rate);
     let channels = config.channels as usize;
@@ -1275,12 +1277,57 @@ fn find_device(host: &cpal::Host, name: &str, output: bool) -> Option<cpal::Devi
 /// Build the cpal `StreamConfig` honoring opts where possible. Falls
 /// back to the device's default config for any unspecified or
 /// unsupported choice.
+/// Channel count to request for a `--bus-layout <index>` selection: the
+/// wider of that layout's total input / output channels. `None` (no
+/// selection) keeps the device default. Out-of-range warns and falls back.
+fn bus_layout_channels<P: PluginExport>(opts: &Options) -> Option<u16> {
+    let idx = opts.bus_layout?;
+    let layouts = P::bus_layouts();
+    let Some(layout) = layouts.get(idx) else {
+        eprintln!(
+            "--bus-layout {idx}: out of range (plugin declares {} layout(s)); \
+             using the device default",
+            layouts.len()
+        );
+        return None;
+    };
+    let ch = layout
+        .total_output_channels()
+        .max(layout.total_input_channels());
+    u16::try_from(ch).ok().filter(|&c| c > 0)
+}
+
+/// Whether the output device advertises a config with exactly `ch`
+/// channels. Used to reject a `--bus-layout` wider than the hardware.
+fn device_supports_output_channels(device: &cpal::Device, ch: u16) -> bool {
+    device
+        .supported_output_configs()
+        .is_ok_and(|mut r| r.any(|c| c.channels() == ch))
+}
+
 fn resolve_config(
     device: &cpal::Device,
     default: &cpal::SupportedStreamConfig,
     opts: &Options,
+    requested_channels: Option<u16>,
 ) -> cpal::StreamConfig {
-    let channels = default.channels();
+    let mut channels = default.channels();
+    // A `--bus-layout` selection runs the plugin at that layout's channel
+    // count, so request it from the device. The device has to support the
+    // count (you can't get 6 channels from a stereo interface); otherwise
+    // keep the device default and warn.
+    if let Some(req) = requested_channels {
+        if req == channels {
+            // Already the default - nothing to do.
+        } else if device_supports_output_channels(device, req) {
+            channels = req;
+        } else {
+            eprintln!(
+                "--bus-layout: device doesn't offer {req} output channels; \
+                 running the plugin at the device's {channels}"
+            );
+        }
+    }
     let mut sample_rate = default.sample_rate();
     let mut buffer_size = cpal::BufferSize::Default;
 
