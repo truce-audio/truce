@@ -285,6 +285,19 @@ impl ParamRange {
     pub fn step_count_usize(&self) -> usize {
         self.step_count().map_or(1, |n| n.get() as usize)
     }
+
+    /// The underlying range with any [`Self::Reversed`] wrapper peeled
+    /// off. Reversing only flips the axis direction; the base range
+    /// decides the parameter's *shape* (a reversed enum is still an enum).
+    /// Match on this when classifying by shape - picking a widget, a taper
+    /// - so a reversed enum / toggle isn't misread as a continuous knob.
+    #[must_use]
+    pub fn base(&self) -> &Self {
+        match self {
+            Self::Reversed(inner) => inner.base(),
+            other => other,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -445,6 +458,25 @@ mod tests {
         assert_eq!(range.min(), 0.0);
         assert_eq!(range.max(), 100.0);
         assert!(range.step_count().is_none());
+    }
+
+    #[test]
+    fn base_peels_reversed_so_shape_survives() {
+        static ENUM: ParamRange = ParamRange::Enum { count: 4 };
+        static ONCE: ParamRange = ParamRange::Reversed(&ENUM);
+
+        // A reversed enum is still an enum - `base()` unwraps to it so
+        // widget / taper classification doesn't misread it as continuous.
+        let reversed = ParamRange::Reversed(&ENUM);
+        assert!(matches!(reversed.base(), ParamRange::Enum { count: 4 }));
+
+        // Nested reversing peels all the way down.
+        let twice = ParamRange::Reversed(&ONCE);
+        assert!(matches!(twice.base(), ParamRange::Enum { count: 4 }));
+
+        // A non-reversed range is its own base.
+        let linear = ParamRange::Linear { min: 0.0, max: 1.0 };
+        assert!(matches!(linear.base(), ParamRange::Linear { .. }));
     }
 
     #[test]

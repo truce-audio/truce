@@ -150,7 +150,9 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
     });
     let widget_type: Box<dyn Fn(u32) -> WidgetType> = Box::new(move |id| {
         let info = p_wtype.param_infos().iter().find(|i| i.id == id).copied();
-        match info.as_ref().map(|i| &i.range) {
+        // `base()` peels any `Reversed` wrapper so a reversed enum / 0..1
+        // discrete still classifies as a dropdown / toggle.
+        match info.as_ref().map(|i| i.range.base()) {
             Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => WidgetType::Toggle,
             Some(truce_params::ParamRange::Enum { .. }) => WidgetType::Dropdown,
             _ => WidgetType::Knob,

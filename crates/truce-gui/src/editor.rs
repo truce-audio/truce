@@ -1386,7 +1386,9 @@ fn resolve_widget_type<P: Params>(
                 .iter()
                 .find(|i| i.id == param_id)
                 .copied();
-            match param_info.as_ref().map(|i| &i.range) {
+            // `base()` peels any `Reversed` wrapper so a reversed enum /
+            // 0..1 discrete still classifies as a dropdown / toggle.
+            match param_info.as_ref().map(|i| i.range.base()) {
                 Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => {
                     widgets::WidgetType::Toggle
                 }
