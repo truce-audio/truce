@@ -46,6 +46,13 @@ pub struct Options {
     pub qwerty_midi: bool,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
+    /// `--bus-layout <index>`: which `bus_layouts()` entry to run in.
+    /// Its channel count is requested from the audio device (a plugin
+    /// declaring multiple layouts otherwise runs in the device-default
+    /// one). `None` keeps the device's channel count. `--list-bus-layouts`
+    /// prints the choices.
+    pub bus_layout: Option<usize>,
+    pub list_bus_layouts: bool,
     /// MIDI input device substrings, one per `--midi-input`. The i-th
     /// entry is routed to the plugin's MIDI input port i, so a
     /// multi-port instrument can take a distinct controller per port
@@ -120,6 +127,9 @@ OPTIONS:
                             or the Settings menu's Computer Keyboard item.
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
+  --bus-layout <index>      Run in this bus_layouts() entry (its channel
+                            count is requested from the device)
+  --list-bus-layouts        List the plugin's bus layouts and exit
   --midi-input <name>       MIDI input device (substring match).
                             Repeatable: the i-th --midi-input routes to
                             the plugin's MIDI input port i (multi-port).
@@ -234,6 +244,10 @@ pub fn parse() -> Result<Options, String> {
     let buffer_size = args
         .opt_value_from_str::<_, u32>("--buffer")
         .map_err(|e| format!("--buffer: {e}"))?;
+    let bus_layout = args
+        .opt_value_from_str::<_, usize>("--bus-layout")
+        .map_err(|e| format!("--bus-layout: {e}"))?;
+    let list_bus_layouts = args.contains("--list-bus-layouts");
     // Repeatable: the i-th `--midi-input` maps to plugin MIDI port i.
     let midi_inputs = args
         .values_from_str::<_, String>("--midi-input")
@@ -293,6 +307,8 @@ pub fn parse() -> Result<Options, String> {
             || env("QWERTY_KEYS").is_some_and(|s| matches!(s.trim(), "1" | "true" | "on" | "yes")),
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
+        bus_layout: bus_layout.or_else(|| env("BUS_LAYOUT").and_then(|s| s.parse().ok())),
+        list_bus_layouts,
         // Env fallback is single-device (one port); flags win when
         // present (any number of ports).
         midi_inputs: if midi_inputs.is_empty() {
