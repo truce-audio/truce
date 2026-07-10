@@ -4,7 +4,7 @@ Notable changes per release.
 
 ## 5.0.1
 
-The headline is multiple bus layouts working end-to-end on every format and background-task handlers choosing their own concurrency, plus new parameter range and smoothing shapes.
+Multiple bus layouts working end-to-end on every format and background-task handlers choosing their own concurrency, plus new parameter range and smoothing shapes.
 
 ### Bus layouts
 
