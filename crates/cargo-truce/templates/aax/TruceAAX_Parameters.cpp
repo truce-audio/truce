@@ -247,6 +247,25 @@ void TruceAAX_Parameters::RenderAudio(
         for (uint32_t ch = 0; ch < numIn; ch++)
             inputs[ch] = ioRenderInfo->mAudioInputs[ch];
     }
+
+    // Append the AAX side-chain after the main input channels, so the
+    // plugin sees flat channel indexing (main then sidechain). Pro Tools
+    // side-chain is always mono; duplicate it across the plugin's declared
+    // sidechain width so a stereo-sidechain plugin gets it on both
+    // channels. `*mSideChainP` is 0 when no side-chain source is patched -
+    // then numIn stays at the main width and the plugin runs dry.
+    if (g_descriptor.sidechain_in_channels > 0 && ioRenderInfo->mAudioInputs) {
+        auto* extInfo = reinterpret_cast<TruceAaxExtendedRenderInfo*>(ioRenderInfo);
+        if (extInfo->mSideChainP && *extInfo->mSideChainP != 0) {
+            const float* scBuf = ioRenderInfo->mAudioInputs[*extInfo->mSideChainP];
+            for (uint32_t c = 0;
+                 c < g_descriptor.sidechain_in_channels && numIn < kMaxChannels;
+                 c++) {
+                inputs[numIn++] = scBuf;
+            }
+        }
+    }
+
     if (ioRenderInfo->mAudioOutputs) {
         for (uint32_t ch = 0; ch < numOut; ch++)
             outputs[ch] = ioRenderInfo->mAudioOutputs[ch];

@@ -26,6 +26,11 @@
 struct TruceAaxExtendedRenderInfo {
     AAX_SInstrumentRenderInfo base;
     AAX_IMIDINode* mOutputNode;
+    // Side-chain input port (registered via AddSideChainIn when the
+    // plugin declares a sidechain). AAX fills this with a pointer to the
+    // index of the mono side-chain channel within `base.mAudioInputs`;
+    // 0 means no side-chain source is connected.
+    int32_t* mSideChainP;
 };
 
 class TruceAAX_Parameters : public AAX_CMonolithicParameters {

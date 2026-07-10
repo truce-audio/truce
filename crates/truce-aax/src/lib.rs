@@ -121,6 +121,10 @@ pub struct TruceAaxDescriptor {
     pub layout_in_channels: *const i16,
     pub layout_out_channels: *const i16,
     pub num_layouts: u32,
+    /// Total sidechain (non-main) input width from the first layout. `> 0`
+    /// makes the describe template register an AAX side-chain port; the
+    /// render appends that (mono) channel after the main inputs.
+    pub sidechain_in_channels: u32,
 }
 
 /// Capacity of [`TruceAaxDescriptor::legacy_chunk_ids`]; mirrors
@@ -444,10 +448,17 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         // declare truthful `bus_layouts: [BusLayout::new()]` for
         // MIDI effects without AAX-specific workarounds polluting
         // the plugin code.
-        let (aax_inputs, aax_outputs) = match (
-            layout.total_input_channels(),
-            layout.total_output_channels(),
-        ) {
+        // AAX registers the main input stem; a sidechain is a separate
+        // mono side-chain port, so the stem width is the main bus alone,
+        // not the summed total. Non-sidechain plugins have main == total.
+        let main_in_of = |l: &BusLayout| l.inputs.first().map_or(0, |b| b.channels.channel_count());
+        let sidechain_in: u32 = layout
+            .inputs
+            .iter()
+            .skip(1)
+            .map(|b| b.channels.channel_count())
+            .sum();
+        let (aax_inputs, aax_outputs) = match (main_in_of(layout), layout.total_output_channels()) {
             (0, 0) => (2, 2),              // pure MIDI effect → stereo passthrough
             (0, out) => (out.max(2), out), // output-only instrument → match output
             (in_, out) => (in_, out),
@@ -496,10 +507,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         let layouts = P::bus_layouts();
         let (layout_in_channels, layout_out_channels, num_layouts) = if layouts.len() > 1 {
             let ch = |c: u32| i16::try_from(c).unwrap_or(0);
-            let ins: Vec<i16> = layouts
-                .iter()
-                .map(|l| ch(l.total_input_channels()))
-                .collect();
+            let ins: Vec<i16> = layouts.iter().map(|l| ch(main_in_of(l))).collect();
             let outs: Vec<i16> = layouts
                 .iter()
                 .map(|l| ch(l.total_output_channels()))
@@ -535,6 +543,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             layout_in_channels,
             layout_out_channels,
             num_layouts,
+            sidechain_in_channels: sidechain_in,
         };
 
         // Static metadata path: derive emits a `LazyLock`-cached
