@@ -24,6 +24,16 @@
 //!     }
 //! }
 //! ```
+//!
+//! ## Schema evolution
+//!
+//! The codec is **keyed by field name** (like `#[persist]`), so evolving
+//! the struct is safe: adding, removing, *and* reordering fields all keep
+//! every surviving field's value. A field absent from an older blob loads
+//! as its `Default`; a field present in the blob but no longer declared is
+//! ignored. Two fields whose names collide under the key hash are rejected
+//! at compile time. Pre-keyed blobs (saved by an older truce) still load
+//! through a legacy positional path, so existing sessions are unaffected.
 
 /// Re-exported so plugin authors name the lock-free `#[persist]` cell
 /// as `AtomicCell` through the prelude, without depending on crossbeam.
@@ -94,7 +104,9 @@ pub trait StateField: Sized {
 /// Trait for custom plugin state structs.
 ///
 /// Derive with `#[derive(State)]`. The struct must also implement `Default`
-/// so missing fields can be filled with defaults when loading old state.
+/// so a field absent from an older (or reordered / trimmed) blob loads as
+/// its default - the codec matches fields by name, so schema evolution is
+/// safe in every direction (see the module docs).
 pub trait State: Sized + Default {
     /// Serialize into `buf`. Clears `buf` first, then reuses its
     /// capacity - calling this repeatedly with the same buffer is
