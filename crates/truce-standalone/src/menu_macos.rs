@@ -109,6 +109,7 @@ pub fn install(
     midi: &MidiController,
     presets: &PresetController,
     qwerty: &Arc<AtomicBool>,
+    bus_layouts: &[(u16, u16)],
 ) {
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
@@ -227,6 +228,28 @@ pub fn install(
             );
             let _: () = msg_send![out_ch_item, setSubmenu: out_ch_menu];
             let _: () = msg_send![plugin_menu, addItem: out_ch_item];
+        }
+
+        // Bus Layout submenu - only when the plugin declares more than
+        // one layout. Selecting one rebuilds the audio stream at that
+        // width (its `set_channels` command). The select action moves the
+        // checkmark; the count is otherwise session-stable like the
+        // channel menus above.
+        if bus_layouts.len() > 1 {
+            let sep3: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+            let _: () = msg_send![plugin_menu, addItem: sep3];
+            let bus_item = make_menu_item("Bus Layout");
+            let _: () = msg_send![bus_item, setTarget: target];
+            let bus_menu = make_menu("Bus Layout");
+            populate_bus_layout_menu(
+                bus_menu,
+                target,
+                bus_layouts,
+                output.channels(),
+                sel!(selectBusLayoutAction:),
+            );
+            let _: () = msg_send![bus_item, setSubmenu: bus_menu];
+            let _: () = msg_send![plugin_menu, addItem: bus_item];
         }
 
         // MIDI section, appended into the same Settings menu: an
@@ -551,6 +574,26 @@ unsafe fn populate_channel_menu(
                 encoded_tag(ChannelRoute::Mono { base: c }),
                 current_tag,
             );
+        }
+    }
+}
+
+/// Populate the Bus Layout submenu: one item per declared layout,
+/// labelled by its I/O channel counts and tagged by its channel width
+/// so `selectBusLayoutAction:` can hand the width to `set_channels`.
+unsafe fn populate_bus_layout_menu(
+    menu: *mut Object,
+    target: *mut Object,
+    layouts: &[(u16, u16)],
+    current_channels: usize,
+    action: Sel,
+) {
+    unsafe {
+        let current_tag = i64::try_from(current_channels).unwrap_or(0);
+        for (in_ch, out_ch) in layouts {
+            let width = (*in_ch).max(*out_ch);
+            let label = format!("{in_ch} in / {out_ch} out");
+            add_tagged_item(menu, target, action, &label, i64::from(width), current_tag);
         }
     }
 }
@@ -913,6 +956,26 @@ fn ensure_class() -> &'static Class {
         decl.add_method(
             sel!(selectOutputChannelsAction:),
             select_output_channels_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // Bus layout chosen (tag = the layout's channel width). Rebuilds
+        // the audio stream at that width and moves the checkmark.
+        extern "C" fn select_bus_layout_action(this: &Object, _: Sel, sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let tag: i64 = msg_send![sender, tag];
+                let channels = u16::try_from(tag).unwrap_or(2);
+                vlog!("bus layout: {channels} channels");
+                state.output.set_channels(channels);
+                let menu: *mut Object = msg_send![sender, menu];
+                update_channel_checkmarks(menu, tag);
+            }
+        }
+        decl.add_method(
+            sel!(selectBusLayoutAction:),
+            select_bus_layout_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
         // MIDI input device chosen. The item tag encodes the plugin

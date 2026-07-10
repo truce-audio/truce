@@ -85,6 +85,10 @@ const MENU_CMD_INPUT_CHANNELS_BASE: u16 = 0xC300;
 const MENU_CMD_INPUT_CHANNELS_END: u16 = 0xC3FF;
 const MENU_CMD_OUTPUT_CHANNELS_BASE: u16 = 0xC400;
 const MENU_CMD_OUTPUT_CHANNELS_END: u16 = 0xC4FF;
+/// Bus Layout submenu. `MENU_CMD_BUS_LAYOUT_BASE + channel_width` per
+/// item, so the command carries the width for `set_channels`.
+const MENU_CMD_BUS_LAYOUT_BASE: u16 = 0xC500;
+const MENU_CMD_BUS_LAYOUT_END: u16 = 0xC5FF;
 
 /// MIDI-input device items, one strided block per plugin MIDI input
 /// port inside `[0xC900, 0xCCFF]`. Port `p`'s block starts at
@@ -140,6 +144,12 @@ struct MenuState {
     /// instruments. Repopulated on `WM_INITMENUPOPUP`.
     hmenu_input_channels: HMENU,
     hmenu_output_channels: HMENU,
+    /// Bus Layout submenu (`null` for single-layout plugins). Repopulated
+    /// on `WM_INITMENUPOPUP` with the active width checked.
+    hmenu_bus_layout: HMENU,
+    /// The plugin's declared layouts as (in, out) channel counts, for the
+    /// Bus Layout submenu.
+    bus_layouts: Vec<(u16, u16)>,
     /// Device channel count, used to build the channel submenus.
     channels: usize,
     /// MIDI device / channel control + its submenus, repopulated on
@@ -176,6 +186,7 @@ pub fn install(
     midi: MidiController,
     presets: PresetController,
     qwerty: Arc<AtomicBool>,
+    bus_layouts: Vec<(u16, u16)>,
 ) {
     if hwnd.is_null() {
         return;
@@ -291,6 +302,21 @@ pub fn install(
             (std::ptr::null_mut(), std::ptr::null_mut())
         };
 
+        // Bus Layout submenu - only when the plugin declares more than
+        // one layout. Empty at install; repopulated (with the active
+        // width checked) on WM_INITMENUPOPUP.
+        let bus_layout_menu = if bus_layouts.len() > 1 {
+            let m = CreatePopupMenu();
+            if !m.is_null() {
+                AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
+                let label = wide("Bus Layout");
+                AppendMenuW(plugin_menu, MF_POPUP, m as usize, label.as_ptr());
+            }
+            m
+        } else {
+            std::ptr::null_mut()
+        };
+
         // MIDI section, appended into the same Settings popup behind a
         // separator: one input-device picker per plugin MIDI input
         // port + a channel filter. Submenus are empty here; repopulated
@@ -360,6 +386,8 @@ pub fn install(
             hmenu_output_devices: output_dev_menu,
             hmenu_input_channels: input_ch_menu,
             hmenu_output_channels: output_ch_menu,
+            hmenu_bus_layout: bus_layout_menu,
+            bus_layouts,
             channels,
             midi,
             hmenu_midi_inputs,
@@ -639,6 +667,17 @@ unsafe extern "system" fn subclass_proc(
                     return 0;
                 }
 
+                if !state.hmenu_bus_layout.is_null()
+                    && (MENU_CMD_BUS_LAYOUT_BASE..=MENU_CMD_BUS_LAYOUT_END).contains(&cmd_id)
+                {
+                    // Command carries the target channel width; rebuild the
+                    // stream at it. The checkmark refreshes on next open.
+                    let channels = cmd_id - MENU_CMD_BUS_LAYOUT_BASE;
+                    vlog!("bus layout: {channels} channels");
+                    state.output.set_channels(channels);
+                    return 0;
+                }
+
                 if (MENU_CMD_MIDI_INPUT_BASE..=MENU_CMD_MIDI_INPUT_END).contains(&cmd_id) {
                     // Decode the strided block: which plugin port, and
                     // whether it's that port's "None" (disconnect) row.
@@ -707,6 +746,8 @@ unsafe extern "system" fn subclass_proc(
                         state.output.channel_route(),
                         MENU_CMD_OUTPUT_CHANNELS_BASE,
                     );
+                } else if !state.hmenu_bus_layout.is_null() && popup == state.hmenu_bus_layout {
+                    repopulate_bus_layout_menu(popup, &state.bus_layouts, state.output.channels());
                 } else if let Some(port) = state
                     .hmenu_midi_inputs
                     .iter()
@@ -869,6 +910,33 @@ unsafe fn repopulate_channel_menu(
         for c in 0..channels {
             let label = format!("Channel {} (mono)", c + 1);
             append_channel_item(popup, cmd_base, ChannelRoute::Mono { base: c }, &label, cur);
+        }
+    }
+}
+
+/// Rebuild the Bus Layout popup: one item per declared layout, labelled
+/// by its I/O channel counts. Each item's command ID is
+/// `MENU_CMD_BUS_LAYOUT_BASE + channel_width`; the layout whose width is
+/// the plugin's current count gets `MF_CHECKED`.
+unsafe fn repopulate_bus_layout_menu(
+    popup: HMENU,
+    layouts: &[(u16, u16)],
+    current_channels: usize,
+) {
+    unsafe {
+        let count = GetMenuItemCount(popup);
+        for _ in 0..count {
+            DeleteMenu(popup, 0, MF_BYPOSITION);
+        }
+        for (in_ch, out_ch) in layouts {
+            let width = (*in_ch).max(*out_ch);
+            let cmd = MENU_CMD_BUS_LAYOUT_BASE.wrapping_add(width);
+            let mut flags = MF_STRING;
+            if usize::from(width) == current_channels {
+                flags |= MF_CHECKED;
+            }
+            let text = wide(&format!("{in_ch} in / {out_ch} out"));
+            AppendMenuW(popup, flags, cmd as usize, text.as_ptr());
         }
     }
 }

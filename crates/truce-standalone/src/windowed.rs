@@ -194,6 +194,22 @@ where
         let preset_ctrl =
             crate::presets::PresetController::new::<P>(Arc::clone(&plugin), presets_dir.clone());
 
+        // The plugin's bus layouts as (in, out) channel counts, for the
+        // Bus Layout menu (built only when there's more than one). Channel
+        // counts are tiny; clamp the u32->u16 cast rather than truncate.
+        let bus_layouts: Vec<(u16, u16)> = {
+            let c16 = |c: u32| u16::try_from(c).unwrap_or(u16::MAX);
+            P::bus_layouts()
+                .iter()
+                .map(|l| {
+                    (
+                        c16(l.total_input_channels()),
+                        c16(l.total_output_channels()),
+                    )
+                })
+                .collect()
+        };
+
         #[cfg(target_os = "macos")]
         {
             crate::menu_macos::install(
@@ -205,6 +221,7 @@ where
                 &midi_ctrl,
                 &preset_ctrl,
                 &qwerty_enabled,
+                &bus_layouts,
             );
         }
 
@@ -225,6 +242,7 @@ where
                 midi_ctrl.clone(),
                 preset_ctrl.clone(),
                 qwerty_enabled.clone(),
+                bus_layouts.clone(),
             );
             // Fixed-size editors get the window locked to a
             // close-only frame so maximizing / dragging doesn't

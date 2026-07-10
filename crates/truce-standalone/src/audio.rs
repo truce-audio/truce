@@ -277,10 +277,18 @@ pub struct OutputController {
     /// plugin drive device outputs 3-4, or fold down to a mono output.
     /// Shared with the callback.
     channel_route: Arc<AtomicUsize>,
+    /// The plugin's current channel count (= the active bus layout's
+    /// width). The worker updates it after a `SetChannels` rebuild; the
+    /// Bus Layout menu reads it to mark the active entry.
+    channels: Arc<AtomicUsize>,
 }
 
 enum OutputCmd {
     SetDevice(Option<String>),
+    /// Switch the plugin to a bus layout of this channel count. The
+    /// worker rebuilds the stream at the new width (if the device
+    /// supports it), so the plugin's `process` sees the new channel count.
+    SetChannels(u16),
 }
 
 impl OutputController {
@@ -304,6 +312,20 @@ impl OutputController {
     /// non-fatal - the previous stream remains running.
     pub fn set_device(&self, name: Option<String>) {
         let _ = self.cmd_tx.send(OutputCmd::SetDevice(name));
+    }
+
+    /// Switch the plugin to a bus layout of `channels` width. The audio
+    /// stream is torn down and rebuilt at the new channel count; on a
+    /// device that can't provide it, the previous stream stays running
+    /// (the worker logs and keeps the old width).
+    pub fn set_channels(&self, channels: u16) {
+        let _ = self.cmd_tx.send(OutputCmd::SetChannels(channels));
+    }
+
+    /// The plugin's current channel count (the active bus layout's width).
+    #[must_use]
+    pub fn channels(&self) -> usize {
+        self.channels.load(Ordering::Relaxed)
     }
 
     /// Currently-resolved output device name, or `None` if not
@@ -620,11 +642,15 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let output_enabled = Arc::new(AtomicBool::new(opts.output_enabled.unwrap_or(true)));
 
     let output_channel_route = Arc::new(AtomicUsize::new(0));
+    // Shared plugin channel count (active bus layout width). Seeded with
+    // the launch value; the worker updates it on a `SetChannels` rebuild.
+    let output_channels_shared = Arc::new(AtomicUsize::new(channels));
     let output_controller = OutputController {
         enabled: Arc::clone(&output_enabled),
         cmd_tx: output_cmd_tx,
         current_name: Arc::clone(&output_current_name),
         channel_route: Arc::clone(&output_channel_route),
+        channels: Arc::clone(&output_channels_shared),
     };
     // Apply `--output-channels` (and its env var) once at launch. The
     // native menus override this live; on Linux (no menu) the CLI is
@@ -691,6 +717,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         current_name: Arc::clone(&output_current_name),
         input_channel_route: Arc::clone(&input_controller.channel_route),
         output_channel_route: Arc::clone(&output_channel_route),
+        channels: Arc::clone(&output_channels_shared),
         promised_max_frames: Arc::new(AtomicUsize::new(initial_max_frames)),
         #[cfg(feature = "playback")]
         playback: playback.clone(),
@@ -876,6 +903,10 @@ struct OutputResources<P: PluginExport> {
     /// Output channel routing (encoded [`ChannelRoute`]). Shared with
     /// `OutputController` (menu writes it).
     output_channel_route: Arc<AtomicUsize>,
+    /// The plugin's current channel count, shared with `OutputController`
+    /// so the Bus Layout menu can mark the active entry. The worker
+    /// updates it after a `SetChannels` rebuild.
+    channels: Arc<AtomicUsize>,
     /// The `max_frames` the plugin was last `reset()` with. A device
     /// switch onto a larger buffer bound must renew the promise
     /// before the new stream's first callback.
@@ -900,10 +931,10 @@ fn output_worker<P: PluginExport>(
     cmd_rx: mpsc::Receiver<OutputCmd>,
     open_result: mpsc::Sender<Result<(), String>>,
     initial_device_name: Option<String>,
-    config: cpal::StreamConfig,
+    mut config: cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     sample_rate: f64,
-    channels: usize,
+    mut channels: usize,
     is_effect: bool,
     res: OutputResources<P>,
 ) {
@@ -939,6 +970,39 @@ fn output_worker<P: PluginExport>(
                     &mut stream,
                 ) {
                     eprintln!("output device switch failed: {e}");
+                }
+            }
+            OutputCmd::SetChannels(new_ch) => {
+                // Validate against the current device *before* tearing the
+                // stream down, so a width the hardware can't provide leaves
+                // the running audio intact.
+                let host = cpal::default_host();
+                let name = res.current_name.lock().ok().and_then(|g| g.clone());
+                let device = match name.as_deref() {
+                    Some(n) => find_device(&host, n, true),
+                    None => host.default_output_device(),
+                };
+                match device {
+                    Some(dev) if device_supports_output_channels(&dev, new_ch) => {
+                        config.channels = new_ch;
+                        channels = new_ch as usize;
+                        stream = None;
+                        if let Err(e) = open_output_stream::<P>(
+                            name.as_deref(),
+                            &config,
+                            sample_format,
+                            sample_rate,
+                            channels,
+                            is_effect,
+                            &res,
+                            &mut stream,
+                        ) {
+                            eprintln!("bus-layout switch failed: {e}");
+                        } else {
+                            res.channels.store(channels, Ordering::Relaxed);
+                        }
+                    }
+                    _ => eprintln!("bus-layout: device doesn't offer {new_ch} output channels"),
                 }
             }
         }

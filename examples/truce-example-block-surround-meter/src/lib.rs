@@ -7,10 +7,10 @@
 //! gives us exactly.
 //!
 //! Also one of the only examples in the tree with a non-stereo bus
-//! layout. The plugin advertises both stereo and 5.1 in its
-//! `bus_layouts()` override so it loads in DAWs without surround
-//! support; channels beyond the host-selected layout's count are
-//! simply not touched.
+//! layout. The plugin advertises mono, stereo, and 5.1 in its
+//! `bus_layouts()` override, so the host can pick whichever its track
+//! width needs and switch between them live. Meters for channels
+//! beyond the selected layout's count are held at zero.
 //!
 //! Per block:
 //!
@@ -83,6 +83,7 @@ impl PurePluginLogic for SurroundMeter {
         #[allow(clippy::cast_possible_truncation)]
         let n = CHANS as u32;
         vec![
+            BusLayout::mono(),
             BusLayout::stereo(),
             BusLayout::new()
                 .with_input("Surround", ChannelConfig::Custom(n))
@@ -122,8 +123,11 @@ impl PurePluginLogic for SurroundMeter {
         math::linear_to_db_block(&mut peaks_db, &peaks_lin);
 
         // Map clamped dB into [0, 1] for the meter widget. Linear
-        // meter on a logarithmic scale is the correct visual.
-        for (ch, &db_raw) in peaks_db.iter().take(nch).enumerate() {
+        // meter on a logarithmic scale is the correct visual. Inactive
+        // channels (peak 0 -> -inf dB) clamp to the floor and read
+        // empty, so switching down from 5.1 clears the extra meters
+        // instead of freezing them at their last value.
+        for (ch, &db_raw) in peaks_db.iter().enumerate() {
             let db = db_raw.clamp(METER_FLOOR_DB, 0.0);
             let norm = (db - METER_FLOOR_DB) / -METER_FLOOR_DB;
             context.set_meter(METER_IDS[ch], norm);
