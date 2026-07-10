@@ -2,7 +2,7 @@
 
 Notable changes per release.
 
-## 6.0.1
+## 6.1.0
 
 Sidechain and aux inputs now reach your plugin as separate buses instead of collapsing into one summed main bus, so a `with_sidechain_input(...)` layout gives the host a real sidechain to route into.
 

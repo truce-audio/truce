@@ -27,15 +27,23 @@ use crate::export::PluginExport;
 
 pub use plugin_cell::{PluginCell, PluginGuard};
 
-/// The ownership cell every format wrapper puts around its plugin
-/// instance. The audio thread owns the plugin while the host is
-/// processing (`process`, the queued state apply); the host thread owns
-/// it while processing is stopped (`init`, `reset`, an inactive state
-/// load). The host contract makes those two mutually exclusive in time -
-/// a spec-compliant host never overlaps `process` with a lifecycle
-/// callback - so [`PluginCell`] holds no OS lock and the audio thread
-/// never waits. Ownership handoff carries a release-acquire edge (each
-/// owner observes the previous owner's writes), not mutual exclusion.
+/// The ownership cell the real-time format wrappers (CLAP, VST3, VST2,
+/// AU, AAX) put around their plugin instance. The audio thread owns the
+/// plugin while the host is processing (`process`, the queued state
+/// apply); the host thread owns it while processing is stopped (`init`,
+/// `reset`, an inactive state load). The host contract makes those two
+/// mutually exclusive in time - a spec-compliant host never overlaps
+/// `process` with a lifecycle callback - so [`PluginCell`] holds no OS
+/// lock and the audio thread never waits. Ownership handoff carries a
+/// release-acquire edge (each owner observes the previous owner's
+/// writes), not mutual exclusion.
+///
+/// LV2 is the exception: its `save`/`restore` run in the non-realtime
+/// instantiation thread class, which the host already serializes against
+/// `run`, so it owns its plugin directly and saves through
+/// `Plugin::save_state` (which still funnels to `snapshot_into`) rather
+/// than the snapshot slot. Nothing there contends with the audio thread,
+/// so the cell would buy it nothing.
 ///
 /// A host state save no longer touches the plugin at all: it reads the
 /// lock-free [`SnapshotSlot`](crate::snapshot::SnapshotSlot) the audio

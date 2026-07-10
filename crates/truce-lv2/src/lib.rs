@@ -138,6 +138,11 @@ impl PortLayout {
 
 /// Live instance of an LV2 plugin. Held as `LV2_Handle` for the host.
 pub struct Lv2Instance<P: PluginExport> {
+    // Owned directly, not through `SharedPlugin`/`PluginCell` like the
+    // real-time wrappers: LV2 `save`/`restore` run in the non-realtime
+    // instantiation thread class, which the host serializes against
+    // `run`, so state save reads the plugin directly instead of the
+    // lock-free snapshot slot.
     plugin: P,
     sample_rate: f64,
     max_block_size: usize,
