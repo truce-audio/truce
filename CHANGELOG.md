@@ -13,6 +13,19 @@ Sidechain and aux inputs now reach your plugin as separate buses instead of coll
 - New `truce-example-sidechain`: stereo main + stereo sidechain with IN/SC meters and a Mix knob.
 - LV2 sidechain plugins run main-only for now (the TTL is generated from the plugin category and can't declare the sidechain ports yet); a one-time log notes the dropped sidechain.
 
+### Fixes
+
+- **Typed value entry.** Hosts can type a value into a parameter field and have it parsed back, wired across every format.
+- **Parameter kinds advertised correctly.** Stepped, enum, and toggle parameters now present to hosts as discrete / indexed / boolean (with value labels) instead of plain continuous knobs, on VST3, AU, AAX, VST2, and LV2.
+- **`EnumParam`** clamps out-of-range indices to the last variant instead of reading past the end.
+- **Linear smoothing** now converges at the correct constant-increment rate.
+- **Transport position in seconds** is reported to plugins on VST3, VST2, AU, and LV2 (previously always zero); LV2 also gains beat/tempo position reporting.
+- **`#[derive(State)]`** now uses a keyed state envelope, so older saved sessions keep loading after you add or reorder fields.
+- **Preset loading hardened**, plus preset-handling fixes on CLAP and AU.
+- **AAX** parameter taper fixed so non-linear ranges track correctly in Pro Tools.
+- **Panic safety.** Editor-lifecycle and parameter-format callbacks are now panic-guarded on every format, matching the existing state save/load guards: a panic in author code (editor build/open/close, value formatting/parsing, reset, instantiation) yields a safe default instead of aborting the host.
+- Per-format correctness fixes: VST3 result-code (ABI) values; CLAP latency/tail, category, and modulatable-flag reporting; AU bus-layout and render-notify handling; VST2 chunk frees, time-signature, and previously-missing opcodes; LV2 latency reporting and bypass flag.
+
 ## 6.0.0
 
 Saving your plugin's state - a host session save, a preset capture, the editor reading state back - now runs completely off the audio thread. Even large custom state (a sampler's loaded audio, big wavetables) can no longer cause an audio glitch when the host saves during playback.
