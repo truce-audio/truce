@@ -94,6 +94,11 @@ pub struct AudioHandles<P: PluginExport> {
     /// with `--output-file`.
     #[cfg(feature = "playback")]
     pub playback: Option<Arc<crate::playback::PlaybackSource>>,
+    /// Live-mode `--sidechain-file` source (gated on the `playback`
+    /// feature). Feeds the sidechain input bus independently of
+    /// `playback`, so the main and sidechain buses run separate files.
+    #[cfg(feature = "playback")]
+    pub sidechain_playback: Option<Arc<crate::playback::PlaybackSource>>,
     /// Live-mode `--output-file` capture sink. The runner calls
     /// `take_capture().finalize()` on its way out so the WAV
     /// header gets the correct sample count.
@@ -700,6 +705,26 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         None => None,
     };
 
+    // Decode `--sidechain-file` against the sidechain bus width. A
+    // plugin with no sidechain bus (or a non-effect) has nowhere to
+    // route it, so warn and ignore rather than fail.
+    #[cfg(feature = "playback")]
+    let sidechain_playback = {
+        let sc_width = num_in.saturating_sub(main_input_width::<P>(num_in, num_out));
+        match &opts.sidechain_file {
+            Some(path) if is_effect && sc_width > 0 => {
+                let src = crate::playback::PlaybackSource::from_wav(path, sample_rate, sc_width)?;
+                vlog!("Sidechain: {} → sidechain bus (one-shot)", path.display());
+                Some(Arc::new(src))
+            }
+            Some(_) => {
+                eprintln!("--sidechain-file ignored: plugin has no sidechain input bus");
+                None
+            }
+            None => None,
+        }
+    };
+
     // `--output-file` capture sink. Created here so any
     // filesystem error (missing parent dir, unwritable target,
     // …) propagates back to the runner before audio starts.
@@ -732,6 +757,8 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         promised_max_frames: Arc::new(AtomicUsize::new(initial_max_frames)),
         #[cfg(feature = "playback")]
         playback: playback.clone(),
+        #[cfg(feature = "playback")]
+        sidechain_playback: sidechain_playback.clone(),
         #[cfg(feature = "playback")]
         capture: capture.as_ref().map(super::playback::CaptureSink::pusher),
     };
@@ -781,6 +808,8 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         transport,
         #[cfg(feature = "playback")]
         playback,
+        #[cfg(feature = "playback")]
+        sidechain_playback,
         #[cfg(feature = "playback")]
         capture,
     })
@@ -928,6 +957,10 @@ struct OutputResources<P: PluginExport> {
     /// the mic ring - see the matrix in `cli.rs::HELP`.
     #[cfg(feature = "playback")]
     playback: Option<Arc<crate::playback::PlaybackSource>>,
+    /// Optional `.wav` sidechain source (gated on `playback`). Feeds
+    /// the sidechain input bus, independent of the main `playback`.
+    #[cfg(feature = "playback")]
+    sidechain_playback: Option<Arc<crate::playback::PlaybackSource>>,
     /// Optional `--output-file` capture pusher. Cloned into each
     /// cpal callback closure, so device switches don't tear down
     /// the capture. The owning `CaptureSink` lives on
@@ -1081,6 +1114,8 @@ fn open_output_stream<P: PluginExport>(
     #[cfg(feature = "playback")]
     let playback_a = res.playback.clone();
     #[cfg(feature = "playback")]
+    let sidechain_playback_a = res.sidechain_playback.clone();
+    #[cfg(feature = "playback")]
     let capture_a = res.capture.clone();
 
     // Per-stream audio-callback scratch. Owned by the move-closure so
@@ -1143,6 +1178,10 @@ fn open_output_stream<P: PluginExport>(
         p.reset(&AudioConfig::new(sample_rate, frame_bound));
     }
     scratch.ensure_capacity(num_in, num_out, frame_bound);
+    // Split point between the main input bus and any sidechain bus, so the
+    // callback can feed the playback file into the sidechain. Computed once
+    // per stream open (the layout is fixed for the stream's lifetime).
+    let num_main_in = main_input_width::<P>(num_in, num_out);
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -1153,6 +1192,7 @@ fn open_output_stream<P: PluginExport>(
                         data,
                         channels,
                         num_in,
+                        num_main_in,
                         num_out,
                         sample_rate,
                         is_effect,
@@ -1176,6 +1216,8 @@ fn open_output_stream<P: PluginExport>(
                         &mut scratch,
                         #[cfg(feature = "playback")]
                         playback_a.as_ref(),
+                        #[cfg(feature = "playback")]
+                        sidechain_playback_a.as_ref(),
                         #[cfg(feature = "playback")]
                         capture_a.as_ref(),
                     );
@@ -1406,6 +1448,21 @@ fn selected_bus_layout<P: PluginExport>(opts: &Options) -> (usize, usize) {
     })
 }
 
+/// Main input bus width of the declared layout matching `(num_in,
+/// num_out)`. Any input channels past this are the sidechain / aux bus,
+/// which the standalone feeds from the playback file. Falls back to
+/// `num_in` (no sidechain) when nothing matches.
+fn main_input_width<P: PluginExport>(num_in: usize, num_out: usize) -> usize {
+    P::bus_layouts()
+        .iter()
+        .find(|l| {
+            l.total_input_channels() as usize == num_in
+                && l.total_output_channels() as usize == num_out
+        })
+        .and_then(|l| l.inputs.first())
+        .map_or(num_in, |b| b.channels.channel_count() as usize)
+}
+
 /// Whether the output device advertises a config with exactly `ch`
 /// channels. Used to reject a `--bus-layout` wider than the hardware.
 fn device_supports_output_channels(device: &cpal::Device, ch: u16) -> bool {
@@ -1516,6 +1573,10 @@ fn audio_callback<P: PluginExport>(
     // layout (1 -> 2, 2 -> 1) runs at its real dimensions instead of a
     // single collapsed width.
     num_in: usize,
+    // Channels [0, num_main_in) are the main input bus; [num_main_in,
+    // num_in) are the sidechain. The mic and `--input-file` feed the main
+    // bus; `--sidechain-file` feeds the sidechain when the plugin has one.
+    num_main_in: usize,
     num_out: usize,
     sample_rate: f64,
     is_effect: bool,
@@ -1538,8 +1599,13 @@ fn audio_callback<P: PluginExport>(
     ptr_scratch: &mut CallbackPtrScratch,
     scratch: &mut RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
+    #[cfg(feature = "playback")] sidechain_playback: Option<&Arc<crate::playback::PlaybackSource>>,
     #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
 ) {
+    // `num_main_in` only routes the sidechain when the `playback` feature
+    // supplies a file source to feed it.
+    #[cfg(not(feature = "playback"))]
+    let _ = num_main_in;
     let num_frames = data.len() / channels;
 
     let Ok(mut plugin) = plugin.try_lock() else {
@@ -1636,10 +1702,20 @@ fn audio_callback<P: PluginExport>(
             }
         }
 
-        // (2) Playback file → input_bufs (per-block sum, on top of mic).
+        // (2) Playback files → their buses. The main file sums onto the
+        // main bus (alongside the mic); the sidechain file feeds the
+        // sidechain bus, so the two are independent sources you can drive
+        // and test separately.
         #[cfg(feature = "playback")]
-        if let Some(src) = playback {
-            src.mix_into(input_bufs, num_frames);
+        {
+            if let Some(src) = playback {
+                src.mix_into(&mut input_bufs[..num_main_in], num_frames);
+            }
+            if let Some(src) = sidechain_playback
+                && num_in > num_main_in
+            {
+                src.mix_into(&mut input_bufs[num_main_in..num_in], num_frames);
+            }
         }
     } else {
         input_bufs.clear();

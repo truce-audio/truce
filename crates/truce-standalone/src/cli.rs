@@ -88,6 +88,12 @@ pub struct Options {
     /// the `playback` feature is enabled.
     #[cfg(feature = "playback")]
     pub input_file: Option<PathBuf>,
+    /// `.wav` file to feed into the plugin's sidechain input bus
+    /// (plugins that declare one). Independent of `input_file`, so
+    /// the main bus and the sidechain can be driven separately. Only
+    /// populated when the `playback` feature is enabled.
+    #[cfg(feature = "playback")]
+    pub sidechain_file: Option<PathBuf>,
     /// `.wav` file to write the plugin's output bus to. Forces
     /// headless. Only populated when the `playback` feature is
     /// enabled.
@@ -154,6 +160,12 @@ const HELP_PLAYBACK: &str = "\
                             enabled. Linear-interp resample if file SR
                             doesn't match device SR; channel-count
                             mismatches are soft-warned and adapted.
+  --sidechain-file <path>   Decode <path>.wav into the plugin's sidechain
+                            input bus (plugins that declare one).
+                            Independent of --input-file: the mic and main
+                            file drive the main bus, this drives the
+                            sidechain. One-shot; same resample / channel-
+                            adapt rules as --input-file.
   --output-file <path>      Capture the plugin's output bus to <path>.wav.
                             32-bit float; pre-mute. Implies --headless.
                             Real-time by default; pair with --no-playback
@@ -273,6 +285,10 @@ pub fn parse() -> Result<Options, String> {
         .opt_value_from_str::<_, PathBuf>("--input-file")
         .map_err(|e| format!("--input-file: {e}"))?;
     #[cfg(feature = "playback")]
+    let sidechain_file = args
+        .opt_value_from_str::<_, PathBuf>("--sidechain-file")
+        .map_err(|e| format!("--sidechain-file: {e}"))?;
+    #[cfg(feature = "playback")]
     let output_file = args
         .opt_value_from_str::<_, PathBuf>("--output-file")
         .map_err(|e| format!("--output-file: {e}"))?;
@@ -326,6 +342,8 @@ pub fn parse() -> Result<Options, String> {
             || env("VERBOSE").is_some_and(|s| matches!(s.trim(), "1" | "true" | "on" | "yes")),
         #[cfg(feature = "playback")]
         input_file: input_file.or_else(|| env("INPUT_FILE").map(PathBuf::from)),
+        #[cfg(feature = "playback")]
+        sidechain_file: sidechain_file.or_else(|| env("SIDECHAIN_FILE").map(PathBuf::from)),
         #[cfg(feature = "playback")]
         output_file: output_file.or_else(|| env("OUTPUT_FILE").map(PathBuf::from)),
         #[cfg(feature = "playback")]
