@@ -1,4 +1,4 @@
-//! Integration test: a plugin's `BackgroundTasks::run_task` runs on the
+//! Integration test: a task type's `BackgroundTask::run` runs on the
 //! shared pool when scheduled from `process` through the shell-wired
 //! `TaskSpawner`. Exercises the full static-shell path: `from_parts`
 //! stores the spawner, `process` stamps it into the `ProcessContext`,
@@ -10,13 +10,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use truce::prelude::BackgroundTasks;
+use truce::prelude::BackgroundTask;
 use truce_core::AudioConfig;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{EventList, TransportInfo};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_core::tasks::{AnyTaskSpawner, TaskSpawner};
+use truce_core::tasks::{AnyTaskSpawner, TaskSpawner, TaskSpawnerBundle};
 use truce_derive::Params;
 use truce_gui::PluginLogic;
 
@@ -25,7 +25,7 @@ struct TaskParams {
     #[param(id = 0, name = "Gain", range = "linear(0, 1)")]
     gain: truce_params::FloatParam,
     // Not a parameter: the worker bumps this so the test can observe
-    // that `run_task` ran. Reached through the shared `Arc<Params>`.
+    // that the handler ran. Reached through the shared `Arc<Params>`.
     #[skip]
     ran: Arc<AtomicU32>,
 }
@@ -57,11 +57,10 @@ impl PluginLogic for TaskPlugin {
     }
 }
 
-impl BackgroundTasks for TaskPlugin {
+impl BackgroundTask for Ping {
     type Params = TaskParams;
-    type Task = Ping;
 
-    fn run_task(_task: Ping, params: &TaskParams) {
+    fn run(self, params: &TaskParams) {
         params.ran.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -84,7 +83,7 @@ fn background_task_runs_when_scheduled_from_process() {
     // Build the spawner exactly as the `tasks:` key on `plugin!` does.
     let spawner = {
         let params = Arc::clone(&params);
-        TaskSpawner::<Ping>::new(move |task| TaskPlugin::run_task(task, &params))
+        TaskSpawner::<Ping>::new(move |task| task.run(&params))
     };
     let tasks = AnyTaskSpawner::new(&spawner);
 
@@ -105,7 +104,7 @@ fn background_task_runs_when_scheduled_from_process() {
     let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut output_events);
     shell.process(&mut buffer, &EventList::default(), &mut ctx);
 
-    // The pool runs `run_task` asynchronously; wait for it.
+    // The pool runs the handler asynchronously; wait for it.
     let start = Instant::now();
     while ran.load(Ordering::Relaxed) == 0 && start.elapsed() < Duration::from_secs(2) {
         thread::sleep(Duration::from_millis(1));
@@ -113,7 +112,72 @@ fn background_task_runs_when_scheduled_from_process() {
     assert_eq!(
         ran.load(Ordering::Relaxed),
         1,
-        "run_task ran once, off the audio thread"
+        "the handler ran once, off the audio thread"
+    );
+}
+
+// A second, serialized lane in the same plugin. Adds 100 so the test can
+// tell the two lanes' handlers apart in one counter.
+#[derive(Debug)]
+struct Rebuild;
+impl BackgroundTask for Rebuild {
+    type Params = TaskParams;
+    const SERIALIZED: bool = true;
+    fn run(self, params: &TaskParams) {
+        params.ran.fetch_add(100, Ordering::Relaxed);
+    }
+}
+
+// A task type the plugin never declares - `downcast` must not resolve it.
+struct Absent;
+impl BackgroundTask for Absent {
+    type Params = TaskParams;
+    fn run(self, _params: &TaskParams) {}
+}
+
+#[test]
+fn multiple_lanes_resolve_by_type_and_run_independently() {
+    let params = Arc::new(TaskParams::new());
+    let ran = Arc::clone(&params.ran);
+
+    // Two lanes with different modes, bundled as `plugin! { tasks: [..] }`
+    // does: `Ping` concurrent, `Rebuild` serialized.
+    let mut bundle = TaskSpawnerBundle::new();
+    {
+        let params = Arc::clone(&params);
+        bundle.push(TaskSpawner::<Ping>::new(move |t| t.run(&params)));
+    }
+    {
+        let params = Arc::clone(&params);
+        let run = move |t: Rebuild| t.run(&params);
+        bundle.push(TaskSpawner::<Rebuild>::new_serialized(run));
+    }
+    let any = bundle.into_any().expect("two lanes bundled");
+
+    // Each type resolves to its own lane; an undeclared type does not.
+    any.downcast::<Ping>()
+        .expect("ping lane")
+        .try_spawn(Ping)
+        .expect("queue has room");
+    any.downcast::<Rebuild>()
+        .expect("rebuild lane")
+        .try_spawn(Rebuild)
+        .expect("queue has room");
+    assert!(
+        any.downcast::<Absent>().is_none(),
+        "an undeclared task type resolves to no lane"
+    );
+
+    // Ping adds 1, Rebuild adds 100: 101 total proves each ran its own
+    // handler, off its own lane.
+    let start = Instant::now();
+    while ran.load(Ordering::Relaxed) < 101 && start.elapsed() < Duration::from_secs(2) {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        ran.load(Ordering::Relaxed),
+        101,
+        "both lanes ran their own handler"
     );
 }
 
@@ -126,7 +190,7 @@ fn background_task_runs_when_scheduled_from_editor_context() {
 
     let spawner = {
         let params = Arc::clone(&params);
-        TaskSpawner::<Ping>::new(move |task| TaskPlugin::run_task(task, &params))
+        TaskSpawner::<Ping>::new(move |task| task.run(&params))
     };
     let tasks = AnyTaskSpawner::new(&spawner);
 

@@ -8,7 +8,7 @@
 //! *construction offload* half.
 //!
 //! Two ways to drain:
-//! - a `BackgroundTasks` handler (in `truce_plugin`) on the shared pool,
+//! - a `BackgroundTask` handler (in `truce_plugin`) on the shared pool,
 //!   woken by a coalescing task each block - bounded threads, best when
 //!   analysis is bursty or coalescable.
 //! - a dedicated [`StreamWorker`] via [`AudioTap::spawn_worker`] - one
@@ -34,7 +34,7 @@
 //! params.tap.push_frames(&interleaved);
 //! if let Some(t) = ctx.tasks::<Analyze>() { t.spawn_coalescing(Analyze); }
 //!
-//! // run_task (pool thread):
+//! // run (pool thread):
 //! params.tap.drain_with(|chunk| { /* run the FFT, publish */ });
 //! ```
 
@@ -153,7 +153,7 @@ impl<S: Copy + Send + 'static> AudioTap<S> {
 
     /// Drain everything buffered and hand it to `f` as one interleaved
     /// slice. Runs on the consumer (a pool worker); safe to call from a
-    /// `BackgroundTasks::run_task`. If another worker is already draining
+    /// `BackgroundTask::run`. If another worker is already draining
     /// this tap it returns without double-draining - that worker sees the
     /// same data. `f` is not called when nothing is buffered.
     pub fn drain_with(&self, mut f: impl FnMut(&[S])) {
