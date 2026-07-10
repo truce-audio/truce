@@ -83,11 +83,11 @@ impl PurePluginLogic for SurroundMeter {
         #[allow(clippy::cast_possible_truncation)]
         let n = CHANS as u32;
         vec![
-            BusLayout::mono(),
-            BusLayout::stereo(),
             BusLayout::new()
                 .with_input("Surround", ChannelConfig::Custom(n))
                 .with_output("Surround", ChannelConfig::Custom(n)),
+            BusLayout::stereo(),
+            BusLayout::mono(),
         ]
     }
 
