@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 use truce_core::Float;
 use truce_core::buffer::RawBufferScratch;
+use truce_core::bus::BusKind;
 use truce_core::cast::len_u32;
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
@@ -244,6 +245,22 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 /// The FFI entry points (`instantiate`, `instantiate_ui`) treat `None`
 /// as a graceful instantiation failure (log + null) rather than
 /// panicking across the host boundary.
+/// One-shot warning that a plugin's sidechain input is unavailable in
+/// LV2. Fires once per process on the first instantiation of a sidechain
+/// plugin so the author sees why the extra input is missing without the
+/// message repeating per instance.
+fn warn_lv2_sidechain_dropped_once(channels: u32) {
+    use std::sync::Once;
+    static WARNED: Once = Once::new();
+    WARNED.call_once(|| {
+        eprintln!(
+            "[truce LV2] sidechain input ({channels} ch) unavailable: the LV2 \
+             TTL is generated from the plugin category and can't declare the \
+             sidechain ports yet, so the plugin runs main-only in LV2 hosts."
+        );
+    });
+}
+
 pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> Option<PortLayout> {
     // LV2 ports are fixed in the TTL and can't be reconfigured at runtime,
     // so a multi-layout plugin exposes only its first (default) layout.
@@ -253,8 +270,29 @@ pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> Option<PortLayout> {
     let param_count = len_u32(params.param_infos().len());
     let meter_count = len_u32(params.meter_ids().len());
     let info = P::info();
+
+    // The LV2 TTL port count is emitted at compile time from the plugin
+    // category (the derive macro can't call bus_layouts()), so it never
+    // declares the sidechain (non-main) input ports. Presenting them at
+    // runtime would shift every port index past the main bus - the host
+    // binds its output buffers into what the runtime treats as sidechain
+    // input slots. Until the TTL is rendered from the real layout at
+    // install, expose only the main bus so the indices line up and a
+    // sidechain plugin degrades to a plain effect: the sidechain is
+    // dropped, not corrupted.
+    let main_in: u32 = default_layout
+        .inputs
+        .iter()
+        .filter(|b| b.kind == BusKind::Main)
+        .map(|b| b.channels.channel_count())
+        .sum();
+    let dropped_sidechain = default_layout.total_input_channels() - main_in;
+    if dropped_sidechain > 0 {
+        warn_lv2_sidechain_dropped_once(dropped_sidechain);
+    }
+
     Some(PortLayout {
-        num_audio_in: default_layout.total_input_channels(),
+        num_audio_in: main_in,
         num_audio_out: default_layout.total_output_channels(),
         num_params: param_count,
         num_meters: meter_count,
