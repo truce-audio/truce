@@ -303,6 +303,65 @@ mod tests {
         truce_test::assert_state_round_trip::<Plugin>();
     }
 
+    /// `#[derive(State)]` is keyed: a struct whose fields were reordered,
+    /// with one removed and one added, still recovers each field's value
+    /// by name. Positional decoding would mis-assign here.
+    #[test]
+    fn state_keyed_survives_reorder_remove_add() {
+        #[derive(State, Default)]
+        struct V1 {
+            alpha: u32,
+            beta: String,
+            gamma: u32,
+        }
+        // gamma/alpha reordered, beta removed, delta added.
+        #[derive(State, Default)]
+        struct V2 {
+            gamma: u32,
+            alpha: u32,
+            delta: bool,
+        }
+
+        let mut buf = Vec::new();
+        V1 {
+            alpha: 11,
+            beta: "gone".into(),
+            gamma: 33,
+        }
+        .serialize_into(&mut buf);
+
+        let v2 = V2::deserialize(&buf).expect("keyed deserialize");
+        // Matched by name across the reorder + removal - not positionally
+        // (which would have put alpha's 11 into gamma).
+        assert_eq!(v2.alpha, 11);
+        assert_eq!(v2.gamma, 33);
+        // Added field defaults; removed field's bytes are ignored.
+        assert!(!v2.delta);
+    }
+
+    /// Old sessions still load: a hand-built pre-keyed (positional) blob
+    /// deserializes through the legacy path (the leading word is a small
+    /// field count, not the keyed magic).
+    #[test]
+    fn state_reads_legacy_positional_blob() {
+        #[derive(State, Default)]
+        struct Legacy {
+            x: u32,
+            y: u32,
+        }
+        // [field_count=2][len=4][x=5][len=4][y=9] - the old layout.
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&2u32.to_le_bytes());
+        blob.extend_from_slice(&4u32.to_le_bytes());
+        blob.extend_from_slice(&5u32.to_le_bytes());
+        blob.extend_from_slice(&4u32.to_le_bytes());
+        blob.extend_from_slice(&9u32.to_le_bytes());
+
+        let v = Legacy::deserialize(&blob).expect("legacy positional read");
+        assert_eq!(v.x, 5);
+        assert_eq!(v.y, 9);
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {

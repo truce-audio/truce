@@ -847,6 +847,21 @@ pub(crate) fn name_hash_id(name: &str) -> u32 {
     h & (METER_ID_BASE - 1)
 }
 
+/// Full 32-bit FNV-1a of a field name - the keyed `#[derive(State)]`
+/// codec's per-field key. Unmasked (unlike [`name_hash_id`], which folds
+/// into the param-id space) to minimize collisions; the derive rejects a
+/// same-hash pair at compile time.
+fn state_field_hash(name: &str) -> u32 {
+    const FNV_OFFSET: u32 = 0x811c_9dc5;
+    const FNV_PRIME: u32 = 0x0100_0193;
+    let mut h = FNV_OFFSET;
+    for b in name.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h
+}
+
 /// Coerce a `default = ...` attribute expression into an `f64`.
 ///
 /// Accepts numeric literals (positive and `-`-prefixed) and a
@@ -2799,8 +2814,13 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
 
 /// Derive binary serialization for a custom state struct.
 ///
-/// The struct must also implement `Default`. Missing fields during
-/// deserialization are filled with defaults (forward compatibility).
+/// The struct must also implement `Default`. The codec is **keyed by
+/// field name**, so schema evolution is safe in every direction: adding,
+/// removing, and reordering fields all preserve each surviving field's
+/// value. A field absent from a blob loads as its `Default`; an unknown
+/// stored field is ignored. Two field names that collide under the key
+/// hash are a compile error. Pre-keyed blobs still load via a legacy
+/// positional path (existing sessions are unaffected).
 ///
 /// Supported field types: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`,
 /// `f32`, `f64`, `bool`, `String`, `Vec<T>`, `Option<T>`, and nested `State` types.
@@ -2818,6 +2838,9 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
 /// Panics if `syn` fails to parse the input token stream - same
 /// "rustc-already-rejected" condition as [`derive_params`].
 #[proc_macro_derive(State)]
+// One linear pass building the keyed serialize / dual-path deserialize
+// codegen; splitting it would scatter the token-stream construction.
+#[allow(clippy::too_many_lines)]
 pub fn derive_state(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for State derive");
     let name = &ast.ident;
@@ -2858,11 +2881,35 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // Per-field key for the keyed codec (add/remove/reorder-safe). Reject
+    // a same-hash pair at compile time so a collision can never silently
+    // mis-assign - the exact footgun the keyed format removes.
+    let field_hashes: Vec<u32> = field_idents
+        .iter()
+        .map(|id| state_field_hash(&id.to_string()))
+        .collect();
+    {
+        let mut seen: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+        for (id, h) in field_idents.iter().zip(&field_hashes) {
+            if let Some(prev) = seen.insert(*h, id.to_string()) {
+                let msg = format!(
+                    "State field name hash collision between `{prev}` and `{id}` \
+                     (hash {h:#010x}); rename one field"
+                );
+                return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
+            }
+        }
+    }
+
+    // Keyed field frame: `[name_hash:4][value_len:4][value bytes]`. The
+    // hash lets the reader match by name regardless of declaration order.
     let write_fields: Vec<_> = field_idents
         .iter()
-        .map(|ident| {
+        .zip(&field_hashes)
+        .map(|(ident, hash)| {
             quote! {
                 {
+                    buf.extend_from_slice(&#hash.to_le_bytes());
                     let field_start = buf.len();
                     buf.extend_from_slice(&0u32.to_le_bytes());
                     ::truce::core::custom_state::StateField::write_field(&self.#ident, buf);
@@ -2873,7 +2920,30 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let read_fields: Vec<_> = field_idents.iter().map(|ident| {
+    // Read arm per field: match the stored key hash, read the value into
+    // its slot. Unmatched stored fields (a removed field) fall through the
+    // `_` arm and are skipped; declared fields with no match keep their
+    // `Default`. This is what makes add / remove / reorder safe.
+    let keyed_read_arms: Vec<_> = field_idents
+        .iter()
+        .zip(&field_hashes)
+        .map(|(ident, hash)| {
+            quote! {
+                #hash => {
+                    if let Some(val) =
+                        ::truce::core::custom_state::StateField::read_field(&mut cursor)
+                    {
+                        result.#ident = val;
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Legacy positional read (pre-keyed blobs): assign the i-th stored
+    // field to the i-th declared field. Kept verbatim so old sessions /
+    // presets still load; new saves always use the keyed format above.
+    let legacy_read_fields: Vec<_> = field_idents.iter().map(|ident| {
         quote! {
             if field_idx < stored_count {
                 // `cursor.read_bytes(4)` returns a 4-byte slice when
@@ -2907,30 +2977,65 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         impl ::truce::core::custom_state::State for #name {
             fn serialize_into(&self, buf: &mut Vec<u8>) {
                 buf.clear();
+                // Keyed format: a leading magic (`0xFFFFFF00 | version`)
+                // that a legacy positional blob's small field-count first
+                // word can never be, so `deserialize` distinguishes them.
+                buf.extend_from_slice(&0xFFFF_FF01u32.to_le_bytes());
                 buf.extend_from_slice(&#field_count.to_le_bytes());
                 #(#write_fields)*
             }
 
             fn deserialize(data: &[u8]) -> Option<Self> {
                 let mut cursor = ::truce::core::custom_state::StateCursor::new(data);
-                let count_bytes = cursor.read_bytes(4)?;
-                // Cap `stored_count` at the cursor's remaining-byte
-                // count: each forward-compat field carries at minimum
-                // a 4-byte length prefix (read inside `skip_field`),
-                // so a `stored_count` larger than the data can possibly
-                // hold is hostile / corrupt input. The break inside
-                // the loop already terminates on `skip_field()` →
-                // false, but bounding `stored_count` up front keeps a
-                // multi-GB synthetic count from forcing a long loop
-                // before the buffer underrun is detected.
-                let stored_count = (u32::from_le_bytes(count_bytes.try_into().ok()?) as usize)
-                    .min(cursor.remaining() / 4 + #field_count as usize);
+                let tag_bytes = cursor.read_bytes(4)?;
+                let tag = u32::from_le_bytes(tag_bytes.try_into().ok()?);
                 let mut result = Self::default();
-                let mut field_idx: usize = 0;
-                #(#read_fields)*
-                while field_idx < stored_count {
-                    if !cursor.skip_field() { break; }
-                    field_idx += 1;
+
+                if (tag & 0xFFFF_FF00) == 0xFFFF_FF00 {
+                    // Keyed format. Low byte is the version (only v1 today).
+                    // Each field is `[name_hash:4][len:4][value]`; match by
+                    // hash, so add / remove / reorder are all safe.
+                    let count_bytes = cursor.read_bytes(4)?;
+                    // Each keyed field is >= 8 bytes (hash + len), so bound
+                    // the count by remaining/8 to reject a hostile count.
+                    let stored_count = (u32::from_le_bytes(count_bytes.try_into().ok()?) as usize)
+                        .min(cursor.remaining() / 8 + #field_count as usize);
+                    let mut kf: usize = 0;
+                    while kf < stored_count {
+                        let Some(hb) = cursor.read_bytes(4) else { break };
+                        let Ok(harr) = <[u8; 4]>::try_from(hb) else { break };
+                        let hash = u32::from_le_bytes(harr);
+                        let Some(lb) = cursor.read_bytes(4) else { break };
+                        let Ok(larr) = <[u8; 4]>::try_from(lb) else { break };
+                        let field_len = u32::from_le_bytes(larr) as usize;
+                        let before = cursor.remaining();
+                        match hash {
+                            #(#keyed_read_arms)*
+                            // Unknown key (a since-removed field): skip below.
+                            _ => {}
+                        }
+                        // Skip any bytes the matched reader didn't consume
+                        // (a field whose type shrank), or the whole value
+                        // for an unmatched key.
+                        let consumed = before - cursor.remaining();
+                        if consumed < field_len {
+                            let _ = cursor.read_bytes(field_len - consumed);
+                        }
+                        kf += 1;
+                    }
+                } else {
+                    // Legacy positional format: `tag` is the field count.
+                    // Assign the i-th stored field to the i-th declared one
+                    // (append-only-safe; the keyed path above supersedes it
+                    // for anything saved by this build).
+                    let stored_count = (tag as usize)
+                        .min(cursor.remaining() / 4 + #field_count as usize);
+                    let mut field_idx: usize = 0;
+                    #(#legacy_read_fields)*
+                    while field_idx < stored_count {
+                        if !cursor.skip_field() { break; }
+                        field_idx += 1;
+                    }
                 }
                 Some(result)
             }
