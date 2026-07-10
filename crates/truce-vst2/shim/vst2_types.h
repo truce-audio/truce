@@ -50,9 +50,15 @@
 #define effGetEffectName    45
 #define effBeginSetProgram  67
 #define effEndSetProgram    68
+#define effString2Parameter    27
 #define effGetInputProperties  33
 #define effGetOutputProperties 34
+#define effGetPlugCategory     35
 #define effGetParameterProperties 56
+
+/* effGetPlugCategory return values (VstPlugCategory). */
+#define kPlugCategEffect 1
+#define kPlugCategSynth  2
 
 /* VstPinProperties.flags */
 #define kVstPinIsActive  (1 << 0)
@@ -333,6 +339,9 @@ typedef struct {
     /* Format the param's *current* plain value for display. */
     uint32_t (*param_format_current)(void* ctx, uint32_t id,
                                       char* out, uint32_t out_len);
+    /* Parse host text-entry and apply it (effString2Parameter). Returns
+     * 1 on success, 0 if the text isn't a valid value for the param. */
+    int32_t (*param_parse)(void* ctx, uint32_t id, const char* text);
     /* Plugin → host MIDI output. Mirror of the input event flow:
      * the C shim calls `output_event_count` after each process(),
      * then `output_event_at(idx)` to fill a 3-byte MIDI packet.
