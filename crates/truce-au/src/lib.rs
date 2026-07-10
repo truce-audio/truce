@@ -67,9 +67,8 @@ use truce_core::ump::{
 };
 use truce_core::wrapper::{
     ParamCStrings, SharedPlugin, default_io_channels, lock_plugin, log_midi_ports_clamped,
-    max_io_channels,
-    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, save_extra,
-    shared_plugin,
+    log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
+    run_register, save_extra, shared_plugin,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
