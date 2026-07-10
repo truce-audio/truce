@@ -6,7 +6,7 @@
 
 pub mod ffi;
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
@@ -810,6 +810,33 @@ unsafe extern "C" fn cb_param_set_normalized<P: PluginExport>(
     }
 }
 
+/// Parse host text-entry into a plain value and apply it (backs
+/// `effString2Parameter`). Returns `1` on a successful parse, `0` when
+/// the text isn't valid for the param. VST2 has no plain<->normalized
+/// callback, so the parse + set happen here where the range is known.
+unsafe extern "C" fn cb_param_parse<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    id: u32,
+    text: *const c_char,
+) -> i32 {
+    unsafe {
+        if text.is_null() {
+            return 0;
+        }
+        let Ok(text) = CStr::from_ptr(text).to_str() else {
+            return 0;
+        };
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        match inst.params_arc.parse_value(id, text) {
+            Some(plain) => {
+                inst.params_arc.set_plain(id, plain);
+                1
+            }
+            None => 0,
+        }
+    }
+}
+
 unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
@@ -1257,6 +1284,7 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         param_get_normalized: cb_param_get_normalized::<P>,
         param_set_normalized: cb_param_set_normalized::<P>,
         param_format_current: cb_param_format_current::<P>,
+        param_parse: cb_param_parse::<P>,
         output_event_count: cb_output_event_count::<P>,
         output_event_at: cb_output_event_at::<P>,
         push_sysex_input: cb_push_sysex_input::<P>,

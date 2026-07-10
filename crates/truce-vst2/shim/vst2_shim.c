@@ -53,6 +53,12 @@ typedef struct {
     uint32_t midi_count;
     int state_loaded;           /* set after effSetChunk or effMainsChanged */
     void* deferred_parent;      /* stashed parent view if editor opened before state loaded */
+    /* Most recent blob handed to the host from effGetChunk. The host
+     * borrows the pointer until it copies the bytes, so we keep it live
+     * and free it (via the Rust state_free) on the next effGetChunk or at
+     * effClose - otherwise every save/preset query leaks a multi-KB blob. */
+    uint8_t* saved_chunk;
+    uint32_t saved_chunk_len;
     /* Scratch for SysEx output: every `EventBody::SysEx` the plugin
      * emits gets framed (0xF0 + inner + 0xF7) into this buffer
      * before the `VstMidiSysExEvent::sysexDump` pointer is handed
@@ -80,6 +86,9 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             return 0;
 
         case effClose:
+            /* Free the last state blob the host was handed (VS1 leak). */
+            if (inst->saved_chunk && g_vst2_callbacks)
+                g_vst2_callbacks->state_free(inst->saved_chunk, inst->saved_chunk_len);
             if (inst->rust_ctx && g_vst2_callbacks)
                 g_vst2_callbacks->destroy(inst->rust_ctx);
             free(inst);
@@ -232,6 +241,40 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             ((char*)ptr)[63] = 0;
             return 1;
 
+        case effGetProgramName:
+            /* One default program; name it after the plugin so a host's
+             * program slot isn't blank. */
+            if (!ptr || !g_vst2_descriptor) return 0;
+            strncpy((char*)ptr, g_vst2_descriptor->name, 24);
+            ((char*)ptr)[23] = 0;
+            return 1;
+
+        case effGetPlugCategory:
+            /* Instruments / MIDI processors (component_type aumu / aumi)
+             * are kPlugCategSynth; everything else is kPlugCategEffect.
+             * An uncategorized (0) plugin is filtered out of some hosts'
+             * instrument / effect menus. */
+            if (g_vst2_descriptor &&
+                g_vst2_descriptor->component_type[0] == 'a' &&
+                g_vst2_descriptor->component_type[1] == 'u' &&
+                g_vst2_descriptor->component_type[2] == 'm' &&
+                (g_vst2_descriptor->component_type[3] == 'u' ||
+                 g_vst2_descriptor->component_type[3] == 'i'))
+                return kPlugCategSynth;
+            return kPlugCategEffect;
+
+        case effString2Parameter: {
+            /* Host text entry: parse `ptr` and apply it to the param.
+             * Returns 1 on success. Mirrors the value-from-string path
+             * the other formats gained. */
+            if (!ptr || !g_vst2_callbacks || !g_vst2_callbacks->param_parse ||
+                !inst->rust_ctx || index < 0 ||
+                (uint32_t)index >= g_vst2_num_params)
+                return 0;
+            return g_vst2_callbacks->param_parse(
+                inst->rust_ctx, g_vst2_params[index].id, (const char*)ptr);
+        }
+
         case effGetInputProperties: {
             /* Name the input pins so a host can identify the sidechain.
              * VST2 has no bus concept: the sidechain rides the last
@@ -328,19 +371,37 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             return 0;
         }
 
-        case effGetTailSize:
-            return (inst->rust_ctx && g_vst2_callbacks && g_vst2_callbacks->get_tail)
-                ? g_vst2_callbacks->get_tail(inst->rust_ctx) : 0;
+        case effGetTailSize: {
+            if (!inst->rust_ctx || !g_vst2_callbacks || !g_vst2_callbacks->get_tail)
+                return 0;
+            uint32_t tail = g_vst2_callbacks->get_tail(inst->rust_ctx);
+            /* VST2 conflates 0 = "no tail" with 0 = "unknown", and some
+             * hosts treat unknown as infinite - keeping a no-tail effect
+             * alive forever feeding silence. truce's tail()==0 means
+             * genuinely none, so report 1 (a 1-sample, effectively-zero
+             * tail). Never truncates a real tail. */
+            return tail == 0 ? 1 : (VstIntPtr)tail;
+        }
 
         case effCanBeAutomated:
             return 1;
 
         case effGetChunk: {
             if (!g_vst2_callbacks || !inst->rust_ctx || !ptr) return 0;
+            /* Free the blob from the previous effGetChunk (the host has
+             * long since copied it) before allocating the next one. */
+            if (inst->saved_chunk) {
+                g_vst2_callbacks->state_free(inst->saved_chunk, inst->saved_chunk_len);
+                inst->saved_chunk = NULL;
+                inst->saved_chunk_len = 0;
+            }
             uint8_t* data = NULL;
             uint32_t len = 0;
             g_vst2_callbacks->state_save(inst->rust_ctx, &data, &len);
             if (data && len > 0) {
+                /* Retain the pointer so it can be freed next time / at close. */
+                inst->saved_chunk = data;
+                inst->saved_chunk_len = len;
                 *(void**)ptr = data;
                 return (VstIntPtr)len;
             }
@@ -445,6 +506,12 @@ void truce_vst2_host_get_time(AEffect* e, Vst2TransportSnapshot* out) {
     if (ti->flags & kVstTimeSigValid) {
         out->time_sig_num = ti->time_sig_num;
         out->time_sig_den = ti->time_sig_den;
+    } else {
+        /* No time-sig-valid flag: default 4/4 (matching VST3 / CLAP, and
+         * the already-defaulted tempo) so beats-per-bar math (num*4/den)
+         * never divides by zero and feeds NaN into a bar-phased LFO. */
+        out->time_sig_num = 4;
+        out->time_sig_den = 4;
     }
     if (ti->flags & kVstCyclePosValid) {
         out->loop_start_beats = ti->cycle_start_pos;
