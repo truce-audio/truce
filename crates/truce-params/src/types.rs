@@ -557,7 +557,17 @@ impl<E: ParamEnum> EnumParam<E> {
     }
 
     pub fn set_index(&self, idx: u32) {
-        self.value.store(idx, Ordering::Relaxed);
+        // Clamp to the enum's valid range. A preset saved with a wider
+        // enum (a since-shrunk v1) restores an out-of-range index through
+        // here; stored verbatim, `value()` / `from_index` read it as the
+        // first variant while `get_normalized` clamps to the last, so audio
+        // and display disagree. Clamp to the last variant - matching
+        // `ParamRange::Enum::normalize`'s clamp - so they stay consistent.
+        // `variant_count()` is >= 1 for any `ParamEnum`; `saturating_sub`
+        // guards the underflow regardless.
+        #[allow(clippy::cast_possible_truncation)]
+        let max = (E::variant_count() as u32).saturating_sub(1);
+        self.value.store(idx.min(max), Ordering::Relaxed);
     }
 
     pub fn index(&self) -> u32 {
@@ -695,6 +705,20 @@ mod tests {
     #[should_panic(expected = "negative")]
     fn enum_param_rejects_negative_default() {
         let _: EnumParam<E4> = EnumParam::new(info("Mode", ParamRange::Enum { count: 4 }, -1.0));
+    }
+
+    #[test]
+    fn enum_param_set_index_clamps_out_of_range() {
+        // A preset saved with a wider (5-variant) enum restores index 4
+        // into this 4-variant enum. It must clamp to the last variant so
+        // `value()` (audio) and the normalized read (display) agree - not
+        // play the first variant while `normalize` clamps to the last.
+        let p: EnumParam<E4> = EnumParam::new(info("Mode", ParamRange::Enum { count: 4 }, 0.0));
+        p.set_index(4);
+        assert_eq!(p.index(), 3, "out-of-range index clamps to last variant");
+        assert!(matches!(p.value(), E4::D));
+        p.set_index(1000);
+        assert_eq!(p.index(), 3);
     }
 
     #[test]
