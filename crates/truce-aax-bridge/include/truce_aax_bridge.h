@@ -32,8 +32,11 @@ extern "C" {
  *           via AAX_IController::SetSignalLatency).
  *   6 → 7: multiple bus layouts - layout_in_channels / layout_out_channels
  *           / num_layouts on the descriptor (one AAX stem-format config
- *           per bus_layouts() entry). */
-#define TRUCE_AAX_ABI_VERSION 7u
+ *           per bus_layouts() entry).
+ *   7 → 8: sidechain input - sidechain_in_channels on the descriptor; the
+ *           template registers an AAX mono side-chain port (AddSideChainIn)
+ *           and appends it after the main input channels. */
+#define TRUCE_AAX_ABI_VERSION 8u
 
 /* Capacity of TruceAaxDescriptor::legacy_chunk_ids. */
 #define TRUCE_AAX_MAX_LEGACY_CHUNKS 8u
@@ -86,6 +89,12 @@ typedef struct {
     const int16_t* layout_in_channels;
     const int16_t* layout_out_channels;
     uint32_t num_layouts;
+    /* Total sidechain (non-main) input channel width from the first bus
+     * layout. > 0 makes the describe template register an AAX side-chain
+     * input port (AddSideChainIn) - Pro Tools side-chain is always mono,
+     * so RenderAudio duplicates that one channel across this width and
+     * appends it after the main input channels. 0 for no sidechain. */
+    uint32_t sidechain_in_channels;
 } TruceAaxDescriptor;
 
 /* Parameter info. */

@@ -56,7 +56,8 @@ static AAX_Result TruceDescribeOneConfig(
     AAX_IEffectDescriptor* ioDescriptor,
     const AAX_SInstrumentSetupInfo& setupInfo,
     bool needsOutputMIDI,
-    const char* outputMIDIName)
+    const char* outputMIDIName,
+    bool needsSidechain)
 {
     AAX_IComponentDescriptor* const compDesc = ioDescriptor->NewComponentDescriptor();
     if (!compDesc) return AAX_ERROR_NULL_OBJECT;
@@ -118,6 +119,16 @@ static AAX_Result TruceDescribeOneConfig(
     if (err != AAX_SUCCESS) return err;
     err = compDesc->AddClock(AAX_FIELD_INDEX(TruceAaxExtendedRenderInfo, base.mClock));
     if (err != AAX_SUCCESS) return err;
+
+    // Side-chain input port. AAX side-chain is always mono; the field
+    // receives a pointer to the index of the side-chain channel within
+    // mAudioInputs. RenderAudio duplicates it across the plugin's declared
+    // sidechain width and appends it after the main input channels.
+    if (needsSidechain) {
+        err = compDesc->AddSideChainIn(
+            AAX_FIELD_INDEX(TruceAaxExtendedRenderInfo, mSideChainP));
+        if (err != AAX_SUCCESS) return err;
+    }
 
     // No meters declared - fill the slot with a small block of private
     // data so the offset stays reserved (matches `StaticDescribe`'s
@@ -315,7 +326,8 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         setupInfo.mPluginID = g_descriptor.plugin_id;
         err = TruceDescribeOneConfig(desc, setupInfo,
                                      /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
-                                     g_descriptor.name);
+                                     g_descriptor.name,
+                                     /*needsSidechain=*/g_descriptor.sidechain_in_channels > 0);
         if (err != AAX_SUCCESS) return err;
     }
 
@@ -327,7 +339,8 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         setupInfo.mPluginID = g_descriptor.plugin_id ^ 0x00000002; // unique ID for stereo
         err = TruceDescribeOneConfig(desc, setupInfo,
                                       /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
-                                      g_descriptor.name);
+                                      g_descriptor.name,
+                                      /*needsSidechain=*/g_descriptor.sidechain_in_channels > 0);
         if (err != AAX_SUCCESS) return err;
     }
 
@@ -363,7 +376,8 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
             g_descriptor.plugin_id ^ static_cast<int32_t>(0x00010000u + i);
         err = TruceDescribeOneConfig(desc, setupInfo,
                                      /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
-                                     g_descriptor.name);
+                                     g_descriptor.name,
+                                     /*needsSidechain=*/g_descriptor.sidechain_in_channels > 0);
         if (err != AAX_SUCCESS) return err;
     }
 
