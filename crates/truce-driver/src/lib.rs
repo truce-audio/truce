@@ -75,7 +75,8 @@ pub enum InputSource {
     Constant(f32),
     /// Channel-major buffer (`bufs[ch][frame]`). Length must be
     /// `>= total_frames`; shorter buffers panic at run-time. The
-    /// channel count must match the driver's `channels`.
+    /// channel count must match the target bus width - the driver's
+    /// `channels` for `input`, the sidechain width for `sidechain`.
     Buffer(Vec<Vec<f32>>),
     /// `(frame_idx, sample_rate) -> sample`. Same value goes into
     /// every channel. Useful for sweeps / noise / generators.
@@ -429,6 +430,12 @@ pub struct PluginDriver<P: PluginExport> {
 
     transport: TransportSpec,
     input: InputSource,
+    /// Audio for the sidechain (non-main) input bus. Independent of
+    /// `input`. Ignored for plugins that declare no sidechain bus.
+    sidechain: InputSource,
+    /// Sidechain bus width override. Auto-detected from the plugin's
+    /// first bus layout when `None`.
+    sidechain_channels: Option<usize>,
     script: Script,
 
     /// Pending state source. Either an in-memory blob (set directly by
@@ -467,6 +474,8 @@ impl<P: PluginExport> PluginDriver<P> {
             process_mode: ProcessMode::Realtime,
             transport: TransportSpec::default(),
             input: InputSource::Silence,
+            sidechain: InputSource::Silence,
+            sidechain_channels: None,
             script: Script::default(),
             state_source: None,
             manifest_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -525,6 +534,25 @@ impl<P: PluginExport> PluginDriver<P> {
     #[must_use]
     pub fn input(mut self, source: InputSource) -> Self {
         self.input = source;
+        self
+    }
+
+    /// Audio fed into the plugin's sidechain input bus (plugins that
+    /// declare one). Independent of [`input`](Self::input): the main
+    /// bus and the sidechain run separate sources, so a test can drive
+    /// one while the other stays silent. Ignored - with a warning - for
+    /// plugins with no sidechain bus. Defaults to silence.
+    #[must_use]
+    pub fn sidechain(mut self, source: InputSource) -> Self {
+        self.sidechain = source;
+        self
+    }
+
+    /// Override the sidechain bus width. Auto-detected from the sum of
+    /// the plugin's non-main input buses (first bus layout) when unset.
+    #[must_use]
+    pub fn sidechain_channels(mut self, n: usize) -> Self {
+        self.sidechain_channels = Some(n);
         self
     }
 
@@ -744,6 +772,29 @@ impl<P: PluginExport> PluginDriver<P> {
         let is_effect = P::info().category == PluginCategory::Effect;
         let total_frames = sample_count_usize(self.duration.as_secs_f64() * self.sample_rate);
 
+        // Sidechain (non-main) input width. A plugin's sidechain bus is
+        // always present at its declared width - silent when nothing
+        // drives it - so an effect that declares one runs with the extra
+        // input channels even under the default silent source. `channels`
+        // is the main-bus width; `num_in` = main + sidechain.
+        let sidechain_channels = if is_effect {
+            self.sidechain_channels.unwrap_or_else(|| {
+                let layouts = P::bus_layouts();
+                layouts[0]
+                    .inputs
+                    .iter()
+                    .skip(1)
+                    .map(|b| b.channels.channel_count() as usize)
+                    .sum()
+            })
+        } else {
+            0
+        };
+        let num_in = channels + sidechain_channels;
+        if sidechain_channels == 0 && !matches!(self.sidechain, InputSource::Silence) {
+            eprintln!("truce-driver: sidechain source ignored - plugin declares no sidechain bus");
+        }
+
         // Capture buffers.
         let mut output: Vec<Vec<f32>> = if self.capture.audio {
             (0..channels)
@@ -761,6 +812,11 @@ impl<P: PluginExport> PluginDriver<P> {
         // Buffer / Generator we lazy-fill per block; for Constant
         // we just produce a single fill-value to broadcast.
         let constant_value: Option<f32> = match &self.input {
+            InputSource::Constant(v) => Some(*v),
+            InputSource::Silence => Some(0.0),
+            _ => None,
+        };
+        let sc_constant_value: Option<f32> = match &self.sidechain {
             InputSource::Constant(v) => Some(*v),
             InputSource::Silence => Some(0.0),
             _ => None,
@@ -786,6 +842,16 @@ impl<P: PluginExport> PluginDriver<P> {
                 bufs.len(),
             );
         }
+        if sidechain_channels > 0
+            && let InputSource::Buffer(bufs) = &self.sidechain
+        {
+            assert_eq!(
+                bufs.len(),
+                sidechain_channels,
+                "sidechain InputSource::Buffer channel count {} doesn't match sidechain width {sidechain_channels}",
+                bufs.len(),
+            );
+        }
 
         // Pre-allocate per-block scratch outside the loop. Reusing the
         // buffers keeps the hot loop allocation-free for `Silence` /
@@ -795,9 +861,7 @@ impl<P: PluginExport> PluginDriver<P> {
             .map(|_| vec![0.0f32; self.block_size])
             .collect();
         let mut in_bufs: Vec<Vec<f32>> = if is_effect {
-            (0..channels)
-                .map(|_| vec![0.0f32; self.block_size])
-                .collect()
+            (0..num_in).map(|_| vec![0.0f32; self.block_size]).collect()
         } else {
             Vec::new()
         };
@@ -867,14 +931,27 @@ impl<P: PluginExport> PluginDriver<P> {
             }
 
             if is_effect {
+                // Main bus from `input`, sidechain bus from `sidechain` -
+                // disjoint slices of the flat `in_bufs`, filled from the
+                // two independent sources.
                 fill_input_block(
-                    &mut in_bufs,
+                    &mut in_bufs[..channels],
                     &mut self.input,
                     constant_value,
                     cursor,
                     block_len,
                     self.sample_rate,
                 );
+                if sidechain_channels > 0 {
+                    fill_input_block(
+                        &mut in_bufs[channels..],
+                        &mut self.sidechain,
+                        sc_constant_value,
+                        cursor,
+                        block_len,
+                        self.sample_rate,
+                    );
+                }
             }
 
             // Mirror `in_bufs` / `out_bufs` into raw pointer arrays for

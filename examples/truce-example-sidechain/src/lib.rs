@@ -166,17 +166,16 @@ mod tests {
         use std::time::Duration;
         use truce_test::{InputSource, MeterCapture, MeterReadings, driver};
         // main L hot / main R silent; sidechain L silent / sidechain R hot.
+        // Main and sidechain are independent driver sources - the sidechain
+        // width auto-detects from the plugin's bus layout, so the run drives
+        // all four input channels without a manual channel override.
         let frames = 4096;
-        let bufs = vec![
-            vec![1.0f32; frames], // 0: main L
-            vec![0.0f32; frames], // 1: main R
-            vec![0.0f32; frames], // 2: sidechain L
-            vec![1.0f32; frames], // 3: sidechain R
-        ];
+        let main = vec![vec![1.0f32; frames], vec![0.0f32; frames]];
+        let side = vec![vec![0.0f32; frames], vec![1.0f32; frames]];
         let result = driver!(Plugin)
             .duration(Duration::from_millis(20))
-            .channels(4)
-            .input(InputSource::Buffer(bufs))
+            .input(InputSource::Buffer(main))
+            .sidechain(InputSource::Buffer(side))
             .capture_meters(MeterCapture::Final)
             .run();
         let MeterReadings::Final(meters) = result.meters else {
@@ -193,6 +192,36 @@ mod tests {
         assert!(get(P::InR) < 0.1, "in R should be silent: {}", get(P::InR));
         assert!(get(P::ScL) < 0.1, "sc L should be silent: {}", get(P::ScL));
         assert!(get(P::ScR) > 0.9, "sc R should be hot: {}", get(P::ScR));
+    }
+
+    #[test]
+    fn mix_knob_blends_sidechain_into_output() {
+        use std::time::Duration;
+        use truce_test::{InputSource, driver};
+        // Main = DC 0.25, sidechain = DC 0.75 on both channels. At Mix=1 the
+        // output is the sidechain; at Mix=0 it's the main. Proves the
+        // sidechain bus reaches `process` and the blend routes it out.
+        let frames = 2048;
+        let main = || InputSource::Buffer(vec![vec![0.25f32; frames]; 2]);
+        let side = || InputSource::Buffer(vec![vec![0.75f32; frames]; 2]);
+        let tail = |mix: f64| {
+            let out = driver!(Plugin)
+                .duration(Duration::from_millis(40))
+                .input(main())
+                .sidechain(side())
+                .set_param(P::Mix, mix)
+                .run()
+                .output;
+            // Last settled sample of the left output channel.
+            *out[0].last().unwrap()
+        };
+        let wet = tail(1.0);
+        let dry = tail(0.0);
+        assert!(
+            (wet - 0.75).abs() < 0.01,
+            "Mix=1 should pass sidechain: {wet}"
+        );
+        assert!((dry - 0.25).abs() < 0.01, "Mix=0 should pass main: {dry}");
     }
 
     #[test]
