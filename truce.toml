@@ -179,6 +179,16 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
+name = "Truce Sidechain"
+bundle_id = "sidechain"
+crate = "truce-example-sidechain"
+category = "effect"
+fourcc = "TScm"
+aax_category = "Dynamics"
+vst3_subcategory = "Tools"
+au3_name = "Truce Sidechain (AUv3)"
+
+[[plugin]]
 name = "Truce Synth"
 bundle_id = "synth"
 crate = "truce-example-synth"
