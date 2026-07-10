@@ -132,6 +132,17 @@ bitflags::bitflags! {
         /// sample-accuracy win. Read by
         /// `truce_core::chunked_process::is_split_event`.
         const CHUNKED     = 0b1_0000;
+        /// The host may modulate this parameter (CLAP
+        /// `CLAP_PARAM_IS_MODULATABLE`): it emits `CLAP_EVENT_PARAM_MOD`,
+        /// delivered to `process` as an `EventBody::ParamMod`. Opt-in - a
+        /// plugin sets it only for params it actually reads mod events
+        /// for; other formats ignore it (host-owned there).
+        const MODULATABLE = 0b10_0000;
+        /// Per-note-id (polyphonic) modulation: implies
+        /// [`Self::MODULATABLE`] and maps to
+        /// `CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID`. The `ParamMod`
+        /// event's `note_id` scopes the offset to one voice.
+        const MODULATABLE_PER_NOTE = 0b100_0000;
     }
 }
 

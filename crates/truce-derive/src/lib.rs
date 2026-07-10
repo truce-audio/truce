@@ -1301,6 +1301,12 @@ fn parse_flags_tokens(flags: &str) -> proc_macro2::TokenStream {
             "hidden" => parts.push(quote! { ::truce::params::ParamFlags::HIDDEN }),
             "readonly" => parts.push(quote! { ::truce::params::ParamFlags::READONLY }),
             "bypass" => parts.push(quote! { ::truce::params::ParamFlags::IS_BYPASS }),
+            "modulatable" => parts.push(quote! { ::truce::params::ParamFlags::MODULATABLE }),
+            // Per-note modulation implies mono modulation.
+            "modulatable_per_note" => parts.push(quote! {
+                ::truce::params::ParamFlags::MODULATABLE
+                    | ::truce::params::ParamFlags::MODULATABLE_PER_NOTE
+            }),
             _ => {}
         }
     }
