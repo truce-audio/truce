@@ -284,6 +284,53 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
         }
     }
 
+    /// Like [`Self::for_each_frame`] but for a DSP whose frame shape is a
+    /// fixed `(IN, OUT)` that need not match the bus width. Input slot `k`
+    /// reads bus input channel `k`, repeating the last available channel
+    /// when the bus has fewer than `IN` inputs - so a mono source fans into
+    /// both inputs of a stereo graph. Output slot `k` writes bus output
+    /// channel `k` while `k < num_output_channels`; frame outputs past the
+    /// bus width are dropped.
+    ///
+    /// This lets a plugin built around a fixed-shape DSP (a fundsp
+    /// `reverb_stereo`, a dasp graph) run on any declared bus layout -
+    /// `(2, 2)` stereo and `(1, 2)` mono-in/stereo-out alike - through one
+    /// `for_each_frame_io::<2, 2>` call, with no per-width branch. A bus
+    /// with no inputs (an instrument) feeds silence.
+    pub fn for_each_frame_io<const IN: usize, const OUT: usize, F>(&mut self, mut tick: F)
+    where
+        F: FnMut(&[S; IN], &mut [S; OUT]),
+    {
+        let num_in = self.inputs.len();
+        let num_out = self.outputs.len();
+        let mut frame_in = [S::default(); IN];
+        let mut frame_out = [S::default(); OUT];
+        let end = self.offset + self.num_samples;
+        for i in self.offset..end {
+            if num_in > 0 {
+                for (k, slot) in frame_in.iter_mut().enumerate() {
+                    *slot = self.inputs[k.min(num_in - 1)][i];
+                }
+            }
+            tick(&frame_in, &mut frame_out);
+            for (k, sample) in frame_out.iter().enumerate().take(num_out) {
+                self.outputs[k][i] = *sample;
+            }
+        }
+    }
+
+    /// [`Self::for_each_frame_io`] specialized to a stereo `(2, 2)` DSP -
+    /// the common case (a `reverb_stereo`, a stereo filter block). Runs the
+    /// 2-in/2-out `tick` over any declared bus: a mono source fans into
+    /// both inputs, a stereo bus maps 1:1, so a stereo effect needs no
+    /// per-width branch and no turbofish.
+    pub fn for_each_stereo_frame<F>(&mut self, tick: F)
+    where
+        F: FnMut(&[S; 2], &mut [S; 2]),
+    {
+        self.for_each_frame_io::<2, 2, F>(tick);
+    }
+
     /// Peak absolute value across an output channel, returned as `f32`
     /// because meters / UI display always work in `f32` regardless of
     /// the plugin's internal precision.
@@ -787,6 +834,33 @@ mod tests {
     fn assert_doubled<H: Sample>(output: &[H]) {
         let got: Vec<f64> = output.iter().map(|v| v.to_f64()).collect();
         assert_eq!(got, vec![2.0, 4.0, 6.0, 8.0]);
+    }
+
+    // Passthrough, so the outputs are bit-identical to the input - exact
+    // float equality is the contract being checked.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn for_each_frame_io_fans_mono_input_to_a_stereo_graph() {
+        // Mono-in (1) / stereo-out (2) bus fed through a 2-in/2-out identity
+        // "graph": the single input must fan into both frame slots, so both
+        // outputs receive the mono signal, with no per-width branch.
+        let input: [f32; 3] = [0.1, 0.2, 0.3];
+        let mut out_l = [0.0f32; 3];
+        let mut out_r = [0.0f32; 3];
+        let inputs: [&[f32]; 1] = [&input];
+        let mut outputs: [&mut [f32]; 2] = [&mut out_l, &mut out_r];
+        let mut buf = AudioBuffer::<f32>::from_slices_checked(&inputs, &mut outputs, 3);
+
+        buf.for_each_frame_io::<2, 2, _>(|frame_in, frame_out| {
+            // Identity graph: both channels pass through.
+            frame_out[0] = frame_in[0];
+            frame_out[1] = frame_in[1];
+        });
+
+        // frame_in[1] repeated the last (only) input channel, so both
+        // outputs equal the mono input.
+        assert_eq!(out_l, input);
+        assert_eq!(out_r, input);
     }
 
     #[test]
