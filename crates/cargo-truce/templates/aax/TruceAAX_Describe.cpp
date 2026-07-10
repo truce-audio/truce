@@ -278,22 +278,38 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
     }
 
     // A stereo-output instrument (a synth) renders a fixed stereo image and
-    // has no meaningful mono form. Offering the mono config lets Pro Tools
-    // run it mono / multi-mono, where the plugin's second output channel is
-    // dropped - silence, or a collapsed pan. Register only the stereo config
-    // for it. Effects stay channel-generic, so they keep the mono config.
+    // has no meaningful mono form, so it registers only the stereo config.
     const bool stereo_instrument =
         g_descriptor.category == static_cast<uint32_t>(AAX_ePlugInCategory_SWGenerators) &&
         g_descriptor.num_outputs >= 2;
 
+    // Which mono / stereo output widths the plugin actually declares. A
+    // single-layout plugin contributes its one width; a multi-layout one
+    // its whole array. This keeps a surround-only plugin from registering
+    // the mono / stereo components it never declared.
+    bool declares_mono = false;
+    bool declares_stereo = false;
+    if (g_descriptor.num_layouts > 0) {
+        for (uint32_t i = 0; i < g_descriptor.num_layouts; i++) {
+            if (g_descriptor.layout_out_channels[i] == 1) declares_mono = true;
+            if (g_descriptor.layout_out_channels[i] == 2) declares_stereo = true;
+        }
+    } else {
+        declares_mono = g_descriptor.num_outputs == 1;
+        declares_stereo = g_descriptor.num_outputs == 2;
+    }
+    // A single mono / stereo layout is the channel-generic effect case:
+    // it offers both mono and stereo so it drops onto either track width
+    // (a stereo-declared effect is still insertable on a mono track). An
+    // explicit multi-layout or a surround-only plugin gets only the widths
+    // it declares.
+    const bool channel_generic =
+        g_descriptor.num_layouts == 0 && g_descriptor.num_outputs <= 2;
+
     AAX_Result err = AAX_SUCCESS;
 
-    // Register mono configuration. The Rust wrapper synthesizes
-    // dummy stereo I/O for plugins that declare no audio buses
-    // (pure MIDI effects, instruments) - see the layout match in
-    // `truce-aax/src/lib.rs::register_aax` - so `num_inputs > 0`
-    // always holds at this point and `Mono` is the right choice.
-    if (!stereo_instrument) {
+    // Mono component. The base plugin ID; existing sessions reference it.
+    if (!stereo_instrument && (declares_mono || channel_generic)) {
         setupInfo.mInputStemFormat = AAX_eStemFormat_Mono;
         setupInfo.mOutputStemFormat = AAX_eStemFormat_Mono;
         setupInfo.mPluginID = g_descriptor.plugin_id;
@@ -303,8 +319,8 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         if (err != AAX_SUCCESS) return err;
     }
 
-    // Register stereo configuration (different plugin ID required)
-    if (g_descriptor.num_outputs >= 2) {
+    // Stereo component (different plugin ID required).
+    if (declares_stereo || (channel_generic && g_descriptor.num_outputs >= 2)) {
         setupInfo.mInputStemFormat = g_descriptor.num_inputs >= 2
             ? AAX_eStemFormat_Stereo : AAX_eStemFormat_Mono;
         setupInfo.mOutputStemFormat = AAX_eStemFormat_Stereo;
@@ -315,22 +331,33 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         if (err != AAX_SUCCESS) return err;
     }
 
-    // Additional declared bus_layouts() beyond mono/stereo (surround
-    // etc.): one component per layout, so Pro Tools offers every declared
-    // I/O width. Mono/stereo layouts are already covered by the generic
-    // configs above; `num_layouts == 0` (single-layout plugins) skips this.
-    for (uint32_t i = 0; i < g_descriptor.num_layouts; i++) {
-        AAX_EStemFormat outStem = TruceStemFormat(g_descriptor.layout_out_channels[i]);
-        if (outStem == AAX_eStemFormat_None
-            || outStem == AAX_eStemFormat_Mono
-            || outStem == AAX_eStemFormat_Stereo) {
+    // Surround components: one per declared layout wider than stereo.
+    // Single-layout plugins (num_layouts == 0) contribute their one
+    // (num_inputs, num_outputs) width; multi-layout plugins iterate the
+    // declared arrays. Mono / stereo widths are covered above and skipped.
+    uint32_t layoutCount = g_descriptor.num_layouts > 0 ? g_descriptor.num_layouts : 1;
+    for (uint32_t i = 0; i < layoutCount; i++) {
+        int16_t inCh = g_descriptor.num_layouts > 0
+            ? g_descriptor.layout_in_channels[i]
+            : static_cast<int16_t>(g_descriptor.num_inputs);
+        int16_t outCh = g_descriptor.num_layouts > 0
+            ? g_descriptor.layout_out_channels[i]
+            : static_cast<int16_t>(g_descriptor.num_outputs);
+        if (outCh <= 2) continue; // mono / stereo handled above
+        AAX_EStemFormat outStem = TruceStemFormat(outCh);
+        if (outStem == AAX_eStemFormat_None) {
+            fprintf(stderr,
+                    "[truce-aax] %s: no AAX stem format for a %d-channel output "
+                    "layout; that config will not appear in Pro Tools\n",
+                    g_descriptor.name, static_cast<int>(outCh));
             continue;
         }
-        AAX_EStemFormat inStem = TruceStemFormat(g_descriptor.layout_in_channels[i]);
-        setupInfo.mInputStemFormat =
-            inStem == AAX_eStemFormat_None ? AAX_eStemFormat_Mono : inStem;
+        AAX_EStemFormat inStem = TruceStemFormat(inCh);
+        // Fall back to a symmetric input stem when the input width has no
+        // canonical stem (unusual for a surround layout, where in == out).
+        setupInfo.mInputStemFormat = inStem == AAX_eStemFormat_None ? outStem : inStem;
         setupInfo.mOutputStemFormat = outStem;
-        // Unique, order-stable plugin ID per extra config, clear of the
+        // Unique, order-stable plugin ID per surround config, clear of the
         // base (mono) and base ^ 0x2 (stereo) IDs used above.
         setupInfo.mPluginID =
             g_descriptor.plugin_id ^ static_cast<int32_t>(0x00010000u + i);

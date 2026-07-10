@@ -37,8 +37,8 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, first_bus_layout, lock_plugin,
-    log_midi_ports_clamped, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
+    ParamCStrings, SharedPlugin, first_bus_layout, lock_plugin, log_midi_ports_clamped,
+    log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
     run_register, save_extra, shared_plugin,
 };
 use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
@@ -934,7 +934,11 @@ pub unsafe fn _reset<P: PluginExport>(
     let max_frames = (max_frames as usize).max(1024);
     inst.sample_rate = sample_rate;
     inst.max_block_size = max_frames;
-    let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
+    // Size scratch to the widest declared layout: a multi-layout plugin
+    // gets one AAX component per stem, and this instance may be any of
+    // them, so pre-allocating for the max keeps `_process` off the audio
+    // thread's allocator when the stem is wider than the first layout.
+    let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
     inst.scratch
         .ensure_capacity(num_in as usize, num_out as usize, max_frames);
     // Offline-bounce state, set from the host's `EnteringOfflineMode` /
