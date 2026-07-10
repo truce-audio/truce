@@ -50,6 +50,12 @@
 #define effGetEffectName    45
 #define effBeginSetProgram  67
 #define effEndSetProgram    68
+#define effGetInputProperties  33
+#define effGetOutputProperties 34
+
+/* VstPinProperties.flags */
+#define kVstPinIsActive  (1 << 0)
+#define kVstPinIsStereo  (1 << 1)
 
 /* audioMaster opcodes (host callbacks) */
 #define audioMasterAutomate 0
@@ -223,6 +229,17 @@ typedef struct {
     const char* group;
 } Vst2ParamDescriptor;
 
+/* Host-allocated pin descriptor filled by effGetInput/OutputProperties.
+ * 128 bytes, matching the VST 2.4 layout so a host reading the trailing
+ * fields stays in bounds. */
+typedef struct {
+    char label[64];
+    int32_t flags;
+    int32_t arrangementType;
+    char shortLabel[8];
+    char future[48];
+} VstPinProperties;
+
 typedef struct {
     uint8_t component_type[4];
     uint8_t component_subtype[4];
@@ -243,6 +260,11 @@ typedef struct {
     /* Non-zero when the plugin processes natively in f64. Sets
      * effFlagsCanDoubleReplacing and wires processDoubleReplacing. */
     int32_t supports_f64;
+    /* Sidechain (non-main) input width. VST2 has no bus concept, so the
+     * sidechain rides the last `sidechain_in_channels` of `num_inputs`;
+     * effGetInputProperties labels those pins "Sidechain N" so hosts can
+     * route to them. 0 for no sidechain. */
+    uint32_t sidechain_in_channels;
 } Vst2PluginDescriptor;
 
 typedef struct {

@@ -232,6 +232,50 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             ((char*)ptr)[63] = 0;
             return 1;
 
+        case effGetInputProperties: {
+            /* Name the input pins so a host can identify the sidechain.
+             * VST2 has no bus concept: the sidechain rides the last
+             * `sidechain_in_channels` of `num_inputs`, so the leading
+             * pins are "Input N" and the tail pins "Sidechain N". Naming
+             * them is what lets a host route its sidechain send here. */
+            VstPinProperties* props = (VstPinProperties*)ptr;
+            if (!props || !g_vst2_descriptor || index < 0 ||
+                (uint32_t)index >= g_vst2_descriptor->num_inputs)
+                return 0;
+            uint32_t total = g_vst2_descriptor->num_inputs;
+            uint32_t sc = g_vst2_descriptor->sidechain_in_channels;
+            uint32_t mainCh = sc <= total ? total - sc : total;
+            int isSidechain = (uint32_t)index >= mainCh;
+            uint32_t groupWidth = isSidechain ? sc : mainCh;
+            uint32_t local = isSidechain ? (uint32_t)index - mainCh : (uint32_t)index;
+            memset(props, 0, sizeof(*props));
+            snprintf(props->label, sizeof(props->label), "%s %u",
+                     isSidechain ? "Sidechain" : "Input", local + 1);
+            snprintf(props->shortLabel, sizeof(props->shortLabel), "%s%u",
+                     isSidechain ? "SC" : "In", local + 1);
+            props->flags = kVstPinIsActive;
+            /* Flag the lead channel of each stereo pair within its group. */
+            if ((local % 2) == 0 && local + 1 < groupWidth)
+                props->flags |= kVstPinIsStereo;
+            return 1;
+        }
+
+        case effGetOutputProperties: {
+            VstPinProperties* props = (VstPinProperties*)ptr;
+            if (!props || !g_vst2_descriptor || index < 0 ||
+                (uint32_t)index >= g_vst2_descriptor->num_outputs)
+                return 0;
+            uint32_t total = g_vst2_descriptor->num_outputs;
+            uint32_t local = (uint32_t)index;
+            memset(props, 0, sizeof(*props));
+            snprintf(props->label, sizeof(props->label), "Output %u", local + 1);
+            snprintf(props->shortLabel, sizeof(props->shortLabel), "Out%u", local + 1);
+            props->flags = kVstPinIsActive;
+            if ((local % 2) == 0 && local + 1 < total)
+                props->flags |= kVstPinIsStereo;
+            return 1;
+        }
+
         case effCanDo: {
             if (!ptr) return 0;
             const char* s = (const char*)ptr;
