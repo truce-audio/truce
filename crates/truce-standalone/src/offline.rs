@@ -5,7 +5,8 @@
 //! [`InputSource::Buffer`] for a fixed duration, then writes the
 //! captured output via [`truce_driver::DriverResult::write_wav`]. No threads, no
 //! mpsc, no cpal. Disk slowness stretches render time but never
-//! causes glitches.
+//! causes glitches. An optional `--sidechain-file` decodes into the
+//! plugin's sidechain bus via the driver's `sidechain` source.
 //!
 //! Gated on `feature = "playback"`; called from `lib.rs::run_with`
 //! when the user's flag combination resolves to offline mode (see
@@ -87,6 +88,41 @@ where
     let total_frames = input_buf.first().map_or(0, std::vec::Vec::len);
     let duration = Duration::from_secs_f64(frame_count_f64(total_frames) / sample_rate);
 
+    // Sidechain bus width from the plugin's first layout (sum of the
+    // non-main input buses). Flat channel alignment (main L/R at 0/1,
+    // sidechain at 2/3) holds when the main file is the plugin's main
+    // width - the common stereo case; a narrower main file shifts the
+    // sidechain down, so it lands only when the widths line up.
+    let sidechain_width: usize = P::bus_layouts().first().map_or(0, |l| {
+        l.inputs
+            .iter()
+            .skip(1)
+            .map(|b| b.channels.channel_count() as usize)
+            .sum()
+    });
+    let sidechain_buf = match opts.sidechain_file.as_deref() {
+        Some(path) if sidechain_width > 0 => {
+            eprintln!(
+                "Offline sidechain: {} → sidechain bus ({} ch)",
+                path.display(),
+                sidechain_width,
+            );
+            Some(decode_wav_channel_major(
+                path,
+                sample_rate,
+                sidechain_width,
+            )?)
+        }
+        Some(path) => {
+            eprintln!(
+                "--sidechain-file {} ignored: plugin has no sidechain input bus",
+                path.display(),
+            );
+            None
+        }
+        None => None,
+    };
+
     let started = Instant::now();
 
     let mut driver = PluginDriver::<P>::new()
@@ -97,6 +133,10 @@ where
         .process_mode(ProcessMode::Offline)
         .bpm(opts.bpm.unwrap_or(120.0))
         .input(InputSource::Buffer(input_buf));
+
+    if let Some(sc) = sidechain_buf {
+        driver = driver.sidechain(InputSource::Buffer(sc));
+    }
 
     if let Some(path) = opts.state_path.as_deref() {
         driver = driver.state_file(path);
