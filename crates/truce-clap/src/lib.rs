@@ -61,8 +61,8 @@ use clap_sys::ext::note_ports::{
 };
 use clap_sys::ext::params::{
     CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_BYPASS, CLAP_PARAM_IS_ENUM,
-    CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_READONLY, CLAP_PARAM_IS_STEPPED, clap_param_info,
-    clap_plugin_params,
+    CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_MODULATABLE, CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID,
+    CLAP_PARAM_IS_READONLY, CLAP_PARAM_IS_STEPPED, clap_param_info, clap_plugin_params,
 };
 use clap_sys::ext::params::{CLAP_PARAM_RESCAN_VALUES, clap_host_params};
 use clap_sys::ext::preset_load::{
@@ -82,9 +82,8 @@ use clap_sys::host::clap_host;
 use clap_sys::id::{CLAP_INVALID_ID, clap_id};
 use clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
 use clap_sys::plugin_features::{
-    CLAP_PLUGIN_FEATURE_ANALYZER, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
-    CLAP_PLUGIN_FEATURE_INSTRUMENT, CLAP_PLUGIN_FEATURE_NOTE_EFFECT,
-    CLAP_PLUGIN_FEATURE_SYNTHESIZER, CLAP_PLUGIN_FEATURE_UTILITY,
+    CLAP_PLUGIN_FEATURE_ANALYZER, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_INSTRUMENT,
+    CLAP_PLUGIN_FEATURE_NOTE_EFFECT, CLAP_PLUGIN_FEATURE_SYNTHESIZER, CLAP_PLUGIN_FEATURE_UTILITY,
 };
 use clap_sys::process::{
     CLAP_PROCESS_CONTINUE, CLAP_PROCESS_CONTINUE_IF_NOT_QUIET, CLAP_PROCESS_ERROR,
@@ -449,10 +448,16 @@ impl DescriptorHolder {
             // AUDIO_EFFECT for insert menus, but lead with the specific
             // feature so a feature-filtered browser surfaces them.
             PluginCategory::Analyzer => {
-                vec![CLAP_PLUGIN_FEATURE_ANALYZER, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT]
+                vec![
+                    CLAP_PLUGIN_FEATURE_ANALYZER,
+                    CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
+                ]
             }
             PluginCategory::Tool => {
-                vec![CLAP_PLUGIN_FEATURE_UTILITY, CLAP_PLUGIN_FEATURE_AUDIO_EFFECT]
+                vec![
+                    CLAP_PLUGIN_FEATURE_UTILITY,
+                    CLAP_PLUGIN_FEATURE_AUDIO_EFFECT,
+                ]
             }
         };
 
@@ -2280,6 +2285,12 @@ unsafe extern "C" fn params_get_info<P: PluginExport>(
         }
         if info.flags.contains(ParamFlags::IS_BYPASS) {
             flags |= CLAP_PARAM_IS_BYPASS;
+        }
+        if info.flags.contains(ParamFlags::MODULATABLE) {
+            flags |= CLAP_PARAM_IS_MODULATABLE;
+        }
+        if info.flags.contains(ParamFlags::MODULATABLE_PER_NOTE) {
+            flags |= CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID;
         }
         match &info.range {
             ParamRange::Enum { .. } => {
