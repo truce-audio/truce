@@ -99,6 +99,12 @@ typedef struct {
     const int16_t *layout_in_channels;
     const int16_t *layout_out_channels;
     uint32_t num_layouts;
+    /* Channel count of the sidechain input bus (the second input bus), or
+     * 0 when the plugin declares no sidechain. Non-zero makes the v2 shim
+     * expose a second kAudioUnitScope_Input element the host routes a
+     * separate source to; `num_inputs` is the main input bus (element 0).
+     * Append-only, so an out-of-date shim ignores it. */
+    uint32_t sidechain_in_channels;
 } AuPluginDescriptor;
 
 typedef struct {
