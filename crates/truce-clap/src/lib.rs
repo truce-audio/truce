@@ -580,16 +580,22 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
             instance.reset(&AudioConfig::new(sample_rate, max_block).with_process_mode(mode));
         }
 
-        // Pre-grow the widening / narrowing scratch on the f64 path.
-        // Without this, the first audio block after `activate` hits
-        // the global allocator inside `clap_plugin_process` to grow
-        // the outer Vec and each channel's inner Vec - a real RT
-        // hazard on the first block post-reload. The outer-Vec
-        // capacity is already reserved in `create_plugin`; what we
-        // do here is push the inner per-channel `Vec<P::Sample>`s up
-        // to `max_block_size` frames so the per-block `.clear() +
-        // .reserve()` path is no-op-on-the-allocator.
-        if <P as PluginRuntime>::Sample::IS_F64 {
+        // Pre-grow the widening / narrowing scratch so no host wire /
+        // plugin precision combination allocates on the audio thread.
+        // Without this, the first block after `activate` hits the global
+        // allocator inside `clap_plugin_process` to grow the outer Vec and
+        // each channel's inner Vec - a real RT hazard. The outer-Vec
+        // capacity is already reserved in `create_plugin`; here we push the
+        // inner per-channel `Vec<P::Sample>`s up to `max_block_size` frames
+        // so the per-block `.clear() + .reserve()` path never allocates.
+        //
+        // Unconditional, both directions: an f64 plugin converts whenever a
+        // host sends f32, and an f32 plugin converts if a (non-compliant)
+        // host sends f64 to a port that never advertised
+        // `SUPPORTS_64BITS`. Pre-growing for the f32 plugin keeps that
+        // defensive path allocation-free too; its scratch just stays unused
+        // on the common zero-copy path.
+        {
             let max_in = data.input_widen.capacity();
             let max_out = data.output_narrow.capacity();
             while data.input_widen.len() < max_in {
