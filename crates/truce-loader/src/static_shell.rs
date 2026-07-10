@@ -412,16 +412,25 @@ macro_rules! export_static {
                     $crate::__macro_deps::truce_core::tasks::AnyTaskSpawner,
                 > = ::core::option::Option::None;
                 $(
-                    let spawner = $crate::__macro_deps::truce_core::tasks::TaskSpawner::<
-                        <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::Task,
-                    >::new({
+                    let __task_run = {
                         let params = std::sync::Arc::clone(&params);
                         move |task| {
                             <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::run_task(
                                 task, &params,
                             )
                         }
-                    });
+                    };
+                    // `SERIALIZED` picks one-slot vs concurrent draining;
+                    // the const folds the branch away at compile time.
+                    let spawner = if <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::SERIALIZED {
+                        $crate::__macro_deps::truce_core::tasks::TaskSpawner::<
+                            <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::Task,
+                        >::new_serialized(__task_run)
+                    } else {
+                        $crate::__macro_deps::truce_core::tasks::TaskSpawner::<
+                            <$tasks as $crate::__macro_deps::truce_plugin::BackgroundTasks>::Task,
+                        >::new(__task_run)
+                    };
                     tasks = ::core::option::Option::Some(
                         $crate::__macro_deps::truce_core::tasks::AnyTaskSpawner::new(&spawner),
                     );

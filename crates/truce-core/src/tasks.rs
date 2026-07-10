@@ -9,6 +9,19 @@
 //! channels - the pool owns only the worker threads and the inbound
 //! queue.
 //!
+//! ## Concurrency
+//!
+//! By default drains are **not** mutually exclusive: the stranding-
+//! avoidance handshake clears a sink's `scheduled` flag before draining,
+//! so a burst that re-arms an instance mid-drain can hand a second idle
+//! worker the same sink - `run_task` can run concurrently with itself for
+//! one instance. Handlers must therefore be reentrancy-safe: talk to the
+//! audio thread only through lock-free / atomic channels (the reverb
+//! example's MPMC handoff), or guard shared mutable state (the
+//! `AudioTap::drain_with` `try_lock` idiom). A plugin that can't meet that
+//! contract sets `BackgroundTasks::SERIALIZED = true`, and the pool then
+//! runs that instance's handler one at a time.
+//!
 //! The pool is shared across every instance in the process (one small
 //! set of threads, not one thread per instance) and initializes lazily
 //! the first time any instance actually schedules a task, so a plugin
@@ -62,6 +75,15 @@ struct Sink<T: Send + 'static> {
     /// Coalesces wake-ups: set when this sink is already queued in the
     /// injector, so a burst of pushes injects it once.
     scheduled: AtomicBool,
+    /// Serialized ("one-slot") mode: when set, at most one worker runs
+    /// `run` for this sink at a time. `false` (default) lets a second
+    /// worker drain concurrently for throughput.
+    serialized: bool,
+    /// Exclusive-drain guard for [`Self::serialized`]. A worker that finds
+    /// it already held bows out; the holder's re-check loop in `drain`
+    /// picks up whatever the bower-out was injected for, so nothing is
+    /// stranded. Unused in the concurrent (default) mode.
+    draining: AtomicBool,
     /// `run(task)` is `move |task| L::run_task(task, &params)`, built
     /// once when the instance registers - never per task.
     run: Box<dyn Fn(T) + Send + Sync>,
@@ -78,19 +100,16 @@ impl<T: Send + 'static> Sink<T> {
     }
 }
 
-impl<T: Send + 'static> Drain for Sink<T> {
-    fn drain(&self) {
-        // Clear the flag before draining so a task pushed mid-drain
-        // re-arms the sink instead of being stranded. This clear and the
-        // queue reads below form a StoreLoad pair against the producer's
-        // push + `arm` swap; Release/AcqRel don't order a store followed
-        // by a load of a *different* location, so without the SeqCst store
-        // + fence a worker could clear the flag, read the queue empty, and
-        // a concurrent producer could push a task and read the flag still
-        // `true` - stranding that task with nothing scheduled to drain it.
-        // Only SeqCst forbids that reordering. The stranded task self-heals
-        // on the sink's next `arm`, so continuous work (a knob sweep) is
-        // fine, but the last one-shot before an idle period would hang.
+impl<T: Send + 'static> Sink<T> {
+    /// Clear `scheduled`, then run every currently-queued task once. The
+    /// clear-before-drain + `SeqCst` fence is the stranding-avoidance
+    /// handshake: a task pushed mid-drain re-arms the sink (its `arm` swap
+    /// sees `scheduled == false`) instead of being stranded. Release/AcqRel
+    /// don't order a store followed by a load of a *different* location, so
+    /// without the `SeqCst` store + fence a worker could clear the flag, read
+    /// the queue empty, and a concurrent producer could push a task and read
+    /// the flag still `true` - stranding it. Only `SeqCst` forbids that.
+    fn drain_queues(&self) {
         self.scheduled.store(false, Ordering::SeqCst);
         fence(Ordering::SeqCst);
         // The coalesced slot held only the newest target, so a burst of
@@ -102,6 +121,48 @@ impl<T: Send + 'static> Drain for Sink<T> {
         // FIFO tasks each run.
         while let Some(task) = self.queue.pop() {
             self.run_one(task);
+        }
+    }
+}
+
+impl<T: Send + 'static> Drain for Sink<T> {
+    fn drain(&self) {
+        // Concurrent (default) mode: a second worker may drain this sink at
+        // the same time. Handlers must be reentrancy-safe (see
+        // `BackgroundTasks::SERIALIZED`).
+        if !self.serialized {
+            self.drain_queues();
+            return;
+        }
+        // Serialized ("one-slot") mode: run the handler for this instance on
+        // at most one worker at a time. A worker that finds the guard held
+        // is inert and returns - it touches nothing, so the `scheduled`
+        // handshake below stays the sole no-stranding signal, exactly as in
+        // the concurrent path.
+        if self.draining.swap(true, Ordering::Acquire) {
+            return;
+        }
+        loop {
+            self.drain_queues();
+            self.draining.store(false, Ordering::Release);
+            fence(Ordering::SeqCst);
+            // Re-check the *scheduled flag*, not the queue: a producer that
+            // armed during the drain set it with a SeqCst swap ordered after
+            // `drain_queues`'s SeqCst clear, so we either observe it here and
+            // re-drain, or its swap saw our clear and injected a fresh drain.
+            // (Reading the queue instead would race - a plain queue load
+            // isn't synchronized with the producer's push, so it could miss a
+            // task a re-injection carried and strand it.) `drain_queues`
+            // clears the flag each pass, so the loop makes progress and can't
+            // spin: at most one extra empty drain after the last arm.
+            if !self.scheduled.load(Ordering::SeqCst) {
+                return;
+            }
+            // Work remains. Re-take the guard and drain again; if another
+            // worker took it first, that worker now owns the remainder.
+            if self.draining.swap(true, Ordering::Acquire) {
+                return;
+            }
         }
     }
 }
@@ -202,6 +263,10 @@ fn schedule(sink: Arc<dyn Drain>) -> bool {
 /// A cheap-to-clone handle for scheduling background tasks onto the
 /// shared pool. Held by the shell and handed to the plugin through
 /// [`InitContext`], `ProcessContext`, and the editor's `PluginContext`.
+///
+/// A spawner built with [`Self::new`] may run its handler concurrently
+/// with itself for one instance (see the module's Concurrency section);
+/// [`Self::new_serialized`] runs it one at a time.
 pub struct TaskSpawner<T: Send + 'static> {
     sink: Arc<Sink<T>>,
 }
@@ -220,12 +285,28 @@ impl<T: Send + 'static> TaskSpawner<T> {
     /// by the shell. The pool itself is not started until the first task
     /// is actually scheduled, so constructing a spawner for a plugin that
     /// never schedules costs only the (small) inbound queue.
+    ///
+    /// The handler may run concurrently with itself for one instance; use
+    /// [`Self::new_serialized`] for a handler that isn't reentrancy-safe.
     pub fn new(run: impl Fn(T) + Send + Sync + 'static) -> Self {
+        Self::with_mode(run, false)
+    }
+
+    /// Like [`Self::new`], but the pool runs the handler for a given
+    /// instance one at a time ("one-slot" mode). The shell selects this
+    /// when the plugin's `BackgroundTasks::SERIALIZED` is `true`.
+    pub fn new_serialized(run: impl Fn(T) + Send + Sync + 'static) -> Self {
+        Self::with_mode(run, true)
+    }
+
+    fn with_mode(run: impl Fn(T) + Send + Sync + 'static, serialized: bool) -> Self {
         Self {
             sink: Arc::new(Sink {
                 queue: ArrayQueue::new(TASK_QUEUE_PREALLOC),
                 coalesced: ArrayQueue::new(1),
                 scheduled: AtomicBool::new(false),
+                serialized,
+                draining: AtomicBool::new(false),
                 run: Box::new(run),
             }),
         }
@@ -460,6 +541,47 @@ mod tests {
     }
 
     #[test]
+    fn serialized_runs_one_at_a_time_and_drops_nothing() {
+        // One-slot mode: the handler must never run concurrently with
+        // itself for this instance, and every FIFO task must still run.
+        const N: u32 = 64;
+        let in_flight = Arc::new(AtomicU32::new(0));
+        let peak = Arc::new(AtomicU32::new(0));
+        let latch = Arc::new(Latch::default());
+        let (inf, pk, l) = (
+            Arc::clone(&in_flight),
+            Arc::clone(&peak),
+            Arc::clone(&latch),
+        );
+        let spawner = TaskSpawner::<u32>::new_serialized(move |_| {
+            let now = inf.fetch_add(1, Ordering::AcqRel) + 1;
+            pk.fetch_max(now, Ordering::AcqRel);
+            // Widen the window so a second worker would overlap if the guard
+            // let it - a bare increment could hide a real race.
+            thread::sleep(Duration::from_millis(1));
+            inf.fetch_sub(1, Ordering::AcqRel);
+            l.bump();
+        });
+
+        // Push across a burst so re-arms land mid-drain: each one re-injects
+        // the sink and tempts an idle worker to pick it up concurrently.
+        for n in 0..N {
+            while spawner.try_spawn(n).is_err() {
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        // Blocks until all N ran; a stranded task would hang here (a hung
+        // test, not a false pass).
+        latch.wait_for(N);
+        assert_eq!(
+            peak.load(Ordering::Acquire),
+            1,
+            "serialized: at most one handler in flight at a time"
+        );
+    }
+
+    #[test]
     fn coalescing_collapses_to_the_newest() {
         let runs = Arc::new(AtomicU32::new(0));
         let last = Arc::new(AtomicU32::new(0));
@@ -541,6 +663,73 @@ mod loom_tests {
             assert!(
                 !pending || scheduled,
                 "task stranded: pending with scheduled == false"
+            );
+        });
+    }
+
+    // The serialized ("one-slot") path adds a `draining` guard for mutual
+    // exclusion. The no-stranding signal stays the `scheduled` handshake: a
+    // worker that loses the guard is inert, and the winner re-checks the
+    // *flag* (not the queue) after each drain, looping until it reads
+    // `false`. This models that body for two workers plus a producer and
+    // asserts the same invariant. Re-checking `item` instead of the flag
+    // (an unsynchronized queue read) makes loom find the interleaving where
+    // the winner misses the producer's task and it strands.
+    #[test]
+    fn serialized_drain_never_strands_a_task() {
+        loom::model(|| {
+            // A sink already scheduled with one queued task; two workers pop
+            // it (the producer's re-inject can hand it to a second worker),
+            // and the producer pushes one more task concurrently.
+            let scheduled = Arc::new(AtomicBool::new(true));
+            let item = Arc::new(AtomicBool::new(true));
+            let draining = Arc::new(AtomicBool::new(false));
+
+            // One execution of the serialized `Sink::drain` path. The
+            // re-check loop is bounded to two passes - enough for the one
+            // extra task a single producer can push.
+            let worker =
+                |scheduled: Arc<AtomicBool>, item: Arc<AtomicBool>, draining: Arc<AtomicBool>| {
+                    if draining.swap(true, Ordering::Acquire) {
+                        return; // loser: inert
+                    }
+                    for _ in 0..2 {
+                        // drain_queues: clear the flag (SeqCst), fence, pop.
+                        scheduled.store(false, Ordering::SeqCst);
+                        fence(Ordering::SeqCst);
+                        let _ = item.swap(false, Ordering::AcqRel);
+                        draining.store(false, Ordering::Release);
+                        fence(Ordering::SeqCst);
+                        // Re-check the flag, not the queue.
+                        if !scheduled.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        if draining.swap(true, Ordering::Acquire) {
+                            return;
+                        }
+                    }
+                };
+
+            let (s1, i1, d1) = (scheduled.clone(), item.clone(), draining.clone());
+            let w1 = thread::spawn(move || worker(s1, i1, d1));
+            let (s2, i2, d2) = (scheduled.clone(), item.clone(), draining.clone());
+            let w2 = thread::spawn(move || worker(s2, i2, d2));
+
+            // `try_spawn` + `arm`: push the task, then flag the sink.
+            item.store(true, Ordering::Release);
+            fence(Ordering::SeqCst);
+            let _ = scheduled.swap(true, Ordering::SeqCst);
+
+            w1.join().unwrap();
+            w2.join().unwrap();
+
+            // Same invariant: no task left pending unless the flag is still
+            // set for a future drain to pick it up.
+            let pending = item.load(Ordering::SeqCst);
+            let is_scheduled = scheduled.load(Ordering::SeqCst);
+            assert!(
+                !pending || is_scheduled,
+                "serialized task stranded: pending with scheduled == false"
             );
         });
     }

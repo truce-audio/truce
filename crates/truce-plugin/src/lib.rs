@@ -701,7 +701,26 @@ pub trait BackgroundTasks {
     /// A unit of off-thread work. `Send` because the pool moves it across
     /// threads; `'static` because the worker outlives any block.
     type Task: Send + 'static;
-    /// Run one task on the pool. See the trait docs for the contract.
+    /// Run `run_task` one at a time for a given instance ("one-slot" mode).
+    ///
+    /// Default `false`: the pool is shared and lock-free, so a burst that
+    /// re-arms an instance while a worker is still draining it can hand a
+    /// second worker the same instance - `run_task` may run **concurrently
+    /// with itself** for one instance. A handler that only talks to the
+    /// audio thread through lock-free channels / atomics (the reverb
+    /// example's MPMC handoff) is fine that way and keeps maximum
+    /// throughput.
+    ///
+    /// Set `true` when the handler read-modify-writes shared mutable state
+    /// that isn't safe to enter re-entrantly (a scratch buffer, a
+    /// non-atomic cache): the pool then serializes drains so at most one
+    /// `run_task` for this instance runs at a time, without the author
+    /// needing a `try_lock` guard. Tasks are never dropped or reordered;
+    /// serialization only bounds concurrency, so keep the handler short
+    /// (a long serialized handler delays this instance's later tasks).
+    const SERIALIZED: bool = false;
+    /// Run one task on the pool. See the trait docs for the contract,
+    /// including the concurrency note on [`Self::SERIALIZED`].
     fn run_task(task: Self::Task, params: &Self::Params);
 }
 
