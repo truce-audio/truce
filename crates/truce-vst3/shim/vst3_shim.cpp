@@ -1179,27 +1179,46 @@ public:
             }
         }
 
-        /* Deactivated trailing buses: the spec lets the host drop the
-         * AudioBusBuffers for a deactivated last bus entirely, so an
-         * effect with its input bus off arrives here as numInputs == 0
-         * with real output buffers (and mirrored for outputs). The
-         * plug-in negotiated fixed widths; feed the missing side at
-         * that width - shared read-only silence for inputs, per-channel
-         * discard scratch for outputs - instead of a layout it never
-         * agreed to. The true no-bus flush shape already returned
-         * above. Skipped if a host overruns its own maxSamplesPerBlock
-         * promise (the scratch is sized to it). */
-        if (numIn == 0 && g_desc && g_desc->num_inputs > 0 && silenceScratch
-                && (uint32_t)numFrames <= maxFrames) {
-            numIn = g_desc->num_inputs > 32 ? 32 : g_desc->num_inputs;
-            for (uint32_t c = 0; c < numIn; c++)
-                inPtrs[c] = silenceScratch;
-        }
-        if (numOut == 0 && g_desc && g_desc->num_outputs > 0 && trashScratch
-                && (uint32_t)numFrames <= maxFrames) {
-            numOut = g_desc->num_outputs > 32 ? 32 : g_desc->num_outputs;
-            for (uint32_t c = 0; c < numOut; c++)
-                outPtrs[c] = trashScratch + (size_t)c * maxFrames * sizeof(double);
+        /* Deactivated buses: the plug-in negotiated fixed widths
+         * (cur_in / cur_out) and its flat AudioBuffer indexes every
+         * channel, but a deactivated bus reaches process() two ways -
+         * present with null channel pointers, or a trailing bus whose
+         * AudioBusBuffers the host dropped entirely (numInputs short of
+         * the bus count). Either way the missing channels must read as
+         * shared read-only silence (inputs) or absorb writes into
+         * per-channel discard scratch (outputs), never arrive as a null
+         * pointer the Rust bridge turns into an out-of-range empty
+         * slice. Back-fill nulls in place (positions stay aligned since a
+         * present bus still reports its width), then pad the tail up to
+         * the negotiated width for dropped trailing buses. The true
+         * no-bus flush shape already returned above. Skipped if a host
+         * overruns its own maxSamplesPerBlock promise (the scratch is
+         * sized to it). */
+        if ((uint32_t)numFrames <= maxFrames) {
+            if (g_desc && cur_in > 0 && silenceScratch) {
+                const uint32_t wantIn = cur_in > 32 ? 32 : cur_in;
+                for (uint32_t c = 0; c < numIn; c++)
+                    if (!inPtrs[c]) inPtrs[c] = silenceScratch;
+                for (; numIn < wantIn; numIn++)
+                    inPtrs[numIn] = silenceScratch;
+            }
+            if (g_desc && cur_out > 0 && trashScratch) {
+                const uint32_t wantOut = cur_out > 32 ? 32 : cur_out;
+                // Distinct discard blocks allocated in setupProcessing,
+                // sized to the descriptor's output width. Clamp the slot
+                // so a layout wider than that still stays in bounds - an
+                // aliased discard is harmless since trash is never read.
+                const uint32_t trashCh = g_desc->num_outputs > 32 ? 32 : g_desc->num_outputs;
+                for (uint32_t c = 0; c < numOut; c++)
+                    if (!outPtrs[c]) {
+                        const uint32_t slot = (trashCh && c < trashCh) ? c : (trashCh ? trashCh - 1 : 0);
+                        outPtrs[c] = trashScratch + (size_t)slot * maxFrames * sizeof(double);
+                    }
+                for (; numOut < wantOut; numOut++) {
+                    const uint32_t slot = (trashCh && numOut < trashCh) ? numOut : (trashCh ? trashCh - 1 : 0);
+                    outPtrs[numOut] = trashScratch + (size_t)slot * maxFrames * sizeof(double);
+                }
+            }
         }
 
         // Copy input to output for in-place processing

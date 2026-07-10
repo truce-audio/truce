@@ -904,4 +904,90 @@ mod tests {
         }
         assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
     }
+
+    /// A disconnected VST3 sidechain reaches the plugin as block-sized
+    /// silence, not a null pointer. The VST3 shim substitutes silence for
+    /// any missing or null input channel - a deactivated bus arrives with
+    /// null channel buffers, or a trailing bus is dropped from
+    /// `ProcessData` - so the flat channel array always carries the
+    /// negotiated width. This pins the downstream contract: such a channel
+    /// is a readable, zeroed, block-length slice, not the out-of-range
+    /// empty slice a raw null would produce.
+    #[test]
+    fn silence_substituted_sidechain_channels_are_full_length_zeros() {
+        let nf = 512usize;
+        let main_l = vec![0.5f32; nf];
+        let main_r = vec![0.5f32; nf];
+        // What the shim now hands us for a disconnected stereo sidechain:
+        // a block-sized zeroed buffer per channel (shared read-only).
+        let silence = vec![0.0f32; nf];
+        let mut out_l = vec![0.0f32; nf];
+        let mut out_r = vec![0.0f32; nf];
+
+        let in_ptrs = [
+            main_l.as_ptr(),
+            main_r.as_ptr(),
+            silence.as_ptr(),
+            silence.as_ptr(),
+        ];
+        let mut out_ptrs = [out_l.as_mut_ptr(), out_r.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<f32>::default();
+        // SAFETY: every pointer addresses `nf` valid samples that outlive
+        // the buffer; `silence` backs both deactivated-bus channels.
+        unsafe {
+            #[allow(clippy::cast_possible_truncation)]
+            let buf = scratch.build(
+                in_ptrs.as_ptr(),
+                out_ptrs.as_mut_ptr(),
+                4,
+                2,
+                nf as u32,
+                false,
+            );
+            assert_eq!(buf.num_input_channels(), 4);
+            // The reads that panicked when the sidechain arrived as a
+            // null/empty slice now return block-length silence.
+            assert_eq!(buf.input(2).len(), nf);
+            assert_eq!(buf.input(3).len(), nf);
+            assert!(buf.input(2).iter().all(|&s| s == 0.0));
+            assert!(buf.input(3).iter().all(|&s| s == 0.0));
+        }
+    }
+
+    /// The inverse: a raw null channel pointer (what a deactivated bus
+    /// would forward without the shim's substitution) collapses to an
+    /// empty slice that cannot serve a full block - the debug assertion in
+    /// `AudioBuffer::from_slices` catches it. This is the exact hazard the
+    /// shim normalization prevents.
+    #[test]
+    #[should_panic(expected = "exceeds input channel")]
+    #[cfg(debug_assertions)]
+    fn raw_null_sidechain_channel_is_rejected() {
+        let nf = 512usize;
+        let main_l = vec![0.5f32; nf];
+        let main_r = vec![0.5f32; nf];
+        let mut out_l = vec![0.0f32; nf];
+        let mut out_r = vec![0.0f32; nf];
+        let in_ptrs = [
+            main_l.as_ptr(),
+            main_r.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+        ];
+        let mut out_ptrs = [out_l.as_mut_ptr(), out_r.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<f32>::default();
+        // SAFETY: the non-null pointers address `nf` valid samples; the
+        // null channels are the deactivated-bus shape under test.
+        unsafe {
+            #[allow(clippy::cast_possible_truncation)]
+            let _ = scratch.build(
+                in_ptrs.as_ptr(),
+                out_ptrs.as_mut_ptr(),
+                4,
+                2,
+                nf as u32,
+                false,
+            );
+        }
+    }
 }
