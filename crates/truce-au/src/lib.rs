@@ -67,6 +67,7 @@ use truce_core::ump::{
 };
 use truce_core::wrapper::{
     ParamCStrings, SharedPlugin, default_io_channels, lock_plugin, log_midi_ports_clamped,
+    max_io_channels,
     log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, save_extra,
     shared_plugin,
 };
@@ -429,7 +430,10 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let max_frames = (max_frames as usize).max(1024);
         inst.sample_rate = sample_rate;
         inst.max_block_size = max_frames;
-        let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
+        // Size scratch to the widest declared layout: the host can switch
+        // a multi-layout plugin to any of them via the stream format, and
+        // the process buffers must not outgrow this allocation.
+        let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         // Host-set offline flag (`kAudioUnitProperty_OfflineRender` /

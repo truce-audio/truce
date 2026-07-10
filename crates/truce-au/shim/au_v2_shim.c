@@ -144,6 +144,42 @@ static void build_asbd(AudioStreamBasicDescription *asbd, double sampleRate, uin
     asbd->mBytesPerPacket = 4;
 }
 
+// Is `channels` an acceptable count for `scope`'s stream format? A
+// multi-layout plugin (num_layouts > 0) accepts any declared layout's
+// main-bus count, so the host can select mono / stereo / surround from
+// the configs advertised by SupportedNumChannels. A single-layout
+// plugin keeps the one num_inputs / num_outputs count.
+static bool channel_count_supported(uint32_t channels, AudioUnitScope scope) {
+    if (g_descriptor->num_layouts > 0) {
+        const int16_t *arr = scope == kAudioUnitScope_Input
+            ? g_descriptor->layout_in_channels
+            : g_descriptor->layout_out_channels;
+        for (uint32_t i = 0; i < g_descriptor->num_layouts; i++) {
+            if (arr[i] == (int16_t)channels) return true;
+        }
+        return false;
+    }
+    uint32_t only = scope == kAudioUnitScope_Input
+        ? g_descriptor->num_inputs : g_descriptor->num_outputs;
+    return channels == only;
+}
+
+// Is the (in, out) channel pair one of the plugin's declared layouts?
+// SetStreamFormat validates each scope independently, so a host can pair
+// a valid input count with a valid output count that don't belong to the
+// same layout (e.g. 1-in / 2-out). Initialize checks the whole pair here
+// and rejects those combinations.
+static bool layout_pair_supported(uint32_t in, uint32_t out) {
+    if (g_descriptor->num_layouts == 0)
+        return in == g_descriptor->num_inputs && out == g_descriptor->num_outputs;
+    for (uint32_t i = 0; i < g_descriptor->num_layouts; i++) {
+        if ((uint32_t)g_descriptor->layout_in_channels[i] == in
+            && (uint32_t)g_descriptor->layout_out_channels[i] == out)
+            return true;
+    }
+    return false;
+}
+
 static void notify_listeners(TruceAUv2 *inst, AudioUnitPropertyID prop,
                              AudioUnitScope scope, AudioUnitElement elem) {
     for (uint32_t i = 0; i < inst->listenerCount; i++) {
@@ -399,12 +435,24 @@ static OSStatus au_v2_close(void *self_) {
 
 static OSStatus au_v2_initialize(void *self_) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
+
+    // Reject a channel pairing the host assembled from independently-set
+    // scopes that isn't one of the declared layouts (audio-less plugins
+    // keep num_inputs == 0, matching the single (0, num_outputs) layout).
+    uint32_t numOut = inst->outputFormat.mChannelsPerFrame;
+    uint32_t numIn = g_descriptor->num_inputs > 0 ? inst->inputFormat.mChannelsPerFrame : 0;
+    if (!layout_pair_supported(numIn, numOut))
+        return kAudioUnitErr_FormatNotSupported;
+
     if (g_callbacks && inst->rustCtx)
         g_callbacks->reset(inst->rustCtx, inst->sampleRate, inst->maxFramesPerSlice);
 
-    // Allocate internal output buffers
-    uint32_t numOut = g_descriptor->num_outputs;
-    for (uint32_t c = 0; c < numOut && c < 32; c++) {
+    // Allocate internal buffers for the negotiated channel count (a
+    // multi-layout plugin may run at any declared width, not just the
+    // first layout's num_outputs). These stage the input pull as well as
+    // the output, so size to whichever direction is wider.
+    uint32_t numBuf = numIn > numOut ? numIn : numOut;
+    for (uint32_t c = 0; c < numBuf && c < 32; c++) {
         free(inst->outputBuffers[c]);
         inst->outputBuffers[c] = (float *)calloc(inst->maxFramesPerSlice, sizeof(float));
     }
@@ -998,14 +1046,14 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             if (scope == kAudioUnitScope_Output) {
                 if (g_descriptor->num_outputs == 0)
                     return kAudioUnitErr_InvalidElement;
-                if (asbd->mChannelsPerFrame != g_descriptor->num_outputs)
+                if (!channel_count_supported(asbd->mChannelsPerFrame, scope))
                     return kAudioUnitErr_FormatNotSupported;
                 inst->outputFormat = *asbd;
                 inst->sampleRate = asbd->mSampleRate;
             } else if (scope == kAudioUnitScope_Input) {
                 if (g_descriptor->num_inputs == 0)
                     return kAudioUnitErr_InvalidElement;
-                if (asbd->mChannelsPerFrame != g_descriptor->num_inputs)
+                if (!channel_count_supported(asbd->mChannelsPerFrame, scope))
                     return kAudioUnitErr_FormatNotSupported;
                 inst->inputFormat = *asbd;
             } else {
@@ -1414,9 +1462,12 @@ static OSStatus au_v2_render(void *self_,
         return kAudioUnitErr_TooManyFramesToProcess;
 
 
-    // Pull input for effects
-    uint32_t numIn = g_descriptor->num_inputs;
-    uint32_t numOut = g_descriptor->num_outputs;
+    // Pull input for effects. Channel counts come from the negotiated
+    // per-instance stream format so a multi-layout plugin runs at the
+    // width the host selected; an audio-less plugin (num_inputs == 0)
+    // keeps 0 inputs even though its output format is a stereo dummy.
+    uint32_t numIn = g_descriptor->num_inputs > 0 ? inst->inputFormat.mChannelsPerFrame : 0;
+    uint32_t numOut = inst->outputFormat.mChannelsPerFrame;
 
     if (numIn > 0) {
         // Build a temporary ABL pointing to our buffers for the input pull

@@ -334,6 +334,21 @@ pub fn default_io_channels<P: PluginExport>() -> Option<(u32, u32)> {
         .map(|l| (l.total_input_channels(), l.total_output_channels()))
 }
 
+/// `(max_input_channels, max_output_channels)` across every declared bus
+/// layout, or `None` when the plugin declares no layouts. Wrappers that
+/// let the host switch layouts at runtime (AU's per-instance stream
+/// format) size their process-time scratch to this so a later, wider
+/// layout selection doesn't outgrow buffers allocated for the first one.
+#[must_use]
+pub fn max_io_channels<P: PluginExport>() -> Option<(u32, u32)> {
+    P::bus_layouts().iter().fold(None, |acc, l| {
+        let (in_, out) = (l.total_input_channels(), l.total_output_channels());
+        Some(acc.map_or((in_, out), |(ai, ao): (u32, u32)| {
+            (ai.max(in_), ao.max(out))
+        }))
+    })
+}
+
 /// Pick the plugin's first bus layout, or `None` when the plugin
 /// declares no layouts.
 /// Used by wrappers (AAX, VST2) that need to read the layout *before*
