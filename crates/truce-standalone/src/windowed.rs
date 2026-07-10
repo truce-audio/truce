@@ -197,6 +197,9 @@ where
         // The plugin's bus layouts as (in, out) channel counts, for the
         // Bus Layout menu (built only when there's more than one). Channel
         // counts are tiny; clamp the u32->u16 cast rather than truncate.
+        // Only macOS and Windows carry the native menu bar that consumes it;
+        // X11 has no menu, so gate the binding to avoid an unused warning.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         let bus_layouts: Vec<(u16, u16)> = {
             let c16 = |c: u32| u16::try_from(c).unwrap_or(u16::MAX);
             P::bus_layouts()
