@@ -245,7 +245,7 @@ pub fn install(
                 bus_menu,
                 target,
                 bus_layouts,
-                output.current_layout(),
+                output.current_index(),
                 sel!(selectBusLayoutAction:),
             );
             let _: () = msg_send![bus_item, setSubmenu: bus_menu];
@@ -580,21 +580,21 @@ unsafe fn populate_channel_menu(
 
 /// Populate the Bus Layout submenu: one item per declared layout,
 /// labelled by its I/O channel counts and tagged by its channel width
-/// so `selectBusLayoutAction:` can hand the exact `(in, out)` to
-/// `set_layout`. Each item's tag packs `(in << 16) | out`, so two layouts
-/// that share a maximum width still get distinct tags (and checkmarks).
+/// so `selectBusLayoutAction:` can hand the layout index to `set_layout`.
+/// Each item's tag is its layout index, so two layouts that share a maximum
+/// width still get distinct tags (and checkmarks).
 unsafe fn populate_bus_layout_menu(
     menu: *mut Object,
     target: *mut Object,
     layouts: &[(u16, u16)],
-    current_layout: (usize, usize),
+    current_index: usize,
     action: Sel,
 ) {
     unsafe {
-        let current_tag = i64::try_from(current_layout.0 << 16 | current_layout.1).unwrap_or(-1);
-        for (in_ch, out_ch) in layouts {
+        let current_tag = i64::try_from(current_index).unwrap_or(-1);
+        for (idx, (in_ch, out_ch)) in layouts.iter().enumerate() {
             let label = format!("{in_ch} in / {out_ch} out");
-            let tag = i64::from(*in_ch) << 16 | i64::from(*out_ch);
+            let tag = i64::try_from(idx).unwrap_or(-1);
             add_tagged_item(menu, target, action, &label, tag, current_tag);
         }
     }
@@ -968,10 +968,9 @@ fn ensure_class() -> &'static Class {
                     return;
                 };
                 let tag: i64 = msg_send![sender, tag];
-                let num_in = u16::try_from((tag >> 16) & 0xFFFF).unwrap_or(0);
-                let num_out = u16::try_from(tag & 0xFFFF).unwrap_or(0);
-                vlog!("bus layout: {num_in} in / {num_out} out");
-                state.output.set_layout(num_in, num_out);
+                let idx = usize::try_from(tag).unwrap_or(0);
+                vlog!("bus layout: index {idx}");
+                state.output.set_layout(idx);
                 let menu: *mut Object = msg_send![sender, menu];
                 update_channel_checkmarks(menu, tag);
             }

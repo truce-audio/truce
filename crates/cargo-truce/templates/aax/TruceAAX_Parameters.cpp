@@ -353,8 +353,16 @@ void TruceAAX_Parameters::RenderAudio(
     // subset. Passing more channels to Rust than the arrays hold would
     // read past their end, so the counts and the fill loops share the
     // same clamp.
-    constexpr uint32_t kMaxChannels = 8; // 7.1 DTS, the widest stem we register
-    const float* inputs[kMaxChannels] = {};
+    constexpr uint32_t kMaxChannels = 8; // 7.1 DTS, the widest main stem we register
+    // The input array carries the appended sidechain after the main
+    // channels, so it needs room for a full-width main PLUS the declared
+    // sidechain width. Sizing it to kMaxChannels alone silently dropped the
+    // sidechain of a 7.1 main (numIn already == kMaxChannels), feeding Rust
+    // fewer channels than the negotiated layout - an out-of-range read the
+    // Rust bridge panics on, leaving the track permanently silent. The
+    // sidechain never exceeds a full-width bus, so cap it at kMaxChannels.
+    constexpr uint32_t kMaxInputs = kMaxChannels + kMaxChannels;
+    const float* inputs[kMaxInputs] = {};
     float* outputs[kMaxChannels] = {};
 
     uint32_t numIn = mNumInputChannels < kMaxChannels ? mNumInputChannels : kMaxChannels;
@@ -381,7 +389,7 @@ void TruceAAX_Parameters::RenderAudio(
         if (ioRenderInfo->mAudioInputs && extInfo->mSideChainP && *extInfo->mSideChainP != 0)
             scBuf = ioRenderInfo->mAudioInputs[*extInfo->mSideChainP];
         for (uint32_t c = 0;
-             c < g_descriptor.sidechain_in_channels && numIn < kMaxChannels;
+             c < g_descriptor.sidechain_in_channels && numIn < kMaxInputs;
              c++) {
             inputs[numIn++] = scBuf ? scBuf : mSilence.data();
         }

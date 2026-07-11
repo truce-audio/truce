@@ -282,34 +282,25 @@ pub struct OutputController {
     /// plugin drive device outputs 3-4, or fold down to a mono output.
     /// Shared with the callback.
     channel_route: Arc<AtomicUsize>,
-    /// The plugin's active bus layout as a packed `(num_in, num_out)` (see
-    /// [`pack_layout`]). The worker updates it after a `SetLayout` rebuild;
-    /// the Bus Layout menu reads it to mark the active entry.
+    /// The plugin's active bus-layout index (into `P::bus_layouts()`). The
+    /// worker updates it after a `SetLayout` rebuild; the Bus Layout menu
+    /// reads it to mark the active entry. The index (not the channel totals)
+    /// is the identity so two layouts sharing totals stay distinct.
     layout: Arc<AtomicUsize>,
 }
 
 enum OutputCmd {
     SetDevice(Option<String>),
-    /// Switch the plugin to a declared bus layout of exactly these (input,
-    /// output) channel counts. The worker rebuilds the plugin at these
-    /// dimensions and keeps the device stream at a hardware-supported width
-    /// (mapping the plugin output onto it), so an asymmetric layout or a
-    /// width the device can't open natively still works.
+    /// Switch the plugin to the declared bus layout at this index. The index
+    /// is the layout's unambiguous identity - two layouts can share channel
+    /// totals but split main/sidechain differently, so the worker resolves
+    /// the widths from the index. It rebuilds the plugin at those dimensions
+    /// and keeps the device stream at a hardware-supported width (mapping the
+    /// plugin output onto it), so an asymmetric layout or a width the device
+    /// can't open natively still works.
     SetLayout {
-        num_in: u16,
-        num_out: u16,
+        index: usize,
     },
-}
-
-/// Pack a plugin `(num_in, num_out)` layout into one `usize` for the
-/// lock-free share with the menus. Both counts fit in `u16`.
-fn pack_layout(num_in: usize, num_out: usize) -> usize {
-    (num_in << 16) | (num_out & 0xFFFF)
-}
-
-/// Inverse of [`pack_layout`].
-fn unpack_layout(v: usize) -> (usize, usize) {
-    (v >> 16, v & 0xFFFF)
 }
 
 impl OutputController {
@@ -335,18 +326,18 @@ impl OutputController {
         let _ = self.cmd_tx.send(OutputCmd::SetDevice(name));
     }
 
-    /// Switch the plugin to a declared bus layout of exactly `(num_in,
-    /// num_out)`. The plugin is rebuilt at these dimensions; the device
-    /// stream stays at a hardware-supported width and the plugin output is
-    /// mapped onto it (so a mono layout plays through a stereo-only device).
-    pub fn set_layout(&self, num_in: u16, num_out: u16) {
-        let _ = self.cmd_tx.send(OutputCmd::SetLayout { num_in, num_out });
+    /// Switch the plugin to the declared bus layout at `index`. The plugin is
+    /// rebuilt at that layout's dimensions; the device stream stays at a
+    /// hardware-supported width and the plugin output is mapped onto it (so a
+    /// mono layout plays through a stereo-only device).
+    pub fn set_layout(&self, index: usize) {
+        let _ = self.cmd_tx.send(OutputCmd::SetLayout { index });
     }
 
-    /// The plugin's active bus layout as `(num_in, num_out)`.
+    /// The plugin's active bus-layout index (into `P::bus_layouts()`).
     #[must_use]
-    pub fn current_layout(&self) -> (usize, usize) {
-        unpack_layout(self.layout.load(Ordering::Relaxed))
+    pub fn current_index(&self) -> usize {
+        self.layout.load(Ordering::Relaxed)
     }
 
     /// Currently-resolved output device name, or `None` if not
@@ -582,7 +573,8 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // The plugin runs a declared bus layout; the device stream tries to
     // match its output width but falls back to the device default (the
     // plugin output then maps onto whatever channels the device gives).
-    let (num_in, num_out) = selected_bus_layout::<P>(opts);
+    let layout_index = selected_layout_index::<P>(opts);
+    let (num_in, num_out, num_main_in) = layout_at_index::<P>(layout_index);
     let requested_channels = u16::try_from(num_out).ok().filter(|&c| c > 0);
     let config: cpal::StreamConfig =
         resolve_config(&initial_output, &default_config, opts, requested_channels);
@@ -658,9 +650,10 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let output_enabled = Arc::new(AtomicBool::new(opts.output_enabled.unwrap_or(true)));
 
     let output_channel_route = Arc::new(AtomicUsize::new(0));
-    // Shared active bus layout, packed (num_in, num_out). Seeded with the
-    // launch selection; the worker updates it on a `SetLayout` rebuild.
-    let output_layout_shared = Arc::new(AtomicUsize::new(pack_layout(num_in, num_out)));
+    // Shared active bus-layout index. Seeded with the launch selection; the
+    // worker updates it on a `SetLayout` rebuild. The index (not the channel
+    // totals) is the identity so two layouts sharing totals stay distinct.
+    let output_layout_shared = Arc::new(AtomicUsize::new(layout_index));
     let output_controller = OutputController {
         enabled: Arc::clone(&output_enabled),
         cmd_tx: output_cmd_tx,
@@ -710,7 +703,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // route it, so warn and ignore rather than fail.
     #[cfg(feature = "playback")]
     let sidechain_playback = {
-        let sc_width = num_in.saturating_sub(main_input_width::<P>(num_in, num_out));
+        let sc_width = num_in.saturating_sub(num_main_in);
         match &opts.sidechain_file {
             Some(path) if is_effect && sc_width > 0 => {
                 let src = crate::playback::PlaybackSource::from_wav(path, sample_rate, sc_width)?;
@@ -776,6 +769,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
                 sample_rate,
                 num_in,
                 num_out,
+                num_main_in,
                 is_effect,
                 res,
             );
@@ -984,6 +978,11 @@ fn output_worker<P: PluginExport>(
     // device runs `num_out == 1` but the stream stays at 2.
     mut num_in: usize,
     mut num_out: usize,
+    // Main-input width of the active layout (channels past it are the
+    // sidechain). Resolved by index from the selected layout, so it's
+    // reassigned - not re-derived from ambiguous totals - on a runtime
+    // `SetLayout` switch below.
+    mut num_main_in: usize,
     is_effect: bool,
     res: OutputResources<P>,
 ) {
@@ -997,6 +996,7 @@ fn output_worker<P: PluginExport>(
         config.channels as usize,
         num_in,
         num_out,
+        num_main_in,
         is_effect,
         &res,
         &mut stream,
@@ -1018,6 +1018,7 @@ fn output_worker<P: PluginExport>(
                     config.channels as usize,
                     num_in,
                     num_out,
+                    num_main_in,
                     is_effect,
                     &res,
                     &mut stream,
@@ -1025,10 +1026,7 @@ fn output_worker<P: PluginExport>(
                     eprintln!("output device switch failed: {e}");
                 }
             }
-            OutputCmd::SetLayout {
-                num_in: new_in,
-                num_out: new_out,
-            } => {
+            OutputCmd::SetLayout { index } => {
                 let host = cpal::default_host();
                 let name = res.current_name.lock().ok().and_then(|g| g.clone());
                 let device = match name.as_deref() {
@@ -1039,18 +1037,21 @@ fn output_worker<P: PluginExport>(
                     eprintln!("bus-layout: no output device");
                     continue;
                 };
+                let (new_in, new_out, new_main_in) = layout_at_index::<P>(index);
+                let new_out_dev = u16::try_from(new_out).unwrap_or(u16::MAX);
                 // Keep the device stream at a width the hardware can open.
                 // Prefer the layout's output width (so a surround device
                 // plays surround), else keep the current stream width and
                 // map the plugin output onto it (a mono layout plays
                 // through a stereo-only device instead of being rejected).
-                config.channels = if device_supports_output_channels(&dev, new_out) {
-                    new_out
+                config.channels = if device_supports_output_channels(&dev, new_out_dev) {
+                    new_out_dev
                 } else {
                     config.channels
                 };
-                num_in = new_in as usize;
-                num_out = new_out as usize;
+                num_in = new_in;
+                num_out = new_out;
+                num_main_in = new_main_in;
                 stream = None;
                 if let Err(e) = open_output_stream::<P>(
                     name.as_deref(),
@@ -1060,14 +1061,14 @@ fn output_worker<P: PluginExport>(
                     config.channels as usize,
                     num_in,
                     num_out,
+                    num_main_in,
                     is_effect,
                     &res,
                     &mut stream,
                 ) {
                     eprintln!("bus-layout switch failed: {e}");
                 } else {
-                    res.layout
-                        .store(pack_layout(num_in, num_out), Ordering::Relaxed);
+                    res.layout.store(index, Ordering::Relaxed);
                 }
             }
         }
@@ -1086,6 +1087,10 @@ fn open_output_stream<P: PluginExport>(
     channels: usize,
     num_in: usize,
     num_out: usize,
+    // Main-input width of the selected layout; channels [num_main_in,
+    // num_in) are the sidechain bus. Resolved by the caller from the
+    // selected layout index (see `layout_at_index`).
+    num_main_in: usize,
     is_effect: bool,
     res: &OutputResources<P>,
     stream_slot: &mut Option<cpal::Stream>,
@@ -1178,10 +1183,9 @@ fn open_output_stream<P: PluginExport>(
         p.reset(&AudioConfig::new(sample_rate, frame_bound));
     }
     scratch.ensure_capacity(num_in, num_out, frame_bound);
-    // Split point between the main input bus and any sidechain bus, so the
-    // callback can feed the playback file into the sidechain. Computed once
-    // per stream open (the layout is fixed for the stream's lifetime).
-    let num_main_in = main_input_width::<P>(num_in, num_out);
+    // `num_main_in` (the main/sidechain split of the selected layout) is
+    // resolved by the caller and passed in - the layout is fixed for the
+    // stream's lifetime.
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -1426,41 +1430,42 @@ fn find_device(host: &cpal::Host, name: &str, output: bool) -> Option<cpal::Devi
 /// and falls back); with no selection the plugin's first (default) layout
 /// is used. The plugin always runs a *declared* layout - never the
 /// device's default channel count.
-fn selected_bus_layout<P: PluginExport>(opts: &Options) -> (usize, usize) {
-    let layouts = P::bus_layouts();
-    let idx = match opts.bus_layout {
-        Some(i) if i < layouts.len() => i,
+/// Returns `(total_in, total_out, main_in)` for the selected layout. The
+/// main/sidechain split (`main_in`; channels past it are the sidechain the
+/// standalone feeds from `--sidechain-file`) is read from the SELECTED
+/// layout by index - not from a total-channel match, which picks the wrong
+/// layout when two share totals but split differently, routing the
+/// sidechain file over the main channels. The offline path pins the split
+/// the same way.
+fn selected_layout_index<P: PluginExport>(opts: &Options) -> usize {
+    let count = P::bus_layouts().len();
+    match opts.bus_layout {
+        Some(i) if i < count => i,
         Some(i) => {
             eprintln!(
-                "--bus-layout {i}: out of range (plugin declares {} layout(s)); \
-                 using the default layout",
-                layouts.len()
+                "--bus-layout {i}: out of range (plugin declares {count} layout(s)); \
+                 using the default layout"
             );
             0
         }
         None => 0,
-    };
-    layouts.get(idx).map_or((0, 0), |l| {
+    }
+}
+
+/// `(total_in, total_out, main_in)` for the declared layout at `idx`. The
+/// layout index is the unambiguous identity (two layouts can share channel
+/// totals but split main/sidechain differently), so both the initial
+/// selection and a runtime `SetLayout` switch resolve widths from here.
+fn layout_at_index<P: PluginExport>(idx: usize) -> (usize, usize, usize) {
+    P::bus_layouts().get(idx).map_or((0, 0, 0), |l| {
         (
             l.total_input_channels() as usize,
             l.total_output_channels() as usize,
+            l.inputs
+                .first()
+                .map_or(0, |b| b.channels.channel_count() as usize),
         )
     })
-}
-
-/// Main input bus width of the declared layout matching `(num_in,
-/// num_out)`. Any input channels past this are the sidechain / aux bus,
-/// which the standalone feeds from the playback file. Falls back to
-/// `num_in` (no sidechain) when nothing matches.
-fn main_input_width<P: PluginExport>(num_in: usize, num_out: usize) -> usize {
-    P::bus_layouts()
-        .iter()
-        .find(|l| {
-            l.total_input_channels() as usize == num_in
-                && l.total_output_channels() as usize == num_out
-        })
-        .and_then(|l| l.inputs.first())
-        .map_or(num_in, |b| b.channels.channel_count() as usize)
 }
 
 /// Whether the output device advertises a config with exactly `ch`

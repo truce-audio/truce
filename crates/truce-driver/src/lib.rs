@@ -778,9 +778,12 @@ impl<P: PluginExport> PluginDriver<P> {
         // by hand, which silently disagreed with the driver's auto-pick
         // when callers later passed `.channels(...)`.
         let channels = self.channels.unwrap_or_else(|| {
-            let layouts = P::bus_layouts();
-            let layout = &layouts[0];
-            let outs = layout.total_output_channels() as usize;
+            // `.first()`, not `[0]`: a plugin that declares no bus layout
+            // must not panic the driver. Fall back to stereo, same as a
+            // layout with no output channels.
+            let outs = P::bus_layouts()
+                .first()
+                .map_or(0, |l| l.total_output_channels() as usize);
             if outs > 0 { outs } else { 2 }
         });
 
