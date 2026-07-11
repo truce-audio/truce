@@ -13,7 +13,6 @@
 use std::ffi::{CStr, CString, c_void};
 use std::mem;
 use std::os::raw::c_char;
-use std::ptr;
 use std::slice;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -37,9 +36,9 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, enter_plugin, first_bus_layout, log_midi_ports_clamped,
-    log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
-    run_register, save_extra, shared_plugin,
+    ParamCStrings, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
+    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
+    run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
 use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
@@ -1449,16 +1448,7 @@ pub unsafe fn _format_param<P: PluginExport>(
         }
         let inst = &*ctx.cast::<AaxInstance<P>>();
         if let Some(text) = inst.params_arc.format_value(id, value) {
-            let bytes = text.as_bytes();
-            let mut len = bytes.len().min((out_len as usize) - 1);
-            // Truncate on a char boundary: a torn multi-byte UTF-8 tail (the
-            // "°" of a Degrees unit, say) is an invalid C string that strict
-            // hosts reject wholesale.
-            while len > 0 && !text.is_char_boundary(len) {
-                len -= 1;
-            }
-            ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
-            *out.add(len) = 0;
+            let _ = copy_c_str(out, out_len as usize, &text);
         }
     });
 }

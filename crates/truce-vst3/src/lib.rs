@@ -35,7 +35,7 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, enter_plugin, find_bus_layout,
+    ParamCStrings, SharedPlugin, copy_c_str, default_io_channels, enter_plugin, find_bus_layout,
     log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, save_extra,
     shared_plugin,
 };
@@ -370,8 +370,11 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     // Dropping the instance cascades into the editor's `Drop` (wgpu surface
-    // / NSView / baseview / runloop-timer teardown). A panic there on host
-    // quit would abort the host; swallow it - the process is going away.
+    // / NSView / baseview / runloop-timer teardown). A panic there would
+    // unwind across this `extern "C"` boundary and abort the host. Hosts
+    // destroy instances routinely mid-session - removing a plugin from a
+    // track, closing a project - not just at quit, so swallowing the panic
+    // keeps a live host alive; the instance is being torn down regardless.
     run_extern_callback_with::<P, ()>("vst3", "destroy", (), || unsafe {
         if !ctx.is_null() {
             drop(Box::from_raw(ctx.cast::<Vst3Instance<P>>()));
@@ -1085,19 +1088,7 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         match inst.params_arc.format_value(id, value) {
-            Some(text) => {
-                let bytes = text.as_bytes();
-                let mut len = bytes.len().min((out_len as usize) - 1);
-                // Truncate on a char boundary: a torn multi-byte UTF-8 tail
-                // (the "°" of a Degrees unit, say) is an invalid C string
-                // that strict hosts reject wholesale.
-                while len > 0 && !text.is_char_boundary(len) {
-                    len -= 1;
-                }
-                std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
-                *out.add(len) = 0;
-                len_u32(len)
-            }
+            Some(text) => len_u32(copy_c_str(out, out_len as usize, &text)),
             None => 0,
         }
     })

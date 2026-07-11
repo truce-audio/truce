@@ -29,7 +29,7 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, enter_plugin, first_bus_layout,
+    ParamCStrings, SharedPlugin, copy_c_str, default_io_channels, enter_plugin, first_bus_layout,
     log_midi_ports_clamped, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
     run_register, save_extra, shared_plugin,
 };
@@ -878,19 +878,7 @@ unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
             return 0;
         };
         match inst.params_arc.format_value(id, plain) {
-            Some(text) => {
-                let bytes = text.as_bytes();
-                let mut len = bytes.len().min((out_len as usize) - 1);
-                // Truncate on a char boundary: a torn multi-byte UTF-8 tail
-                // (the "°" of a Degrees unit, say) is an invalid C string
-                // that strict hosts reject wholesale.
-                while len > 0 && !text.is_char_boundary(len) {
-                    len -= 1;
-                }
-                std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
-                *out.add(len) = 0;
-                len_u32(len)
-            }
+            Some(text) => len_u32(copy_c_str(out, out_len as usize, &text)),
             None => 0,
         }
     })

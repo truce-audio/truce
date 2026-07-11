@@ -17,6 +17,7 @@
 
 use std::any::type_name;
 use std::ffi::CString;
+use std::os::raw::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
@@ -434,6 +435,40 @@ fn extract_panic_msg(payload: &Box<dyn std::any::Any + Send>) -> &str {
     }
 }
 
+/// Copy `text` into the host's C-string buffer `out` of capacity `out_len`
+/// bytes (including the trailing NUL), NUL-terminate, and return the number
+/// of content bytes written (excluding the NUL).
+///
+/// Truncates on a UTF-8 char boundary: audio param display strings are full
+/// of multi-byte characters (`°`, `µs`, `−12 dB`, `Δ`, `♯`), and cutting one
+/// mid-codepoint yields an invalid C string that strict host readers reject
+/// wholesale. Every format wrapper's `format_value` path funnels through
+/// here so the truncation rule lives in one place, not five copies.
+///
+/// # Safety
+/// `out` must be valid for writes of `out_len` bytes, and `out_len` must be
+/// `> 0`. Callers guard `out_len == 0` / a null `out` as "host wants
+/// nothing" before calling.
+#[must_use]
+pub unsafe fn copy_c_str(out: *mut c_char, out_len: usize, text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut len = bytes.len().min(out_len - 1);
+    // Walk back off a torn multi-byte tail. `is_char_boundary(bytes.len())`
+    // is always true, so a string that fits untouched never loops.
+    while len > 0 && !text.is_char_boundary(len) {
+        len -= 1;
+    }
+    // SAFETY: `len < out_len` (so `out.add(len)` is in bounds for the NUL),
+    // and `out` is valid for `out_len` writes per the contract. Reinterpreting
+    // the `u8` bytes as `c_char` is a bit-preserving copy on every platform
+    // (`c_char` is `i8` or `u8`).
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
+        *out.add(len) = 0;
+    }
+    len
+}
+
 #[cfg(test)]
 mod plugin_cell_tests {
     use std::sync::Arc;
@@ -488,5 +523,66 @@ mod plugin_cell_tests {
         })
         .join();
         assert_eq!(*enter_plugin(&plugin), 7);
+    }
+}
+
+#[cfg(test)]
+mod copy_c_str_tests {
+    use super::copy_c_str;
+    use std::os::raw::c_char;
+
+    /// Copy `text` into a `cap`-byte buffer; return `(written_len, content)`
+    /// where `content` is the NUL-terminated bytes read back as a `String`.
+    fn run(text: &str, cap: usize) -> (usize, String) {
+        let mut buf = vec![0 as c_char; cap];
+        // SAFETY: `buf` is `cap` `c_char`, and `cap > 0` in every case here.
+        let n = unsafe { copy_c_str(buf.as_mut_ptr(), cap, text) };
+        // `c_char` -> `u8` is the bit-preserving inverse of the copy.
+        #[allow(clippy::cast_sign_loss)]
+        let bytes: Vec<u8> = buf[..n].iter().map(|&c| c as u8).collect();
+        (n, String::from_utf8(bytes).unwrap())
+    }
+
+    #[test]
+    fn copies_when_it_fits() {
+        let (n, s) = run("-6 dB", 32);
+        assert_eq!(n, 5);
+        assert_eq!(s, "-6 dB");
+    }
+
+    #[test]
+    fn writes_the_trailing_nul() {
+        let mut buf = [1 as c_char; 8];
+        // SAFETY: 8-byte buffer, capacity 8.
+        let n = unsafe { copy_c_str(buf.as_mut_ptr(), 8, "ab") };
+        assert_eq!(n, 2);
+        assert_eq!(buf[2], 0, "NUL terminator written after the content");
+    }
+
+    #[test]
+    fn truncates_ascii_to_capacity() {
+        // cap 4 -> 3 content bytes + NUL.
+        let (n, s) = run("abcdef", 4);
+        assert_eq!(n, 3);
+        assert_eq!(s, "abc");
+    }
+
+    #[test]
+    fn truncates_on_a_char_boundary() {
+        // "12°" is [0x31, 0x32, 0xC2, 0xB0]. cap 4 -> 3 content bytes would
+        // cut '°' (U+00B0) mid-codepoint; the guard backs off to 2 so the
+        // result is valid UTF-8, not a torn tail a strict host rejects.
+        let (n, s) = run("12°", 4);
+        assert_eq!(n, 2, "dropped the half-written degree sign");
+        assert_eq!(s, "12");
+    }
+
+    #[test]
+    fn multibyte_that_fits_is_untouched() {
+        // U+2212 MINUS SIGN (3 bytes) plus " 12 dB".
+        let text = "−12 dB";
+        let (n, s) = run(text, 32);
+        assert_eq!(n, text.len());
+        assert_eq!(s, text);
     }
 }
