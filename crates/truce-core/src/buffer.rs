@@ -83,10 +83,13 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
                     );
                 }
             }
-            // Verify num_samples doesn't exceed any slice length.
+            // Verify num_samples doesn't exceed any slice length. An empty
+            // input slice is an in-place channel (`supports_in_place`): the
+            // plugin reads+writes via `in_out_mut`, so there's no separate
+            // input to bound-check. Any non-empty slice must cover the block.
             for (i, inp) in inputs.iter().enumerate() {
                 assert!(
-                    num_samples <= inp.len(),
+                    inp.is_empty() || num_samples <= inp.len(),
                     "AudioBuffer: num_samples ({num_samples}) exceeds input channel {i} length ({})",
                     inp.len(),
                 );
@@ -154,8 +157,17 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
 
     #[must_use]
     pub fn input(&self, channel: usize) -> &[S] {
+        let s = self.inputs[channel];
+        // An empty backing slice marks an in-place channel: the host aliases
+        // it and the plugin opted into `supports_in_place`, so it reads and
+        // writes the shared buffer through `in_out_mut`. A real input slice
+        // would alias the output. Return the empty slice as-is; slicing
+        // `[offset..end]` would be out of range.
+        if s.is_empty() {
+            return s;
+        }
         let end = self.offset + self.num_samples;
-        &self.inputs[channel][self.offset..end]
+        &s[self.offset..end]
     }
 
     pub fn output(&mut self, channel: usize) -> &mut [S] {
@@ -933,6 +945,34 @@ mod tests {
             for i in 0..4 {
                 let v = buf.input(0)[i];
                 buf.output(0)[i] = v * 10.0;
+            }
+        }
+        assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn in_place_true_path_hands_shared_buffer() {
+        // `supports_in_place = true`: the host aliases in/out, so the wrapper
+        // skips the copy. `input(ch)` is empty and the plugin reads+writes
+        // the shared buffer through `in_out_mut`. This is the zero-copy path
+        // the `f64_wire_in_place_snapshots_input` test (opting out) never
+        // exercises - and the one that used to panic at construction (debug)
+        // or in `input()` (release).
+        let mut io: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let in_ptrs = [io.as_ptr()];
+        let mut out_ptrs = [io.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<f32>::default();
+        // SAFETY: the aliased pointer addresses 4 valid samples that outlive
+        // the buffer.
+        unsafe {
+            let mut buf = scratch.build(in_ptrs.as_ptr(), out_ptrs.as_mut_ptr(), 1, 1, 4, true);
+            assert!(buf.is_in_place(0));
+            assert!(buf.input(0).is_empty(), "in-place input(ch) is empty");
+            let io_ch = buf.in_out_mut(0);
+            assert_eq!(io_ch.len(), 4);
+            for s in io_ch.iter_mut() {
+                *s *= 10.0; // read the current (input) value, write in place
             }
         }
         assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
