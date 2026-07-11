@@ -1832,54 +1832,81 @@ fn audio_callback<P: PluginExport>(
         );
     }
 
-    // MIDI-only plugins declare zero output buses, so `channel_bufs` is
-    // empty even though the device stream still has `channels` to fill.
-    // The capture, mute, and route-mapping paths below all index
-    // `channel_bufs[..]`, so silence the device buffer and return before
-    // any of them can underflow `len() - 1` or index an empty buffer.
-    if channel_bufs.is_empty() {
+    let route = ChannelRoute::decode(output_channel_route.load(Ordering::Relaxed));
+    write_output_to_device(
+        data,
+        channels,
+        num_frames,
+        channel_bufs,
+        output_enabled.load(Ordering::Relaxed),
+        route,
+        #[cfg(feature = "playback")]
+        capture,
+    );
+}
+
+/// Map the plugin's rendered output onto the interleaved device buffer
+/// `data`. `channel_bufs` holds one `Vec<f32>` per plugin output channel
+/// (each `num_frames` long); `channels` is the device interleave stride.
+///
+/// A layout with no output channels - a MIDI-only instrument *or* an
+/// input-only analyzer / sink - leaves `channel_bufs` empty. There is then
+/// nothing to route, and every path below indexes `channel_bufs[..]`
+/// (`Direct` via `n_buf - 1`, `Stereo` / `Mono` via `[0]` / `[1]`), so the
+/// empty case is silenced and returned first. Keeping that guard here, next
+/// to the indexing it protects, is deliberate: cpal drives this from an
+/// `extern "C"` callback on the OS audio thread, where a `0 - 1` underflow
+/// panic (or an empty-`Vec` index) would abort the host process.
+///
+/// `output_enabled == false` is device mute: the plugin already ran, so the
+/// `--output-file` capture copy is still taken (mute is speaker silence, not
+/// a bounce cut), then the device buffer is zeroed.
+fn write_output_to_device(
+    data: &mut [f32],
+    channels: usize,
+    num_frames: usize,
+    channel_bufs: &[Vec<f32>],
+    output_enabled: bool,
+    route: ChannelRoute,
+    #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
+) {
+    let n_buf = channel_bufs.len();
+    if n_buf == 0 {
         data.fill(0.0);
         return;
     }
 
-    // `--output-file` capture: hand a copy of the post-process,
-    // pre-mute output to the writer thread. Mute is *device*
-    // silence (speakers off); the file should still get the
-    // real plugin output, matching every DAW's mute-and-bounce.
-    // The capture path transfers Vec ownership to the writer thread
-    // (channel-bounded `mpsc::sync_channel`), so the per-block alloc
-    // here can't be amortized without a free-list pool. Left as-is -
-    // `--output-file` is the offline render/capture path (often paired
-    // with `--no-playback`), not the real-time playback hot path.
+    // `--output-file` capture: hand a copy of the post-process, pre-mute
+    // output to the writer thread. The capture path transfers Vec ownership
+    // to the writer thread (channel-bounded `mpsc::sync_channel`), so the
+    // per-block alloc here can't be amortized without a free-list pool. Left
+    // as-is - `--output-file` is the offline render/capture path (often
+    // paired with `--no-playback`), not the real-time playback hot path.
     #[cfg(feature = "playback")]
     if let Some(pusher) = capture {
         let mut interleaved = vec![0.0_f32; num_frames * channels];
         for frame in 0..num_frames {
             for ch in 0..channels {
-                let ch_idx = ch.min(channel_bufs.len() - 1);
+                let ch_idx = ch.min(n_buf - 1);
                 interleaved[frame * channels + ch] = channel_bufs[ch_idx][frame];
             }
         }
         pusher.submit(interleaved);
     }
 
-    // Output mute: keep the plugin running (transport, MIDI, meters
-    // all still tick) but zero-fill the device buffer so the
-    // speakers stay silent. Cheaper and more responsive than
-    // tearing down the cpal stream.
-    if !output_enabled.load(Ordering::Relaxed) {
+    // Output mute: keep the plugin running (transport, MIDI, meters all still
+    // tick) but zero-fill the device buffer so the speakers stay silent.
+    // Cheaper and more responsive than tearing down the cpal stream.
+    if !output_enabled {
         data.fill(0.0);
         return;
     }
 
     // Map the plugin's output bus onto device output channels per the
-    // selected route. `Direct` is the 1:1 default; `Stereo` drives a
-    // chosen device pair (other channels silent); `Mono` folds the
-    // plugin's first two channels down into one device channel. The
-    // non-Direct modes clear the buffer first since they only write
-    // the selected channels.
-    let route = ChannelRoute::decode(output_channel_route.load(Ordering::Relaxed));
-    let n_buf = channel_bufs.len();
+    // selected route. `Direct` is the 1:1 default; `Stereo` drives a chosen
+    // device pair (other channels silent); `Mono` folds the plugin's first
+    // two channels down into one device channel. The non-Direct modes clear
+    // the buffer first since they only write the selected channels.
     match route {
         ChannelRoute::Direct => {
             for frame in 0..num_frames {
@@ -1917,7 +1944,103 @@ fn audio_callback<P: PluginExport>(
 
 #[cfg(test)]
 mod tests {
-    use super::ChannelRoute;
+    use super::{ChannelRoute, write_output_to_device};
+
+    /// Call `write_output_to_device` the same way `audio_callback` does,
+    /// threading the `playback`-gated `capture` arg through so the test
+    /// compiles in both feature configs.
+    fn route(
+        data: &mut [f32],
+        channels: usize,
+        num_frames: usize,
+        channel_bufs: &[Vec<f32>],
+        output_enabled: bool,
+        route: ChannelRoute,
+    ) {
+        write_output_to_device(
+            data,
+            channels,
+            num_frames,
+            channel_bufs,
+            output_enabled,
+            route,
+            #[cfg(feature = "playback")]
+            None,
+        );
+    }
+
+    #[test]
+    fn zero_output_layout_silences_without_underflow() {
+        // A MIDI-only instrument or an input-only analyzer / sink declares no
+        // output buses, so `channel_bufs` is empty while the device stream
+        // still asks for `channels` frames. Routing must not compute
+        // `0usize - 1` or index an empty buffer (either aborts the cpal audio
+        // thread); it silences the device and returns.
+        let channels = 2;
+        let num_frames = 4;
+        let channel_bufs: Vec<Vec<f32>> = Vec::new();
+        for &r in &[
+            ChannelRoute::Direct,
+            ChannelRoute::Stereo { base: 0 },
+            ChannelRoute::Mono { base: 0 },
+        ] {
+            let mut data = vec![7.0_f32; num_frames * channels];
+            route(&mut data, channels, num_frames, &channel_bufs, true, r);
+            assert!(
+                data.iter().all(|&s| s == 0.0),
+                "zero-output layout must silence the device buffer ({r:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_route_maps_and_clamps_channels() {
+        let channels = 2;
+        let num_frames = 2;
+        // Mono plugin output on a stereo device: `ch.min(n_buf - 1)` folds
+        // both device channels onto the single plugin channel.
+        let mono = vec![vec![0.25_f32, 0.5]];
+        let mut data = vec![0.0_f32; num_frames * channels];
+        route(
+            &mut data,
+            channels,
+            num_frames,
+            &mono,
+            true,
+            ChannelRoute::Direct,
+        );
+        assert_eq!(data, vec![0.25, 0.25, 0.5, 0.5]);
+
+        // Stereo plugin output maps 1:1.
+        let stereo = vec![vec![0.1_f32, 0.2], vec![0.3, 0.4]];
+        let mut data = vec![0.0_f32; num_frames * channels];
+        route(
+            &mut data,
+            channels,
+            num_frames,
+            &stereo,
+            true,
+            ChannelRoute::Direct,
+        );
+        assert_eq!(data, vec![0.1, 0.3, 0.2, 0.4]);
+    }
+
+    #[test]
+    fn muted_output_zeroes_device_buffer() {
+        let channels = 2;
+        let num_frames = 2;
+        let stereo = vec![vec![0.1_f32, 0.2], vec![0.3, 0.4]];
+        let mut data = vec![9.0_f32; num_frames * channels];
+        route(
+            &mut data,
+            channels,
+            num_frames,
+            &stereo,
+            false,
+            ChannelRoute::Direct,
+        );
+        assert!(data.iter().all(|&s| s == 0.0), "mute silences the device");
+    }
 
     #[test]
     fn encode_decode_roundtrips() {

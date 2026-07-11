@@ -2,16 +2,20 @@
 
 Notable changes per release.
 
-## 6.1.1
+## 6.1.2
 
-- Standalone no longer crashes on MIDI-only plugins (zero output buses, e.g. transpose / arpeggio), which previously panicked on the first audio callback. MIDI output from the standalone isn't wired up yet, so their emitted events still go nowhere.
-- Author-code and GUI-teardown panics can't abort the host: instance create/destroy and param format/parse callbacks are panic-guarded on every format, closing the remaining gaps on VST3, AAX, and CLAP.
-- Parameter writes clamp to the declared range (float, int, and enum) and reject non-finite floats, and the smoother self-heals from a NaN accumulator, so a corrupt project or preset can't poison the audio path.
 - Every format wrapper reaches its instance through a shared reference with per-block scratch and editor state behind ownership cells, removing the cross-thread aliasing between the audio thread's process block and concurrent host-thread param/GUI callbacks (CLAP, VST3, VST2, AU, AAX). A Tree-Borrows Miri harness gates it.
 - VST2 process scratch is sized to the widest declared bus layout, not the default one, so a wider layout selection can't allocate on the audio thread.
 - GUI resize/scale entries are panic-guarded: CLAP `gui_set_scale`/`gui_get_size`/`gui_can_resize`/`gui_get_resize_hints`/`gui_set_size`/`gui_adjust_size` and every AAX `editor_*` entry now firewall author `Editor` calls instead of unwinding through the host during a resize.
 - iOS editor thunks (tick, touch, and keyboard selectors on the built-in, egui, iced, and slint backends) catch panics at the UIKit boundary, so author view code or an allocation failure can't abort the AUv3 host.
 - LV2: `time:Position` / `patch:Set` property decoders bound each atom value against the bytes remaining in the object body, not just the atom's claimed size, so a truncated trailing property can no longer over-read up to 8 bytes past the host atom-port buffer on the audio thread.
+- Standalone: the zero-output guard moved next to the channel indexing it protects, with regression tests covering input-only analyzer / sink layouts as well as MIDI-only instruments.
+
+## 6.1.1
+
+- Standalone no longer crashes on MIDI-only plugins (zero output buses, e.g. transpose / arpeggio), which previously panicked on the first audio callback. MIDI output from the standalone isn't wired up yet, so their emitted events still go nowhere.
+- Author-code and GUI-teardown panics can't abort the host: instance create/destroy and param format/parse callbacks are panic-guarded on every format, closing the remaining gaps on VST3, AAX, and CLAP.
+- Parameter writes clamp to the declared range (float, int, and enum) and reject non-finite floats, and the smoother self-heals from a NaN accumulator, so a corrupt project or preset can't poison the audio path.
 
 ## 6.1.0
 
