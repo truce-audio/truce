@@ -64,6 +64,7 @@ struct LogicSymbols<S: Sample> {
     tail: fn(*const ()) -> u32,
     save_state: fn(*const ()) -> Vec<u8>,
     snapshot_into: fn(*const (), &mut Vec<u8>) -> bool,
+    snapshot_version: fn(*const ()) -> Option<u64>,
     load_state: fn(*mut (), &[u8]) -> Result<(), StateLoadError>,
     state_changed: fn(*mut (), *const ()),
     /// Structural fingerprint of the plugin's `State`. The shell keeps
@@ -110,6 +111,7 @@ impl<S: Sample> LogicSymbols<S> {
             tail: sym!(b"truce_tail", fn(*const ()) -> u32),
             save_state: sym!(b"truce_save_state", fn(*const ()) -> Vec<u8>),
             snapshot_into: sym!(b"truce_snapshot_into", fn(*const (), &mut Vec<u8>) -> bool),
+            snapshot_version: sym!(b"truce_snapshot_version", fn(*const ()) -> Option<u64>),
             load_state: sym!(
                 b"truce_load_state",
                 fn(*mut (), &[u8]) -> Result<(), StateLoadError>
@@ -467,6 +469,16 @@ impl<S: Sample> NativeLoader<S> {
         self.symbols
             .as_ref()
             .is_some_and(|s| (s.snapshot_into)(state, buf))
+    }
+
+    /// Snapshot generation token for the loaded logic, or `None` when no
+    /// dylib is loaded or the plugin doesn't version its snapshot (in
+    /// which case the shell re-serializes every block, as before).
+    #[must_use]
+    pub fn snapshot_version(&self, state: *const ()) -> Option<u64> {
+        self.symbols
+            .as_ref()
+            .and_then(|s| (s.snapshot_version)(state))
     }
 
     /// Restore `state` from `data`, then fire `state_changed` in the same

@@ -41,6 +41,8 @@ use std::time::Duration;
 
 use crossbeam_queue::ArrayQueue;
 
+use crate::snapshot::SnapshotPublisher;
+
 /// Preallocated inbound-queue capacity per instance. Mirrors
 /// `EVENT_LIST_PREALLOC`: a block that schedules more tasks than this
 /// drops the overflow (`try_spawn` returns `Err`) rather than
@@ -435,12 +437,27 @@ impl TaskSpawnerBundle {
 /// `init` argument.
 pub struct InitContext {
     tasks: Option<AnyTaskSpawner>,
+    /// Handle for the off-thread snapshot lane (large state save), when
+    /// the shell wired one. `None` in `--shell` hot-reload builds, where
+    /// (like `tasks`) it isn't threaded across the dylib boundary yet -
+    /// so the off-thread snapshot path is a static-build feature.
+    snapshot: Option<SnapshotPublisher>,
 }
 
 impl InitContext {
     #[must_use]
     pub fn new(tasks: Option<AnyTaskSpawner>) -> Self {
-        Self { tasks }
+        Self {
+            tasks,
+            snapshot: None,
+        }
+    }
+
+    /// Attach the off-thread snapshot publisher (see [`SnapshotPublisher`]).
+    #[must_use]
+    pub fn with_snapshot(mut self, snapshot: SnapshotPublisher) -> Self {
+        self.snapshot = Some(snapshot);
+        self
     }
 
     /// The task spawner for task type `T`, or `None` if the plugin declared
@@ -448,6 +465,15 @@ impl InitContext {
     #[must_use]
     pub fn tasks<T: Send + 'static>(&self) -> Option<TaskSpawner<T>> {
         self.tasks.as_ref().and_then(AnyTaskSpawner::downcast::<T>)
+    }
+
+    /// Handle to publish large custom state off the audio thread. Stash it
+    /// in your DSP state and call `publish` from a background-task handler
+    /// after your state changes. `None` in `--shell` builds; use
+    /// `snapshot_into` for small state, which works everywhere.
+    #[must_use]
+    pub fn snapshot_publisher(&self) -> Option<SnapshotPublisher> {
+        self.snapshot.clone()
     }
 }
 
@@ -458,9 +484,24 @@ mod tests {
     #![allow(clippy::cast_possible_truncation)]
 
     use super::*;
+    use crate::snapshot::{SnapshotPublisher, SnapshotSlot};
     use std::sync::atomic::AtomicU32;
     use std::sync::{Condvar, Mutex};
     use std::time::Instant;
+
+    #[test]
+    fn init_context_exposes_snapshot_publisher() {
+        let slot = SnapshotSlot::new();
+        let cx = InitContext::new(None).with_snapshot(SnapshotPublisher::new(&slot));
+        // The plugin captures this in `init` and publishes large state
+        // through it off the audio thread.
+        cx.snapshot_publisher()
+            .expect("publisher present")
+            .publish(vec![1, 2, 3]);
+        assert_eq!(slot.read(), Some(vec![1, 2, 3]));
+        // No snapshot wired (the `--shell` / no-slot case) yields None.
+        assert!(InitContext::new(None).snapshot_publisher().is_none());
+    }
 
     fn wait_until(deadline: Duration, mut done: impl FnMut() -> bool) -> bool {
         let start = Instant::now();

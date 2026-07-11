@@ -184,6 +184,13 @@ macro_rules! export_plugin {
         }
 
         #[unsafe(no_mangle)]
+        pub fn truce_snapshot_version(state: *const ()) -> ::core::option::Option<u64> {
+            let state =
+                unsafe { &*state.cast::<<$logic as $crate::PluginLogicCore<Sample>>::DspState>() };
+            <$logic as $crate::PluginLogicCore<Sample>>::snapshot_version(state)
+        }
+
+        #[unsafe(no_mangle)]
         pub fn truce_load_state(
             state: *mut (),
             data: &[u8],
