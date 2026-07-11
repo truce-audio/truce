@@ -4,7 +4,7 @@ Notable changes per release.
 
 ## 6.1.1
 
-- MIDI effects now run in the standalone host: a MIDI-only plugin (zero output buses, like the transpose and arpeggio examples) no longer crashes on its first audio callback.
+- Standalone no longer crashes on MIDI-only plugins (zero output buses, e.g. transpose / arpeggio), which previously panicked on the first audio callback. MIDI output from the standalone isn't wired up yet, so their emitted events still go nowhere.
 - Panic guards on VST3 instance create/destroy and AAX param format/parse callbacks, so author-code or GUI-teardown panics can't abort the host.
 - Float parameter writes reject non-finite values and clamp to range, and the smoother self-heals from a NaN accumulator, so a corrupt project or preset can't poison the audio path.
 

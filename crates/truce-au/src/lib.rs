@@ -67,9 +67,9 @@ use truce_core::ump::{
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, default_io_channels, enter_plugin, log_midi_ports_clamped,
-    log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
-    run_register, save_extra, shared_plugin,
+    ParamCStrings, SharedPlugin, copy_c_str, default_io_channels, enter_plugin,
+    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
+    run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
@@ -417,9 +417,11 @@ unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
             // boundary as UB - in practice the host catches it
             // as an Objective-C exception, `objc_exception_rethrow`
             // can't recover, and `std::terminate` aborts the host
-            // (the REAPER / Cubase quit-time SIGABRT pattern).
-            // Catching here keeps the host alive; the process is
-            // going away anyway so swallowing is fine.
+            // (the REAPER / Cubase SIGABRT pattern). Hosts destroy
+            // instances routinely mid-session - removing a plugin
+            // from a track, closing a project - not just at quit,
+            // so catching here keeps a live host alive; the
+            // instance is being torn down anyway.
             let raw = ctx.cast::<AuInstance<P>>();
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 drop(Box::from_raw(raw));
@@ -868,20 +870,7 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
         match inst.params_arc.format_value(id, value) {
-            Some(text) => {
-                let bytes = text.as_bytes();
-                let mut len = bytes.len().min((out_len as usize) - 1);
-                // Truncate on a char boundary: a torn multi-byte UTF-8
-                // tail ("°" in a Degrees unit, say) makes strict
-                // readers - CFStringCreateWithCString in the v2 shim -
-                // reject the whole string.
-                while len > 0 && !text.is_char_boundary(len) {
-                    len -= 1;
-                }
-                std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
-                *out.add(len) = 0;
-                len_u32(len)
-            }
+            Some(text) => len_u32(copy_c_str(out, out_len as usize, &text)),
             None => 0,
         }
     })

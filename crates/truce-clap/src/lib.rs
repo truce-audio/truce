@@ -121,8 +121,8 @@ use truce_core::state::PluginFormat;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
-    SharedPlugin, enter_plugin, run_audio_block_with, run_extern_callback_with, save_extra,
-    shared_plugin,
+    SharedPlugin, copy_c_str, enter_plugin, run_audio_block_with, run_extern_callback_with,
+    save_extra, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::Params;
@@ -504,22 +504,16 @@ impl DescriptorHolder {
 // Helper: copy a Rust &str into a fixed-size [c_char; N] array
 // ---------------------------------------------------------------------------
 
+/// Copy `src` into the fixed-size C-string array `dst` (name / vendor /
+/// module buffers), truncating on a UTF-8 char boundary and NUL-terminating.
+/// Thin slice-typed front for [`copy_c_str`] so the truncation rule lives in
+/// one place.
 fn copy_str_to_buf(dst: &mut [c_char], src: &str) {
-    let bytes = src.as_bytes();
-    let mut len = bytes.len().min(dst.len() - 1);
-    // Truncate on a char boundary so a torn multi-byte UTF-8 tail (a name
-    // like "Détune" cut mid-codepoint) can't emit an invalid C string.
-    while len > 0 && !src.is_char_boundary(len) {
-        len -= 1;
+    debug_assert!(!dst.is_empty(), "copy_str_to_buf needs room for the NUL");
+    // SAFETY: `dst` is a valid, non-empty slice of `dst.len()` `c_char`.
+    unsafe {
+        let _ = copy_c_str(dst.as_mut_ptr(), dst.len(), src);
     }
-    for (i, &b) in bytes[..len].iter().enumerate() {
-        // `c_char` is signed on most platforms; bytes ≥ 128 wrap to
-        // negative values and round-trip correctly through the FFI.
-        #[allow(clippy::cast_possible_wrap)]
-        let c = b as c_char;
-        dst[i] = c;
-    }
-    dst[len] = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -592,10 +586,11 @@ unsafe extern "C" fn clap_plugin_destroy<P: PluginExport>(plugin: *const clap_pl
         // chain propagates across this `extern "C"` boundary as
         // UB - hosts catch it as an Obj-C exception,
         // `objc_exception_rethrow` can't recover, and
-        // `std::terminate` aborts the host on quit (the REAPER /
-        // Cubase quit-time SIGABRT pattern). Catching here keeps
-        // the host alive; the process is going away anyway so
-        // swallowing the panic is fine.
+        // `std::terminate` aborts the host (the REAPER / Cubase
+        // SIGABRT pattern). Hosts destroy instances routinely
+        // mid-session - removing a plugin from a track, closing a
+        // project - not just at quit, so catching here keeps a
+        // live host alive; the instance is being torn down anyway.
         let plugin_ptr = plugin.cast_mut();
         let data_ptr = (*plugin).plugin_data.cast::<ClapPluginData<P>>();
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2368,17 +2363,7 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
         let data = data_from_plugin::<P>(plugin);
         match data.params_arc.format_value(param_id, value) {
             Some(text) => {
-                let bytes = text.as_bytes();
-                let cap = out_buffer_capacity as usize;
-                let mut len = bytes.len().min(cap - 1);
-                // Truncate on a char boundary: a torn multi-byte UTF-8 tail
-                // (the "°" of a Degrees unit, say) is an invalid C string
-                // that strict hosts reject wholesale.
-                while len > 0 && !text.is_char_boundary(len) {
-                    len -= 1;
-                }
-                ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out_buffer, len);
-                *out_buffer.add(len) = 0;
+                let _ = copy_c_str(out_buffer, out_buffer_capacity as usize, &text);
                 true
             }
             None => false,
