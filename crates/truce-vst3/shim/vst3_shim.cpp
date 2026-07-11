@@ -1180,9 +1180,19 @@ public:
                 auto& bus = data->inputs[b];
                 int32 nch = bus.numChannels;
                 uint32_t bch = nch <= 0 ? 0u : (uint32_t)nch;
+                // A deactivated/unconnected bus can legally arrive with
+                // numChannels > 0 but a NULL channelBuffers array (a third
+                // deactivated-bus shape shipping hosts produce, which
+                // JUCE / nih-plug both guard). Treat the null array as
+                // all-channels-null so the back-fill below substitutes
+                // silence, instead of dereferencing it here on the audio
+                // thread.
+                const bool nullArr =
+                    use64 ? (bus.channelBuffers64 == nullptr) : (bus.channelBuffers32 == nullptr);
                 for (uint32_t c = 0; c < bch && numIn < kMaxProcChannels; c++, numIn++)
-                    inPtrs[numIn] = use64 ? (const void*)bus.channelBuffers64[c]
-                                          : (const void*)bus.channelBuffers32[c];
+                    inPtrs[numIn] = nullArr ? nullptr
+                                    : use64 ? (const void*)bus.channelBuffers64[c]
+                                            : (const void*)bus.channelBuffers32[c];
             }
         }
         if (data->outputs) {
@@ -1190,18 +1200,23 @@ public:
                 auto& bus = data->outputs[b];
                 int32 nch = bus.numChannels;
                 uint32_t bch = nch <= 0 ? 0u : (uint32_t)nch;
+                const bool nullArr =
+                    use64 ? (bus.channelBuffers64 == nullptr) : (bus.channelBuffers32 == nullptr);
                 for (uint32_t c = 0; c < bch && numOut < kMaxProcChannels; c++, numOut++)
-                    outPtrs[numOut] = use64 ? (void*)bus.channelBuffers64[c]
-                                            : (void*)bus.channelBuffers32[c];
+                    outPtrs[numOut] = nullArr ? nullptr
+                                      : use64 ? (void*)bus.channelBuffers64[c]
+                                              : (void*)bus.channelBuffers32[c];
             }
         }
 
         /* Deactivated buses: the plug-in negotiated fixed widths
          * (cur_in / cur_out) and its flat AudioBuffer indexes every
-         * channel, but a deactivated bus reaches process() two ways -
-         * present with null channel pointers, or a trailing bus whose
-         * AudioBusBuffers the host dropped entirely (numInputs short of
-         * the bus count). Either way the missing channels must read as
+         * channel, but a deactivated bus reaches process() three ways -
+         * present with null per-channel pointers, present with a null
+         * channelBuffers array (both normalized to null pointers by the
+         * gather above), or a trailing bus whose AudioBusBuffers the host
+         * dropped entirely (numInputs short of the bus count). Either way
+         * the missing channels must read as
          * shared read-only silence (inputs) or absorb writes into
          * per-channel discard scratch (outputs), never arrive as a null
          * pointer the Rust bridge turns into an out-of-range empty
