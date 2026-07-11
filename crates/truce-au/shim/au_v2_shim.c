@@ -471,12 +471,15 @@ static OSStatus au_v2_initialize(void *self_) {
 
     // Allocate internal buffers for the negotiated channel count (a
     // multi-layout plugin may run at any declared width, not just the
-    // first layout's num_outputs). These stage the input pull as well as
-    // the output, so size to whichever direction is wider - and the input
-    // side spans the main bus plus any sidechain channels, which stage
-    // into buffers past the main ones.
-    uint32_t totalIn = numIn + g_descriptor->sidechain_in_channels;
-    uint32_t numBuf = totalIn > numOut ? totalIn : numOut;
+    // first layout's num_outputs). Main input and output share buffers
+    // [0, base): that overlap is intended in-place aliasing the Rust
+    // bridge snapshots. The sidechain, though, must NOT overlap the
+    // output region - with numOut > numIn (a mono-in/stereo-out plugin) a
+    // sidechain staged right after the main input would land on an output
+    // buffer and get clobbered mid-block. Stage it past BOTH directions,
+    // at [base, base + scCh), and size the allocation to match.
+    uint32_t base = numIn > numOut ? numIn : numOut;
+    uint32_t numBuf = base + g_descriptor->sidechain_in_channels;
     for (uint32_t c = 0; c < numBuf && c < 32; c++) {
         free(inst->outputBuffers[c]);
         inst->outputBuffers[c] = (float *)calloc(inst->maxFramesPerSlice, sizeof(float));
@@ -1684,10 +1687,13 @@ static OSStatus au_v2_render(void *self_,
     // keeps 0 inputs even though its output format is a stereo dummy.
     uint32_t numIn = g_descriptor->num_inputs > 0 ? inst->inputFormat.mChannelsPerFrame : 0;
     uint32_t numOut = inst->outputFormat.mChannelsPerFrame;
-    // Sidechain channels stage into the buffers past the main input, so
-    // the flat array is [main..., sidechain...]. Clamp to the buffer array.
+    // The plugin sees a flat input array [main..., sidechain...], but the
+    // sidechain stages into buffers past BOTH the main-input and output
+    // regions (which share [0, base)), so a wider output never clobbers
+    // sidechain data mid-block. Clamp so base + scCh fits the buffer array.
+    uint32_t base = numIn > numOut ? numIn : numOut;
     uint32_t scCh = g_descriptor->sidechain_in_channels;
-    if (numIn + scCh > 32) scCh = numIn < 32 ? 32 - numIn : 0;
+    if (base + scCh > 32) scCh = base < 32 ? 32 - base : 0;
 
     if (numIn > 0) {
         // Build a temporary ABL pointing to our buffers for the input pull.
@@ -1695,7 +1701,8 @@ static OSStatus au_v2_render(void *self_,
         // ioData->mNumberBuffers (the OUTPUT width). An N-in/M-out layout
         // with N>M (a 2->1 sum, a 4->2 downmix) would otherwise pull only M
         // channels and leave the rest stale/aliased. `outputBuffers` is
-        // staged to max(totalIn, numOut), so there's room for all numIn.
+        // staged to base + scCh (base = max(numIn, numOut)), so there's
+        // room for all numIn.
         UInt32 pullBufCount = numIn < 32 ? numIn : 32;
         // Use stack-allocated ABL
         char ablStorage[sizeof(AudioBufferList) + sizeof(AudioBuffer) * 31];
@@ -1736,8 +1743,10 @@ static OSStatus au_v2_render(void *self_,
         }
     }
 
-    // Pull the sidechain input element (element 1) into the buffers just
-    // past the main channels. An unconnected sidechain reads as silence.
+    // Pull the sidechain input element (element 1) into the buffers past
+    // both the main-input and output regions (index `base + c`), so a
+    // wider output never overwrites it mid-block. An unconnected sidechain
+    // reads as silence.
     if (scCh > 0) {
         char scAblStorage[sizeof(AudioBufferList) + sizeof(AudioBuffer) * 31];
         AudioBufferList *scABL = (AudioBufferList *)scAblStorage;
@@ -1745,7 +1754,7 @@ static OSStatus au_v2_render(void *self_,
         for (UInt32 c = 0; c < scCh; c++) {
             scABL->mBuffers[c].mNumberChannels = 1;
             scABL->mBuffers[c].mDataByteSize = inFrameCount * sizeof(float);
-            scABL->mBuffers[c].mData = inst->outputBuffers[numIn + c];
+            scABL->mBuffers[c].mData = inst->outputBuffers[base + c];
         }
         AudioUnitRenderActionFlags scFlags = 0;
         OSStatus scErr = -1;
@@ -1757,13 +1766,13 @@ static OSStatus au_v2_render(void *self_,
                 inTimeStamp, inst->sidechainSourceOutputBus, inFrameCount, scABL);
         if (scErr == noErr) {
             for (UInt32 c = 0; c < scCh; c++)
-                if (scABL->mBuffers[c].mData != inst->outputBuffers[numIn + c])
-                    memcpy(inst->outputBuffers[numIn + c], scABL->mBuffers[c].mData,
+                if (scABL->mBuffers[c].mData != inst->outputBuffers[base + c])
+                    memcpy(inst->outputBuffers[base + c], scABL->mBuffers[c].mData,
                            inFrameCount * sizeof(float));
         } else {
             // No source connected (or the pull failed): feed silence.
             for (uint32_t c = 0; c < scCh; c++)
-                memset(inst->outputBuffers[numIn + c], 0, inFrameCount * sizeof(float));
+                memset(inst->outputBuffers[base + c], 0, inFrameCount * sizeof(float));
         }
     }
 
@@ -1778,9 +1787,11 @@ static OSStatus au_v2_render(void *self_,
 
     for (uint32_t c = 0; c < numIn && c < 32; c++)
         inPtrs[c] = (const float *)inst->outputBuffers[c];
-    // Sidechain channels follow the main ones in the flat array.
+    // Sidechain channels follow the main ones in the flat array the plugin
+    // sees (index numIn + c), but read from the non-aliasing staging
+    // buffers at base + c.
     for (uint32_t c = 0; c < scCh && numIn + c < 32; c++)
-        inPtrs[numIn + c] = (const float *)inst->outputBuffers[numIn + c];
+        inPtrs[numIn + c] = (const float *)inst->outputBuffers[base + c];
     for (uint32_t c = 0; c < numOut && c < 32; c++)
         outPtrs[c] = inst->outputBuffers[c];
 
