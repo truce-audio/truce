@@ -642,6 +642,12 @@ class TruceComponent {
     uint8_t* silenceScratch = nullptr;
     uint8_t* trashScratch = nullptr;
 public:
+    // cb_create (Rust `_create`) returns null when the author's create() /
+    // init() panicked; a component with a null ctx is an inert zombie that
+    // guards every callback but does nothing. The factory checks this to
+    // fail createInstance rather than hand the host a do-nothing plugin.
+    bool constructed() const { return ctx != nullptr; }
+
     void* componentHandler;  // IComponentHandler*, stored with addRef
     // Pending IComponentHandler::restartComponent flags (RestartFlags
     // bitmask, e.g. kLatencyChanged = 8). The audio thread sets bits via
@@ -2779,6 +2785,15 @@ static tresult factory_createInstance(void*, FIDString cid, FIDString iid, void*
 
     auto* com = create_component();
     if (!com) return kResultFalse;
+
+    // The plugin constructor (cb_create) returns null when author create() /
+    // init() panicked. Fail instantiation so the host surfaces an error
+    // instead of silently loading an inert zombie plugin.
+    if (!com->impl.constructed()) {
+        com->impl.~TruceComponent();
+        free(com);
+        return kResultFalse;
+    }
 
     tresult r = com->impl.queryInterface(com, reinterpret_cast<const int8_t*>(iid), obj);
     if (r != kResultOk) {
