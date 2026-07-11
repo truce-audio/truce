@@ -18,7 +18,7 @@ members = ["truce-example-gui-zoo-gpu"]
 resolver = "3"
 
 [workspace.package]
-version = "6.1.0"
+version = "6.1.1"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
