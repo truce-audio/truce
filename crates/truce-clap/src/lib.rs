@@ -2603,7 +2603,12 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
     location: *const c_char,
     load_key: *const c_char,
 ) -> bool {
-    unsafe {
+    // Runs author `migrate_state`, and (on the inactive branch) a
+    // synchronous `load_state` + `editor.state_changed()`. Firewall it like
+    // `state_load` so a panic degrades to "load failed" instead of
+    // unwinding across this `extern "C"` boundary and aborting the host
+    // mid-preset-browse.
+    run_extern_callback_with::<P, bool>("CLAP", "preset_load", false, || unsafe {
         if location_kind != CLAP_PRESET_DISCOVERY_LOCATION_FILE || location.is_null() {
             return false;
         }
@@ -2659,7 +2664,7 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
             }
         }
         true
-    }
+    })
 }
 
 fn make_preset_load_extension<P: PluginExport>() -> clap_plugin_preset_load {
