@@ -71,6 +71,13 @@ pub struct AudioHandles<P: PluginExport> {
     /// Event queue the caller pushes MIDI into; drained by the audio
     /// callback each block.
     pub pending: Arc<ArrayQueue<MidiEvent>>,
+    /// Editor-initiated custom-state (`load_state`) blobs. The UI thread
+    /// pushes here instead of locking the plugin, and the audio callback
+    /// drains and applies one at the block top under its per-block lock -
+    /// so a slow `load_state` never stalls the callback's `try_lock` (the
+    /// VST3 `StateLoadQueue` pattern; capacity 1, newest wins). Custom
+    /// state only; params restore atomically through `set_param`.
+    pub pending_state: Arc<ArrayQueue<Vec<u8>>>,
     /// Plugin instance shared between caller and audio callback.
     pub plugin: Arc<Mutex<P>>,
     /// Audio config (sample rate, channels) resolved from the device.
@@ -588,6 +595,9 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // input thread pushes, the audio thread drains, neither blocks.
     // On overflow the producer drops the oldest event (see midi.rs).
     let pending: Arc<ArrayQueue<MidiEvent>> = Arc::new(ArrayQueue::new(256));
+    // Capacity 1, newest-wins: only the most recent editor state-load matters
+    // if several arrive before the audio thread drains one.
+    let pending_state: Arc<ArrayQueue<Vec<u8>>> = Arc::new(ArrayQueue::new(1));
     let initial_max_frames = config.buffer_size_max_frames(&default_config);
     let plugin = Arc::new(Mutex::new({
         let mut p = P::create();
@@ -739,6 +749,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let res = OutputResources {
         plugin: Arc::clone(&plugin),
         pending: Arc::clone(&pending),
+        pending_state: Arc::clone(&pending_state),
         input_ring: Arc::clone(&input_ring),
         input_enabled: Arc::clone(&input_enabled),
         output_enabled: Arc::clone(&output_enabled),
@@ -793,6 +804,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
 
     Ok(AudioHandles {
         pending,
+        pending_state,
         plugin,
         sample_rate,
         channels,
@@ -925,6 +937,9 @@ fn setup_input_pipeline(
 struct OutputResources<P: PluginExport> {
     plugin: Arc<Mutex<P>>,
     pending: Arc<ArrayQueue<MidiEvent>>,
+    /// Editor-initiated `load_state` blobs, drained at the block top (see
+    /// [`AudioHandles::pending_state`]).
+    pending_state: Arc<ArrayQueue<Vec<u8>>>,
     input_ring: Arc<Mutex<Vec<f32>>>,
     input_enabled: Arc<AtomicBool>,
     /// Drives the audio callback's mute / unmute decision (UI thread
@@ -1110,6 +1125,7 @@ fn open_output_stream<P: PluginExport>(
 
     let plugin_a = Arc::clone(&res.plugin);
     let pending_a = Arc::clone(&res.pending);
+    let pending_state_a = Arc::clone(&res.pending_state);
     let ring_a = Arc::clone(&res.input_ring);
     let enabled_a = Arc::clone(&res.input_enabled);
     let out_enabled_a = Arc::clone(&res.output_enabled);
@@ -1202,6 +1218,7 @@ fn open_output_stream<P: PluginExport>(
                         is_effect,
                         &plugin_a,
                         &pending_a,
+                        &pending_state_a,
                         &ring_a,
                         &enabled_a,
                         &out_enabled_a,
@@ -1587,6 +1604,7 @@ fn audio_callback<P: PluginExport>(
     is_effect: bool,
     plugin: &Arc<Mutex<P>>,
     pending: &Arc<ArrayQueue<MidiEvent>>,
+    pending_state: &Arc<ArrayQueue<Vec<u8>>>,
     input_ring: &Arc<Mutex<Vec<f32>>>,
     input_enabled: &Arc<AtomicBool>,
     output_enabled: &Arc<AtomicBool>,
@@ -1617,6 +1635,18 @@ fn audio_callback<P: PluginExport>(
         data.fill(0.0);
         return;
     };
+
+    // Apply an editor-initiated state load before this block's work, under
+    // the `&mut plugin` we now hold. The UI thread only pushed the bytes to
+    // the lock-free `pending_state`, so it never blocked us or stalled this
+    // callback's `try_lock`. `load_state` legitimately allocates (a sampler
+    // decoding, say); accepted here at the block top, the same handoff the
+    // VST3 wrapper uses for its queued state.
+    if let Some(bytes) = pending_state.pop()
+        && let Err(e) = plugin.load_state(&bytes)
+    {
+        eprintln!("truce-standalone: load_state failed: {e}");
+    }
 
     // Drain queued MIDI only after the lock is held. A lost try_lock
     // (an editor state read in flight) returns early above, and events

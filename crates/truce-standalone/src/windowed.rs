@@ -140,6 +140,7 @@ where
 
     let plugin = Arc::clone(&audio_handles.plugin);
     let pending = Arc::clone(&audio_handles.pending);
+    let pending_state = Arc::clone(&audio_handles.pending_state);
     let transport = audio_handles.transport.clone();
 
     // Both controllers are `Send + Sync` - the cpal streams they
@@ -365,7 +366,12 @@ where
             unsafe { crate::windowed_macos::pin_content_size(h.ns_window, lw, lh) };
         }
 
-        let ctx = synthesize_editor_context::<P>(&plugin, &transport, Arc::clone(&pending_resize));
+        let ctx = synthesize_editor_context::<P>(
+            &plugin,
+            &transport,
+            Arc::clone(&pending_state),
+            Arc::clone(&pending_resize),
+        );
         // The standalone owns a real top-level window and should honor
         // the desktop scale (Xft.dpi on Linux); plugins leave the default
         // and drive scale from the host instead. See
@@ -970,6 +976,7 @@ fn is_mod_pressed(mods: Modifiers) -> bool {
 fn synthesize_editor_context<P: PluginExport>(
     plugin: &Arc<Mutex<P>>,
     transport: &Transport,
+    pending_state: Arc<ArrayQueue<Vec<u8>>>,
     pending_resize: Arc<AtomicU64>,
 ) -> PluginContext
 where
@@ -996,7 +1003,6 @@ where
         .task_spawner();
     let plugin_meter = Arc::clone(plugin);
     let plugin_save = Arc::clone(plugin);
-    let plugin_load = Arc::clone(plugin);
 
     PluginContext::from_closures(
         ClosureBridge {
@@ -1030,15 +1036,14 @@ where
                     .unwrap_or_default()
             }),
             set_state: Box::new(move |bytes| {
-                // Blocking lock, matching `get_state`: a `try_lock`'s silent
-                // fallback dropped the load on a lost race with the audio
-                // callback, which holds the plugin mutex for a whole block.
-                // Poisoned (audio thread panicked) skips the load.
-                if let Ok(mut p) = plugin_load.lock()
-                    && let Err(e) = p.load_state(&bytes)
-                {
-                    eprintln!("truce-standalone: load_state failed: {e}");
-                }
+                // Hand the blob to the audio thread instead of locking the
+                // plugin here. It drains `pending_state` and applies
+                // `load_state` at the next block top under the lock it
+                // already takes - so this never blocks the UI thread and a
+                // slow load never stalls the callback's `try_lock`. Newest
+                // wins if several arrive before a block drains one; the audio
+                // thread logs any `load_state` error.
+                let _ = pending_state.force_push(bytes);
             }),
             transport: Box::new(move || Some(transport_read.snapshot())),
         },
