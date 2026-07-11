@@ -5,6 +5,8 @@
 // and narrows on the way out.
 use std::f64::consts::TAU;
 
+use std::sync::Arc;
+
 use truce::prelude64::*;
 use truce_core::midi::{norm_7bit, norm_pitch_bend};
 use truce_gui::IntoLayoutEditor;
@@ -26,7 +28,6 @@ pub enum Waveform {
 // --- Parameters ---
 
 use SynthParamsParamId as P;
-use std::sync::Arc;
 
 #[derive(Params)]
 pub struct FilterParams {
