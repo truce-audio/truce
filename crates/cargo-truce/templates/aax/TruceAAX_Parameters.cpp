@@ -237,7 +237,12 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
                 true));
         }
 
-        param->SetNumberOfSteps(info.step_count > 0 ? info.step_count : 128);
+        // AAX counts step *positions*, not intervals: a binary param has 2
+        // steps, an N-value enum has N. `info.step_count` is intervals
+        // (values - 1, matching VST3's stepCount and AU's value-string
+        // loop), so a Discrete param needs `step_count + 1`. A Continuous
+        // param takes a plain automation resolution (128).
+        param->SetNumberOfSteps(info.step_count > 0 ? info.step_count + 1 : 128);
         // A stepped param (bool / enum / discrete int) is Discrete so Pro
         // Tools quantizes automation to the steps and offers step
         // navigation instead of treating it as a continuous knob. Its
