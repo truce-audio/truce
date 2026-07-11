@@ -75,14 +75,26 @@ pub const TRUCE_AAX_RANGE_CUSTOM: u8 = 3;
 /// taper, so they use `CUSTOM` - a linear taper (the old fallback) would
 /// map the knob linearly while truce's editor maps it through the skew,
 /// making the knob fight the user and recording wrong automation.
-/// `Reversed` takes its inner shape's classification.
+///
+/// `Reversed` also uses `CUSTOM`: truce normalizes it as
+/// `1 - inner.normalize`, which no native AAX taper mirrors, so routing
+/// through truce's own normalize/denormalize is the only faithful mapping.
+/// Classifying it by the inner shape would hand AAX an un-reversed taper -
+/// the same knob-fights-editor / wrong-automation bug the skew fix closed.
+/// Discreteness is preserved independently: the C++ shim's
+/// `SetType`/`SetNumberOfSteps` key off the step count, not the taper, so a
+/// `Reversed(Discrete/Enum)` stays a stepped param with a reversed taper.
 fn aax_range_type(range: &ParamRange) -> u8 {
     match range {
         ParamRange::Linear { .. } => TRUCE_AAX_RANGE_LINEAR,
-        ParamRange::Skewed { .. } | ParamRange::SymmetricalSkewed { .. } => TRUCE_AAX_RANGE_CUSTOM,
+        // Skew shapes have no native AAX taper; a reversed range's
+        // `1 - inner.normalize` has none either. Both route through the
+        // custom taper (truce's own normalize/denormalize).
+        ParamRange::Skewed { .. }
+        | ParamRange::SymmetricalSkewed { .. }
+        | ParamRange::Reversed(_) => TRUCE_AAX_RANGE_CUSTOM,
         ParamRange::Logarithmic { .. } => TRUCE_AAX_RANGE_LOG,
         ParamRange::Discrete { .. } | ParamRange::Enum { .. } => TRUCE_AAX_RANGE_DISCRETE,
-        ParamRange::Reversed(inner) => aax_range_type(inner),
     }
 }
 
@@ -1926,3 +1938,68 @@ pub unsafe fn _free_state(data: *mut u8, len: u32) {
 // (The Rust-vs-`.h` ABI drift assertion lives in
 // `truce-aax-bridge`, the crate that owns both the header text
 // and the Rust constant. No need to duplicate it here.)
+
+#[cfg(test)]
+mod range_type_tests {
+    use super::{
+        TRUCE_AAX_RANGE_CUSTOM, TRUCE_AAX_RANGE_DISCRETE, TRUCE_AAX_RANGE_LINEAR,
+        TRUCE_AAX_RANGE_LOG, aax_range_type,
+    };
+    use truce_params::ParamRange;
+
+    static LINEAR: ParamRange = ParamRange::Linear { min: 0.0, max: 1.0 };
+    static DISCRETE: ParamRange = ParamRange::Discrete { min: 0, max: 3 };
+    static ENUM: ParamRange = ParamRange::Enum { count: 4 };
+
+    /// A reversed range must route through the CUSTOM taper (truce's own
+    /// `1 - inner.normalize`), for every inner shape - classifying it by
+    /// the inner shape would hand AAX an un-reversed taper and the knob
+    /// would fight the editor.
+    #[test]
+    fn reversed_always_uses_custom() {
+        assert_eq!(
+            aax_range_type(&ParamRange::Reversed(&LINEAR)),
+            TRUCE_AAX_RANGE_CUSTOM
+        );
+        assert_eq!(
+            aax_range_type(&ParamRange::Reversed(&DISCRETE)),
+            TRUCE_AAX_RANGE_CUSTOM
+        );
+        assert_eq!(
+            aax_range_type(&ParamRange::Reversed(&ENUM)),
+            TRUCE_AAX_RANGE_CUSTOM
+        );
+    }
+
+    /// Non-reversed shapes keep their native classification.
+    #[test]
+    fn non_reversed_classification_unchanged() {
+        assert_eq!(
+            aax_range_type(&ParamRange::Linear { min: 0.0, max: 1.0 }),
+            TRUCE_AAX_RANGE_LINEAR
+        );
+        assert_eq!(
+            aax_range_type(&ParamRange::Logarithmic {
+                min: 20.0,
+                max: 20_000.0
+            }),
+            TRUCE_AAX_RANGE_LOG
+        );
+        assert_eq!(
+            aax_range_type(&ParamRange::Skewed {
+                min: 0.0,
+                max: 1.0,
+                factor: 2.0
+            }),
+            TRUCE_AAX_RANGE_CUSTOM
+        );
+        assert_eq!(
+            aax_range_type(&ParamRange::Discrete { min: 0, max: 3 }),
+            TRUCE_AAX_RANGE_DISCRETE
+        );
+        assert_eq!(
+            aax_range_type(&ParamRange::Enum { count: 4 }),
+            TRUCE_AAX_RANGE_DISCRETE
+        );
+    }
+}
