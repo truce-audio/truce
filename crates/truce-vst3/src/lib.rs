@@ -511,6 +511,25 @@ fn leak_bus_kinds(buses: &[BusConfig]) -> &'static [u8] {
     )
 }
 
+/// True when every declared layout shares the first layout's bus topology:
+/// the same input and output bus COUNT and the same per-bus KIND (main vs
+/// sidechain) in order. VST3 fixes one bus topology per plugin - only
+/// channel widths are negotiated - so [`descriptor_buses`] takes the bus
+/// count + kinds from layout 0 and [`cb_match_bus_layout_perbus`] requires
+/// the host arrangement to have exactly that many buses. A layout with a
+/// different bus count or kind can therefore never be matched (it's dead),
+/// or, if it leads the list, silently drops a bus the others declare.
+fn vst3_topology_consistent(layouts: &[BusLayout]) -> bool {
+    let kinds = |buses: &[BusConfig]| buses.iter().map(|b| b.kind).collect::<Vec<BusKind>>();
+    let Some(first) = layouts.first() else {
+        return true;
+    };
+    let (first_in, first_out) = (kinds(&first.inputs), kinds(&first.outputs));
+    layouts
+        .iter()
+        .all(|l| kinds(&l.inputs) == first_in && kinds(&l.outputs) == first_out)
+}
+
 /// Build a slice from a `(ptr, len)` the C++ shim handed us, or an empty
 /// slice when the pointer is null (a direction with no buses).
 unsafe fn slice_or_empty<'a>(ptr: *const u32, len: u32) -> &'a [u32] {
@@ -2180,6 +2199,16 @@ pub fn register_vst3<P: PluginExport>() {
             );
             return;
         }
+        if !vst3_topology_consistent(&P::bus_layouts()) {
+            eprintln!(
+                "[truce VST3] {} declares bus layouts that differ in input/output bus count or \
+                 kind. VST3 fixes one bus topology per plugin - only channel widths may vary \
+                 across layouts, not the number of buses or their main/sidechain kind. Give every \
+                 layout the same bus structure. Plugin will not register.",
+                std::any::type_name::<P>(),
+            );
+            return;
+        }
         register_vst3_inner::<P>(num_inputs, num_outputs);
     });
 }
@@ -2605,8 +2634,37 @@ mod midi_proxy_tests {
 
 #[cfg(test)]
 mod channel_limit_tests {
-    use super::{VST3_MAX_CHANNELS_PER_DIRECTION, max_layout_channels};
+    use super::{VST3_MAX_CHANNELS_PER_DIRECTION, max_layout_channels, vst3_topology_consistent};
     use truce_core::bus::{BusLayout, ChannelConfig};
+
+    /// Layouts differing only in channel *width* (the point of multi-layout)
+    /// share one bus topology and are accepted.
+    #[test]
+    fn topology_consistent_when_only_widths_vary() {
+        let layouts = [
+            BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo),
+            BusLayout::mono().with_sidechain_input("Sidechain", ChannelConfig::Mono),
+        ];
+        assert!(vst3_topology_consistent(&layouts));
+    }
+
+    /// A layout with a different input bus *count* (the report's case: a
+    /// mono main with no sidechain alongside a main+sidechain layout) can
+    /// never be matched, so it's rejected at registration.
+    #[test]
+    fn topology_inconsistent_when_bus_count_differs() {
+        let layouts = [
+            BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo),
+            BusLayout::mono(),
+        ];
+        assert!(!vst3_topology_consistent(&layouts));
+    }
+
+    #[test]
+    fn topology_single_or_empty_is_consistent() {
+        assert!(vst3_topology_consistent(&[BusLayout::stereo()]));
+        assert!(vst3_topology_consistent(&[]));
+    }
 
     #[test]
     fn widest_layout_wins() {
