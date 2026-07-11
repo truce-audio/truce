@@ -10,6 +10,7 @@ Notable changes per release.
 - Float parameter writes (host automation, state restore) drop non-finite values and clamp to range, and the smoother self-heals from a non-finite accumulator, so a corrupt project/preset can't latch NaN into the audio path.
 - Standalone no longer crashes on its first audio callback for MIDI-only plugins (zero output buses, e.g. the transpose / arpeggio examples): the device stream is silenced instead of indexing an empty output buffer.
 - Zero-copy in-place I/O (`supports_in_place = true`) is now usable: `input(ch)` returns an empty slice for host-aliased channels (plugin reads+writes via `in_out_mut`) instead of panicking at buffer construction (debug) or in `input()` (release).
+- Standalone editor-initiated state/preset loads use a blocking lock instead of `try_lock`, so a load is no longer silently dropped when it races the audio callback (which holds the plugin mutex for a whole block).
 
 ## 6.1.0
 
