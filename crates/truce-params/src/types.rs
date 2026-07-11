@@ -47,10 +47,19 @@ impl FloatParam {
         }
     }
 
-    /// Set the plain value (used by host automation).
+    /// Set the plain value (host automation and, crucially, state restore
+    /// from a project file / preset - untrusted input `parse_state` can
+    /// validate the structure of but not the values). Drop non-finite
+    /// writes and clamp to the declared range, so a corrupt or hostile
+    /// value can't latch a NaN into the smoother (which would then emit
+    /// NaN audio forever) or drive out-of-range DSP.
     #[inline]
     pub fn set_value(&self, v: f64) {
-        self.value.store(v);
+        if !v.is_finite() {
+            return;
+        }
+        self.value
+            .store(v.clamp(self.info.range.min(), self.info.range.max()));
     }
 
     /// Internal: raw target value at `f64` precision (host-side
@@ -749,5 +758,33 @@ mod tests {
     #[should_panic(expected = "outside range")]
     fn int_param_rejects_out_of_range_default() {
         let _ = IntParam::new(info("N", ParamRange::Discrete { min: 0, max: 5 }, 10.0));
+    }
+
+    fn float(min: f64, max: f64) -> FloatParam {
+        FloatParam::new(
+            info("Gain", ParamRange::Linear { min, max }, 0.0),
+            SmoothingStyle::None,
+        )
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // clamp / dropped-write yields the exact stored value
+    fn float_set_value_drops_non_finite() {
+        let p = float(-60.0, 6.0);
+        p.set_value(-12.0);
+        p.set_value(f64::NAN);
+        assert_eq!(p.raw_target(), -12.0, "NaN write is dropped");
+        p.set_value(f64::INFINITY);
+        assert_eq!(p.raw_target(), -12.0, "infinite write is dropped");
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // clamp yields the exact range bound
+    fn float_set_value_clamps_to_range() {
+        let p = float(-60.0, 6.0);
+        p.set_value(1e308);
+        assert_eq!(p.raw_target(), 6.0, "clamps above max");
+        p.set_value(-1e308);
+        assert_eq!(p.raw_target(), -60.0, "clamps below min");
     }
 }

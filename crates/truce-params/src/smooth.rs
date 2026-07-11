@@ -145,6 +145,14 @@ impl Smoother {
         let current = self.current.load();
         let coeff = self.coeff.load();
 
+        // A non-finite `current` would latch forever: `NaN + coeff * (target
+        // - NaN)` stays NaN, and no later target could recover it. Snap to
+        // `target` (kept finite by the parameter write path) to self-heal.
+        if !current.is_finite() {
+            self.snap(target);
+            return target as f32;
+        }
+
         let new_current = match self.style {
             SmoothingStyle::None => target,
             SmoothingStyle::Linear(_) => {
@@ -690,5 +698,19 @@ mod tests {
         let v = s.next_after(0.7, 1024);
         assert_eq!(v, 0.7);
         assert_eq!(s.current(), 0.7);
+    }
+
+    #[test]
+    fn next_self_heals_from_non_finite_current() {
+        // A NaN accumulator would latch forever without the recovery guard.
+        let s = Smoother::new(SmoothingStyle::Exponential(5.0));
+        s.snap(f64::NAN);
+        let first = s.next(0.5);
+        assert!(first.is_finite(), "recovers to a finite value");
+        // And keeps converging normally afterward.
+        for _ in 0..64 {
+            assert!(s.next(0.5).is_finite());
+        }
+        assert!((s.current() - 0.5).abs() < 1e-3);
     }
 }
