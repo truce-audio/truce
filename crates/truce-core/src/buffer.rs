@@ -140,6 +140,32 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
         &mut self.outputs[ch][self.offset..end]
     }
 
+    /// Debug guard for the accessors that hand out a disjoint `(&[S], &mut
+    /// [S])` for a channel (`io` / `io_pair` / `for_each_frame` /
+    /// `for_each_frame_io` / `chunks_mut`). Those shapes can't represent a
+    /// zero-copy in-place channel: its input and output are the same memory,
+    /// so a live `&` input would alias the `&mut` output - which is why such
+    /// a channel's input slice is the empty sentinel. Use [`Self::in_out_mut`]
+    /// there instead.
+    ///
+    /// Keys on the empty input slice, **not** [`Self::is_in_place`]: the copy
+    /// path also reports `is_in_place` (the host aliased, but the wrapper
+    /// snapshotted the input), yet its input is a full, readable slice these
+    /// accessors handle fine. Compiled out in release, where indexing the
+    /// empty slice then panics out of range (caught by the process firewall).
+    #[inline]
+    fn debug_assert_not_in_place(&self, ch: usize) {
+        debug_assert!(
+            self.num_samples == 0
+                || ch >= self.inputs.len()
+                || self.inputs[ch].len() >= self.offset + self.num_samples,
+            "AudioBuffer: channel {ch} is a zero-copy in-place channel (host \
+             aliases its input and output, so its input slice is empty); a \
+             disjoint (input, output) accessor can't represent it - use \
+             in_out_mut({ch})"
+        );
+    }
+
     #[must_use]
     pub fn num_samples(&self) -> usize {
         self.num_samples
@@ -181,8 +207,12 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
         self.inputs.len().min(self.outputs.len())
     }
 
-    /// Get an input/output pair for a channel. Useful for in-place processing.
+    /// Get a disjoint `(input, output)` pair for a channel. NOT for
+    /// in-place (host-aliased) channels: their input and output are the
+    /// same memory, which this shape can't represent - use
+    /// [`Self::in_out_mut`] there.
     pub fn io_pair(&mut self, in_ch: usize, out_ch: usize) -> (&[S], &mut [S]) {
+        self.debug_assert_not_in_place(in_ch);
         let end = self.offset + self.num_samples;
         let input = &self.inputs[in_ch][self.offset..end];
         let output = &mut self.outputs[out_ch][self.offset..end];
@@ -282,6 +312,9 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
             self.channels(),
             "for_each_frame::<{N}> requires the buffer to have exactly {N} channels"
         );
+        for ch in 0..N {
+            self.debug_assert_not_in_place(ch);
+        }
         let mut frame_in = [S::default(); N];
         let mut frame_out = [S::default(); N];
         let end = self.offset + self.num_samples;
@@ -315,6 +348,9 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
     {
         let num_in = self.inputs.len();
         let num_out = self.outputs.len();
+        for ch in 0..num_in.min(IN) {
+            self.debug_assert_not_in_place(ch);
+        }
         let mut frame_in = [S::default(); IN];
         let mut frame_out = [S::default(); OUT];
         let end = self.offset + self.num_samples;
@@ -485,6 +521,7 @@ impl<S: Sample, const N: usize> ChunksMut<'_, '_, S, N> {
             let ch = self.ch;
             let sample = self.pos;
 
+            self.buffer.debug_assert_not_in_place(ch);
             let inp_slice = &self.buffer.inputs[ch][abs_start..abs_end];
             let out_slice: &mut [S] = &mut self.buffer.outputs[ch][abs_start..abs_end];
 
@@ -976,6 +1013,58 @@ mod tests {
             }
         }
         assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
+    }
+
+    /// The disjoint `(input, output)` accessors can't represent an in-place
+    /// channel, so they debug-assert with a clear message instead of the
+    /// opaque out-of-range panic the empty input slice would otherwise
+    /// produce. Gated on `debug_assertions`: the guard is compiled out in
+    /// release, so this only runs (and only should panic) in debug.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "in-place")]
+    fn io_on_zero_copy_in_place_channel_debug_asserts() {
+        let mut io: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let in_ptrs = [io.as_ptr()];
+        let mut out_ptrs = [io.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<f32>::default();
+        // SAFETY: the aliased pointer addresses 4 valid samples that outlive
+        // the buffer.
+        unsafe {
+            // supports_in_place = true -> zero-copy, empty input slice.
+            let mut buf = scratch.build(in_ptrs.as_ptr(), out_ptrs.as_mut_ptr(), 1, 1, 4, true);
+            assert!(buf.is_in_place(0));
+            // Should fire the guard, not index the empty input slice.
+            let _ = buf.io(0);
+        }
+    }
+
+    /// The guard must NOT fire on the copy path: a host-aliased channel with
+    /// `supports_in_place = false` reports `is_in_place`, but the wrapper
+    /// snapshotted its input into a full slice, so `io()` works. A guard
+    /// keyed on `is_in_place` would false-positive here and break every
+    /// normal plugin that uses `io()` in an aliasing host (e.g. AU, which
+    /// advertises in-place unconditionally).
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn io_on_copy_path_aliased_channel_is_fine() {
+        let mut io: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let in_ptrs = [io.as_ptr()];
+        let mut out_ptrs = [io.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<f32>::default();
+        // SAFETY: the aliased pointer addresses 4 valid samples that outlive
+        // the buffer.
+        unsafe {
+            // supports_in_place = false -> copy path, full readable input.
+            let mut buf = scratch.build(in_ptrs.as_ptr(), out_ptrs.as_mut_ptr(), 1, 1, 4, false);
+            assert!(buf.is_in_place(0), "still reports host aliasing");
+            let (inp, out) = buf.io(0); // must not panic
+            assert_eq!(inp, &[1.0, 2.0, 3.0, 4.0]);
+            for (o, &i) in out.iter_mut().zip(inp) {
+                *o = i * 2.0;
+            }
+        }
+        assert_eq!(io, vec![2.0, 4.0, 6.0, 8.0]);
     }
 
     /// A disconnected sidechain reaches the plugin as block-sized silence,
