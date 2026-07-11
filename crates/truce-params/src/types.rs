@@ -38,6 +38,18 @@ impl FloatParam {
     #[must_use]
     pub fn new(info: ParamInfo, smoothing: SmoothingStyle) -> Self {
         let default = info.default_plain;
+        // Surface a mis-ordered or non-finite range (a `Linear { min: 6,
+        // max: -60 }` typo) at construction, where it's obvious, rather than
+        // as a `clamp` panic on the first host automation write. The derive
+        // already rejects `min >= max` at compile time; this covers direct
+        // `FloatParam::new` callers. `set_value` normalizes the bounds so it
+        // never panics even in release, where this assert is compiled out.
+        let (lo, hi) = (info.range.min(), info.range.max());
+        debug_assert!(
+            lo.is_finite() && hi.is_finite() && lo <= hi,
+            "FloatParam range bounds must be finite and ordered (min <= max); \
+             got [{lo}, {hi}] - check the `range = \"...\"` attribute"
+        );
         let smoother = Smoother::new(smoothing);
         smoother.snap(default);
         Self {
@@ -58,8 +70,13 @@ impl FloatParam {
         if !v.is_finite() {
             return;
         }
-        self.value
-            .store(v.clamp(self.info.range.min(), self.info.range.max()));
+        // Normalize the bounds before clamping: `f64::clamp` panics if
+        // `min > max`, and `range.min()`/`max()` return the stored fields,
+        // so a mis-ordered range would otherwise panic on every write (on
+        // whatever thread the host calls the setter from). `new` debug-
+        // asserts the ordering; this keeps release safe regardless.
+        let (lo, hi) = (self.info.range.min(), self.info.range.max());
+        self.value.store(v.clamp(lo.min(hi), lo.max(hi)));
     }
 
     /// Internal: raw target value at `f64` precision (host-side
@@ -786,5 +803,50 @@ mod tests {
         assert_eq!(p.raw_target(), 6.0, "clamps above max");
         p.set_value(-1e308);
         assert_eq!(p.raw_target(), -60.0, "clamps below min");
+    }
+
+    /// A mis-ordered range (`min > max`) is a bug caught at construction in
+    /// debug builds - loud and early, not a `clamp` panic buried in a
+    /// host-automation callback.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "ordered")]
+    fn float_new_debug_asserts_misordered_range() {
+        let _ = FloatParam::new(
+            info(
+                "Bad",
+                ParamRange::Linear {
+                    min: 6.0,
+                    max: -60.0,
+                },
+                0.0,
+            ),
+            SmoothingStyle::None,
+        );
+    }
+
+    /// In release the construction assert is compiled out, so `set_value`
+    /// must still not panic on a mis-ordered range: it normalizes the clamp
+    /// bounds. (`f64::clamp` would panic on `min > max`.)
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn float_set_value_survives_misordered_range() {
+        let p = FloatParam::new(
+            info(
+                "Bad",
+                ParamRange::Linear {
+                    min: 6.0,
+                    max: -60.0,
+                },
+                0.0,
+            ),
+            SmoothingStyle::None,
+        );
+        p.set_value(1000.0); // must not panic
+        let v = p.raw_target();
+        assert!(
+            (-60.0..=6.0).contains(&v),
+            "clamped to the normalized interval"
+        );
     }
 }
