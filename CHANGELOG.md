@@ -19,7 +19,7 @@ Sidechain and aux inputs now reach your plugin as separate buses, so a `with_sid
 - Stepped, enum, and toggle parameters are advertised as discrete/indexed/boolean with value labels, not continuous (VST3, AU, AAX, VST2, LV2); AAX step counts are no longer off by one.
 - `EnumParam` clamps out-of-range indices to the last variant.
 - Linear smoothing converges at the correct constant-increment rate.
-- Transport position in seconds is reported on VST3, VST2, AU, and LV2 (was always zero); LV2 also reports beat/tempo position.
+- Transport position in seconds is reported on VST3, VST2, AU, AAX, and LV2 (was always zero); LV2 also reports beat/tempo position.
 - Lock-free state save re-serializes only when state changes (opt-in `snapshot_version`) or, for MB-scale state, publishes off the audio thread via `InitContext::snapshot_publisher()` instead of copying the buffer every block; `snapshot_prealloc_hint` pre-warms the inline buffer.
 - `#[derive(State)]` keyed envelope: add/remove/reorder-safe across sessions, rejects unknown format versions, and rename-type-safe (a changed field type falls back to its default rather than corrupting later fields).
 - Unconnected sidechains read as silence rather than misrouting or panicking; fixed sidechain buffer aliasing on AU v2 and channel-count negotiation on VST3.
