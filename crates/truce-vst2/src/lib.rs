@@ -29,16 +29,16 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, copy_c_str, default_io_channels, enter_plugin, first_bus_layout,
-    log_midi_ports_clamped, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
-    run_register, save_extra, shared_plugin,
+    ParamCStrings, PluginCell, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
+    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
+    run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::{ParamFlags, ParamInfo, Params};
 
 use ffi::{Vst2Callbacks, Vst2MidiEvent, Vst2ParamDescriptor, Vst2PluginDescriptor};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper
@@ -82,6 +82,40 @@ struct Vst2Instance<P: PluginExport> {
     /// `tail()`. Updated by the audio thread (or `cb_reset`).
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
+    /// Cached param-info table for the chunker's split predicate.
+    param_infos: Vec<ParamInfo>,
+    /// `min_subblock_samples` from `truce.toml`'s `[automation]`.
+    min_subblock_samples: u32,
+    plugin_id_hash: u64,
+    /// `AEffect` pointer, set by the C shim after creation. Used for host
+    /// callbacks. Atomic so the audio thread (transport / automation
+    /// notifications) and the editor closures read it through the shared
+    /// `&Inst` without a whole-struct `&mut *ctx`.
+    aeffect_ptr: AtomicPtr<std::ffi::c_void>,
+    /// Shared transport slot: audio thread writes each block, editor reads.
+    transport_slot: Arc<TransportSlot>,
+    /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
+    /// and editor (`set_state` callback) deserialize on their thread
+    /// and push the result; the audio thread pops at the top of
+    /// `cb_process` and calls [`state::apply_state`]
+    /// under its exclusive `&mut plugin`.
+    pending_state: Arc<StateLoadQueue>,
+    /// Audio + lifecycle-owned per-block scratch. Behind a `PluginCell` so
+    /// every callback reaches it through a shared `&Vst2Instance` - never a
+    /// whole-struct `&mut *ctx`, which would alias a concurrent host-thread
+    /// `&*ctx` (param reads, GUI) and is UB under the aliasing model.
+    /// `process` on the audio thread and the lifecycle callbacks never
+    /// overlap, so the cell is never held twice at once.
+    audio: PluginCell<Vst2Audio<P>>,
+    /// Main/UI-thread-owned editor state, behind a `PluginCell` for the same
+    /// reason. Its owners - the GUI callbacks and `cb_state_load`'s
+    /// editor-notify - all run on the host main thread; `cb_process` never
+    /// touches it.
+    gui: PluginCell<Vst2Gui>,
+}
+
+/// Audio + lifecycle-owned per-block scratch (see [`Vst2Instance::audio`]).
+struct Vst2Audio<P: PluginExport> {
     event_list: EventList,
     /// Set when `cb_push_sysex_input` has queued `SysEx` for the
     /// upcoming `process` block. `SysEx` input arrives through that
@@ -93,11 +127,6 @@ struct Vst2Instance<P: PluginExport> {
     output_events: EventList,
     /// Per-sub-block scratch for `chunked_process::process_chunked`.
     sub_event_scratch: EventList,
-    /// Cached param-info table for the chunker's split predicate.
-    param_infos: Vec<ParamInfo>,
-    /// `min_subblock_samples` from `truce.toml`'s `[automation]`.
-    min_subblock_samples: u32,
-    plugin_id_hash: u64,
     sample_rate: f64,
     /// Max block size declared by the host via `effSetBlockSize` /
     /// `effOpen` (delivered through `cb_reset`'s `max_frames`). A
@@ -117,21 +146,21 @@ struct Vst2Instance<P: PluginExport> {
     /// (`processReplacing` f32 / `processDoubleReplacing` f64)
     /// differs from the plugin's.
     scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
+}
+
+/// Main/UI-thread-owned editor state (see [`Vst2Instance::gui`]).
+struct Vst2Gui {
     editor: Option<Box<dyn Editor>>,
-    /// `AEffect` pointer, set by the C shim after creation. Used for host callbacks.
-    aeffect_ptr: *mut std::ffi::c_void,
     /// Whether state has been loaded at least once (via effSetChunk).
     state_loaded: bool,
     /// Buffered parent window handle when editor open arrives before state load.
     pending_editor_parent: Option<*mut std::ffi::c_void>,
-    /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: Arc<TransportSlot>,
-    /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
-    /// and editor (`set_state` callback) deserialize on their thread
-    /// and push the result; the audio thread pops at the top of
-    /// `cb_process` and calls [`state::apply_state`]
-    /// under its exclusive `&mut plugin`.
-    pending_state: Arc<StateLoadQueue>,
+}
+
+impl<P: PluginExport> Vst2Instance<P> {
+    fn aeffect_ptr(&self) -> *mut std::ffi::c_void {
+        self.aeffect_ptr.load(Ordering::Relaxed)
+    }
 }
 
 // SAFETY: `Vst2Instance` holds two raw `*mut c_void` host handles
@@ -273,26 +302,30 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 meter_store,
                 latency_cache,
                 tail_cache,
-                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sysex_inputs_pending: false,
-                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
                 param_infos,
                 min_subblock_samples: info.automation.min_subblock_samples,
                 plugin_id_hash: state::shared_plugin_state_hash(&info),
-                sample_rate: 44100.0,
-                // 8192 covers the largest block sizes mainstream DAWs use; a
-                // non-zero default keeps the process-before-prepared path
-                // from tripping the contract assert.
-                max_block_size: 8192,
-                prepared: false,
-                scratch: RawBufferScratch::default(),
-                editor: None,
-                aeffect_ptr: std::ptr::null_mut(),
-                state_loaded: false,
-                pending_editor_parent: None,
+                aeffect_ptr: AtomicPtr::new(std::ptr::null_mut()),
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
+                audio: PluginCell::new(Vst2Audio {
+                    event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sysex_inputs_pending: false,
+                    output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sample_rate: 44100.0,
+                    // 8192 covers the largest block sizes mainstream DAWs use; a
+                    // non-zero default keeps the process-before-prepared path
+                    // from tripping the contract assert.
+                    max_block_size: 8192,
+                    prepared: false,
+                    scratch: RawBufferScratch::default(),
+                }),
+                gui: PluginCell::new(Vst2Gui {
+                    editor: None,
+                    state_loaded: false,
+                    pending_editor_parent: None,
+                }),
             });
             Box::into_raw(instance).cast::<std::ffi::c_void>()
         },
@@ -331,16 +364,21 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     // Author `reset` (and any deferred `editor.open`) run here; firewall
     // them so a panic can't unwind across the C ABI.
     run_extern_callback_with::<P, ()>("vst2", "reset", (), || unsafe {
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        let mut audio = inst.audio.enter();
         // Clamp host-supplied max_frames to a sane minimum: hosts
         // that ignore their own setBlockSize contract can pass 0
         // here, which would size plugin-internal delay lines to zero
         // and blow up on the first non-zero process() call.
         let max_frames = (max_frames as usize).max(1024);
-        inst.sample_rate = sample_rate;
-        inst.max_block_size = max_frames;
-        let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
-        inst.scratch
+        audio.sample_rate = sample_rate;
+        audio.max_block_size = max_frames;
+        // Size scratch from the widest declared layout, not the default
+        // one, so a host that later selects a wider layout doesn't allocate
+        // in `process`.
+        let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
+        audio
+            .scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
             let mut plugin = enter_plugin(&inst.plugin);
@@ -351,19 +389,21 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
                 .store(plugin.latency(), Ordering::Relaxed);
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
         }
-        inst.prepared = true;
+        audio.prepared = true;
+        drop(audio);
 
+        let mut gui = inst.gui.enter();
         // Mark the instance as "fully initialized" so any subsequent
         // `cb_gui_open` calls open the editor immediately rather than
         // deferring. This covers the fresh-instance case where the host
         // calls `effMainsChanged(true)` (→ this reset) but never calls
         // `effSetChunk` because there's no saved state.
-        inst.state_loaded = true;
+        gui.state_loaded = true;
 
         // If the host opened the editor before state_load but never called
         // state_load (new instance, no saved state), flush the pending open now.
-        if let Some(parent) = inst.pending_editor_parent.take() {
-            open_editor_inner(inst, parent);
+        if let Some(parent) = gui.pending_editor_parent.take() {
+            open_editor_inner(&mut gui, inst, parent);
         }
     });
 }
@@ -445,21 +485,25 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("VST2", || unsafe {
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
+        // Shared `&Vst2Instance` (never a whole-struct `&mut`) - the audio
+        // scratch is reached through its ownership cell, so a concurrent
+        // host-thread `&*ctx` (param reads, GUI) can't alias us.
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        let mut audio = inst.audio.enter();
         let num_frames = num_frames as usize;
 
         // Host called process() before effMainsChanged(true) - sample
         // rate and smoothers haven't been primed yet. Zero outputs
         // and bail rather than running DSP through uninitialized state.
-        if !inst.prepared {
+        if !audio.prepared {
             for ch in 0..num_output_channels as usize {
                 let ptr = *outputs.add(ch);
                 if !ptr.is_null() {
                     std::ptr::write_bytes(ptr, 0, num_frames);
                 }
             }
-            inst.event_list.clear();
-            inst.sysex_inputs_pending = false;
+            audio.event_list.clear();
+            audio.sysex_inputs_pending = false;
             return;
         }
 
@@ -486,21 +530,26 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // allocates. No-op and zero-sized when the feature is off.
         let _rt = RtSection::enter();
 
+        // One reborrow of the scratch so the disjoint fields below (event
+        // list, sub-block scratch, output events, build scratch) can be
+        // borrowed simultaneously - the guard's `Deref` can't split-borrow.
+        let scr = &mut *audio;
+
         // Convert MIDI events. SysEx input arrives through
         // `cb_push_sysex_input` during the host's `effProcessEvents`
         // dispatch, which runs before this callback, so preserve any
         // queued SysEx instead of clearing it; otherwise clear stale
         // events from the previous block before appending short MIDI.
-        if inst.sysex_inputs_pending {
-            inst.sysex_inputs_pending = false;
+        if scr.sysex_inputs_pending {
+            scr.sysex_inputs_pending = false;
         } else {
-            inst.event_list.clear();
+            scr.event_list.clear();
         }
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
             for ev in event_slice {
                 if let Some(body) = decode_short_message(ev.status, ev.data1, ev.data2) {
-                    inst.event_list.push(Event {
+                    scr.event_list.push(Event {
                         sample_offset: ev.delta_frames,
                         port: 0,
                         body,
@@ -508,16 +557,16 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 }
             }
         }
-        inst.event_list.ensure_sorted_by_offset();
+        scr.event_list.ensure_sorted_by_offset();
 
         // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
         debug_assert!(
-            num_frames <= inst.max_block_size,
+            num_frames <= scr.max_block_size,
             "host violated VST2 contract: process() got {num_frames} frames \
              but effSetBlockSize/effOpen declared max {}",
-            inst.max_block_size
+            scr.max_block_size
         );
-        let mut audio_buffer = inst.scratch.build(
+        let mut audio_buffer = scr.scratch.build(
             inputs,
             outputs,
             num_input_channels,
@@ -526,28 +575,29 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             P::supports_in_place(),
         );
 
-        let transport = if inst.aeffect_ptr.is_null() {
+        let aeffect_ptr = inst.aeffect_ptr();
+        let transport = if aeffect_ptr.is_null() {
             TransportInfo::default()
         } else {
             let mut snap = Vst2TransportSnapshot::default();
-            truce_vst2_host_get_time(inst.aeffect_ptr, &raw mut snap);
+            truce_vst2_host_get_time(aeffect_ptr, &raw mut snap);
             if snap.valid != 0 {
-                snap.to_transport_info(inst.sample_rate)
+                snap.to_transport_info(scr.sample_rate)
             } else {
                 TransportInfo::default()
             }
         };
-        inst.output_events.clear();
+        scr.output_events.clear();
         inst.transport_slot.write(&transport);
 
         let mut transport_snap = transport;
         let chunk_args = ChunkedProcess {
-            events: &inst.event_list,
-            sub_event_scratch: &mut inst.sub_event_scratch,
+            events: &scr.event_list,
+            sub_event_scratch: &mut scr.sub_event_scratch,
             transport: &mut transport_snap,
-            sample_rate: inst.sample_rate,
+            sample_rate: scr.sample_rate,
             process_mode: vst2_process_mode(process_level),
-            output_events: &mut inst.output_events,
+            output_events: &mut scr.output_events,
             params_fn: None,
             meters_fn: None,
             param_infos: &inst.param_infos,
@@ -562,9 +612,9 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         let _ = audio_buffer;
         // Narrow rendered f64 output back to host f32 when needed.
         // No-op for `f32` plugins.
-        inst.scratch
+        scr.scratch
             .finish_widening(outputs, num_output_channels, len_u32(num_frames));
-        notify_process_param_changes(inst);
+        notify_process_param_changes(inst, &scr.output_events);
 
         // Refresh latency / tail caches so the host's main-thread
         // queries don't have to touch the plugin.
@@ -642,12 +692,16 @@ pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
     }
 }
 
-fn notify_process_param_changes<P: PluginExport>(inst: &Vst2Instance<P>) {
-    if inst.aeffect_ptr.is_null() {
+fn notify_process_param_changes<P: PluginExport>(
+    inst: &Vst2Instance<P>,
+    output_events: &EventList,
+) {
+    let aeffect_ptr = inst.aeffect_ptr();
+    if aeffect_ptr.is_null() {
         return;
     }
 
-    for event in inst.output_events.iter() {
+    for event in output_events.iter() {
         let EventBody::ParamChange { id, value } = event.body else {
             continue;
         };
@@ -657,7 +711,7 @@ fn notify_process_param_changes<P: PluginExport>(inst: &Vst2Instance<P>) {
 
         let normalized = f32::from_f64(info.range.normalize(value));
         unsafe {
-            truce_vst2_host_automate(inst.aeffect_ptr, id, normalized);
+            truce_vst2_host_automate(aeffect_ptr, id, normalized);
         }
     }
 }
@@ -715,8 +769,10 @@ fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
+        let audio = inst.audio.enter();
         len_u32(
-            inst.output_events
+            audio
+                .output_events
                 .iter()
                 .filter(|e| try_encode_vst2_midi(e).is_some())
                 .count(),
@@ -731,7 +787,8 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
-        if let Some(packet) = inst
+        let audio = inst.audio.enter();
+        if let Some(packet) = audio
             .output_events
             .iter()
             .filter_map(try_encode_vst2_midi)
@@ -752,27 +809,31 @@ unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
     len: u32,
 ) {
     unsafe {
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         if bytes.is_null() || len == 0 {
             return;
         }
+        let mut audio = inst.audio.enter();
+        let scr = &mut *audio;
         // First SysEx of the block clears the previous block's events
         // and flags `process` to keep what we queue here rather than
         // clearing again.
-        if !inst.sysex_inputs_pending {
-            inst.event_list.clear();
-            inst.sysex_inputs_pending = true;
+        if !scr.sysex_inputs_pending {
+            scr.event_list.clear();
+            scr.sysex_inputs_pending = true;
         }
         let slice = std::slice::from_raw_parts(bytes, len as usize);
-        let _ = inst.event_list.push_sysex(delta_frames, slice);
+        let _ = scr.event_list.push_sysex(delta_frames, slice);
     }
 }
 
 unsafe extern "C" fn cb_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
+        let audio = inst.audio.enter();
         len_u32(
-            inst.output_events
+            audio
+                .output_events
                 .iter()
                 .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
                 .count(),
@@ -789,13 +850,14 @@ unsafe extern "C" fn cb_output_sysex_at<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
-        if let Some(event) = inst
+        let audio = inst.audio.enter();
+        if let Some(event) = audio
             .output_events
             .iter()
             .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
             .nth(index as usize)
         {
-            let bytes = inst.output_events.sysex_bytes(&event.body);
+            let bytes = audio.output_events.sysex_bytes(&event.body);
             *out_delta_frames = event.sample_offset;
             *out_bytes = bytes.as_ptr();
             *out_len = len_u32(bytes.len());
@@ -932,7 +994,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     len: u32,
 ) -> i32 {
     run_extern_callback_with::<P, i32>("vst2", "load_state", 0, || unsafe {
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
 
         // `slice::from_raw_parts(null, 0)` is sound but `from_raw_parts(null, n)`
         // for `n > 0` is UB. Hosts under stress (or buggy hosts) have
@@ -975,14 +1037,15 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // open path land out of order with the state_changed
         // notification; the match collapses both outcomes into one
         // decision tree.
+        let mut gui = inst.gui.enter();
         match (
             restored,
-            inst.editor.is_some(),
-            inst.pending_editor_parent.take(),
+            gui.editor.is_some(),
+            gui.pending_editor_parent.take(),
         ) {
             // Editor already open + valid state: notify in place.
             (true, true, None) => {
-                if let Some(ref mut editor) = inst.editor {
+                if let Some(ref mut editor) = gui.editor {
                     editor.state_changed();
                 }
             }
@@ -990,15 +1053,15 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // construction reads the just-restored params, so a
             // separate `state_changed` would double-fire.
             (_, _, Some(parent)) => {
-                inst.state_loaded = true;
-                open_editor_inner(inst, parent);
+                gui.state_loaded = true;
+                open_editor_inner(&mut gui, inst, parent);
                 return i32::from(restored);
             }
             // No editor + restore failed / null buffer: nothing to notify.
             _ => {}
         }
 
-        inst.state_loaded = true;
+        gui.state_loaded = true;
         i32::from(restored)
     })
 }
@@ -1053,14 +1116,15 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if ctx.is_null() {
             return 0;
         }
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
-        if inst.editor.is_none() {
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        let mut gui = inst.gui.enter();
+        if gui.editor.is_none() {
             // Built from the lock-free param store the wrapper already
             // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
-            inst.editor = (inst.editor_builder)(inst.params_arc.clone());
+            gui.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
-        i32::from(inst.editor.is_some())
+        i32::from(gui.editor.is_some())
     })
 }
 
@@ -1073,7 +1137,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     // across the C ABI.
     run_extern_callback_with::<P, ()>("vst2", "gui_get_size", (), || unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
-        if let Some(ref editor) = inst.editor {
+        if let Some(ref editor) = inst.gui.enter().editor {
             // VST2 has no standardised DPI channel - hosts read back
             // whatever `effEditGetRect` returns and embed the NSView /
             // HWND at that pixel size. Report the editor's logical size
@@ -1091,22 +1155,23 @@ unsafe extern "C" fn cb_set_effect_ptr<P: PluginExport>(
     effect: *mut std::ffi::c_void,
 ) {
     unsafe {
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
-        inst.aeffect_ptr = effect;
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        inst.aeffect_ptr.store(effect, Ordering::Relaxed);
     }
 }
 
 /// Actually open the editor with the given parent window handle.
 unsafe fn open_editor_inner<P: PluginExport>(
-    inst: &mut Vst2Instance<P>,
+    gui: &mut Vst2Gui,
+    inst: &Vst2Instance<P>,
     parent: *mut std::ffi::c_void,
 ) {
     unsafe {
-        if let Some(ref mut editor) = inst.editor {
+        if let Some(ref mut editor) = gui.editor {
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);
             let snapshot = Arc::clone(&inst.snapshot);
-            let effect_ptr = SendPtr::new(inst.aeffect_ptr);
+            let effect_ptr = SendPtr::new(inst.aeffect_ptr());
             let params_for_set = params.clone();
             let params_for_get = params.clone();
             let params_for_plain = params.clone();
@@ -1207,11 +1272,12 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     // `editor.open` runs author GUI-construction code that can panic;
     // firewall it so the panic can't unwind across the C ABI.
     run_extern_callback_with::<P, ()>("vst2", "gui_open", (), || unsafe {
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
-        if inst.state_loaded {
-            open_editor_inner(inst, parent);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        let mut gui = inst.gui.enter();
+        if gui.state_loaded {
+            open_editor_inner(&mut gui, inst, parent);
         } else {
-            inst.pending_editor_parent = Some(parent);
+            gui.pending_editor_parent = Some(parent);
         }
     });
 }
@@ -1219,8 +1285,8 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     // `editor.close` runs author teardown code that can panic; firewall it.
     run_extern_callback_with::<P, ()>("vst2", "gui_close", (), || unsafe {
-        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
-        if let Some(ref mut editor) = inst.editor {
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.close();
         }
     });

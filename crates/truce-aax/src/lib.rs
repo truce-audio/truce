@@ -36,7 +36,7 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
+    ParamCStrings, PluginCell, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
     log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
     run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
@@ -285,39 +285,23 @@ struct AaxInstance<P: PluginExport> {
     /// `_set_render_mode` (main thread) and `_reset` / `_process` read
     /// it (audio thread). Defaults to `Realtime` (0).
     render_mode: AtomicU8,
-    event_list: EventList,
-    /// Set when `_push_sysex_input` has queued `SysEx` for the current
-    /// `_render` block. `RenderAudio` reassembles `SysEx` from the MIDI
-    /// packet stream and pushes it before calling into Rust, so the
-    /// render must not blindly clear `event_list` or it wipes the
-    /// queued `SysEx`. The first push of a block clears + sets this;
-    /// the render consumes it instead of re-clearing.
-    sysex_inputs_pending: bool,
-    output_events: EventList,
-    /// Per-sub-block scratch for `chunked_process::process_chunked`.
-    sub_event_scratch: EventList,
     /// Cached param-info table for the chunker's split predicate.
     param_infos: Vec<ParamInfo>,
     /// `min_subblock_samples` from `truce.toml`'s `[automation]`.
     min_subblock_samples: u32,
     plugin_id_hash: u64,
-    sample_rate: f64,
-    /// Max block size declared by AAX in `EffectInit` (delivered
-    /// through `_reset`'s `max_frames`). A generous default keeps
-    /// the contract assert in `_process` from tripping for hosts
-    /// that send process before declaring a max.
-    max_block_size: usize,
-    /// `true` once `_reset` has run. `_process` early-returns and
-    /// zeros outputs while false so DSP doesn't run with un-snapped
-    /// smoothers / unset sample rate.
-    prepared: bool,
-    /// Reused per-block scratch for `RawBufferScratch::build`. Lives
-    /// on the instance so the audio thread doesn't heap-allocate.
-    ///
-    /// Parameterised by `P::Sample`; widens/narrows host-`f32`
-    /// buffers around `plugin.process()` for plugins on `prelude64`.
-    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
-    editor: Option<Box<dyn Editor>>,
+    /// Audio + lifecycle-owned per-block scratch. Behind a `PluginCell` so
+    /// every callback reaches it through a shared `&AaxInstance` - never a
+    /// whole-struct `&mut *ctx`, which would alias a concurrent host-thread
+    /// `&*ctx` (param reads, GUI) and is UB under the aliasing model.
+    /// `_render` on the audio thread and the lifecycle callbacks never
+    /// overlap, so the cell is never held twice at once.
+    audio: PluginCell<AaxAudio<P>>,
+    /// Main/UI-thread-owned editor state, behind a `PluginCell` for the same
+    /// reason. Its owners - the GUI callbacks and `_load_state`'s
+    /// editor-notify - all run on the host main thread; `_render` never
+    /// touches it.
+    gui: PluginCell<AaxGui>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
     /// Cached serialized state plus the `state_revision` value it was
@@ -344,6 +328,42 @@ struct AaxInstance<P: PluginExport> {
     /// `_process` and calls [`state::apply_state`] under
     /// its exclusive `&mut plugin`.
     pending_state: Arc<StateLoadQueue>,
+}
+
+/// Audio + lifecycle-owned per-block scratch (see [`AaxInstance::audio`]).
+struct AaxAudio<P: PluginExport> {
+    event_list: EventList,
+    /// Set when `_push_sysex_input` has queued `SysEx` for the current
+    /// `_render` block. `RenderAudio` reassembles `SysEx` from the MIDI
+    /// packet stream and pushes it before calling into Rust, so the
+    /// render must not blindly clear `event_list` or it wipes the
+    /// queued `SysEx`. The first push of a block clears + sets this;
+    /// the render consumes it instead of re-clearing.
+    sysex_inputs_pending: bool,
+    output_events: EventList,
+    /// Per-sub-block scratch for `chunked_process::process_chunked`.
+    sub_event_scratch: EventList,
+    sample_rate: f64,
+    /// Max block size declared by AAX in `EffectInit` (delivered
+    /// through `_reset`'s `max_frames`). A generous default keeps
+    /// the contract assert in `_process` from tripping for hosts
+    /// that send process before declaring a max.
+    max_block_size: usize,
+    /// `true` once `_reset` has run. `_process` early-returns and
+    /// zeros outputs while false so DSP doesn't run with un-snapped
+    /// smoothers / unset sample rate.
+    prepared: bool,
+    /// Reused per-block scratch for `RawBufferScratch::build`. Lives
+    /// on the instance so the audio thread doesn't heap-allocate.
+    ///
+    /// Parameterised by `P::Sample`; widens/narrows host-`f32`
+    /// buffers around `plugin.process()` for plugins on `prelude64`.
+    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
+}
+
+/// Main/UI-thread-owned editor state (see [`AaxInstance::gui`]).
+struct AaxGui {
+    editor: Option<Box<dyn Editor>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -901,14 +921,14 @@ macro_rules! export_aax {
 // - State pointers (out_data in save_state, data in load_state) are
 //   managed by the AAX chunk system. The template handles allocation.
 //
-// `&*` vs `&mut *` on the `ctx` cast below: the choice tracks what each
-// callback actually mutates on the `AaxInstance`. Read-only or
-// interior-mutability-only paths (`_get_param`, `_set_param` which
-// goes through atomics in `Params`, `_format_param`, `_save_state`)
-// take `&*`; paths that write `inst.event_list` / `inst.sample_rate`
-// / `inst.editor` take `&mut *`. The sequential-per-instance
-// guarantee from the AAX SDK means a single mutable reference is
-// always exclusive when we take one.
+// Every callback below forms a shared `&*ctx` - never a whole-struct
+// `&mut *ctx`. `_render` on the audio thread runs concurrently with
+// host-thread callbacks (param reads, GUI, state), so a `&mut` to the
+// whole instance would alias their `&*` and is UB under the aliasing
+// model. Per-block scratch (`event_list`, `sample_rate`, ...) lives in
+// the `audio` cell and editor state in the `gui` cell; both are reached
+// through the shared `&*ctx`, and the AAX contract keeps their owners
+// from overlapping. Params mutate through their own atomics.
 // ---------------------------------------------------------------------------
 
 pub unsafe fn _get_descriptor(out: *mut TruceAaxDescriptor) {
@@ -956,18 +976,20 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
                 latency_cache,
                 tail_cache,
                 render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
-                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sysex_inputs_pending: false,
-                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
                 param_infos,
                 min_subblock_samples: info.automation.min_subblock_samples,
                 plugin_id_hash: state::shared_plugin_state_hash(&info),
-                sample_rate: 44100.0,
-                max_block_size: 8192,
-                prepared: false,
-                scratch: RawBufferScratch::default(),
-                editor: None,
+                audio: PluginCell::new(AaxAudio {
+                    event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sysex_inputs_pending: false,
+                    output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sample_rate: 44100.0,
+                    max_block_size: 8192,
+                    prepared: false,
+                    scratch: RawBufferScratch::default(),
+                }),
+                gui: PluginCell::new(AaxGui { editor: None }),
                 transport_slot: TransportSlot::new(),
                 state_cache: Mutex::new(None),
                 // Start at 1 so the first cached entry (revision 0) never
@@ -998,17 +1020,19 @@ pub unsafe fn _reset<P: PluginExport>(
     sample_rate: f64,
     max_frames: u32,
 ) {
-    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    let mut audio = inst.audio.enter();
     // Clamp host-supplied max_frames to a sane minimum.
     let max_frames = (max_frames as usize).max(1024);
-    inst.sample_rate = sample_rate;
-    inst.max_block_size = max_frames;
+    audio.sample_rate = sample_rate;
+    audio.max_block_size = max_frames;
     // Size scratch to the widest declared layout: a multi-layout plugin
     // gets one AAX component per stem, and this instance may be any of
     // them, so pre-allocating for the max keeps `_process` off the audio
     // thread's allocator when the stem is wider than the first layout.
     let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
-    inst.scratch
+    audio
+        .scratch
         .ensure_capacity(num_in as usize, num_out as usize, max_frames);
     // Offline-bounce state, set from the host's `EnteringOfflineMode` /
     // `ExitingOfflineMode` notifications (forwarded by the template).
@@ -1020,7 +1044,7 @@ pub unsafe fn _reset<P: PluginExport>(
             .store(plugin.latency(), Ordering::Relaxed);
         inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
     }
-    inst.prepared = true;
+    audio.prepared = true;
 }
 
 /// Host entered / left offline-bounce mode. `mode` is a [`ProcessMode`]
@@ -1062,21 +1086,25 @@ pub unsafe fn _process<P: PluginExport>(
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("AAX", || {
-        let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
+        // Shared `&AaxInstance` (never a whole-struct `&mut`) - the audio
+        // scratch is reached through its ownership cell, so a concurrent
+        // host-thread `&*ctx` (param reads, GUI) can't alias us.
+        let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+        let mut audio = inst.audio.enter();
         let num_frames = nf;
 
         // Host called render before EffectInit primed sample rate /
         // smoothers. Zero outputs and bail so DSP doesn't run with
         // uninitialized state.
-        if !inst.prepared {
+        if !audio.prepared {
             for ch in 0..num_out as usize {
                 let ptr = unsafe { *outputs.add(ch) };
                 if !ptr.is_null() {
                     unsafe { std::ptr::write_bytes(ptr, 0, num_frames) };
                 }
             }
-            inst.event_list.clear();
-            inst.sysex_inputs_pending = false;
+            audio.event_list.clear();
+            audio.sysex_inputs_pending = false;
             return;
         }
 
@@ -1106,21 +1134,26 @@ pub unsafe fn _process<P: PluginExport>(
         // allocates. No-op and zero-sized when the feature is off.
         let _rt = RtSection::enter();
 
+        // One reborrow of the scratch so the disjoint fields below (event
+        // list, sub-block scratch, output events, build scratch) can be
+        // borrowed simultaneously - the guard's `Deref` can't split-borrow.
+        let scr = &mut *audio;
+
         // Convert MIDI. `RenderAudio` reassembles SysEx from the MIDI
         // packet stream and pushes it via `_push_sysex_input` before
         // calling in here, so preserve any queued SysEx instead of
         // clearing it; otherwise clear the previous block's events
         // before appending short MIDI.
-        if inst.sysex_inputs_pending {
-            inst.sysex_inputs_pending = false;
+        if scr.sysex_inputs_pending {
+            scr.sysex_inputs_pending = false;
         } else {
-            inst.event_list.clear();
+            scr.event_list.clear();
         }
         if !events.is_null() && num_events > 0 {
             let ev_slice = unsafe { slice::from_raw_parts(events, num_events as usize) };
             for ev in ev_slice {
                 if let Some(body) = decode_short_message(ev.status, ev.data1, ev.data2) {
-                    inst.event_list.push(Event {
+                    scr.event_list.push(Event {
                         sample_offset: ev.delta_frames,
                         port: 0,
                         body,
@@ -1128,17 +1161,17 @@ pub unsafe fn _process<P: PluginExport>(
                 }
             }
         }
-        inst.event_list.ensure_sorted_by_offset();
+        scr.event_list.ensure_sorted_by_offset();
 
         // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
         debug_assert!(
-            num_frames <= inst.max_block_size,
+            num_frames <= scr.max_block_size,
             "host violated AAX contract: render() got {num_frames} frames \
          but EffectInit declared max {}",
-            inst.max_block_size
+            scr.max_block_size
         );
         unsafe {
-            let mut buffer = inst.scratch.build(
+            let mut buffer = scr.scratch.build(
                 inputs,
                 outputs,
                 num_in,
@@ -1161,8 +1194,8 @@ pub unsafe fn _process<P: PluginExport>(
                     // Derived from samples for a consistent cross-format
                     // value (CLAP fills it directly), matching VST3/VST2/AU/
                     // LV2. Guard the pre-reset zero sample rate.
-                    position_seconds: if inst.sample_rate > 0.0 {
-                        t.position_samples / inst.sample_rate
+                    position_seconds: if scr.sample_rate > 0.0 {
+                        t.position_samples / scr.sample_rate
                     } else {
                         0.0
                     },
@@ -1175,19 +1208,19 @@ pub unsafe fn _process<P: PluginExport>(
             } else {
                 TransportInfo::default()
             };
-            inst.output_events.clear();
+            scr.output_events.clear();
             inst.transport_slot.write(&transport);
 
             let mut transport_snap = transport;
             let chunk_args = ChunkedProcess {
-                events: &inst.event_list,
-                sub_event_scratch: &mut inst.sub_event_scratch,
+                events: &scr.event_list,
+                sub_event_scratch: &mut scr.sub_event_scratch,
                 transport: &mut transport_snap,
-                sample_rate: inst.sample_rate,
+                sample_rate: scr.sample_rate,
                 // Offline-bounce state from the host notifications; read
                 // per block so a mid-session toggle applies immediately.
                 process_mode: ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed)),
-                output_events: &mut inst.output_events,
+                output_events: &mut scr.output_events,
                 params_fn: None,
                 meters_fn: None,
                 param_infos: &inst.param_infos,
@@ -1202,7 +1235,7 @@ pub unsafe fn _process<P: PluginExport>(
             let _ = buffer;
             // Narrow rendered f64 output back to host f32 when needed.
             // No-op for `f32` plugins.
-            inst.scratch
+            scr.scratch
                 .finish_widening(outputs, num_out, len_u32(num_frames));
 
             // Refresh latency / tail caches so the host's main-thread
@@ -1347,7 +1380,8 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
 /// the indexable view agree.
 pub unsafe fn _output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    let n = inst
+    let audio = inst.audio.enter();
+    let n = audio
         .output_events
         .iter()
         .filter(|e| try_encode_aax_midi(e).is_some())
@@ -1364,7 +1398,8 @@ pub unsafe fn _output_event_at<P: PluginExport>(
     out: *mut TruceAaxMidiEvent,
 ) {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    if let Some(packet) = inst
+    let audio = inst.audio.enter();
+    if let Some(packet) = audio
         .output_events
         .iter()
         .filter_map(try_encode_aax_midi)
@@ -1386,25 +1421,29 @@ pub unsafe fn _push_sysex_input<P: PluginExport>(
     bytes: *const u8,
     len: u32,
 ) {
-    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     if bytes.is_null() || len == 0 {
         return;
     }
+    let mut audio = inst.audio.enter();
+    let scr = &mut *audio;
     // First SysEx of the block clears the previous block's events and
     // flags `_render` to keep what we queue here rather than clearing
     // again.
-    if !inst.sysex_inputs_pending {
-        inst.event_list.clear();
-        inst.sysex_inputs_pending = true;
+    if !scr.sysex_inputs_pending {
+        scr.event_list.clear();
+        scr.sysex_inputs_pending = true;
     }
     let slice = unsafe { std::slice::from_raw_parts(bytes, len as usize) };
-    let _ = inst.event_list.push_sysex(delta_frames, slice);
+    let _ = scr.event_list.push_sysex(delta_frames, slice);
 }
 
 pub unsafe fn _output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    let audio = inst.audio.enter();
     len_u32(
-        inst.output_events
+        audio
+            .output_events
             .iter()
             .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
             .count(),
@@ -1419,13 +1458,14 @@ pub unsafe fn _output_sysex_at<P: PluginExport>(
     out_len: *mut u32,
 ) {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    if let Some(event) = inst
+    let audio = inst.audio.enter();
+    if let Some(event) = audio
         .output_events
         .iter()
         .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
         .nth(index as usize)
     {
-        let bytes = inst.output_events.sysex_bytes(&event.body);
+        let bytes = audio.output_events.sysex_bytes(&event.body);
         unsafe {
             *out_delta_frames = event.sample_offset;
             *out_bytes = bytes.as_ptr();
@@ -1670,7 +1710,7 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
 
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
     run_extern_callback_with::<P, ()>("aax", "load_state", (), || unsafe {
-        let inst = &mut *ctx.cast::<AaxInstance<P>>();
+        let inst = &*ctx.cast::<AaxInstance<P>>();
         // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
         // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
         if data.is_null() || len == 0 {
@@ -1700,7 +1740,7 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             if let Ok(mut guard) = inst.state_cache.lock() {
                 *guard = None;
             }
-            if let Some(ref mut editor) = inst.editor {
+            if let Some(ref mut editor) = inst.gui.enter().editor {
                 editor.state_changed();
             }
         }
@@ -1723,7 +1763,7 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
     len: u32,
 ) -> i32 {
     run_extern_callback_with::<P, i32>("aax", "migrate_state", 0, || unsafe {
-        let inst = &mut *ctx.cast::<AaxInstance<P>>();
+        let inst = &*ctx.cast::<AaxInstance<P>>();
         if data.is_null() || len == 0 {
             return 0;
         }
@@ -1746,7 +1786,7 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
         if let Ok(mut guard) = inst.state_cache.lock() {
             *guard = None;
         }
-        if let Some(ref mut editor) = inst.editor {
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();
         }
         1
@@ -1759,12 +1799,13 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
 
 pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceAaxEditorInfo) {
     unsafe {
-        let inst = &mut *ctx.cast::<AaxInstance<P>>();
+        let inst = &*ctx.cast::<AaxInstance<P>>();
+        let mut gui = inst.gui.enter();
         // Built from the lock-free param store the wrapper already
         // holds outside the plugin, so opening the GUI never
         // stalls the audio thread.
-        inst.editor = (inst.editor_builder)(inst.params_arc.clone());
-        let info = match &inst.editor {
+        gui.editor = (inst.editor_builder)(inst.params_arc.clone());
+        let info = match &gui.editor {
             Some(editor) => {
                 // Report logical size; the patched baseview CGLayer path
                 // applies the host scale factor internally when it
@@ -1803,8 +1844,9 @@ pub unsafe fn _editor_open<P: PluginExport>(
         if ctx.is_null() || callbacks.is_null() || parent_view.is_null() {
             return;
         }
-        let inst = &mut *ctx.cast::<AaxInstance<P>>();
-        let Some(editor) = inst.editor.as_mut() else {
+        let inst = &*ctx.cast::<AaxInstance<P>>();
+        let mut gui = inst.gui.enter();
+        let Some(editor) = gui.editor.as_mut() else {
             return;
         };
 
@@ -1890,8 +1932,8 @@ pub unsafe fn _editor_open<P: PluginExport>(
 
 pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
     unsafe {
-        let inst = &mut *ctx.cast::<AaxInstance<P>>();
-        if let Some(ref mut editor) = inst.editor {
+        let inst = &*ctx.cast::<AaxInstance<P>>();
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.close();
         }
     }
@@ -1899,8 +1941,8 @@ pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
 
 pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
     unsafe {
-        let inst = &mut *ctx.cast::<AaxInstance<P>>();
-        if let Some(ref mut editor) = inst.editor {
+        let inst = &*ctx.cast::<AaxInstance<P>>();
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.idle();
         }
     }
@@ -1909,7 +1951,7 @@ pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
 pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32 {
     unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
-        match &inst.editor {
+        match &inst.gui.enter().editor {
             Some(editor) => {
                 // Logical size. The patched baseview CGLayer path handles
                 // HiDPI internally - same contract as CLAP / VST3 / AU.
