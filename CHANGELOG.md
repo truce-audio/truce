@@ -5,6 +5,7 @@ Notable changes per release.
 ## 6.1.1
 
 - Parameter display strings that overflow the host buffer truncate on a UTF-8 char boundary (units like `°`, `µs`, `−12 dB`), not mid-codepoint, on every format.
+- AAX param value format/parse callbacks are panic-guarded, matching the other formats: an author formatter/parser that panics no longer aborts Pro Tools.
 
 ## 6.1.0
 

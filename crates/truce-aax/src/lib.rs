@@ -1440,26 +1440,27 @@ pub unsafe fn _format_param<P: PluginExport>(
     out: *mut c_char,
     out_len: u32,
 ) {
-    // `out_len == 0` would underflow on `out_len as usize - 1` and
-    // let `copy_nonoverlapping` write past the host-supplied buffer.
-    if out_len == 0 || out.is_null() {
-        return;
-    }
-    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    if let Some(text) = inst.params_arc.format_value(id, value) {
-        let bytes = text.as_bytes();
-        let mut len = bytes.len().min((out_len as usize) - 1);
-        // Truncate on a char boundary: a torn multi-byte UTF-8 tail (the
-        // "°" of a Degrees unit, say) is an invalid C string that strict
-        // hosts reject wholesale.
-        while len > 0 && !text.is_char_boundary(len) {
-            len -= 1;
+    // Author `format_value` can panic; firewall it (nothing written).
+    run_extern_callback_with::<P, ()>("aax", "format_value", (), || unsafe {
+        // `out_len == 0` would underflow on `out_len as usize - 1` and
+        // let `copy_nonoverlapping` write past the host-supplied buffer.
+        if out_len == 0 || out.is_null() {
+            return;
         }
-        unsafe {
+        let inst = &*ctx.cast::<AaxInstance<P>>();
+        if let Some(text) = inst.params_arc.format_value(id, value) {
+            let bytes = text.as_bytes();
+            let mut len = bytes.len().min((out_len as usize) - 1);
+            // Truncate on a char boundary: a torn multi-byte UTF-8 tail (the
+            // "°" of a Degrees unit, say) is an invalid C string that strict
+            // hosts reject wholesale.
+            while len > 0 && !text.is_char_boundary(len) {
+                len -= 1;
+            }
             ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
             *out.add(len) = 0;
         }
-    }
+    });
 }
 
 /// Parse host text-entry (UTF-8) into a plain param value. Returns `1`
@@ -1475,20 +1476,23 @@ pub unsafe fn _parse_param<P: PluginExport>(
     text: *const c_char,
     out_plain: *mut f64,
 ) -> i32 {
-    if text.is_null() || out_plain.is_null() {
-        return 0;
-    }
-    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    let Ok(text) = (unsafe { CStr::from_ptr(text) }).to_str() else {
-        return 0;
-    };
-    match inst.params_arc.parse_value(id, text) {
-        Some(v) => {
-            unsafe { *out_plain = v };
-            1
+    // Author `parse_value` can panic; firewall it (0 = "not parsed").
+    run_extern_callback_with::<P, i32>("aax", "parse_value", 0, || unsafe {
+        if text.is_null() || out_plain.is_null() {
+            return 0;
         }
-        None => 0,
-    }
+        let inst = &*ctx.cast::<AaxInstance<P>>();
+        let Ok(text) = CStr::from_ptr(text).to_str() else {
+            return 0;
+        };
+        match inst.params_arc.parse_value(id, text) {
+            Some(v) => {
+                *out_plain = v;
+                1
+            }
+            None => 0,
+        }
+    })
 }
 
 /// Normalize a plain value to `[0,1]` through the param's `ParamRange`
