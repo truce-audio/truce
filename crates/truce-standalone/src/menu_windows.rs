@@ -678,7 +678,7 @@ unsafe extern "system" fn subclass_proc(
                     let idx = usize::from(cmd_id - MENU_CMD_BUS_LAYOUT_BASE);
                     if let Some(&(num_in, num_out)) = state.bus_layouts.get(idx) {
                         vlog!("bus layout: {num_in} in / {num_out} out");
-                        state.output.set_layout(num_in, num_out);
+                        state.output.set_layout(idx);
                     }
                     return 0;
                 }
@@ -755,7 +755,7 @@ unsafe extern "system" fn subclass_proc(
                     repopulate_bus_layout_menu(
                         popup,
                         &state.bus_layouts,
-                        state.output.current_layout(),
+                        state.output.current_index(),
                     );
                 } else if let Some(port) = state
                     .hmenu_midi_inputs
@@ -925,14 +925,10 @@ unsafe fn repopulate_channel_menu(
 
 /// Rebuild the Bus Layout popup: one item per declared layout, labelled
 /// by its I/O channel counts. Each item's command ID is
-/// `MENU_CMD_BUS_LAYOUT_BASE + index`; the layout matching the plugin's
-/// current `(in, out)` gets `MF_CHECKED`. Index (not width) so two layouts
-/// that share a maximum width stay distinct commands.
-unsafe fn repopulate_bus_layout_menu(
-    popup: HMENU,
-    layouts: &[(u16, u16)],
-    current_layout: (usize, usize),
-) {
+/// `MENU_CMD_BUS_LAYOUT_BASE + index`; the layout at `current_index` gets
+/// `MF_CHECKED`. Index (not width) so two layouts that share a maximum
+/// width stay distinct commands.
+unsafe fn repopulate_bus_layout_menu(popup: HMENU, layouts: &[(u16, u16)], current_index: usize) {
     unsafe {
         let count = GetMenuItemCount(popup);
         for _ in 0..count {
@@ -944,7 +940,7 @@ unsafe fn repopulate_bus_layout_menu(
             };
             let cmd = MENU_CMD_BUS_LAYOUT_BASE.wrapping_add(idx16);
             let mut flags = MF_STRING;
-            if (usize::from(*in_ch), usize::from(*out_ch)) == current_layout {
+            if idx == current_index {
                 flags |= MF_CHECKED;
             }
             let text = wide(&format!("{in_ch} in / {out_ch} out"));

@@ -220,6 +220,14 @@ struct Vst3PluginDescriptor {
     /* Non-zero when the plugin processes natively in f64. Enables
      * kSample64 negotiation; blocks then route through process_f64. */
     int32_t supports_f64;
+    /* Widest total output-channel count across ALL declared layouts (not
+     * just the first). The per-channel output discard scratch is sized to
+     * this so a host that negotiates a wider layout than the default gets a
+     * distinct discard block per channel - sizing from num_outputs (the
+     * first layout) would make two deactivated output channels of a wider
+     * layout alias one block, which RawBufferScratch turns into two &mut
+     * over the same memory (UB). */
+    uint32_t max_outputs;
 };
 
 struct Vst3ParamDescriptor {
@@ -1068,10 +1076,15 @@ public:
                 free(silenceScratch);
                 silenceScratch = (uint8_t*)calloc(1, frameBytes);
             }
-            if (g_desc->num_outputs > 0 && frameBytes > 0) {
-                uint32_t ch = g_desc->num_outputs > kMaxProcChannels
+            // Size the discard scratch to the WIDEST layout's output width,
+            // not the first layout's (num_outputs): a negotiated wider
+            // layout must still get one distinct block per output channel,
+            // or two aliased discard pointers become aliased `&mut`s in the
+            // Rust bridge.
+            if (g_desc->max_outputs > 0 && frameBytes > 0) {
+                uint32_t ch = g_desc->max_outputs > kMaxProcChannels
                                   ? kMaxProcChannels
-                                  : g_desc->num_outputs;
+                                  : g_desc->max_outputs;
                 free(trashScratch);
                 trashScratch = (uint8_t*)malloc((size_t)ch * frameBytes);
             }
@@ -1236,12 +1249,13 @@ public:
             }
             if (g_desc && cur_out > 0 && trashScratch) {
                 const uint32_t wantOut = cur_out > kMaxProcChannels ? kMaxProcChannels : cur_out;
-                // Distinct discard blocks allocated in setupProcessing,
-                // sized to the descriptor's output width. Clamp the slot
-                // so a layout wider than that still stays in bounds - an
-                // aliased discard is harmless since trash is never read.
+                // Distinct discard block per output channel - sized in
+                // setupProcessing to the WIDEST layout's output width, so
+                // every channel of the negotiated layout (cur_out <=
+                // max_outputs) gets its own block. No two output slices
+                // ever alias, which would be UB in the Rust bridge.
                 const uint32_t trashCh =
-                    g_desc->num_outputs > kMaxProcChannels ? kMaxProcChannels : g_desc->num_outputs;
+                    g_desc->max_outputs > kMaxProcChannels ? kMaxProcChannels : g_desc->max_outputs;
                 for (uint32_t c = 0; c < numOut; c++)
                     if (!outPtrs[c]) {
                         const uint32_t slot = (trashCh && c < trashCh) ? c : (trashCh ? trashCh - 1 : 0);

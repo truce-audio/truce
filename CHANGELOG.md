@@ -22,7 +22,7 @@ Sidechain and aux inputs now reach your plugin as separate buses, so a `with_sid
 - Transport position in seconds is reported on VST3, VST2, AU, AAX, and LV2 (was always zero); LV2 also reports beat/tempo position.
 - Lock-free state save re-serializes only when state changes (opt-in `snapshot_version`) or, for MB-scale state, publishes off the audio thread via `InitContext::snapshot_publisher()` instead of copying the buffer every block; `snapshot_prealloc_hint` pre-warms the inline buffer.
 - `#[derive(State)]` keyed envelope: add/remove/reorder-safe across sessions, rejects unknown format versions, and rename-type-safe (a changed field type falls back to its default rather than corrupting later fields).
-- Unconnected sidechains read as silence rather than misrouting or panicking; fixed sidechain buffer aliasing on AU v2 and channel-count negotiation on VST3.
+- Unconnected sidechains read as silence rather than misrouting or panicking; fixed sidechain buffer aliasing on AU v2, and output-buffer aliasing plus channel-count negotiation on VST3 wide layouts.
 - Preset loading hardened; preset-handling fixes on CLAP and AU.
 - AAX parameter taper corrected so non-linear ranges track in Pro Tools.
 - Editor-lifecycle and parameter-format callbacks are panic-guarded on every format (editor build/open/close, value format/parse, reset, instantiation), matching the state save/load guards: an author-code panic returns a safe default instead of aborting the host.

@@ -53,6 +53,11 @@ pub struct Vst3PluginDescriptor {
     /// `process_f64` so the plugin reads/writes host memory directly
     /// with no precision conversion.
     pub supports_f64: i32,
+    /// Widest total output-channel count across *all* declared layouts.
+    /// The shim sizes its per-channel output discard scratch to this so a
+    /// negotiated layout wider than the first can't alias two output
+    /// channels onto one discard block (which would be aliased `&mut`s).
+    pub max_outputs: u32,
 }
 
 /// Parameter descriptor.

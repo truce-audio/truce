@@ -2399,6 +2399,10 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         midi_output_ports,
         midi_input_ports,
         supports_f64: i32::from(<P as PluginRuntime>::Sample::IS_F64),
+        // Widest output width across all layouts, so the shim's per-channel
+        // output discard scratch has a distinct block for every channel of
+        // any negotiable layout (see the field's `ffi` doc).
+        max_outputs: max_layout_channels(&P::bus_layouts()).1,
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {

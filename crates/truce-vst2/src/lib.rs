@@ -300,11 +300,15 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
-    unsafe {
+    // Dropping the instance cascades into the author plugin's `Drop` (and
+    // any editor teardown); firewall it so a panic can't unwind across the
+    // C ABI and abort the host on plugin removal. The instance is going
+    // away regardless, so swallowing is safe.
+    run_extern_callback_with::<P, ()>("vst2", "destroy", (), || unsafe {
         if !ctx.is_null() {
             drop(Box::from_raw(ctx.cast::<Vst2Instance<P>>()));
         }
-    }
+    });
 }
 
 /// Map a VST2 `audioMasterGetCurrentProcessLevel` value

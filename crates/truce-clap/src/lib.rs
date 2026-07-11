@@ -254,10 +254,6 @@ struct ClapPluginData<P: PluginExport> {
     /// main thread, which notifies the host. Coalesces a burst of
     /// changes into one host notification per main-thread callback.
     latency_dirty: AtomicBool,
-    /// Set on the audio thread when `tail()` changes; drained on the main
-    /// thread, which calls `clap_host_tail::changed`. Same coalescing as
-    /// `latency_dirty` (a tail change needs no restart, only `changed`).
-    tail_dirty: AtomicBool,
     /// Queue of GUI-initiated parameter changes to emit as output events.
     gui_changes: Arc<GuiChangeQueue>,
     /// Bounded SPSC handoff for state loads. Host (`state_load`) and
@@ -737,16 +733,6 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             {
                 req_restart(data.host);
             }
-        }
-
-        // Tail changed on the audio thread: notify the host off it. A
-        // tail change (unlike latency) needs no restart - `changed()`
-        // just refreshes the host's bounce end-time bookkeeping.
-        if data.tail_dirty.swap(false, Ordering::Relaxed)
-            && !data.host_tail.is_null()
-            && let Some(changed) = (*data.host_tail).changed
-        {
-            changed(data.host);
         }
     }
 }
@@ -1793,15 +1779,16 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         {
             req_cb(data.host);
         }
-        // Same coalesced main-thread notification for tail: a shrinking
-        // reverb tail must reach the host so its bounce end-time is right.
+        // A shrinking reverb tail must reach the host so its bounce
+        // end-time is right. Unlike latency (which needs a main-thread
+        // restart), `clap.tail.changed` is an [audio-thread] callback, so
+        // notify the host directly from here - no deferral.
         let new_tail = instance.tail();
         if data.tail_cache.swap(new_tail, Ordering::Relaxed) != new_tail
-            && !data.tail_dirty.swap(true, Ordering::Relaxed)
-            && !data.host.is_null()
-            && let Some(req_cb) = (*data.host).request_callback
+            && !data.host_tail.is_null()
+            && let Some(changed) = (*data.host_tail).changed
         {
-            req_cb(data.host);
+            changed(data.host);
         }
 
         // Flush GUI-initiated param changes to host output events
@@ -3815,7 +3802,6 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         host_latency: ptr::null(),
         host_tail: ptr::null(),
         latency_dirty: AtomicBool::new(false),
-        tail_dirty: AtomicBool::new(false),
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         pending_state: Arc::new(StateLoadQueue::new(1)),
         active: AtomicBool::new(false),
