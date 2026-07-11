@@ -564,12 +564,28 @@ unsafe fn borrow_inner_arc<P: Params + 'static, M: IcedPlugin<P> + 'static>(
     }
 }
 
+/// Run an iOS `extern "C"` thunk body under `catch_unwind`. `UIKit` invokes
+/// these selectors across an Obj-C boundary that can't carry a Rust unwind;
+/// an escaping panic (author UI code, an allocation failure) would become an
+/// uncaught Obj-C exception and abort the `AUv3` host. Swallow and log it
+/// instead, matching the desktop handlers.
+fn ffi_firewall(label: &str, f: impl FnOnce()) {
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        let msg = e
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| e.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        log::error!("truce-iced iOS {label} thunk panic swallowed: {msg}");
+    }
+}
+
 unsafe extern "C" fn tick_thunk<P: Params + 'static, M: IcedPlugin<P> + 'static>(
     self_: &AnyObject,
     _cmd: Sel,
     _sender: *mut AnyObject,
 ) {
-    unsafe {
+    ffi_firewall("tick", || unsafe {
         let wants_keyboard = {
             let Some(arc) = borrow_inner_arc::<P, M>(self_) else {
                 return;
@@ -589,7 +605,7 @@ unsafe extern "C" fn tick_thunk<P: Params + 'static, M: IcedPlugin<P> + 'static>
         } else if !wants_keyboard && is_first.as_bool() {
             let _: Bool = msg_send![self_, resignFirstResponder];
         }
-    }
+    });
 }
 
 // UIKeyInput conformance - drives the iOS soft keyboard for iced text widgets.
@@ -616,7 +632,7 @@ unsafe extern "C" fn insert_text<P: Params + 'static, M: IcedPlugin<P> + 'static
     _cmd: Sel,
     text: *mut AnyObject,
 ) {
-    unsafe {
+    ffi_firewall("insert_text", || unsafe {
         if text.is_null() {
             return;
         }
@@ -636,7 +652,7 @@ unsafe extern "C" fn insert_text<P: Params + 'static, M: IcedPlugin<P> + 'static
             (Key::Character(s.into()), Some(s))
         };
         with_inner::<P, M>(self_, |inner| push_key(inner, key, text));
-    }
+    });
 }
 
 /// `UIKeyInput.deleteBackward` - Backspace. iced's `text_input` removes the
@@ -645,11 +661,11 @@ unsafe extern "C" fn delete_backward<P: Params + 'static, M: IcedPlugin<P> + 'st
     self_: &AnyObject,
     _cmd: Sel,
 ) {
-    unsafe {
+    ffi_firewall("delete_backward", || unsafe {
         with_inner::<P, M>(self_, |inner| {
             push_key(inner, Key::Named(Named::Backspace), None);
         });
-    }
+    });
 }
 
 /// Run `f` against the live `Inner`, borrowed out of the view's ivar.
@@ -705,7 +721,9 @@ unsafe extern "C" fn touches_began<P: Params + 'static, M: IcedPlugin<P> + 'stat
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe { dispatch_touch::<P, M>(self_, touches, TouchPhase::Began) }
+    ffi_firewall("touches_began", || unsafe {
+        dispatch_touch::<P, M>(self_, touches, TouchPhase::Began);
+    });
 }
 
 unsafe extern "C" fn touches_moved<P: Params + 'static, M: IcedPlugin<P> + 'static>(
@@ -714,7 +732,9 @@ unsafe extern "C" fn touches_moved<P: Params + 'static, M: IcedPlugin<P> + 'stat
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe { dispatch_touch::<P, M>(self_, touches, TouchPhase::Moved) }
+    ffi_firewall("touches_moved", || unsafe {
+        dispatch_touch::<P, M>(self_, touches, TouchPhase::Moved);
+    });
 }
 
 unsafe extern "C" fn touches_ended<P: Params + 'static, M: IcedPlugin<P> + 'static>(
@@ -723,7 +743,9 @@ unsafe extern "C" fn touches_ended<P: Params + 'static, M: IcedPlugin<P> + 'stat
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe { dispatch_touch::<P, M>(self_, touches, TouchPhase::Ended) }
+    ffi_firewall("touches_ended", || unsafe {
+        dispatch_touch::<P, M>(self_, touches, TouchPhase::Ended);
+    });
 }
 
 unsafe extern "C" fn touches_cancelled<P: Params + 'static, M: IcedPlugin<P> + 'static>(
@@ -732,7 +754,9 @@ unsafe extern "C" fn touches_cancelled<P: Params + 'static, M: IcedPlugin<P> + '
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe { dispatch_touch::<P, M>(self_, touches, TouchPhase::Ended) }
+    ffi_firewall("touches_cancelled", || unsafe {
+        dispatch_touch::<P, M>(self_, touches, TouchPhase::Ended);
+    });
 }
 
 unsafe fn dispatch_touch<P: Params + 'static, M: IcedPlugin<P> + 'static>(

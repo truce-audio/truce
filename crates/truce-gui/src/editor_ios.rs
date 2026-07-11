@@ -485,12 +485,28 @@ unsafe fn borrow_inner_arc<P: Params + 'static>(
     }
 }
 
+/// Run an iOS `extern "C"` thunk body under `catch_unwind`. `UIKit` invokes
+/// these selectors across an Obj-C boundary that can't carry a Rust unwind;
+/// an escaping panic (author view code, an allocation failure) would become
+/// an uncaught Obj-C exception and abort the `AUv3` host. Swallow and log it
+/// instead, matching the desktop baseview handlers.
+fn ffi_firewall(label: &str, f: impl FnOnce()) {
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        let msg = e
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| e.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        log::error!("truce-gui iOS {label} thunk panic swallowed: {msg}");
+    }
+}
+
 unsafe extern "C" fn tick_thunk<P: Params + 'static>(
     self_: &AnyObject,
     _cmd: Sel,
     _sender: *mut AnyObject,
 ) {
-    unsafe {
+    ffi_firewall("tick", || unsafe {
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
             return;
         };
@@ -504,7 +520,7 @@ unsafe extern "C" fn tick_thunk<P: Params + 'static>(
         };
         let Some(inner) = guard.as_mut() else { return };
         tick(inner);
-    }
+    });
 }
 
 unsafe extern "C" fn touches_began<P: Params + 'static>(
@@ -513,9 +529,9 @@ unsafe extern "C" fn touches_began<P: Params + 'static>(
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe {
+    ffi_firewall("touches_began", || unsafe {
         dispatch_touch::<P>(self_, touches, TouchPhase::Began);
-    }
+    });
 }
 
 unsafe extern "C" fn touches_moved<P: Params + 'static>(
@@ -524,9 +540,9 @@ unsafe extern "C" fn touches_moved<P: Params + 'static>(
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe {
+    ffi_firewall("touches_moved", || unsafe {
         dispatch_touch::<P>(self_, touches, TouchPhase::Moved);
-    }
+    });
 }
 
 unsafe extern "C" fn touches_ended<P: Params + 'static>(
@@ -535,9 +551,9 @@ unsafe extern "C" fn touches_ended<P: Params + 'static>(
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe {
+    ffi_firewall("touches_ended", || unsafe {
         dispatch_touch::<P>(self_, touches, TouchPhase::Ended);
-    }
+    });
 }
 
 unsafe extern "C" fn touches_cancelled<P: Params + 'static>(
@@ -546,13 +562,13 @@ unsafe extern "C" fn touches_cancelled<P: Params + 'static>(
     touches: *mut AnyObject,
     _event: *mut AnyObject,
 ) {
-    unsafe {
+    ffi_firewall("touches_cancelled", || unsafe {
         // Cancellations are surfaced as "up" so the editor can clear
         // any in-progress drag state; the user might tilt the phone
         // mid-twist and we shouldn't strand the param at the
         // last-moved value with no End to commit it.
         dispatch_touch::<P>(self_, touches, TouchPhase::Ended);
-    }
+    });
 }
 
 unsafe fn dispatch_touch<P: Params + 'static>(
