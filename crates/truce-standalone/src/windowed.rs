@@ -1030,7 +1030,11 @@ where
                     .unwrap_or_default()
             }),
             set_state: Box::new(move |bytes| {
-                if let Ok(mut p) = plugin_load.try_lock()
+                // Blocking lock, matching `get_state`: a `try_lock`'s silent
+                // fallback dropped the load on a lost race with the audio
+                // callback, which holds the plugin mutex for a whole block.
+                // Poisoned (audio thread panicked) skips the load.
+                if let Ok(mut p) = plugin_load.lock()
                     && let Err(e) = p.load_state(&bytes)
                 {
                     eprintln!("truce-standalone: load_state failed: {e}");
