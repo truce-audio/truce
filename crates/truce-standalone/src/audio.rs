@@ -1795,6 +1795,16 @@ fn audio_callback<P: PluginExport>(
         );
     }
 
+    // MIDI-only plugins declare zero output buses, so `channel_bufs` is
+    // empty even though the device stream still has `channels` to fill.
+    // The capture, mute, and route-mapping paths below all index
+    // `channel_bufs[..]`, so silence the device buffer and return before
+    // any of them can underflow `len() - 1` or index an empty buffer.
+    if channel_bufs.is_empty() {
+        data.fill(0.0);
+        return;
+    }
+
     // `--output-file` capture: hand a copy of the post-process,
     // pre-mute output to the writer thread. Mute is *device*
     // silence (speakers off); the file should still get the
