@@ -1645,7 +1645,14 @@ fn audio_callback<P: PluginExport>(
     if let Some(bytes) = pending_state.pop()
         && let Err(e) = plugin.load_state(&bytes)
     {
+        // Debug-only breadcrumb: this runs on the audio thread (the editor's
+        // load pops off the handoff queue here), and `eprintln!` locks stderr
+        // and allocates, so it must never fire in a release build. Matches
+        // `truce_core::state::apply_state`, which defers the same log.
+        #[cfg(debug_assertions)]
         eprintln!("truce-standalone: load_state failed: {e}");
+        #[cfg(not(debug_assertions))]
+        let _ = e;
     }
 
     // Drain queued MIDI only after the lock is held. A lost try_lock
@@ -1842,7 +1849,8 @@ fn audio_callback<P: PluginExport>(
     // The capture path transfers Vec ownership to the writer thread
     // (channel-bounded `mpsc::sync_channel`), so the per-block alloc
     // here can't be amortized without a free-list pool. Left as-is -
-    // capture is a `--output-file` dev convenience, not a hot path.
+    // `--output-file` is the offline render/capture path (often paired
+    // with `--no-playback`), not the real-time playback hot path.
     #[cfg(feature = "playback")]
     if let Some(pusher) = capture {
         let mut interleaved = vec![0.0_f32; num_frames * channels];
