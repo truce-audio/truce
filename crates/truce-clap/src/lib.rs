@@ -3110,7 +3110,9 @@ unsafe extern "C" fn gui_set_scale<P: PluginExport>(
     plugin: *const clap_plugin,
     scale: f64,
 ) -> bool {
-    unsafe {
+    // `Editor::set_scale_factor` is author code; firewall it so a panic
+    // can't unwind across the C ABI (false = "scale not applied").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_set_scale", false, || unsafe {
         if !scale.is_finite() || scale <= 0.0 {
             return false;
         }
@@ -3120,7 +3122,7 @@ unsafe extern "C" fn gui_set_scale<P: PluginExport>(
             editor.set_scale_factor(scale);
         }
         true
-    }
+    })
 }
 
 unsafe extern "C" fn gui_get_size<P: PluginExport>(
@@ -3128,7 +3130,9 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
     width: *mut u32,
     height: *mut u32,
 ) -> bool {
-    unsafe {
+    // `Editor::size` is author code; firewall it so a panic can't unwind
+    // across the C ABI (false = "size unavailable").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_get_size", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let gui = data.gui.enter();
         if let Some(ref editor) = gui.editor {
@@ -3162,18 +3166,19 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
             return true;
         }
         false
-    }
+    })
 }
 
 unsafe extern "C" fn gui_can_resize<P: PluginExport>(plugin: *const clap_plugin) -> bool {
-    unsafe {
+    // `Editor::can_resize` is author code; firewall it (false = "not resizable").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_can_resize", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         data.gui
             .enter()
             .editor
             .as_ref()
             .is_some_and(|e| e.can_resize())
-    }
+    })
 }
 
 unsafe extern "C" fn gui_set_parent<P: PluginExport>(
@@ -3439,7 +3444,9 @@ unsafe extern "C" fn gui_get_resize_hints<P: PluginExport>(
     plugin: *const clap_plugin,
     hints: *mut clap_gui_resize_hints,
 ) -> bool {
-    unsafe {
+    // `Editor::can_resize` / `aspect_ratio` are author code; firewall them
+    // (false = "no hints").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_get_resize_hints", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let gui = data.gui.enter();
         let Some(editor) = gui.editor.as_ref() else {
@@ -3460,7 +3467,7 @@ unsafe extern "C" fn gui_get_resize_hints<P: PluginExport>(
             aspect_ratio_height: ah,
         };
         true
-    }
+    })
 }
 
 /// Stub: floating windows aren't supported (`is_api_supported` rejects
@@ -3516,7 +3523,9 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
     width: u32,
     height: u32,
 ) -> bool {
-    unsafe {
+    // `Editor::set_size` / `can_resize` / `size` are author code; firewall
+    // them (false = "size rejected").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_set_size", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let host_scale = data.host_scale();
         let mut gui = data.gui.enter();
@@ -3555,7 +3564,7 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
             }
             width == current_w && height == current_h
         }
-    }
+    })
 }
 
 /// Host asks "what's the nearest size you can render at?". CLAP
@@ -3567,7 +3576,9 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
     width: *mut u32,
     height: *mut u32,
 ) -> bool {
-    unsafe {
+    // `Editor::can_resize` / `size` are author code; firewall them
+    // (false = "no adjustment").
+    run_extern_callback_with::<P, bool>("CLAP", "gui_adjust_size", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let host_scale = data.host_scale();
         let gui = data.gui.enter();
@@ -3594,7 +3605,7 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
             *height = current_h;
             true
         }
-    }
+    })
 }
 
 /// Convert physical points (what the host passes in resize APIs)
