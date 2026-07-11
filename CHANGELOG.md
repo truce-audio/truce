@@ -6,6 +6,7 @@ Notable changes per release.
 
 - Parameter display strings that overflow the host buffer truncate on a UTF-8 char boundary (units like `°`, `µs`, `−12 dB`), not mid-codepoint, on every format.
 - AAX param value format/parse callbacks are panic-guarded, matching the other formats: an author formatter/parser that panics no longer aborts Pro Tools.
+- VST3 instance create (author `init`) and destroy (editor teardown) are panic-guarded: a GUI-teardown panic on host quit no longer aborts the host.
 
 ## 6.1.0
 

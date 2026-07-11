@@ -293,78 +293,90 @@ impl NoteIdMap {
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
-    let mut plugin = P::create();
-    plugin.init();
-    let info = P::info();
-    let param_infos: Vec<ParamInfo> = plugin.params().param_infos();
-    let mut param_ranges: Vec<(u32, ParamRange)> =
-        param_infos.iter().map(|i| (i.id, i.range)).collect();
-    // Sort by id so `binary_search_by_key` works in the hot lookups.
-    param_ranges.sort_by_key(|(id, _)| *id);
-    // Precompute the MIDI-controller bindings, sorted by id, so the
-    // audio thread bridges mapped controllers without a linear scan.
-    let mut midi_maps: Vec<(u32, MidiMap)> = param_infos
-        .iter()
-        .filter_map(|i| MidiMap::from_param(i).map(|m| (i.id, m)))
-        .collect();
-    midi_maps.sort_by_key(|(id, _)| *id);
-    let params_arc = plugin.params_arc();
-    let meter_store = plugin.meter_store();
-    let snapshot = plugin.snapshot_slot();
-    let task_spawner = plugin.task_spawner();
-    let editor_builder = plugin.editor_builder();
-    let latency_cache = AtomicU32::new(plugin.latency());
-    let tail_cache = AtomicU32::new(plugin.tail());
-    let instance = Box::new(Vst3Instance::<P> {
-        plugin: shared_plugin(plugin),
-        params_arc,
-        meter_store,
-        snapshot,
-        task_spawner,
-        editor_builder,
-        event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sysex_inputs_pending: false,
-        output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        param_infos,
-        min_subblock_samples: info.automation.min_subblock_samples,
-        plugin_id_hash: state::shared_plugin_state_hash(&info),
-        sample_rate: 44100.0,
-        // 8192 covers the largest block sizes mainstream DAWs / validators
-        // use (Reaper / pluginval ≤ 4096); a non-zero default keeps the
-        // process-before-activate path from tripping the contract assert.
-        max_block_size: 8192,
-        prepared: false,
-        active: AtomicBool::new(false),
-        scratch: RawBufferScratch::default(),
-        param_ranges,
-        midi_maps,
-        editor: None,
-        transport_slot: TransportSlot::new(),
-        host_scale: 1.0,
-        pending_state: Arc::new(StateLoadQueue::new(1)),
-        latency_cache,
-        tail_cache,
-        midi_proxy_values: (0..midi_proxy_len::<P>())
-            .map(|i| {
-                // Bounded by MIDI_PROXY_COUNT.
-                #[allow(clippy::cast_possible_truncation)]
-                let controller = (i as u32) % MIDI_PROXY_PER_CHANNEL;
-                AtomicU64::new(midi_proxy_default(controller).to_bits())
-            })
-            .collect(),
-        note_id_map: NoteIdMap::new(),
-    });
-    let raw = Box::into_raw(instance);
-    raw.cast::<std::ffi::c_void>()
+    // Author `create` / `init` run here; a panic must not cross the FFI
+    // boundary. A null return tells the host construction failed.
+    run_extern_callback_with::<P, *mut std::ffi::c_void>(
+        "vst3",
+        "create",
+        std::ptr::null_mut(),
+        || {
+            let mut plugin = P::create();
+            plugin.init();
+            let info = P::info();
+            let param_infos: Vec<ParamInfo> = plugin.params().param_infos();
+            let mut param_ranges: Vec<(u32, ParamRange)> =
+                param_infos.iter().map(|i| (i.id, i.range)).collect();
+            // Sort by id so `binary_search_by_key` works in the hot lookups.
+            param_ranges.sort_by_key(|(id, _)| *id);
+            // Precompute the MIDI-controller bindings, sorted by id, so the
+            // audio thread bridges mapped controllers without a linear scan.
+            let mut midi_maps: Vec<(u32, MidiMap)> = param_infos
+                .iter()
+                .filter_map(|i| MidiMap::from_param(i).map(|m| (i.id, m)))
+                .collect();
+            midi_maps.sort_by_key(|(id, _)| *id);
+            let params_arc = plugin.params_arc();
+            let meter_store = plugin.meter_store();
+            let snapshot = plugin.snapshot_slot();
+            let task_spawner = plugin.task_spawner();
+            let editor_builder = plugin.editor_builder();
+            let latency_cache = AtomicU32::new(plugin.latency());
+            let tail_cache = AtomicU32::new(plugin.tail());
+            let instance = Box::new(Vst3Instance::<P> {
+                plugin: shared_plugin(plugin),
+                params_arc,
+                meter_store,
+                snapshot,
+                task_spawner,
+                editor_builder,
+                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sysex_inputs_pending: false,
+                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                param_infos,
+                min_subblock_samples: info.automation.min_subblock_samples,
+                plugin_id_hash: state::shared_plugin_state_hash(&info),
+                sample_rate: 44100.0,
+                // 8192 covers the largest block sizes mainstream DAWs / validators
+                // use (Reaper / pluginval ≤ 4096); a non-zero default keeps the
+                // process-before-activate path from tripping the contract assert.
+                max_block_size: 8192,
+                prepared: false,
+                active: AtomicBool::new(false),
+                scratch: RawBufferScratch::default(),
+                param_ranges,
+                midi_maps,
+                editor: None,
+                transport_slot: TransportSlot::new(),
+                host_scale: 1.0,
+                pending_state: Arc::new(StateLoadQueue::new(1)),
+                latency_cache,
+                tail_cache,
+                midi_proxy_values: (0..midi_proxy_len::<P>())
+                    .map(|i| {
+                        // Bounded by MIDI_PROXY_COUNT.
+                        #[allow(clippy::cast_possible_truncation)]
+                        let controller = (i as u32) % MIDI_PROXY_PER_CHANNEL;
+                        AtomicU64::new(midi_proxy_default(controller).to_bits())
+                    })
+                    .collect(),
+                note_id_map: NoteIdMap::new(),
+            });
+            let raw = Box::into_raw(instance);
+            raw.cast::<std::ffi::c_void>()
+        },
+    )
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
-    unsafe {
+    // Dropping the instance cascades into the editor's `Drop` (wgpu surface
+    // / NSView / baseview / runloop-timer teardown). A panic there on host
+    // quit would abort the host; swallow it - the process is going away.
+    run_extern_callback_with::<P, ()>("vst3", "destroy", (), || unsafe {
         if !ctx.is_null() {
             drop(Box::from_raw(ctx.cast::<Vst3Instance<P>>()));
         }
-    }
+    });
 }
 
 /// Map a VST3 `ProcessModes` value (`kRealtime` 0, `kPrefetch` 1,
