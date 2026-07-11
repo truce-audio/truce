@@ -96,3 +96,63 @@ fn serialize_into_matches_serialize_and_reuses_buffer() {
     original.serialize_into(&mut buf);
     assert_eq!(PrimitiveState::deserialize(&buf), Some(original));
 }
+
+/// A keyed blob whose frame-layout version byte isn't 1 must fail cleanly
+/// (return `None`) rather than misparse a future layout as v1. The magic is
+/// `0xFFFFFF01` little-endian, so byte 0 is the version.
+#[test]
+fn unknown_keyed_version_fails_to_none() {
+    let mut blob = PrimitiveState {
+        flag: true,
+        count: 5,
+        rate: 1.0,
+        tag: 2,
+    }
+    .serialize();
+    assert_eq!(blob[0], 0x01, "v1 magic low byte");
+    // Bump to an unknown frame-layout version.
+    blob[0] = 0x02;
+    assert!(
+        PrimitiveState::deserialize(&blob).is_none(),
+        "an unknown keyed version must not be parsed as v1"
+    );
+}
+
+/// A field whose *type* changed (`String` -> `Vec<u32>`) must fail to
+/// Default for that field alone; the fields around it must still decode
+/// correctly rather than be corrupted by an overrun. Bounding each field
+/// read to its frame length is what makes the codec rename-type-safe, not
+/// just add/remove/reorder-safe.
+#[test]
+fn changed_field_type_does_not_corrupt_later_fields() {
+    #[derive(State, Default)]
+    struct Before {
+        a: u32,
+        b: String,
+        c: u32,
+    }
+    #[derive(State, Default, Debug, PartialEq)]
+    struct After {
+        a: u32,
+        b: Vec<u32>,
+        c: u32,
+    }
+    // `b`'s value frame is a length-prefixed string; read as a `Vec<u32>`
+    // it would (without a per-field bound) consume a bogus count and run
+    // into `c`'s bytes.
+    let bytes = Before {
+        a: 1,
+        b: "hi".to_string(),
+        c: 0x1122_3344,
+    }
+    .serialize();
+    let decoded = After::deserialize(&bytes).expect("deserialize");
+    // `b` can't parse as `Vec<u32>`, so it defaults...
+    assert_eq!(decoded.b, Vec::<u32>::new());
+    // ...but the field before it and the field after it are intact.
+    assert_eq!(decoded.a, 1, "field before the type change survives");
+    assert_eq!(
+        decoded.c, 0x1122_3344,
+        "field after the type change is not corrupted by an overrun"
+    );
+}

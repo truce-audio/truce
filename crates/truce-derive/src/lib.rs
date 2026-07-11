@@ -2992,7 +2992,16 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                 let mut result = Self::default();
 
                 if (tag & 0xFFFF_FF00) == 0xFFFF_FF00 {
-                    // Keyed format. Low byte is the version (only v1 today).
+                    // Keyed format. The low byte is the frame-layout version.
+                    // Field evolution (add / remove / reorder / shrink) stays
+                    // on v1 - the per-field hash + length absorbs it - so the
+                    // version only bumps for an incompatible change to the
+                    // frame layout itself. An unknown version is therefore
+                    // something this build can't parse: fail cleanly to
+                    // defaults rather than misread a v2 frame as v1.
+                    if (tag & 0xFF) != 1 {
+                        return None;
+                    }
                     // Each field is `[name_hash:4][len:4][value]`; match by
                     // hash, so add / remove / reorder are all safe.
                     let count_bytes = cursor.read_bytes(4)?;
@@ -3008,18 +3017,26 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                         let Some(lb) = cursor.read_bytes(4) else { break };
                         let Ok(larr) = <[u8; 4]>::try_from(lb) else { break };
                         let field_len = u32::from_le_bytes(larr) as usize;
-                        let before = cursor.remaining();
+                        // Consume exactly this field's bytes from the main
+                        // cursor up front, then parse them in a sub-cursor
+                        // bounded to `field_len`. A field whose *type* changed
+                        // (say u32 -> String) reads a garbage length; bounding
+                        // it here makes that fail to Default for this field
+                        // alone instead of running into - and corrupting -
+                        // every field after it. A short/malformed frame stops
+                        // the loop.
+                        let Some(field_bytes) = cursor.read_bytes(field_len) else { break };
+                        // The read arms below read from `cursor`; shadow it
+                        // with the bounded sub-cursor for the match. The allow
+                        // covers a zero-field struct, where no arm uses it.
+                        #[allow(unused_mut, unused_variables)]
+                        let mut cursor =
+                            ::truce::core::custom_state::StateCursor::new(field_bytes);
                         match hash {
                             #(#keyed_read_arms)*
-                            // Unknown key (a since-removed field): skip below.
+                            // Unknown key (a since-removed field): the frame is
+                            // already consumed from the main cursor.
                             _ => {}
-                        }
-                        // Skip any bytes the matched reader didn't consume
-                        // (a field whose type shrank), or the whole value
-                        // for an unmatched key.
-                        let consumed = before - cursor.remaining();
-                        if consumed < field_len {
-                            let _ = cursor.read_bytes(field_len - consumed);
                         }
                         kf += 1;
                     }
