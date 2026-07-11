@@ -13,14 +13,6 @@ Sidechain and aux inputs now reach your plugin as separate buses instead of coll
 - New `truce-example-sidechain`: stereo main + stereo sidechain with IN/SC meters and a Mix knob.
 - LV2 sidechain plugins run main-only for now (the TTL is generated from the plugin category and can't declare the sidechain ports yet); a one-time log notes the dropped sidechain.
 
-### Lock-free state save: version gating + an off-thread large-state lane
-
-The v6 lock-free save no longer re-serializes on every block, and gains an audio-thread-free path for large state.
-
-- `snapshot_version` (opt-in): return a token that changes when your custom state does; the shell re-serializes only on change, so an unchanged block costs an integer compare instead of re-copying the whole buffer every block.
-- `InitContext::snapshot_publisher()`: for MB-scale state (a sampler's audio, big wavetables), serialize off the audio thread in a background task and publish a pointer-swapped buffer - the audio thread never copies it. `snapshot_into` stays the tool for KB-scale state.
-- `snapshot_prealloc_hint`: pre-warm the inline snapshot buffer to your typical size so the first publish doesn't allocate on the audio thread.
-
 ### Fixes
 
 - **Typed value entry.** Hosts can type a value into a parameter field and have it parsed back, wired across every format.
@@ -28,7 +20,7 @@ The v6 lock-free save no longer re-serializes on every block, and gains an audio
 - **`EnumParam`** clamps out-of-range indices to the last variant instead of reading past the end.
 - **Linear smoothing** now converges at the correct constant-increment rate.
 - **Transport position in seconds** is reported to plugins on VST3, VST2, AU, and LV2 (previously always zero); LV2 also gains beat/tempo position reporting.
-- **`#[derive(State)]`** now uses a keyed state envelope, so older saved sessions keep loading after you add or reorder fields.
+- **State save, sharpened.** Lock-free save now re-serializes only when your state changes (opt-in `snapshot_version`) or publishes MB-scale state off the audio thread entirely (`InitContext::snapshot_publisher()`), instead of copying the whole buffer every block; `snapshot_prealloc_hint` pre-warms the inline buffer. The `#[derive(State)]` keyed envelope (add/remove/reorder-safe across sessions) now also rejects unknown future format versions and is rename-type-safe, so a changed field type falls back to its default instead of corrupting the fields after it.
 - **Preset loading hardened**, plus preset-handling fixes on CLAP and AU.
 - **AAX** parameter taper fixed so non-linear ranges track correctly in Pro Tools.
 - **Panic safety.** Editor-lifecycle and parameter-format callbacks are now panic-guarded on every format, matching the existing state save/load guards: a panic in author code (editor build/open/close, value formatting/parsing, reset, instantiation) yields a safe default instead of aborting the host.
