@@ -6,7 +6,7 @@ Notable changes per release.
 
 - Standalone no longer crashes on MIDI-only plugins (zero output buses, e.g. transpose / arpeggio), which previously panicked on the first audio callback. MIDI output from the standalone isn't wired up yet, so their emitted events still go nowhere.
 - Author-code and GUI-teardown panics can't abort the host: instance create/destroy and param format/parse callbacks are panic-guarded on every format, closing the remaining gaps on VST3, AAX, and CLAP.
-- Float parameter writes reject non-finite values and clamp to range, and the smoother self-heals from a NaN accumulator, so a corrupt project or preset can't poison the audio path.
+- Parameter writes clamp to the declared range (float, int, and enum) and reject non-finite floats, and the smoother self-heals from a NaN accumulator, so a corrupt project or preset can't poison the audio path.
 
 ## 6.1.0
 
