@@ -129,14 +129,21 @@ impl<'a> AtomSequenceReader<'a> {
                     let value_size = value_atom.size as usize;
                     let entry_total = prop_header_min + value_size;
                     let padded = (entry_total + 7) & !7;
+                    // The loop guard bounds only the 16-byte property header.
+                    // The value bytes the atom *claims* may run past the
+                    // object body and into the host-owned port buffer, which
+                    // has no guaranteed slack - so cap what the property /
+                    // value reads may touch to the bytes actually remaining.
+                    let value_avail =
+                        value_size.min(body_bytes.saturating_sub(offset + prop_header_min));
                     if key == self.urid.patch_property
                         && value_atom.type_ != 0
-                        && value_size >= core::mem::size_of::<Urid>()
+                        && value_avail >= core::mem::size_of::<Urid>()
                     {
                         property = Some(*value_data.cast::<Urid>());
                     } else if key == self.urid.patch_value
                         && let Some(v) =
-                            self.read_atom_number(value_atom.type_, value_data, value_size)
+                            self.read_atom_number(value_atom.type_, value_data, value_avail)
                         && v.is_finite()
                     {
                         value = Some(v);
@@ -267,11 +274,18 @@ impl<'a> AtomSequenceReader<'a> {
                 let value_atom = *value_header.cast::<Atom>();
                 let value_data = value_header.add(core::mem::size_of::<Atom>());
                 let value_size = value_atom.size as usize;
-                let entry_total =
-                    core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() + value_size;
+                let prop_header = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
+                let entry_total = prop_header + value_size;
                 let padded = (entry_total + 7) & !7;
+                // The loop guard bounds only the 16-byte property header. The
+                // value bytes the atom *claims* may run past the object body
+                // and into the host-owned port buffer, which has no
+                // guaranteed slack - so cap what the decoder may read to the
+                // bytes actually remaining, keeping the fixed-width value read
+                // inside `body_bytes`.
+                let value_avail = value_size.min(body_bytes.saturating_sub(offset + prop_header));
 
-                if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_size) {
+                if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_avail) {
                     // NaN slipping through `clamp` would narrow to 0 on
                     // `as u8` and propagate through every consumer of
                     // `position_samples` / `tempo` as silent data loss.
@@ -1074,6 +1088,162 @@ mod tests {
         assert!(
             (seen[0].2 - 0.625).abs() < 1e-9,
             "patch:value f32 recovered"
+        );
+    }
+
+    /// A `time:Position` whose final property's 16-byte header sits exactly
+    /// at the object-body boundary, claiming an 8-byte `atom:Double` value
+    /// that isn't there. A pre-fix decoder trusting the atom's `size` reads
+    /// 8 bytes past the object body - against the host-owned port buffer,
+    /// which has no guaranteed slack. Here a sentinel `f64` is written in the
+    /// bytes immediately after the object (simulating adjacent host atom
+    /// data), so an over-read would decode it as the tempo; the reader must
+    /// instead skip the truncated tail, leaving tempo at its default.
+    #[test]
+    fn time_position_truncated_trailing_value_is_skipped_not_over_read() {
+        let urid = test_urid_map();
+
+        let header = core::mem::size_of::<Urid>() * 2;
+        let prop_header = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
+        // prop1: time:speed = 1.0 (atom:Float, 4-byte value) -> padded.
+        let prop1_padded = ((prop_header + 4) + 7) & !7;
+        // prop2: header only, no value bytes present.
+        let obj_body_size = header + prop1_padded + prop_header;
+        let event_size = core::mem::size_of::<AtomEventHeader>() + obj_body_size;
+        let event_padded = (event_size + 7) & !7;
+        let body_offset = core::mem::size_of::<Atom>() + core::mem::size_of::<AtomSequenceBody>();
+
+        let mut buf = vec![0u8; 4096];
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+
+        unsafe {
+            (*seq).atom.type_ = urid.atom_sequence;
+            (*seq).atom.size = len_u32(core::mem::size_of::<AtomSequenceBody>() + event_padded);
+            (*seq).body.unit = 0;
+            (*seq).body.pad = 0;
+
+            let event_ptr = buf.as_mut_ptr().add(body_offset).cast::<AtomEventHeader>();
+            (*event_ptr).time_frames = 0;
+            (*event_ptr).body.size = len_u32(obj_body_size);
+            (*event_ptr).body.type_ = urid.atom_object;
+
+            let obj_body = buf
+                .as_mut_ptr()
+                .add(body_offset + core::mem::size_of::<AtomEventHeader>());
+            *obj_body.cast::<Urid>() = 0;
+            *obj_body.add(core::mem::size_of::<Urid>()).cast::<Urid>() = urid.time_position;
+
+            // prop1: time:speed = 1.0 (atom:Float).
+            let mut prop = obj_body.add(header);
+            *prop.cast::<Urid>() = urid.time_speed;
+            *prop.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0;
+            let atom_hdr = prop.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
+            (*atom_hdr).size = 4;
+            (*atom_hdr).type_ = urid.atom_float;
+            *prop.add(prop_header).cast::<f32>() = 1.0;
+            prop = prop.add(prop1_padded);
+
+            // prop2: time:beatsPerMinute claims an 8-byte atom:Double, but the
+            // object body ends right after this header - the value is absent.
+            *prop.cast::<Urid>() = urid.time_beats_per_minute;
+            *prop.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0;
+            let atom_hdr = prop.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
+            (*atom_hdr).size = 8;
+            (*atom_hdr).type_ = urid.atom_double;
+
+            // Sentinel in the bytes just past the object body, where the
+            // absent value would sit. A pre-fix over-read decodes this as the
+            // tempo; the fix must never reach it.
+            *prop.add(prop_header).cast::<f64>() = 98765.0;
+        }
+
+        let mut decoded = TransportInfo::default();
+        let reader = AtomSequenceReader::new(seq.cast_const(), &urid);
+        assert!(reader.apply_time_position(&mut decoded));
+        assert!(
+            decoded.playing,
+            "time:speed before the truncated tail decodes"
+        );
+        // Bit-exact against the untouched default, which also dodges the
+        // float-equality lint.
+        assert_eq!(
+            decoded.tempo.to_bits(),
+            0.0_f64.to_bits(),
+            "truncated trailing tempo value must be skipped, not over-read"
+        );
+    }
+
+    /// `patch:Set` twin of the above: the boundary property is the
+    /// `patch:property` URID read (a 4-byte deref), which was gated only on
+    /// the atom's claimed size. With the property truncated to its header, a
+    /// pre-fix read would recover the sentinel URID past the object body and
+    /// fire the callback; the reader must instead skip it (no callback).
+    #[test]
+    fn patch_set_truncated_trailing_property_is_skipped_not_over_read() {
+        let mut urid = test_urid_map();
+        urid.patch_set = 200;
+        urid.patch_property = 201;
+        urid.patch_value = 202;
+
+        let header = core::mem::size_of::<Urid>() * 2;
+        let prop_header = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
+        // prop1: patch:value = 0.5 (atom:Float, valid).
+        let prop1_padded = ((prop_header + 4) + 7) & !7;
+        // prop2: patch:property header only, claimed 4-byte URID value absent.
+        let obj_body_size = header + prop1_padded + prop_header;
+        let event_size = core::mem::size_of::<AtomEventHeader>() + obj_body_size;
+        let event_padded = (event_size + 7) & !7;
+        let body_offset = core::mem::size_of::<Atom>() + core::mem::size_of::<AtomSequenceBody>();
+
+        let mut buf = vec![0u8; 4096];
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+
+        unsafe {
+            (*seq).atom.type_ = urid.atom_sequence;
+            (*seq).atom.size = len_u32(core::mem::size_of::<AtomSequenceBody>() + event_padded);
+            (*seq).body.unit = 0;
+            (*seq).body.pad = 0;
+
+            let event_ptr = buf.as_mut_ptr().add(body_offset).cast::<AtomEventHeader>();
+            (*event_ptr).time_frames = 0;
+            (*event_ptr).body.size = len_u32(obj_body_size);
+            (*event_ptr).body.type_ = urid.atom_object;
+
+            let obj_body = buf
+                .as_mut_ptr()
+                .add(body_offset + core::mem::size_of::<AtomEventHeader>());
+            *obj_body.cast::<Urid>() = 0;
+            *obj_body.add(core::mem::size_of::<Urid>()).cast::<Urid>() = urid.patch_set;
+
+            // prop1: patch:value = 0.5 (atom:Float).
+            let mut prop = obj_body.add(header);
+            *prop.cast::<Urid>() = urid.patch_value;
+            *prop.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0;
+            let atom_hdr = prop.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
+            (*atom_hdr).size = 4;
+            (*atom_hdr).type_ = urid.atom_float;
+            *prop.add(prop_header).cast::<f32>() = 0.5;
+            prop = prop.add(prop1_padded);
+
+            // prop2: patch:property claims a 4-byte URID, but the body ends
+            // right after this header.
+            *prop.cast::<Urid>() = urid.patch_property;
+            *prop.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0;
+            let atom_hdr = prop.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
+            (*atom_hdr).size = 4;
+            (*atom_hdr).type_ = urid.atom_int;
+
+            // Sentinel URID just past the object body, where the absent value
+            // would sit. A pre-fix over-read recovers it as the property id.
+            *prop.add(prop_header).cast::<Urid>() = 9001;
+        }
+
+        let reader = AtomSequenceReader::new(seq.cast_const(), &urid);
+        let mut seen = 0usize;
+        reader.for_each_patch_set(|_, _, _| seen += 1);
+        assert_eq!(
+            seen, 0,
+            "truncated patch:property must be skipped, not over-read"
         );
     }
 
