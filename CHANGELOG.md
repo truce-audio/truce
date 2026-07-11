@@ -4,13 +4,9 @@ Notable changes per release.
 
 ## 6.1.1
 
-- Parameter display strings that overflow the host buffer truncate on a UTF-8 char boundary (units like `°`, `µs`, `−12 dB`), not mid-codepoint, on every format.
-- AAX param value format/parse callbacks are panic-guarded, matching the other formats: an author formatter/parser that panics no longer aborts Pro Tools.
-- VST3 instance create (author `init`) and destroy (editor teardown) are panic-guarded: a GUI-teardown panic on host quit no longer aborts the host.
-- Float parameter writes (host automation, state restore) drop non-finite values and clamp to range, and the smoother self-heals from a non-finite accumulator, so a corrupt project/preset can't latch NaN into the audio path.
-- Standalone no longer crashes on its first audio callback for MIDI-only plugins (zero output buses, e.g. the transpose / arpeggio examples): the device stream is silenced instead of indexing an empty output buffer.
-- Zero-copy in-place I/O (`supports_in_place = true`) is now usable: `input(ch)` returns an empty slice for host-aliased channels (plugin reads+writes via `in_out_mut`) instead of panicking at buffer construction (debug) or in `input()` (release).
-- Standalone editor-initiated state/preset loads use a blocking lock instead of `try_lock`, so a load is no longer silently dropped when it races the audio callback (which holds the plugin mutex for a whole block).
+- MIDI effects now run in the standalone host: a MIDI-only plugin (zero output buses, like the transpose and arpeggio examples) no longer crashes on its first audio callback.
+- Panic guards on VST3 instance create/destroy and AAX param format/parse callbacks, so author-code or GUI-teardown panics can't abort the host.
+- Float parameter writes reject non-finite values and clamp to range, and the smoother self-heals from a NaN accumulator, so a corrupt project or preset can't poison the audio path.
 
 ## 6.1.0
 
