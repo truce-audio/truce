@@ -117,7 +117,17 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
         }
         let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let (ids, values) = inst.plugin.params().collect_values();
-        let extra = inst.plugin.save_state();
+        // Prefer the off-thread (publisher) lane: a plugin publishing
+        // MB-scale state via `InitContext::snapshot_publisher()` never puts
+        // it in `save_state()`, so reading the plugin directly (LV2's
+        // non-realtime default) would drop it. The inline lane still goes
+        // through the live `save_state()` below, which LV2 can afford
+        // off-thread and which sidesteps the inline version gate.
+        let extra = inst
+            .plugin
+            .snapshot_slot()
+            .read_offthread()
+            .unwrap_or_else(|| inst.plugin.save_state());
         let persist = inst.plugin.params().serialize_persist();
         let blob = serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);
 

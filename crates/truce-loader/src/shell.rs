@@ -422,7 +422,14 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // The loader restores into `state` and fires `state_changed` in
         // the same window (so the next `process` sees refreshed caches),
         // matching the static shell's policy.
-        loader.load_state(self.state, data)
+        let result = loader.load_state(self.state, data);
+        drop(loader);
+        // Invalidate the snapshot-version gate so the `republish_snapshot`
+        // the wrapper calls right after a load re-serializes, rather than
+        // skipping on a stale version and leaving pre-load bytes in the
+        // slot (see `StaticShell::load_state`).
+        self.last_snapshot_version = None;
+        result
     }
 
     fn migrate_state(

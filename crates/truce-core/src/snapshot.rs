@@ -145,6 +145,21 @@ impl SnapshotSlot {
                 .clone(),
         )
     }
+
+    /// Just the off-thread (publisher) lane's bytes, or `None` when a
+    /// background thread hasn't published there. A non-realtime save path
+    /// (LV2) uses this to pick up a publisher-lane snapshot the plugin's
+    /// live `save_state()` can't produce, without also reading the inline
+    /// lane - which it serves live from the plugin instead, so a
+    /// version-gated inline slot never makes it save stale bytes.
+    #[must_use]
+    pub fn read_offthread(&self) -> Option<Vec<u8>> {
+        self.swapped
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|arc| (**arc).clone())
+    }
 }
 
 /// Plugin-facing handle for the off-thread snapshot lane. Obtain it from
@@ -157,6 +172,13 @@ impl SnapshotSlot {
 /// Use this **instead of** overriding `snapshot_into` - the two lanes are
 /// independent and the off-thread lane takes read preference. It is the
 /// recommended path for MB-scale state; `snapshot_into` is for KB-scale.
+///
+/// **Re-publish after a host load.** The framework can't refresh this
+/// lane for you (it never holds your serialized bytes), and the wrapper's
+/// post-load republish only drives the inline lane. Publish again from
+/// your `state_changed` hook - which runs right after `load_state` - or
+/// the host's next save returns the bytes you published *before* the
+/// load, silently reverting the loaded preset.
 #[derive(Clone)]
 pub struct SnapshotPublisher {
     slot: Arc<SnapshotSlot>,
@@ -290,6 +312,21 @@ mod tests {
         // ...then the off-thread lane swaps in a larger buffer, which wins.
         SnapshotPublisher::new(&slot).publish(vec![2; 4096]);
         assert_eq!(slot.read(), Some(vec![2; 4096]));
+    }
+
+    #[test]
+    fn read_offthread_returns_only_the_publisher_lane() {
+        let slot = SnapshotSlot::new();
+        // Inline publish alone: no off-thread lane, so read_offthread is None
+        // (the LV2 save path then falls back to the live `save_state()`).
+        slot.publish(|buf| {
+            buf.extend_from_slice(&[1, 1]);
+            true
+        });
+        assert!(slot.read_offthread().is_none());
+        // After a publisher-lane store, read_offthread returns those bytes.
+        SnapshotPublisher::new(&slot).publish(vec![9; 3]);
+        assert_eq!(slot.read_offthread(), Some(vec![9; 3]));
     }
 
     #[test]

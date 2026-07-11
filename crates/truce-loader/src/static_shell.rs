@@ -235,6 +235,13 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         // refreshed caches - fire it whether or not load_state
         // succeeded so partial state still triggers a refresh.
         L::state_changed(&mut self.state, &self.params);
+        // Invalidate the snapshot-version gate: the load replaced state
+        // without necessarily bumping `snapshot_version` (a counter that
+        // round-trips through the blob, or an author who forgets), so the
+        // next publish - the `republish_snapshot` the wrapper calls right
+        // after this - must re-serialize rather than skip on a stale
+        // version and leave pre-load bytes in the slot.
+        self.last_snapshot_version = None;
         result
     }
 
@@ -641,5 +648,39 @@ mod tests {
             });
         }
         assert_eq!(calls.get(), 3, "None version re-serializes every block");
+    }
+
+    #[test]
+    fn load_reset_forces_republish_at_unchanged_version() {
+        // A load clears `last_snapshot_version` in both shells' `load_state`,
+        // so the `republish_snapshot` the wrapper fires right after a load
+        // re-serializes even though the plugin's version token didn't change
+        // (a counter that round-trips through the blob, or an author who
+        // forgot to bump). Without the reset the gate stays closed and the
+        // slot keeps pre-load bytes - the host's next save reverts the load.
+        let slot = SnapshotSlot::new();
+        let mut try_snapshot = true;
+        let mut last = None;
+        let calls = Cell::new(0);
+        let publish = |ver, try_s: &mut bool, last: &mut Option<u64>| {
+            publish_snapshot_with(&slot, try_s, last, Some(ver), |buf| {
+                calls.set(calls.get() + 1);
+                buf.push(u8::try_from(ver).unwrap_or(0));
+                true
+            });
+        };
+
+        publish(5, &mut try_snapshot, &mut last);
+        publish(5, &mut try_snapshot, &mut last);
+        assert_eq!(calls.get(), 1, "unchanged version skips");
+
+        // `load_state` clears the gate.
+        last = None;
+        publish(5, &mut try_snapshot, &mut last);
+        assert_eq!(
+            calls.get(),
+            2,
+            "a republish after a load must re-serialize even at the same version"
+        );
     }
 }
