@@ -4298,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-inplace"
-version = "6.1.1"
+version = "6.1.0"
 dependencies = [
  "clap-sys",
  "truce",

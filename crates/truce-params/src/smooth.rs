@@ -136,22 +136,43 @@ impl Smoother {
         }
     }
 
+    /// Short-circuit for any advance that can't step normally. `None` means
+    /// proceed. Shared by `next` / `next_after` / `next_into` so every
+    /// advance path is NaN-safe, not just per-sample `next`. Returns
+    /// `Some(v)`:
+    /// - when `target` is non-finite: `v = current()`, and the accumulator
+    ///   is left untouched - the `Smoother` is public through the prelude,
+    ///   so an author can call `next()` with their own NaN/Inf, and letting
+    ///   it reach `current` would latch (or make the self-heal below
+    ///   re-latch it every sample);
+    /// - else when `current` is non-finite: `v = target` after snapping to
+    ///   it, self-healing a NaN/Inf that slipped in (e.g. a corrupt preset).
+    ///   It would otherwise latch forever, since `NaN + coeff * (target -
+    ///   NaN)` stays NaN and every arm's comparisons are false against NaN.
+    #[inline]
+    #[allow(clippy::cast_possible_truncation)]
+    fn advance_guard(&self, target: f64) -> Option<f32> {
+        if !target.is_finite() {
+            return Some(self.current());
+        }
+        if !self.current.load().is_finite() {
+            self.snap(target);
+            return Some(target as f32);
+        }
+        None
+    }
+
     /// Get next smoothed value, advancing one sample.
     // Smoothed param values stay in `[-1e10, 1e10]`; f32 precision
     // is enough for the per-sample DSP path.
     #[allow(clippy::cast_possible_truncation)]
     #[inline]
     pub fn next(&self, target: f64) -> f32 {
+        if let Some(v) = self.advance_guard(target) {
+            return v;
+        }
         let current = self.current.load();
         let coeff = self.coeff.load();
-
-        // A non-finite `current` would latch forever: `NaN + coeff * (target
-        // - NaN)` stays NaN, and no later target could recover it. Snap to
-        // `target` (kept finite by the parameter write path) to self-heal.
-        if !current.is_finite() {
-            self.snap(target);
-            return target as f32;
-        }
 
         let new_current = match self.style {
             SmoothingStyle::None => target,
@@ -256,6 +277,9 @@ impl Smoother {
         if n_samples == 0 {
             return self.current.load() as f32;
         }
+        if let Some(v) = self.advance_guard(target) {
+            return v;
+        }
 
         let mut current = self.current.load();
         let coeff = self.coeff.load();
@@ -334,6 +358,10 @@ impl Smoother {
     #[allow(clippy::cast_possible_truncation)]
     #[inline]
     pub fn next_into(&self, target: f64, out: &mut [f32]) {
+        if let Some(v) = self.advance_guard(target) {
+            out.fill(v);
+            return;
+        }
         let mut current = self.current.load();
         let coeff = self.coeff.load();
 
@@ -712,5 +740,48 @@ mod tests {
             assert!(s.next(0.5).is_finite());
         }
         assert!((s.current() - 0.5).abs() < 1e-3);
+    }
+
+    /// The block-rate paths (`next_into`, `next_after`, and `next_block`
+    /// via `next_into`) share the same self-heal as `next` - a NaN in the
+    /// accumulator can't fill a whole block with NaN.
+    #[test]
+    fn block_paths_self_heal_from_non_finite_current() {
+        for style in [
+            SmoothingStyle::Exponential(5.0),
+            SmoothingStyle::Linear(5.0),
+            SmoothingStyle::Logarithmic(5.0),
+        ] {
+            let s = Smoother::new(style);
+            s.snap(f64::NAN);
+            let mut out = [0.0f32; 16];
+            s.next_into(0.5, &mut out);
+            assert!(out.iter().all(|v| v.is_finite()), "next_into: {style:?}");
+
+            let s = Smoother::new(style);
+            s.snap(f64::INFINITY);
+            assert!(s.next_after(0.5, 32).is_finite(), "next_after: {style:?}");
+        }
+    }
+
+    /// A non-finite *target* (an author calling the prelude-exported
+    /// `Smoother` with their own NaN) must not poison a healthy
+    /// accumulator: bail to the last good value, leave `current` finite.
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn non_finite_target_bails_without_poisoning() {
+        let s = Smoother::new(SmoothingStyle::Exponential(5.0));
+        s.snap(0.5);
+
+        assert_eq!(s.next(f64::NAN), 0.5, "next keeps the last value");
+        assert!(s.current().is_finite());
+
+        let mut out = [1.0f32; 8];
+        s.next_into(f64::NAN, &mut out);
+        assert!(out.iter().all(|&v| v == 0.5), "next_into fills last value");
+        assert!(s.current().is_finite());
+
+        assert_eq!(s.next_after(f64::INFINITY, 64), 0.5);
+        assert!(s.current().is_finite(), "accumulator stays finite");
     }
 }
