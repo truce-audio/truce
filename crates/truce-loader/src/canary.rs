@@ -50,7 +50,11 @@ use truce_gui_types::theme::{Color, Theme};
 /// epoch-4 dylib exports the old `truce_create` shape and lacks the new
 /// symbols, so it fails at `dlsym` - this bump rejects it earlier and
 /// with a clearer message.
-pub const ABI_EPOCH: u32 = 5;
+/// Epoch 6: adds the `truce_snapshot_version` export (the generation
+/// token that lets the shell skip re-serializing an unchanged snapshot).
+/// A stale epoch-5 dylib lacks the symbol; this bump rejects it at the
+/// canary before symbol resolution fails.
+pub const ABI_EPOCH: u32 = 6;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///

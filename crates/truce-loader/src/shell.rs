@@ -82,6 +82,9 @@ pub struct HotShell<P: Params, S: Sample = f32> {
     /// Latches off if the loaded logic reports no snapshot before it ever
     /// publishes one; a logic that has published stays subscribed.
     try_snapshot: bool,
+    /// Last `truce_snapshot_version` the shell published; a block whose
+    /// version matches skips re-serialization (see `publish_snapshot_with`).
+    last_snapshot_version: Option<u64>,
     sample_rate: f64,
     max_block_size: usize,
     /// Processing mode from the last `reset`. Replayed when the audio
@@ -141,6 +144,7 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
             meters: truce_core::meters::MeterStore::new(),
             snapshots: truce_core::snapshot::SnapshotSlot::new(),
             try_snapshot: true,
+            last_snapshot_version: None,
             sample_rate: 44100.0,
             max_block_size: 1024,
             process_mode: ProcessMode::Realtime,
@@ -349,9 +353,12 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         let status = loader.process(self.state, buffer, events, &mut ctx);
 
         let state = self.state.cast_const();
+        let version = loader.snapshot_version(state);
         crate::static_shell::publish_snapshot_with(
             &self.snapshots,
             &mut self.try_snapshot,
+            &mut self.last_snapshot_version,
+            version,
             |buf| loader.snapshot_into(state, buf),
         );
 
@@ -388,9 +395,12 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             return;
         }
         let state = self.state.cast_const();
+        let version = loader.snapshot_version(state);
         crate::static_shell::publish_snapshot_with(
             &self.snapshots,
             &mut self.try_snapshot,
+            &mut self.last_snapshot_version,
+            version,
             |buf| loader.snapshot_into(state, buf),
         );
     }

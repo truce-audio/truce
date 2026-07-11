@@ -117,6 +117,17 @@ pub trait PluginLogicCore<S: Sample = f32>: 'static {
         let _ = (state, buf);
         false
     }
+    /// Snapshot generation token. See [`PluginLogic::snapshot_version`].
+    fn snapshot_version(state: &Self::DspState) -> Option<u64> {
+        let _ = state;
+        None
+    }
+    /// Inline snapshot buffer pre-warm hint. See
+    /// [`PluginLogic::snapshot_prealloc_hint`].
+    #[must_use]
+    fn snapshot_prealloc_hint() -> usize {
+        truce_core::snapshot::SNAPSHOT_PREALLOC
+    }
     /// Restore plugin-specific state. See [`PluginLogic::load_state`].
     ///
     /// # Errors
@@ -326,17 +337,55 @@ macro_rules! plugin_logic_leaf_trait {
             /// that would otherwise leave the host reading a stale
             /// snapshot forever.
             ///
-            /// Called on the **audio thread** after each process block,
-            /// under the same real-time rules as `process` - bounded, no
-            /// unbounded allocation. The wrapper publishes the result
-            /// into a lock-free slot the host reads without ever taking
-            /// the plugin lock, so saving state while audio runs never
-            /// stalls the audio thread. Overriding this is the
-            /// preferred way to serialize custom state; the default
-            /// [`Self::save_state`] delegates here.
+            /// Called on the **audio thread** after each process block
+            /// whose [`Self::snapshot_version`] changed, under the same
+            /// real-time rules as `process` - bounded, no unbounded
+            /// allocation. The wrapper publishes the result into a
+            /// lock-free slot the host reads without ever taking the
+            /// plugin lock, so saving state while audio runs never stalls
+            /// the audio thread. The default [`Self::save_state`]
+            /// delegates here.
+            ///
+            /// **Size regime.** This inline lane copies the whole buffer
+            /// on every *changed* block, so it is for **KB-scale** state (a
+            /// file path, a view mode, a small analysis buffer). For
+            /// **MB-scale** state (a sampler's audio, big wavetables) copying
+            /// on the audio thread is itself a hazard - publish that off the
+            /// audio thread instead via
+            /// `InitContext::snapshot_publisher()` (a background-serialized,
+            /// pointer-swapped buffer) and leave this at the default.
             fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
                 let _ = (state, buf);
                 false
+            }
+
+            /// Generation token for the state [`Self::snapshot_into`]
+            /// serializes. Bump it (any monotonic change is enough -
+            /// a counter you increment when custom state mutates) so the
+            /// shell re-serializes **only when it changes**: an unchanged
+            /// block then pays O(1) - a single integer read - regardless
+            /// of snapshot size, instead of re-copying the whole buffer
+            /// every block.
+            ///
+            /// Read on the audio thread each block, so keep it trivial
+            /// (read a field; no work). `None` (the default) means "no
+            /// version tracking - re-serialize every block", which is fine
+            /// for tiny state but pays the full copy each block for larger
+            /// state. Return `Some(token)` to opt into gating.
+            fn snapshot_version(state: &Self::DspState) -> Option<u64> {
+                let _ = state;
+                None
+            }
+
+            /// Bytes to pre-warm the inline snapshot buffer to, off the
+            /// audio thread, so the first [`Self::snapshot_into`] publish of
+            /// up to this many bytes doesn't reallocate on the audio thread.
+            /// Default 256. Raise it to your typical inline snapshot size;
+            /// genuinely large state should use the off-thread publisher
+            /// instead (which never touches this buffer).
+            #[must_use]
+            fn snapshot_prealloc_hint() -> usize {
+                $crate::__plugin_logic_deps::SNAPSHOT_PREALLOC
             }
 
             /// Restore plugin-specific state into `state`.
@@ -443,6 +492,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::editor::Editor;
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
+    pub use truce_core::snapshot::SNAPSHOT_PREALLOC;
     pub use truce_core::state::{ForeignState, MigratedState, StateLoadError};
     pub use truce_core::tasks::{InitContext, TaskSpawner};
     pub use truce_params::Params;
@@ -790,6 +840,14 @@ macro_rules! plugin_logic_bridge {
 
             fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
                 <Self as $leaf>::snapshot_into(state, buf)
+            }
+
+            fn snapshot_version(state: &Self::DspState) -> Option<u64> {
+                <Self as $leaf>::snapshot_version(state)
+            }
+
+            fn snapshot_prealloc_hint() -> usize {
+                <Self as $leaf>::snapshot_prealloc_hint()
             }
 
             fn load_state(state: &mut Self::DspState, data: &[u8]) -> Result<(), StateLoadError> {

@@ -13,6 +13,14 @@ Sidechain and aux inputs now reach your plugin as separate buses instead of coll
 - New `truce-example-sidechain`: stereo main + stereo sidechain with IN/SC meters and a Mix knob.
 - LV2 sidechain plugins run main-only for now (the TTL is generated from the plugin category and can't declare the sidechain ports yet); a one-time log notes the dropped sidechain.
 
+### Lock-free state save: version gating + an off-thread large-state lane
+
+The v6 lock-free save no longer re-serializes on every block, and gains an audio-thread-free path for large state.
+
+- `snapshot_version` (opt-in): return a token that changes when your custom state does; the shell re-serializes only on change, so an unchanged block costs an integer compare instead of re-copying the whole buffer every block.
+- `InitContext::snapshot_publisher()`: for MB-scale state (a sampler's audio, big wavetables), serialize off the audio thread in a background task and publish a pointer-swapped buffer - the audio thread never copies it. `snapshot_into` stays the tool for KB-scale state.
+- `snapshot_prealloc_hint`: pre-warm the inline snapshot buffer to your typical size so the first publish doesn't allocate on the audio thread.
+
 ### Fixes
 
 - **Typed value entry.** Hosts can type a value into a parameter field and have it parsed back, wired across every format.
