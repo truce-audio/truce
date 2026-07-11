@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.1.1
+
+- Parameter display strings that overflow the host buffer truncate on a UTF-8 char boundary (units like `°`, `µs`, `−12 dB`), not mid-codepoint, on every format.
+
 ## 6.1.0
 
 Sidechain and aux inputs now reach your plugin as separate buses, so a `with_sidechain_input(...)` layout gives the host a real sidechain to route into.
