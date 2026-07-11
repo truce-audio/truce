@@ -35,9 +35,9 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, copy_c_str, default_io_channels, enter_plugin, find_bus_layout,
-    log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
-    run_register, save_extra, shared_plugin,
+    ParamCStrings, PluginCell, SharedPlugin, copy_c_str, default_io_channels, enter_plugin,
+    find_bus_layout, log_missing_bus_layout, max_io_channels, run_audio_block,
+    run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
 use truce_params::MidiSource;
 use truce_params::sample::{Float, Sample};
@@ -92,12 +92,6 @@ struct Vst3Instance<P: PluginExport> {
     /// the editor never touches the plugin (`--shell` rebuilds
     /// from the reloaded dylib, so GUI edits hot-reload).
     editor_builder: EditorBuilder<P::Params>,
-    event_list: EventList,
-    sysex_inputs_pending: bool,
-    output_events: EventList,
-    /// Per-sub-block scratch for `chunked_process::process_chunked`.
-    /// Pre-allocated to the same capacity as `event_list`.
-    sub_event_scratch: EventList,
     /// Full param-info cache for the chunker's `is_chunked(id)`
     /// lookup. Built once at `cb_create`; static for the life of
     /// the instance.
@@ -107,21 +101,6 @@ struct Vst3Instance<P: PluginExport> {
     /// `chunked_process::process_chunked` every block.
     min_subblock_samples: u32,
     plugin_id_hash: u64,
-    sample_rate: f64,
-    /// Max block size declared by the host in `setupProcessing`.
-    /// Used to debug-assert that `cb_process` never receives more
-    /// frames than the plugin was sized for. Defaults to a generous
-    /// fallback so the contract check stays meaningful even for hosts
-    /// that skip `setupProcessing` (e.g. some validator robustness
-    /// tests).
-    max_block_size: usize,
-    /// `true` once `cb_reset` has run (i.e. the host called
-    /// `setActive(true)`). Until then, `cb_process` early-returns and
-    /// zeros outputs - running DSP before the plugin's smoothers and
-    /// per-rate state are primed produces NaN / garbage that the host
-    /// then has to clean up. Pluginval's "process before activate"
-    /// robustness paths exercise exactly this case.
-    prepared: bool,
     /// `true` between `setActive(true)` and `setActive(false)`.
     /// `cb_state_load` reads it to decide whether the audio thread will
     /// drain `pending_state`: if inactive, no `cb_process` runs, so it
@@ -130,14 +109,6 @@ struct Vst3Instance<P: PluginExport> {
     /// stale extra state). Written only from `cb_set_active` (main
     /// thread); unlike `prepared`, it tracks deactivation too.
     active: AtomicBool,
-    /// Reused per-block scratch for `RawBufferScratch::build`.
-    /// Lives on the instance so the audio thread doesn't allocate.
-    ///
-    /// Parameterised by `P::Sample` so plugins on `prelude64` get
-    /// the widening-scratch path (host wire is `f32`, plugin DSP is
-    /// `f64`) transparently. Same-precision plugins (`prelude32`)
-    /// stay zero-copy through the host pointers.
-    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
     /// Cached `(id, range)` pairs sorted by id. Built once in
     /// `cb_create` from `params().param_infos()`. Hosts call
     /// `cb_param_normalize` / `cb_param_denormalize` extremely often
@@ -152,16 +123,8 @@ struct Vst3Instance<P: PluginExport> {
     /// and the per-change lookup short-circuits (`binary_search` on an
     /// empty slice is `O(1)`).
     midi_maps: Vec<(u32, MidiMap)>,
-    editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
-    /// Content scale reported by the host via
-    /// `IPlugViewContentScaleSupport::setContentScaleFactor`. Defaults
-    /// to 1.0 when the host never calls it (macOS Cocoa hosts, VST3
-    /// runners that don't implement the interface). Used to convert
-    /// the editor's logical size to physical pixels when reporting
-    /// `getSize` on Windows/Linux.
-    host_scale: f64,
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
@@ -182,12 +145,63 @@ struct Vst3Instance<P: PluginExport> {
     /// interior mutability through the shared `&Inst` those callbacks
     /// hold.
     midi_proxy_values: Vec<AtomicU64>,
-    /// Correlates the host's per-voice `noteId` counters (arbitrary,
-    /// assigned at note-on, scoped per event bus) to the
-    /// `(channel, note)` pair truce's per-note events address. Written
-    /// and read on the audio thread inside `cb_process`; cleared by
-    /// `cb_reset` while audio is stopped.
+    /// Content scale from `setContentScaleFactor` (f64 bits, 1.0 default);
+    /// converts the editor's logical size to physical pixels for `getSize`.
+    /// GUI-thread-only, but atomic so the host-thread GUI callbacks and the
+    /// `request_resize` closure reach it through the shared `&Inst` without a
+    /// `&mut *ctx` - and so it stays outside the `gui` cell, which the
+    /// resize closure would otherwise re-enter while `cb_gui_open` holds it.
+    host_scale: AtomicU64,
+    /// Audio + lifecycle-owned per-block scratch. Behind a `PluginCell` so
+    /// every callback reaches it through a shared `&Vst3Instance` - never a
+    /// whole-struct `&mut *ctx`, which would alias a concurrent host-thread
+    /// `&*ctx` (param reads, GUI) and is UB under the aliasing model. The
+    /// VST3 host contract serializes its owners (process, reset, setup,
+    /// activate, and the per-block sysex / output-event callbacks that run
+    /// within the process cycle), so the cell is never held twice at once.
+    audio: PluginCell<Vst3Scratch<P>>,
+    /// Main/UI-thread-owned editor state, behind a `PluginCell` for the same
+    /// reason. Its owners - the GUI callbacks and `cb_state_load`'s
+    /// editor-notify - all run on the host main thread; `cb_process` never
+    /// touches it, so it can't overlap the audio thread.
+    gui: PluginCell<Vst3Gui>,
+}
+
+impl<P: PluginExport> Vst3Instance<P> {
+    fn host_scale(&self) -> f64 {
+        f64::from_bits(self.host_scale.load(Ordering::Relaxed))
+    }
+
+    fn set_host_scale(&self, scale: f64) {
+        self.host_scale.store(scale.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// Audio + lifecycle-owned per-block scratch (see [`Vst3Instance::audio`]).
+struct Vst3Scratch<P: PluginExport> {
+    event_list: EventList,
+    sysex_inputs_pending: bool,
+    output_events: EventList,
+    /// Per-sub-block scratch for `chunked_process::process_chunked`.
+    sub_event_scratch: EventList,
+    sample_rate: f64,
+    /// Max block size declared by the host in `setupProcessing`; used to
+    /// debug-assert `cb_process` never exceeds the sized block.
+    max_block_size: usize,
+    /// `true` once `cb_reset` ran (host `setActive(true)`); `cb_process`
+    /// early-returns and zeros outputs until then.
+    prepared: bool,
+    /// Reused per-block scratch for `RawBufferScratch::build`, parameterized
+    /// by `P::Sample` (widening path for `prelude64` plugins).
+    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
+    /// `(port, noteId) -> (channel, note)` correlation for note expression;
+    /// written/read on the audio thread, cleared by `cb_reset`.
     note_id_map: NoteIdMap,
+}
+
+/// Main/UI-thread-owned editor state (see [`Vst3Instance::gui`]).
+struct Vst3Gui {
+    editor: Option<Box<dyn Editor>>,
 }
 
 /// Fixed-capacity `(port, noteId) -> (channel, note)` correlation for
@@ -329,26 +343,13 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 snapshot,
                 task_spawner,
                 editor_builder,
-                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sysex_inputs_pending: false,
-                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
                 param_infos,
                 min_subblock_samples: info.automation.min_subblock_samples,
                 plugin_id_hash: state::shared_plugin_state_hash(&info),
-                sample_rate: 44100.0,
-                // 8192 covers the largest block sizes mainstream DAWs / validators
-                // use (Reaper / pluginval ≤ 4096); a non-zero default keeps the
-                // process-before-activate path from tripping the contract assert.
-                max_block_size: 8192,
-                prepared: false,
                 active: AtomicBool::new(false),
-                scratch: RawBufferScratch::default(),
                 param_ranges,
                 midi_maps,
-                editor: None,
                 transport_slot: TransportSlot::new(),
-                host_scale: 1.0,
                 pending_state: Arc::new(StateLoadQueue::new(1)),
                 latency_cache,
                 tail_cache,
@@ -360,7 +361,23 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                         AtomicU64::new(midi_proxy_default(controller).to_bits())
                     })
                     .collect(),
-                note_id_map: NoteIdMap::new(),
+                host_scale: AtomicU64::new(1.0f64.to_bits()),
+                audio: PluginCell::new(Vst3Scratch {
+                    event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sysex_inputs_pending: false,
+                    output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sample_rate: 44100.0,
+                    // 8192 covers the largest block sizes mainstream DAWs /
+                    // validators use (Reaper / pluginval <= 4096); a non-zero
+                    // default keeps the process-before-activate path from
+                    // tripping the contract assert.
+                    max_block_size: 8192,
+                    prepared: false,
+                    scratch: RawBufferScratch::default(),
+                    note_id_map: NoteIdMap::new(),
+                }),
+                gui: PluginCell::new(Vst3Gui { editor: None }),
             });
             let raw = Box::into_raw(instance);
             raw.cast::<std::ffi::c_void>()
@@ -402,14 +419,15 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     // Author `reset` can panic (allocation, DSP prep); firewall it so the
     // panic can't unwind across the C ABI and abort the host.
     run_extern_callback_with::<P, ()>("vst3", "reset", (), || unsafe {
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let mut audio = inst.audio.enter();
         // Clamp host-supplied max_frames up to a sane minimum: hosts that
         // don't honor their own setupProcessing contract can pass 0 here,
         // which would size plugin-internal delay lines to zero and blow up
         // on the first non-zero process() call.
         let max_frames = (max_frames as usize).max(1024);
-        inst.sample_rate = sample_rate;
-        inst.max_block_size = max_frames;
+        audio.sample_rate = sample_rate;
+        audio.max_block_size = max_frames;
         // Grow per-block scratch to cover the *widest* declared layout and
         // this block size before the first process() call so the audio
         // thread stays alloc-free. VST3 negotiates layouts at runtime
@@ -417,7 +435,8 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         // must not grow the per-channel Vecs on the audio thread - size to
         // `max_io_channels` like the AU / AAX wrappers, not the first layout.
         let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
-        inst.scratch
+        audio
+            .scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
             let mut plugin = enter_plugin(&inst.plugin);
@@ -430,8 +449,8 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         }
         // Voices don't survive a reset; a stale correlation could
         // route new expression to a dead (channel, note).
-        inst.note_id_map.clear();
-        inst.prepared = true;
+        audio.note_id_map.clear();
+        audio.prepared = true;
     });
 }
 
@@ -649,22 +668,26 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("VST3", || unsafe {
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        // Shared `&Vst3Instance` (never a whole-struct `&mut`) - the audio
+        // scratch is reached through its ownership cell, so a concurrent
+        // host-thread `&*ctx` (param reads, GUI) can't alias us.
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let mut audio = inst.audio.enter();
         let num_frames = nf;
 
         // Host called process() before setActive(true) - the plugin
         // hasn't been told its sample rate / max block size yet, so
         // running DSP would feed garbage out of un-snapped smoothers.
         // Zero outputs and bail.
-        if !inst.prepared {
+        if !audio.prepared {
             for ch in 0..num_output_channels as usize {
                 let ptr = *outputs.add(ch);
                 if !ptr.is_null() {
                     std::ptr::write_bytes(ptr, 0, num_frames);
                 }
             }
-            inst.event_list.clear();
-            inst.sysex_inputs_pending = false;
+            audio.event_list.clear();
+            audio.sysex_inputs_pending = false;
             return;
         }
 
@@ -689,13 +712,18 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // allocates. No-op and zero-sized when the feature is off.
         let _rt = RtSection::enter();
 
+        // One reborrow of the scratch so the disjoint fields below (event
+        // list, sub-block scratch, output events, build scratch) can be
+        // borrowed simultaneously - guard `Deref` can't split-borrow.
+        let scr = &mut *audio;
+
         // Convert MIDI events. SysEx input arrives through a separate
         // callback before this process callback, so preserve the
         // queued SysEx entries when present and append short MIDI.
-        if inst.sysex_inputs_pending {
-            inst.sysex_inputs_pending = false;
+        if scr.sysex_inputs_pending {
+            scr.sysex_inputs_pending = false;
         } else {
-            inst.event_list.clear();
+            scr.event_list.clear();
         }
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
@@ -719,7 +747,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                     } else {
                         unit_to_u32(ev.ne_value)
                     };
-                    inst.note_id_map
+                    scr.note_id_map
                         .lookup(ev.port, ev.note_id)
                         .and_then(|(channel, note)| {
                             let make_pn_cc = |cc| EventBody::PerNoteCC {
@@ -753,13 +781,13 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                     // the release phase, and stale slots are reclaimed
                     // by round-robin overwrite.
                     if ev.status & 0xF0 == 0x90 && ev.data2 > 0 {
-                        inst.note_id_map
+                        scr.note_id_map
                             .insert(ev.port, ev.note_id, ev.status & 0x0F, ev.data1);
                     }
                     decode_short_message(ev.status, ev.data1, ev.data2)
                 };
                 if let Some(body) = body {
-                    inst.event_list.push(Event {
+                    scr.event_list.push(Event {
                         sample_offset: ev.sample_offset,
                         port: ev.port,
                         body,
@@ -773,12 +801,12 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // Build AudioBuffer from raw pointers. Uses the per-instance
         // `scratch` so the audio thread doesn't heap-allocate.
         debug_assert!(
-            num_frames <= inst.max_block_size,
+            num_frames <= scr.max_block_size,
             "host violated VST3 contract: process() got {num_frames} frames \
              but setupProcessing declared max {}",
-            inst.max_block_size
+            scr.max_block_size
         );
-        let mut audio_buffer = inst.scratch.build(
+        let mut audio_buffer = scr.scratch.build(
             inputs,
             outputs,
             num_input_channels,
@@ -809,7 +837,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 if let Some((port, channel, controller)) = midi_proxy_decode(pc.id) {
                     #[allow(clippy::cast_possible_truncation)]
                     let normalized = pc.value.clamp(0.0, 1.0) as f32;
-                    inst.event_list.push(Event::on_port(
+                    scr.event_list.push(Event::on_port(
                         sample_offset,
                         port,
                         midi_proxy_event(channel, controller, normalized),
@@ -829,13 +857,13 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 // originating port to recover - unlike the per-bus
                 // proxy ids decoded above.
                 if let Ok(idx) = inst.midi_maps.binary_search_by_key(&pc.id, |(id, _)| *id) {
-                    inst.event_list.push(Event {
+                    scr.event_list.push(Event {
                         sample_offset,
                         port: 0,
                         body: midi_event_from_map(&inst.midi_maps[idx].1, pc.value),
                     });
                 }
-                inst.event_list.push(Event {
+                scr.event_list.push(Event {
                     sample_offset,
                     port: 0,
                     body: EventBody::ParamChange {
@@ -848,7 +876,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // Single stable sort across the merged MIDI + param-change
         // streams. Stable sort preserves the within-group order each
         // section already pushed in.
-        inst.event_list.ensure_sorted_by_offset();
+        scr.event_list.ensure_sorted_by_offset();
 
         let transport = if transport_ptr.is_null() {
             TransportInfo::default()
@@ -868,8 +896,8 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
                 // Derived from samples so a plugin reading
                 // `position_seconds` gets the same value on every format
                 // (CLAP populates it directly). Guard the pre-reset zero SR.
-                position_seconds: if inst.sample_rate > 0.0 {
-                    t.position_samples / inst.sample_rate
+                position_seconds: if scr.sample_rate > 0.0 {
+                    t.position_samples / scr.sample_rate
                 } else {
                     0.0
                 },
@@ -881,17 +909,17 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
             }
         };
 
-        inst.output_events.clear();
+        scr.output_events.clear();
         inst.transport_slot.write(&transport);
 
         let mut transport_snap = transport;
         let chunk_args = ChunkedProcess {
-            events: &inst.event_list,
-            sub_event_scratch: &mut inst.sub_event_scratch,
+            events: &scr.event_list,
+            sub_event_scratch: &mut scr.sub_event_scratch,
             transport: &mut transport_snap,
-            sample_rate: inst.sample_rate,
+            sample_rate: scr.sample_rate,
             process_mode: vst3_process_mode(process_mode),
-            output_events: &mut inst.output_events,
+            output_events: &mut scr.output_events,
             params_fn: None,
             meters_fn: None,
             param_infos: &inst.param_infos,
@@ -909,7 +937,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // copy + narrow it back to the host's `f32` pointers here.
         // No-op for `f32` plugins (output already pointed at the
         // host buffer).
-        inst.scratch
+        scr.scratch
             .finish_widening(outputs, num_output_channels, len_u32(num_frames));
 
         // Refresh latency / tail caches so the host's main-thread
@@ -1170,7 +1198,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     len: u32,
 ) -> i32 {
     run_extern_callback_with::<P, i32>("vst3", "load_state", 0, || unsafe {
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
         // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
         // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
         if data.is_null() || len == 0 {
@@ -1213,7 +1241,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // now - a `getState` while still inactive reads live state.
             plugin.republish_snapshot();
         }
-        if let Some(ref mut editor) = inst.editor {
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();
         }
         1
@@ -1505,8 +1533,10 @@ fn midi_proxy_len<P: PluginExport>() -> usize {
 unsafe extern "C" fn cb_get_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let audio = inst.audio.enter();
         len_u32(
-            inst.output_events
+            audio
+                .output_events
                 .iter()
                 .filter(|e| try_encode_vst3_midi(e).is_some())
                 .count(),
@@ -1521,13 +1551,14 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let audio = inst.audio.enter();
         // Walk the filtered iterator until we hit the index-th
         // encodable event. Out-of-range index leaves `*out`
         // untouched; the C++ shim zero-initialized the buffer before
         // calling, so callers that forget to bounds-check against
         // `cb_get_output_event_count` get a zero packet rather than
         // stale stack data.
-        if let Some(packet) = inst
+        if let Some(packet) = audio
             .output_events
             .iter()
             .filter_map(try_encode_vst3_midi)
@@ -1550,20 +1581,22 @@ unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
     len: u32,
 ) {
     unsafe {
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
         if bytes.is_null() || len == 0 {
             return;
         }
-        if !inst.sysex_inputs_pending {
-            inst.event_list.clear();
-            inst.sysex_inputs_pending = true;
+        let mut audio = inst.audio.enter();
+        let scr = &mut *audio;
+        if !scr.sysex_inputs_pending {
+            scr.event_list.clear();
+            scr.sysex_inputs_pending = true;
         }
         let slice = std::slice::from_raw_parts(bytes, len as usize);
         // Pool-full failure: drop the message. SysEx is atomic by
         // spec; truncating would corrupt it. The plug-in surfaces
         // the loss via the `EventList`'s pool usage metrics if it
         // cares.
-        let _ = inst
+        let _ = scr
             .event_list
             .push_sysex_on_port(sample_offset, port, slice);
     }
@@ -1572,8 +1605,10 @@ unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
 unsafe extern "C" fn cb_get_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let audio = inst.audio.enter();
         len_u32(
-            inst.output_events
+            audio
+                .output_events
                 .iter()
                 .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
                 .count(),
@@ -1591,18 +1626,19 @@ unsafe extern "C" fn cb_get_output_sysex_event<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let audio = inst.audio.enter();
         // Walk the filtered iterator, same shape as
         // `cb_get_output_event`. Bytes point into the plug-in's
         // SysEx pool - valid until the shim's next `process()`
         // clears the `EventList`, which is after the host's
         // `addEvent` has copied them.
-        if let Some(event) = inst
+        if let Some(event) = audio
             .output_events
             .iter()
             .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
             .nth(index as usize)
         {
-            let bytes = inst.output_events.sysex_bytes(&event.body);
+            let bytes = audio.output_events.sysex_bytes(&event.body);
             *out_sample_offset = event.sample_offset;
             *out_port = event.port;
             *out_bytes = bytes.as_ptr();
@@ -1703,8 +1739,10 @@ unsafe extern "C" fn cb_get_output_note_expression_count<P: PluginExport>(
 ) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let audio = inst.audio.enter();
         len_u32(
-            inst.output_events
+            audio
+                .output_events
                 .iter()
                 .filter(|e| note_expression_of(&e.body).is_some())
                 .count(),
@@ -1723,7 +1761,8 @@ unsafe extern "C" fn cb_get_output_note_expression<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        if let Some(event) = inst
+        let audio = inst.audio.enter();
+        if let Some(event) = audio
             .output_events
             .iter()
             .filter(|e| note_expression_of(&e.body).is_some())
@@ -1744,8 +1783,10 @@ unsafe extern "C" fn cb_get_output_note_expression<P: PluginExport>(
 unsafe extern "C" fn cb_get_output_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let audio = inst.audio.enter();
         len_u32(
-            inst.output_events
+            audio
+                .output_events
                 .iter()
                 .filter(|e| matches!(e.body, EventBody::ParamChange { .. }))
                 .count(),
@@ -1762,7 +1803,8 @@ unsafe extern "C" fn cb_get_output_param<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        if let Some(event) = inst
+        let audio = inst.audio.enter();
+        if let Some(event) = audio
             .output_events
             .iter()
             .filter(|e| matches!(e.body, EventBody::ParamChange { .. }))
@@ -1795,12 +1837,13 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if ctx.is_null() {
             return 0;
         }
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
-        if inst.editor.is_none() {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let mut gui = inst.gui.enter();
+        if gui.editor.is_none() {
             // Built from the lock-free param store the wrapper already
             // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
-            inst.editor = (inst.editor_builder)(inst.params_arc.clone());
+            gui.editor = (inst.editor_builder)(inst.params_arc.clone());
             // Replay a content scale the host reported before the editor
             // existed (a valid VST3 ordering - `setContentScaleFactor`
             // can precede the editor object). macOS drives Retina through
@@ -1808,13 +1851,13 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
             // pinning it would force 1x rendering, so skip macOS.
             #[cfg(not(target_os = "macos"))]
             {
-                let scale = inst.host_scale;
-                if let Some(ref mut editor) = inst.editor {
+                let scale = inst.host_scale();
+                if let Some(ref mut editor) = gui.editor {
                     editor.set_scale_factor(scale);
                 }
             }
         }
-        i32::from(inst.editor.is_some())
+        i32::from(gui.editor.is_some())
     })
 }
 
@@ -1827,7 +1870,8 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     // across the C ABI.
     run_extern_callback_with::<P, ()>("vst3", "gui_get_size", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        if let Some(ref editor) = inst.editor {
+        let gui = inst.gui.enter();
+        if let Some(ref editor) = gui.editor {
             let (ew, eh) = editor.size();
             // VST3 `ViewRect` is documented as "in pixels". That's literally
             // true on Windows/Linux, where hosts expect physical pixels and
@@ -1851,8 +1895,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
                 // and sign casts are safe.
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 {
-                    *w = (f64::from(ew) * inst.host_scale).round() as u32;
-                    *h = (f64::from(eh) * inst.host_scale).round() as u32;
+                    let host_scale = inst.host_scale();
+                    *w = (f64::from(ew) * host_scale).round() as u32;
+                    *h = (f64::from(eh) * host_scale).round() as u32;
                 }
             }
         }
@@ -1873,9 +1918,9 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
         // propagate to the editor and overflow when the editor
         // multiplies its logical size to physical pixels.
         let scale = scale.clamp(0.25, 8.0);
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
-        inst.host_scale = scale;
-        if let Some(ref mut editor) = inst.editor {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        inst.set_host_scale(scale);
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.set_scale_factor(scale);
         }
     });
@@ -1890,7 +1935,13 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
             return 0;
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        i32::from(inst.editor.as_ref().is_some_and(|e| e.can_resize()))
+        i32::from(
+            inst.gui
+                .enter()
+                .editor
+                .as_ref()
+                .is_some_and(|e| e.can_resize()),
+        )
     })
 }
 
@@ -1910,10 +1961,11 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
             return;
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        let Some(ref editor) = inst.editor else {
+        let gui = inst.gui.enter();
+        let Some(ref editor) = gui.editor else {
             return;
         };
-        let host_scale = inst.host_scale;
+        let host_scale = inst.host_scale();
         if editor.can_resize() {
             // Physical -> logical, fit, logical -> physical. Fit the largest
             // on-ratio box *inside* the requested cursor box (never larger on
@@ -1953,9 +2005,9 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
         if ctx.is_null() || w == 0 || h == 0 {
             return;
         }
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
-        let host_scale = inst.host_scale;
-        if let Some(ref mut editor) = inst.editor
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let host_scale = inst.host_scale();
+        if let Some(ref mut editor) = inst.gui.enter().editor
             && editor.can_resize()
         {
             let (lw, lh) = phys_to_logical(w, h, host_scale);
@@ -2048,8 +2100,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     // `editor.open` runs author GUI-construction code that can panic;
     // firewall it so the panic can't unwind across the C ABI.
     run_extern_callback_with::<P, ()>("vst3", "gui_open", (), || unsafe {
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
-        if let Some(ref mut editor) = inst.editor {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let mut gui = inst.gui.enter();
+        if let Some(ref mut editor) = gui.editor {
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);
             let snapshot = Arc::clone(&inst.snapshot);
@@ -2088,7 +2141,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // through the shim's component (rather
                         // than holding a plug view pointer) avoids
                         // UAF across host editor recreations.
-                        let host_scale = (*ctx_raw.as_ptr().cast::<Vst3Instance<P>>()).host_scale;
+                        let host_scale = (*ctx_raw.as_ptr().cast::<Vst3Instance<P>>()).host_scale();
                         // VST3 hosts speak physical points;
                         // `Editor` speaks logical.
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -2152,8 +2205,8 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     // `editor.close` runs author teardown code that can panic; firewall it.
     run_extern_callback_with::<P, ()>("vst3", "gui_close", (), || unsafe {
-        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
-        if let Some(ref mut editor) = inst.editor {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.close();
         }
     });

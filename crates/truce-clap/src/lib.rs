@@ -28,7 +28,7 @@ use std::marker::PhantomData;
 use std::mem::transmute;
 use std::path::Path;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use clap_sys::audio_buffer::clap_audio_buffer;
@@ -121,8 +121,8 @@ use truce_core::state::PluginFormat;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
-    SharedPlugin, copy_c_str, enter_plugin, run_audio_block_with, run_extern_callback_with,
-    save_extra, shared_plugin,
+    PluginCell, SharedPlugin, copy_c_str, enter_plugin, run_audio_block_with,
+    run_extern_callback_with, save_extra, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::Params;
@@ -211,24 +211,16 @@ struct ClapPluginData<P: PluginExport> {
     /// the plugin is deactivated; the audio scratch is pre-sized to the
     /// widest layout, so a wider selection never allocates in `process`.
     selected_config: AtomicU32,
-    /// Re-usable event list for converting CLAP events each process call.
-    event_list: EventList,
-    /// Sounding-note tracker backing wildcard `NOTE_OFF` / `NOTE_CHOKE`
-    /// expansion (see [`SoundingNotes`]). Audio-thread only.
-    sounding_notes: SoundingNotes,
-    /// Re-usable output event list for the process context.
-    output_events: EventList,
-    /// Per-sub-block scratch the chunker writes rebased events into
-    /// while walking the audio block. Pre-allocated to the same
-    /// capacity as `event_list` so steady-state operation stays
-    /// allocation-free.
-    sub_event_scratch: EventList,
+    /// Audio + lifecycle-owned per-block scratch. Behind a `PluginCell` so
+    /// every callback reaches it through a shared `&ClapPluginData` - never a
+    /// whole-struct `&mut`, which would alias a concurrent host-thread `&`
+    /// (param reads, GUI) and is UB under the aliasing model. The CLAP host
+    /// contract serializes its owners (process on the audio thread; activate /
+    /// reset / deactivate on the main thread while stopped), so the cell is
+    /// never held twice at once.
+    audio: PluginCell<ClapAudio<P>>,
     /// Cached parameter infos (built once at init).
     param_infos: Vec<ParamInfo>,
-    /// Current sample rate.
-    sample_rate: f64,
-    /// Current max block size.
-    max_block_size: usize,
     /// Cached plugin info. Read by the chunker each block for
     /// `automation.min_subblock_samples` and otherwise unused; the
     /// rest of the wrapper consumes `PluginInfo` from the C ABI
@@ -236,10 +228,10 @@ struct ClapPluginData<P: PluginExport> {
     info: PluginInfo,
     /// Pre-hashed plugin ID for state serialization.
     plugin_id_hash: u64,
-    /// GUI editor (created by the plugin, if it implements `editor()`).
-    editor: Option<Box<dyn Editor>>,
-    /// Whether the GUI has been created via the gui extension.
-    gui_created: bool,
+    /// Main/UI-thread-owned editor state, behind a `PluginCell` for the same
+    /// reason as `audio`. Its owners are the GUI callbacks, all on the host
+    /// main thread; `process` never touches it.
+    gui: PluginCell<ClapGui>,
     /// Host pointer (for querying host extensions).
     host: *const clap_host,
     /// Host params extension (for `request_flush`).
@@ -294,11 +286,33 @@ struct ClapPluginData<P: PluginExport> {
     ///   logical→physical. Default `1.0` is correct for hosts that
     ///   never call `set_scale` (which by convention are non-DPI-aware
     ///   and want logical points anyway). HiDPI-aware hosts call
-    ///   `set_scale` before `gui_get_size`; `host_scale_set_by_host`
-    ///   records that and stops a stray future re-init from clobbering
-    ///   the host-supplied value.
-    host_scale: f64,
-    host_scale_set_by_host: bool,
+    ///   `set_scale` before `gui_get_size`.
+    ///
+    /// f64 bits; GUI-thread-only, but atomic so `gui_get_size`, `set_scale`,
+    /// and the `gui_create` resize closure reach it through the shared
+    /// `&ClapPluginData` without a `&mut *ctx` - and so it stays outside the
+    /// `gui` cell, which the resize closure would otherwise re-enter.
+    host_scale: AtomicU64,
+}
+
+/// Audio + lifecycle-owned per-block scratch (see [`ClapPluginData::audio`]).
+struct ClapAudio<P: PluginExport> {
+    /// Re-usable event list for converting CLAP events each process call.
+    event_list: EventList,
+    /// Sounding-note tracker backing wildcard `NOTE_OFF` / `NOTE_CHOKE`
+    /// expansion (see [`SoundingNotes`]). Audio-thread only.
+    sounding_notes: SoundingNotes,
+    /// Re-usable output event list for the process context.
+    output_events: EventList,
+    /// Per-sub-block scratch the chunker writes rebased events into
+    /// while walking the audio block. Pre-allocated to the same
+    /// capacity as `event_list` so steady-state operation stays
+    /// allocation-free.
+    sub_event_scratch: EventList,
+    /// Current sample rate.
+    sample_rate: f64,
+    /// Current max block size.
+    max_block_size: usize,
     /// Persistent input/output channel-slice scratch reused across
     /// process callbacks so the audio thread doesn't allocate per
     /// block. The `'static` annotation is fictional - the slices
@@ -323,6 +337,24 @@ struct ClapPluginData<P: PluginExport> {
     /// without re-walking the CLAP bus structures. Each entry is
     /// tagged with the wire precision the host picked for its port.
     host_out_ptrs: Vec<HostOutPtr>,
+}
+
+/// Main/UI-thread-owned editor state (see [`ClapPluginData::gui`]).
+struct ClapGui {
+    /// GUI editor (created by the plugin, if it implements `editor()`).
+    editor: Option<Box<dyn Editor>>,
+    /// Whether the GUI has been created via the gui extension.
+    gui_created: bool,
+}
+
+impl<P: PluginExport> ClapPluginData<P> {
+    fn host_scale(&self) -> f64 {
+        f64::from_bits(self.host_scale.load(Ordering::Relaxed))
+    }
+
+    fn set_host_scale(&self, scale: f64) {
+        self.host_scale.store(scale.to_bits(), Ordering::Relaxed);
+    }
 }
 
 /// Host output channel pointer, tagged with the port's wire
@@ -522,8 +554,8 @@ fn copy_str_to_buf(dst: &mut [c_char], src: &str) {
 
 unsafe fn data_from_plugin<P: PluginExport>(
     plugin: *const clap_plugin,
-) -> &'static mut ClapPluginData<P> {
-    unsafe { &mut *(*plugin).plugin_data.cast::<ClapPluginData<P>>() }
+) -> &'static ClapPluginData<P> {
+    unsafe { &*(*plugin).plugin_data.cast::<ClapPluginData<P>>() }
 }
 
 // ---------------------------------------------------------------------------
@@ -550,7 +582,11 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
     // Author `init` runs here; firewall it so a panic can't unwind across
     // the C ABI (false = "init failed", the host then discards the plugin).
     run_extern_callback_with::<P, bool>("CLAP", "init", false, || unsafe {
-        let data = data_from_plugin::<P>(plugin);
+        // `init` runs once on the main thread before the host publishes the
+        // instance to any audio thread, so an exclusive `&mut` to the whole
+        // struct is sound here - the write-once fields below (`param_infos`,
+        // the host extension pointers) have no concurrent reader yet.
+        let data = &mut *(*plugin).plugin_data.cast::<ClapPluginData<P>>();
         {
             let mut instance = enter_plugin(&data.plugin);
             instance.init();
@@ -609,9 +645,10 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
     // Author `reset` runs here; firewall it (false = "activate failed").
     run_extern_callback_with::<P, bool>("CLAP", "activate", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.sample_rate = sample_rate;
+        let mut audio = data.audio.enter();
+        audio.sample_rate = sample_rate;
         let max_block = max_frames_count as usize;
-        data.max_block_size = max_block;
+        audio.max_block_size = max_block;
         let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
         {
             let mut instance = enter_plugin(&data.plugin);
@@ -642,28 +679,30 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         // defensive path allocation-free too; its scratch just stays unused
         // on the common zero-copy path.
         {
-            let max_in = data.input_widen.capacity();
-            let max_out = data.output_narrow.capacity();
-            while data.input_widen.len() < max_in {
-                data.input_widen.push(Vec::with_capacity(max_block));
+            let scr = &mut *audio;
+            let max_in = scr.input_widen.capacity();
+            let max_out = scr.output_narrow.capacity();
+            while scr.input_widen.len() < max_in {
+                scr.input_widen.push(Vec::with_capacity(max_block));
             }
-            for buf in &mut data.input_widen {
+            for buf in &mut scr.input_widen {
                 if buf.capacity() < max_block {
                     buf.reserve_exact(max_block - buf.capacity());
                 }
             }
-            while data.output_narrow.len() < max_out {
-                data.output_narrow.push(Vec::with_capacity(max_block));
+            while scr.output_narrow.len() < max_out {
+                scr.output_narrow.push(Vec::with_capacity(max_block));
             }
-            for buf in &mut data.output_narrow {
+            for buf in &mut scr.output_narrow {
                 if buf.capacity() < max_block {
                     buf.reserve_exact(max_block - buf.capacity());
                 }
             }
-            while data.host_out_ptrs.len() < max_out {
-                data.host_out_ptrs.push(HostOutPtr::Null);
+            while scr.host_out_ptrs.len() < max_out {
+                scr.host_out_ptrs.push(HostOutPtr::Null);
             }
         }
+        drop(audio);
 
         data.active.store(true, Ordering::Relaxed);
         true
@@ -693,11 +732,12 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
     // the C ABI.
     run_extern_callback_with::<P, ()>("CLAP", "reset", (), || unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.sounding_notes.clear_all();
+        let mut audio = data.audio.enter();
+        audio.sounding_notes.clear_all();
         let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
         let mut instance = enter_plugin(&data.plugin);
         instance.reset(
-            &AudioConfig::new(data.sample_rate, data.max_block_size).with_process_mode(mode),
+            &AudioConfig::new(audio.sample_rate, audio.max_block_size).with_process_mode(mode),
         );
         // Same baseline refresh as `activate` (no dirty flag): keep the
         // caches consistent with the reset instance.
@@ -1122,7 +1162,8 @@ unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
 /// or key axis drops the event, matching the concrete path's
 /// hostile-host guard.
 fn push_note_offs<P: PluginExport>(
-    data: &mut ClapPluginData<P>,
+    scr: &mut ClapAudio<P>,
+    info: &PluginInfo,
     note_event: &clap_event_note,
     sample_offset: u32,
     port: u8,
@@ -1134,16 +1175,16 @@ fn push_note_offs<P: PluginExport>(
         return;
     }
     let (first_port, last_port) = if note_event.port_index == -1 {
-        (0, data.info.midi_input_ports.max(1) - 1)
+        (0, info.midi_input_ports.max(1) - 1)
     } else {
         (port, port)
     };
     // Destructure so the tracker and the event list borrow disjointly.
-    let ClapPluginData {
+    let ClapAudio {
         sounding_notes,
         event_list,
         ..
-    } = data;
+    } = scr;
     for p in first_port..=last_port {
         if let (NoteAxis::One(channel), NoteAxis::One(note)) = (channel, key) {
             sounding_notes.clear(p, channel, note);
@@ -1182,7 +1223,8 @@ fn push_note_offs<P: PluginExport>(
 /// rely on it. Out-of-domain junk on the channel or key axis drops
 /// the event, matching [`push_note_offs`].
 fn push_note_expressions<P: PluginExport>(
-    data: &mut ClapPluginData<P>,
+    scr: &mut ClapAudio<P>,
+    info: &PluginInfo,
     ne: &clap_event_note_expression,
     sample_offset: u32,
     port: u8,
@@ -1193,17 +1235,17 @@ fn push_note_expressions<P: PluginExport>(
         return;
     }
     let (first_port, last_port) = if ne.port_index == -1 {
-        (0, data.info.midi_input_ports.max(1) - 1)
+        (0, info.midi_input_ports.max(1) - 1)
     } else {
         (port, port)
     };
-    let midi2 = data.info.midi_input_dialect == MidiDialect::Midi2;
+    let midi2 = info.midi_input_dialect == MidiDialect::Midi2;
     // Destructure so the tracker and the event list borrow disjointly.
-    let ClapPluginData {
+    let ClapAudio {
         sounding_notes,
         event_list,
         ..
-    } = data;
+    } = scr;
     let mut push = |p: u8, channel: u8, note: u8| {
         let Some(decoded) = note_expression_body(ne, channel, note) else {
             return;
@@ -1235,13 +1277,14 @@ fn push_note_expressions<P: PluginExport>(
 /// it passes `false` to skip the sort.
 #[allow(clippy::too_many_lines)]
 unsafe fn convert_input_events<P: PluginExport>(
-    data: &mut ClapPluginData<P>,
+    scr: &mut ClapAudio<P>,
+    info: &PluginInfo,
     in_events: *const clap_input_events,
     sort: bool,
     state_loaded: bool,
 ) {
     unsafe {
-        data.event_list.clear();
+        scr.event_list.clear();
 
         if in_events.is_null() {
             return;
@@ -1273,7 +1316,7 @@ unsafe fn convert_input_events<P: PluginExport>(
             // get 0.
             let port = route_midi_port(
                 clap_input_port(header, (*header).type_),
-                data.info.midi_input_ports,
+                info.midi_input_ports,
             );
 
             match (*header).type_ {
@@ -1289,13 +1332,13 @@ unsafe fn convert_input_events<P: PluginExport>(
                     let Some((channel, note)) = clap_note_address(note_event) else {
                         continue;
                     };
-                    data.sounding_notes.set(port, channel, note);
+                    scr.sounding_notes.set(port, channel, note);
                     // CLAP's f64 velocity is a normalized [0, 1]; truce
                     // exposes it as a wire-native 7-bit value to match
                     // every other format. Plugins that want CLAP's full
                     // float precision can handle `NoteOn2` from
                     // `CLAP_EVENT_MIDI2` (when the host emits that path).
-                    data.event_list.push(Event::on_port(
+                    scr.event_list.push(Event::on_port(
                         sample_offset,
                         port,
                         EventBody::NoteOn {
@@ -1309,7 +1352,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                 CLAP_EVENT_NOTE_OFF => {
                     let note_event = &*header.cast::<clap_event_note>();
                     let velocity = denorm_7bit(f32::from_f64(note_event.velocity));
-                    push_note_offs(data, note_event, sample_offset, port, velocity);
+                    push_note_offs(scr, info, note_event, sample_offset, port, velocity);
                 }
                 CLAP_EVENT_NOTE_CHOKE => {
                     // A choke is an immediate voice cut (drum choke
@@ -1317,7 +1360,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // choke variant, so deliver a `NoteOff`: a release
                     // tail beats a voice hanging forever.
                     let note_event = &*header.cast::<clap_event_note>();
-                    push_note_offs(data, note_event, sample_offset, port, 0);
+                    push_note_offs(scr, info, note_event, sample_offset, port, 0);
                 }
                 CLAP_EVENT_PARAM_VALUE => {
                     // When a state load was applied at the head of
@@ -1336,7 +1379,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // `chunked_process::process_chunked` - that way
                     // the smoother sees `set_target` at the event's
                     // sample, not at the head of the audio block.
-                    data.event_list.push(Event::on_port(
+                    scr.event_list.push(Event::on_port(
                         sample_offset,
                         port,
                         EventBody::ParamChange {
@@ -1352,7 +1395,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                         continue;
                     }
                     let mod_event = &*header.cast::<clap_event_param_value>();
-                    data.event_list.push(Event::on_port(
+                    scr.event_list.push(Event::on_port(
                         sample_offset,
                         port,
                         EventBody::ParamMod {
@@ -1364,9 +1407,9 @@ unsafe fn convert_input_events<P: PluginExport>(
                 }
                 CLAP_EVENT_TRANSPORT => {
                     let transport = &*header.cast::<clap_event_transport>();
-                    data.event_list.push(Event::new(
+                    scr.event_list.push(Event::new(
                         sample_offset,
-                        EventBody::Transport(build_transport_info(transport, data.sample_rate)),
+                        EventBody::Transport(build_transport_info(transport, scr.sample_rate)),
                     ));
                 }
                 CLAP_EVENT_MIDI => {
@@ -1381,7 +1424,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     if let Some(body) =
                         decode_short_message(midi.data[0], midi.data[1], midi.data[2])
                     {
-                        data.event_list
+                        scr.event_list
                             .push(Event::on_port(sample_offset, port, body));
                     }
                 }
@@ -1401,7 +1444,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     } else {
                         std::slice::from_raw_parts(sysex.buffer, sysex.size as usize)
                     };
-                    let _ = data.event_list.push_sysex(sample_offset, bytes);
+                    let _ = scr.event_list.push_sysex(sample_offset, bytes);
                 }
                 // Decode the UMP packet. A `Midi2`-dialect plugin gets
                 // the native 2.0 `EventBody` variants (group nibble
@@ -1412,13 +1455,13 @@ unsafe fn convert_input_events<P: PluginExport>(
                 CLAP_EVENT_MIDI2 => {
                     let midi2 = &*header.cast::<clap_event_midi2>();
                     if let Some(decoded) = decode_ump_channel_voice_2(midi2.data) {
-                        let body = if data.info.midi_input_dialect == MidiDialect::Midi2 {
+                        let body = if info.midi_input_dialect == MidiDialect::Midi2 {
                             Some(decoded)
                         } else {
                             downconvert_to_midi1(&decoded)
                         };
                         if let Some(body) = body {
-                            data.event_list
+                            scr.event_list
                                 .push(Event::on_port(sample_offset, port, body));
                         }
                     }
@@ -1429,7 +1472,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // out across wildcard axes - with the down-converted
                     // channel form for plugins that didn't opt into 2.0.
                     let ne = &*header.cast::<clap_event_note_expression>();
-                    push_note_expressions(data, ne, sample_offset, port);
+                    push_note_expressions(scr, info, ne, sample_offset, port);
                 }
                 _ => {
                     // Unsupported event type (system real-time, utility)
@@ -1439,7 +1482,7 @@ unsafe fn convert_input_events<P: PluginExport>(
         }
 
         if sort {
-            data.event_list.ensure_sorted_by_offset();
+            scr.event_list.ensure_sorted_by_offset();
         }
     }
 }
@@ -1449,7 +1492,7 @@ unsafe fn convert_input_events<P: PluginExport>(
 // ---------------------------------------------------------------------------
 
 unsafe fn flush_gui_changes<P: PluginExport>(
-    data: &mut ClapPluginData<P>,
+    data: &ClapPluginData<P>,
     out_events: *const clap_output_events,
 ) {
     unsafe {
@@ -1561,17 +1604,25 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // allocates. No-op and zero-sized when the feature is off.
         let _rt = RtSection::enter();
 
+        // The audio scratch lives behind an ownership cell reached through the
+        // shared `&data`, so a concurrent host-thread `&data` (param reads,
+        // GUI) can't alias it. One reborrow so the disjoint scratch fields
+        // (event list, slices, output events, build scratch) can be borrowed
+        // simultaneously - the guard's `Deref` can't split-borrow.
+        let mut audio = data.audio.enter();
+        let scr = &mut *audio;
+
         // Convert CLAP input events to our EventList - sort by
         // sample offset so the plugin sees them in time order.
         // `state_loaded` causes ParamValue/ParamMod events to be
         // dropped because they predate the state-load intent.
-        convert_input_events::<P>(data, proc.in_events, true, state_loaded);
+        convert_input_events::<P>(scr, &data.info, proc.in_events, true, state_loaded);
 
         // Build transport info from the CLAP transport event (or default).
         let transport = if proc.transport.is_null() {
             TransportInfo::default()
         } else {
-            build_transport_info(&*proc.transport, data.sample_rate)
+            build_transport_info(&*proc.transport, scr.sample_rate)
         };
 
         // Build AudioBuffer from CLAP audio buffers.
@@ -1592,10 +1643,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         //    themselves; auto-copying clobbers the previous-block tail
         //    that delay/reverb feedback paths read back from the output.
         debug_assert!(
-            num_frames <= data.max_block_size,
+            num_frames <= scr.max_block_size,
             "host violated CLAP contract: process() got {num_frames} frames \
              but activate() declared max {}",
-            data.max_block_size
+            scr.max_block_size
         );
 
         // Build per-channel slices preserving channel index across
@@ -1612,13 +1663,13 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // memory (zero-copy); otherwise the channel is converted
         // through the matching `input_widen` / `output_narrow` slot
         // and copied back after `process()` returns.
-        data.input_slices.clear();
+        scr.input_slices.clear();
         // Reset each inner scratch buffer's length to 0 (preserves
         // its heap allocation), don't `.clear()` the outer
         // `Vec<Vec<_>>` - that would drop every inner Vec and force
         // the per-channel push below to re-allocate every block,
         // defeating the activate-time pre-grow.
-        for buf in &mut data.input_widen {
+        for buf in &mut scr.input_widen {
             buf.clear();
         }
         // The outer Vec is pre-sized in `clap_plugin_activate`; the
@@ -1631,10 +1682,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             let buf = &*proc.audio_inputs.add(bus_idx as usize);
             let bus_is_f64 = !buf.data64.is_null();
             for ch in 0..buf.channel_count {
-                while data.input_widen.len() <= flat_in_idx {
-                    data.input_widen.push(Vec::new());
+                while scr.input_widen.len() <= flat_in_idx {
+                    scr.input_widen.push(Vec::new());
                 }
-                let scratch = &mut data.input_widen[flat_in_idx];
+                let scratch = &mut scr.input_widen[flat_in_idx];
                 let slice: &'static [P::Sample] = if bus_is_f64 {
                     let host_ptr: *const f64 = *buf.data64.add(ch as usize);
                     input_channel_slice::<P::Sample, f64>(host_ptr, num_frames, scratch)
@@ -1646,30 +1697,30 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     let host_ptr: *const f32 = *buf.data32.add(ch as usize);
                     input_channel_slice::<P::Sample, f32>(host_ptr, num_frames, scratch)
                 };
-                data.input_slices.push(slice);
+                scr.input_slices.push(slice);
                 flat_in_idx += 1;
             }
         }
 
-        data.output_slices.clear();
+        scr.output_slices.clear();
         // Same reasoning as `input_widen` above: clear each inner
         // scratch buffer in place so its heap allocation survives.
-        for buf in &mut data.output_narrow {
+        for buf in &mut scr.output_narrow {
             buf.clear();
         }
-        data.host_out_ptrs.clear();
+        scr.host_out_ptrs.clear();
         let mut flat_out_idx = 0usize;
         for bus_idx in 0..proc.audio_outputs_count {
             let buf = &mut *proc.audio_outputs.add(bus_idx as usize);
             let bus_is_f64 = !buf.data64.is_null();
             for ch in 0..buf.channel_count {
-                while data.output_narrow.len() <= flat_out_idx {
-                    data.output_narrow.push(Vec::new());
+                while scr.output_narrow.len() <= flat_out_idx {
+                    scr.output_narrow.push(Vec::new());
                 }
-                let scratch = &mut data.output_narrow[flat_out_idx];
+                let scratch = &mut scr.output_narrow[flat_out_idx];
                 let slice: &'static mut [P::Sample] = if bus_is_f64 {
                     let host_ptr: *mut f64 = *buf.data64.add(ch as usize);
-                    data.host_out_ptrs.push(if host_ptr.is_null() {
+                    scr.host_out_ptrs.push(if host_ptr.is_null() {
                         HostOutPtr::Null
                     } else {
                         HostOutPtr::F64(host_ptr)
@@ -1681,14 +1732,14 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } else {
                         *buf.data32.add(ch as usize)
                     };
-                    data.host_out_ptrs.push(if host_ptr.is_null() {
+                    scr.host_out_ptrs.push(if host_ptr.is_null() {
                         HostOutPtr::Null
                     } else {
                         HostOutPtr::F32(host_ptr)
                     });
                     output_channel_slice::<P::Sample, f32>(host_ptr, num_frames, scratch)
                 };
-                data.output_slices.push(slice);
+                scr.output_slices.push(slice);
                 flat_out_idx += 1;
             }
         }
@@ -1697,16 +1748,16 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // call only. Without the transmute, the borrow checker
         // propagates the `'static` lifetimes inside `input_slices`
         // out to the AudioBuffer's lifetime parameter - which would
-        // pin `data` mutably for the rest of the function. Same
+        // pin the scratch mutably for the rest of the function. Same
         // pattern as `RawBufferScratch::build`.
-        let data_ptr: *mut ClapPluginData<P> = data;
-        let s = &mut *data_ptr;
+        let scr_ptr: *mut ClapAudio<P> = scr;
+        let s = &mut *scr_ptr;
         let mut audio_buffer =
             transmute::<AudioBuffer<'static, P::Sample>, AudioBuffer<'_, P::Sample>>(
                 AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, num_frames),
             );
 
-        data.output_events.clear();
+        scr.output_events.clear();
 
         // Publish transport to the editor slot before the plugin runs.
         data.transport_slot.write(&transport);
@@ -1719,12 +1770,12 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // inert. See `chunked_process` for the per-sub-block contract.
         let mut transport_snap = transport;
         let chunk_args = ChunkedProcess {
-            events: &data.event_list,
-            sub_event_scratch: &mut data.sub_event_scratch,
+            events: &scr.event_list,
+            sub_event_scratch: &mut scr.sub_event_scratch,
             transport: &mut transport_snap,
-            sample_rate: data.sample_rate,
+            sample_rate: scr.sample_rate,
             process_mode: ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed)),
-            output_events: &mut data.output_events,
+            output_events: &mut scr.output_events,
             params_fn: None,
             meters_fn: None,
             param_infos: &data.param_infos,
@@ -1745,7 +1796,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // if either is shorter (it shouldn't be, but a future drift
         // would hit this), iteration stops at the min cleanly rather
         // than panicking on an out-of-bounds index.
-        for (host_ptr, plugin) in data.host_out_ptrs.iter().zip(data.output_narrow.iter()) {
+        for (host_ptr, plugin) in scr.host_out_ptrs.iter().zip(scr.output_narrow.iter()) {
             if plugin.is_empty() {
                 continue;
             }
@@ -1795,7 +1846,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         flush_gui_changes::<P>(data, proc.out_events);
 
         // Forward plugin output events (MIDI output from instruments/effects)
-        if !proc.out_events.is_null() && !data.output_events.is_empty() {
+        if !proc.out_events.is_null() && !scr.output_events.is_empty() {
             let Some(try_push) = (*proc.out_events).try_push else {
                 return CLAP_PROCESS_CONTINUE;
             };
@@ -1803,10 +1854,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             // that pushes block-level events (an LFO, a mode-switch
             // sweep) after per-event ones would otherwise hand the
             // host an unsorted queue.
-            data.output_events.ensure_sorted_by_offset();
+            scr.output_events.ensure_sorted_by_offset();
             // Route each output event to the note port the plugin
             // stamped it with; an out-of-range port routes to 0.
-            for event in data.output_events.iter() {
+            for event in scr.output_events.iter() {
                 let out_port = route_midi_port(event.port, data.info.midi_output_ports);
                 match &event.body {
                     EventBody::NoteOn {
@@ -1978,7 +2029,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         // defers the copy until later in
                         // `process()` is still fine because the
                         // pool stays valid through the whole block.
-                        let bytes = data.output_events.sysex_bytes(&event.body);
+                        let bytes = scr.output_events.sysex_bytes(&event.body);
                         let ev = clap_event_midi_sysex {
                             header: clap_event_header {
                                 size: size_of_u32::<clap_event_midi_sysex>(),
@@ -2098,8 +2149,8 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // populated would pin dangling pointers across blocks. Clear
         // does NOT shrink capacity, so the next block reuses the
         // same allocation without touching the global allocator.
-        data.input_slices.clear();
-        data.output_slices.clear();
+        scr.input_slices.clear();
+        scr.output_slices.clear();
 
         match status {
             ProcessStatus::Normal => CLAP_PROCESS_CONTINUE,
@@ -2403,12 +2454,16 @@ unsafe extern "C" fn params_flush<P: PluginExport>(
 ) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
+        // `flush` is never concurrent with `process` (CLAP contract), so it
+        // owns the audio scratch through the cell for its event conversion.
+        let mut audio = data.audio.enter();
+        let scr = &mut *audio;
         // params_flush only forwards param values to the plugin and
         // sweeps GUI-driven changes outward; it doesn't iterate the
         // event list in time order, so skip the sort.
         // params_flush is a non-audio-thread param sweep; no state-load
         // race possible here, so the drain flag stays false.
-        convert_input_events::<P>(data, in_events, false, false);
+        convert_input_events::<P>(scr, &data.info, in_events, false, false);
         // `flush` doesn't enter `process()`, so the chunker's deferred
         // `set_plain` apply pass never runs. Apply `ParamChange` events
         // synchronously here so host-thread param sweeps (preset
@@ -2417,7 +2472,7 @@ unsafe extern "C" fn params_flush<P: PluginExport>(
         // effect. Mirrors what the audio-thread chunker does inside
         // `apply_pending_events`.
         let params = data.params_arc.as_ref() as &dyn Params;
-        for ev in data.event_list.iter() {
+        for ev in scr.event_list.iter() {
             if let EventBody::ParamChange { id, value } = ev.body {
                 params.set_plain(id, value);
             }
@@ -2556,7 +2611,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             instance.republish_snapshot();
         }
 
-        if let Some(ref mut editor) = data.editor {
+        if let Some(ref mut editor) = data.gui.enter().editor {
             editor.state_changed();
         }
 
@@ -2629,7 +2684,7 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
             state::apply_state(&mut *instance, &deserialized);
             instance.republish_snapshot();
         }
-        if let Some(ref mut editor) = data.editor {
+        if let Some(ref mut editor) = data.gui.enter().editor {
             editor.state_changed();
         }
 
@@ -3018,22 +3073,24 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
     // panic can't unwind across the C ABI (false = "no editor created").
     run_extern_callback_with::<P, bool>("CLAP", "gui_create", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
-        if data.gui_created {
+        let mut gui = data.gui.enter();
+        if gui.gui_created {
             return true;
         }
         // Built through the cached lock-free editor factory, so opening
         // the GUI never stalls the audio thread (and `--shell` rebuilds
         // from the reloaded dylib).
-        data.editor = (data.editor_builder)(data.params_arc.clone());
-        data.gui_created = data.editor.is_some();
-        data.gui_created
+        gui.editor = (data.editor_builder)(data.params_arc.clone());
+        gui.gui_created = gui.editor.is_some();
+        gui.gui_created
     })
 }
 
 unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        if let Some(editor) = data.editor.as_mut() {
+        let mut gui = data.gui.enter();
+        if let Some(editor) = gui.editor.as_mut() {
             // Same FFI-boundary protection as `clap_plugin_destroy`:
             // any panic during `editor.close()` (wgpu surface
             // drop, NSView teardown, baseview window close) would
@@ -3044,8 +3101,8 @@ unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
                 (*editor_ptr).close();
             }));
         }
-        data.editor = None;
-        data.gui_created = false;
+        gui.editor = None;
+        gui.gui_created = false;
     }
 }
 
@@ -3058,9 +3115,8 @@ unsafe extern "C" fn gui_set_scale<P: PluginExport>(
             return false;
         }
         let data = data_from_plugin::<P>(plugin);
-        data.host_scale = scale;
-        data.host_scale_set_by_host = true;
-        if let Some(ref mut editor) = data.editor {
+        data.set_host_scale(scale);
+        if let Some(ref mut editor) = data.gui.enter().editor {
             editor.set_scale_factor(scale);
         }
         true
@@ -3074,7 +3130,8 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        if let Some(ref editor) = data.editor {
+        let gui = data.gui.enter();
+        if let Some(ref editor) = gui.editor {
             let (w, h) = editor.size();
             // Like VST3, the CLAP spec describes gui size as pixels, but
             // macOS AppKit handles Retina backing automatically. On macOS
@@ -3097,8 +3154,9 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
                 // the `f64 → u32` truncation/sign casts are safe.
                 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 {
-                    *width = (f64::from(w) * data.host_scale).round() as u32;
-                    *height = (f64::from(h) * data.host_scale).round() as u32;
+                    let host_scale = data.host_scale();
+                    *width = (f64::from(w) * host_scale).round() as u32;
+                    *height = (f64::from(h) * host_scale).round() as u32;
                 }
             }
             return true;
@@ -3110,7 +3168,11 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
 unsafe extern "C" fn gui_can_resize<P: PluginExport>(plugin: *const clap_plugin) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.editor.as_ref().is_some_and(|e| e.can_resize())
+        data.gui
+            .enter()
+            .editor
+            .as_ref()
+            .is_some_and(|e| e.can_resize())
     }
 }
 
@@ -3131,7 +3193,8 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let Some(editor) = data.editor.as_mut() else {
+        let mut gui = data.gui.enter();
+        let Some(editor) = gui.editor.as_mut() else {
             return false;
         };
 
@@ -3218,7 +3281,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 }),
                 request_resize: Box::new({
                     let host_ptr = SendPtr::new(data.host);
-                    let host_scale_for_resize = data.host_scale;
+                    let host_scale_for_resize = data.host_scale();
                     move |lw, lh| {
                         request_host_resize(host_ptr.as_ptr(), host_scale_for_resize, lw, lh)
                     }
@@ -3378,7 +3441,8 @@ unsafe extern "C" fn gui_get_resize_hints<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let Some(editor) = data.editor.as_ref() else {
+        let gui = data.gui.enter();
+        let Some(editor) = gui.editor.as_ref() else {
             return false;
         };
         if !editor.can_resize() {
@@ -3454,7 +3518,9 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let Some(editor) = data.editor.as_mut() else {
+        let host_scale = data.host_scale();
+        let mut gui = data.gui.enter();
+        let Some(editor) = gui.editor.as_mut() else {
             return false;
         };
         if editor.can_resize() {
@@ -3466,7 +3532,7 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
             // it can't oscillate when a host re-asserts a pinned axis every
             // frame (Reaper caps the editor height at its FX-window content
             // height and reverts any grow past it).
-            let req = scale_physical_to_logical(width, height, data.host_scale);
+            let req = scale_physical_to_logical(width, height, host_scale);
             let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
             let accepted = editor.set_size(lw, lh);
             // The fit is `<=` the request, so this only ever asks the host to
@@ -3474,11 +3540,14 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
             // never to grow past a pinned axis. Idempotent, so the host's
             // echoed `set_size` agrees and the exchange settles.
             let adopted = editor.size();
+            drop(gui);
             if accepted && adopted != req {
-                request_host_resize(data.host, data.host_scale, adopted.0, adopted.1);
+                request_host_resize(data.host, host_scale, adopted.0, adopted.1);
             }
             accepted
         } else {
+            // Drop the editor borrow before `gui_get_size` re-enters the cell.
+            drop(gui);
             let mut current_w: u32 = 0;
             let mut current_h: u32 = 0;
             if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
@@ -3500,18 +3569,22 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let Some(editor) = data.editor.as_ref() else {
+        let host_scale = data.host_scale();
+        let gui = data.gui.enter();
+        let Some(editor) = gui.editor.as_ref() else {
             return false;
         };
         if editor.can_resize() {
-            let req = scale_physical_to_logical(*width, *height, data.host_scale);
+            let req = scale_physical_to_logical(*width, *height, host_scale);
             let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
             // Convert clamped logical back to physical for the host.
-            let (pw, ph) = scale_logical_to_physical(lw, lh, data.host_scale);
+            let (pw, ph) = scale_logical_to_physical(lw, lh, host_scale);
             *width = pw;
             *height = ph;
             true
         } else {
+            // Drop the editor borrow before `gui_get_size` re-enters the cell.
+            drop(gui);
             let mut current_w: u32 = 0;
             let mut current_h: u32 = 0;
             if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
@@ -3766,6 +3839,8 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         // `clap_plugin_process` call after activate hits the global
         // allocator on the audio thread for every channel push; this
         // amortizes the cost into instance creation, where it belongs.
+        // Read before `info` is moved into the struct literal below.
+        let midi_input_ports = info.midi_input_ports;
         let layouts = P::bus_layouts();
         let max_in = layouts
             .iter()
@@ -3788,17 +3863,9 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             latency_cache,
             tail_cache,
             selected_config: AtomicU32::new(0),
-            event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-            sounding_notes: SoundingNotes::new(info.midi_input_ports),
-            output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-            sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
             param_infos,
-            sample_rate: 44100.0,
-            max_block_size: 1024,
             info,
             plugin_id_hash,
-            editor: None,
-            gui_created: false,
             host,
             host_params: ptr::null(),
             host_latency: ptr::null(),
@@ -3810,13 +3877,24 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
             needs_rescan: Arc::new(AtomicBool::new(false)),
             transport_slot: TransportSlot::new(),
-            host_scale: 1.0,
-            host_scale_set_by_host: false,
-            input_slices: Vec::with_capacity(max_in),
-            output_slices: Vec::with_capacity(max_out),
-            input_widen: Vec::with_capacity(max_in),
-            output_narrow: Vec::with_capacity(max_out),
-            host_out_ptrs: Vec::with_capacity(max_out),
+            host_scale: AtomicU64::new(1.0f64.to_bits()),
+            audio: PluginCell::new(ClapAudio {
+                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sounding_notes: SoundingNotes::new(midi_input_ports),
+                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sample_rate: 44100.0,
+                max_block_size: 1024,
+                input_slices: Vec::with_capacity(max_in),
+                output_slices: Vec::with_capacity(max_out),
+                input_widen: Vec::with_capacity(max_in),
+                output_narrow: Vec::with_capacity(max_out),
+                host_out_ptrs: Vec::with_capacity(max_out),
+            }),
+            gui: PluginCell::new(ClapGui {
+                editor: None,
+                gui_created: false,
+            }),
         });
 
         let clap = Box::new(clap_plugin {

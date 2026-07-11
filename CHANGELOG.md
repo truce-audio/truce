@@ -7,6 +7,8 @@ Notable changes per release.
 - Standalone no longer crashes on MIDI-only plugins (zero output buses, e.g. transpose / arpeggio), which previously panicked on the first audio callback. MIDI output from the standalone isn't wired up yet, so their emitted events still go nowhere.
 - Author-code and GUI-teardown panics can't abort the host: instance create/destroy and param format/parse callbacks are panic-guarded on every format, closing the remaining gaps on VST3, AAX, and CLAP.
 - Parameter writes clamp to the declared range (float, int, and enum) and reject non-finite floats, and the smoother self-heals from a NaN accumulator, so a corrupt project or preset can't poison the audio path.
+- Every format wrapper reaches its instance through a shared reference with per-block scratch and editor state behind ownership cells, removing the cross-thread aliasing between the audio thread's process block and concurrent host-thread param/GUI callbacks (CLAP, VST3, VST2, AU, AAX). A Tree-Borrows Miri harness gates it.
+- VST2 process scratch is sized to the widest declared bus layout, not the default one, so a wider layout selection can't allocate on the audio thread.
 
 ## 6.1.0
 

@@ -67,7 +67,7 @@ use truce_core::ump::{
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
-    ParamCStrings, SharedPlugin, copy_c_str, default_io_channels, enter_plugin,
+    ParamCStrings, PluginCell, SharedPlugin, copy_c_str, default_io_channels, enter_plugin,
     log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
     run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
@@ -238,6 +238,40 @@ struct AuInstance<P: PluginExport> {
     /// `None` only if the notifier thread failed to spawn.
     #[cfg(target_os = "macos")]
     param_notify: Option<ParamNotifier>,
+    /// Cached param-info table for the chunker's split predicate.
+    param_infos: Vec<ParamInfo>,
+    /// `min_subblock_samples` from `truce.toml`'s `[automation]`.
+    min_subblock_samples: u32,
+    plugin_id_hash: u64,
+    /// Audio + lifecycle-owned per-block scratch. Behind a `PluginCell` so
+    /// every callback reaches it through a shared `&AuInstance` - never a
+    /// whole-struct `&mut *ctx`, which would alias a concurrent host-thread
+    /// `&*ctx` (param reads, GUI) and is UB under the aliasing model.
+    /// `cb_process` on the audio thread and the lifecycle callbacks never
+    /// overlap, so the cell is never held twice at once.
+    audio: PluginCell<AuAudio<P>>,
+    /// Main/UI-thread-owned editor state, behind a `PluginCell` for the same
+    /// reason. Its owners - the GUI callbacks and `cb_state_load`'s
+    /// editor-notify - all run on the host main thread; `cb_process` never
+    /// touches it.
+    gui: PluginCell<AuGui>,
+    /// Shared transport slot: audio thread writes each block, editor reads.
+    transport_slot: Arc<TransportSlot>,
+    /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
+    /// and editor (`set_state` callback) deserialize on their thread
+    /// and push the result; the audio thread pops at the top of
+    /// `cb_process` and calls [`state::apply_state`]
+    /// under its exclusive `&mut plugin`.
+    pending_state: Arc<StateLoadQueue>,
+    /// `legacy_au_keys` from `PluginInfo`, NUL-terminated for the
+    /// shim's `ClassInfo` foreign-key probe. Built once at create;
+    /// pointers handed out via `cb_legacy_state_key_at` stay valid
+    /// for the instance lifetime.
+    legacy_key_cstrings: Vec<CString>,
+}
+
+/// Audio + lifecycle-owned per-block scratch (see [`AuInstance::audio`]).
+struct AuAudio<P: PluginExport> {
     event_list: EventList,
     /// Set when `cb_au_push_sysex_input` has queued `SysEx` for the
     /// upcoming `cb_process` block. AU v2 hosts deliver `SysEx` input
@@ -254,10 +288,6 @@ struct AuInstance<P: PluginExport> {
     ump_drain_cursor: UmpDrainCursor,
     /// Per-sub-block scratch for `chunked_process::process_chunked`.
     sub_event_scratch: EventList,
-    /// Cached param-info table for the chunker's split predicate.
-    param_infos: Vec<ParamInfo>,
-    /// `min_subblock_samples` from `truce.toml`'s `[automation]`.
-    min_subblock_samples: u32,
     /// Per-instance UMP `SysEx` reassembler. AU v3 hosts deliver
     /// long `SysEx` payloads as a chain of `SysEx`-7 (6-byte) or
     /// `SysEx`-8 (13-byte) UMPs; the assembler concatenates them
@@ -269,7 +299,6 @@ struct AuInstance<P: PluginExport> {
     /// into each other. Cleared at the top of `cb_process` so a
     /// partial message can't bleed across blocks.
     sysex_assembler: SysExAssembler,
-    plugin_id_hash: u64,
     sample_rate: f64,
     /// Max block size declared by the host via
     /// `kAudioUnitProperty_MaximumFramesPerSlice` (delivered through
@@ -287,20 +316,11 @@ struct AuInstance<P: PluginExport> {
     /// Parameterised by `P::Sample`; widens/narrows host-`f32`
     /// buffers around `plugin.process()` for plugins on `prelude64`.
     scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
+}
+
+/// Main/UI-thread-owned editor state (see [`AuInstance::gui`]).
+struct AuGui {
     editor: Option<Box<dyn Editor>>,
-    /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: Arc<TransportSlot>,
-    /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
-    /// and editor (`set_state` callback) deserialize on their thread
-    /// and push the result; the audio thread pops at the top of
-    /// `cb_process` and calls [`state::apply_state`]
-    /// under its exclusive `&mut plugin`.
-    pending_state: Arc<StateLoadQueue>,
-    /// `legacy_au_keys` from `PluginInfo`, NUL-terminated for the
-    /// shim's `ClassInfo` foreign-key probe. Built once at create;
-    /// pointers handed out via `cb_legacy_state_key_at` stay valid
-    /// for the instance lifetime.
-    legacy_key_cstrings: Vec<CString>,
 }
 
 // ---------------------------------------------------------------------------
@@ -367,20 +387,22 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
                 #[cfg(target_os = "macos")]
                 param_notify: None,
-                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sysex_inputs_pending: false,
-                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                ump_drain_cursor: UmpDrainCursor::HEAD,
-                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
                 param_infos,
                 min_subblock_samples: info.automation.min_subblock_samples,
-                sysex_assembler: SysExAssembler::with_capacity(SYSEX_POOL_PREALLOC),
                 plugin_id_hash: state::shared_plugin_state_hash(&info),
-                sample_rate: 44100.0,
-                max_block_size: 8192,
-                prepared: false,
-                scratch: RawBufferScratch::default(),
-                editor: None,
+                audio: PluginCell::new(AuAudio {
+                    event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sysex_inputs_pending: false,
+                    output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    ump_drain_cursor: UmpDrainCursor::HEAD,
+                    sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    sysex_assembler: SysExAssembler::with_capacity(SYSEX_POOL_PREALLOC),
+                    sample_rate: 44100.0,
+                    max_block_size: 8192,
+                    prepared: false,
+                    scratch: RawBufferScratch::default(),
+                }),
+                gui: PluginCell::new(AuGui { editor: None }),
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
                 legacy_key_cstrings: info
@@ -438,16 +460,18 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     // Author `reset` runs here; firewall it so a panic can't unwind across
     // the C ABI.
     run_extern_callback_with::<P, ()>("au", "reset", (), || unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        let mut audio = inst.audio.enter();
         // Clamp host-supplied max_frames to a sane minimum.
         let max_frames = (max_frames as usize).max(1024);
-        inst.sample_rate = sample_rate;
-        inst.max_block_size = max_frames;
+        audio.sample_rate = sample_rate;
+        audio.max_block_size = max_frames;
         // Size scratch to the widest declared layout: the host can switch
         // a multi-layout plugin to any of them via the stream format, and
         // the process buffers must not outgrow this allocation.
         let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
-        inst.scratch
+        audio
+            .scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         // Host-set offline flag (`kAudioUnitProperty_OfflineRender` /
         // `isRenderingOffline`), forwarded by the shim before the host
@@ -461,7 +485,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
                 .store(plugin.latency(), Ordering::Relaxed);
             inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
         }
-        inst.prepared = true;
+        audio.prepared = true;
     });
 }
 
@@ -498,20 +522,24 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("AU", || unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        // Shared `&AuInstance` (never a whole-struct `&mut`) - the audio
+        // scratch is reached through its ownership cell, so a concurrent
+        // host-thread `&*ctx` (param reads, GUI) can't alias us.
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        let mut audio = inst.audio.enter();
         let num_frames = nf;
 
         // Host called render before AU initialized us - sample rate
         // and smoothers haven't been primed. Zero outputs and bail.
-        if !inst.prepared {
+        if !audio.prepared {
             for ch in 0..num_output_channels as usize {
                 let ptr = *outputs.add(ch);
                 if !ptr.is_null() {
                     std::ptr::write_bytes(ptr, 0, num_frames);
                 }
             }
-            inst.event_list.clear();
-            inst.sysex_inputs_pending = false;
+            audio.event_list.clear();
+            audio.sysex_inputs_pending = false;
             return;
         }
 
@@ -538,21 +566,27 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // allocates. No-op and zero-sized when the feature is off.
         let _rt = RtSection::enter();
 
+        // One reborrow of the scratch so the disjoint fields below (event
+        // list, assembler, sub-block scratch, output events, build scratch)
+        // can be borrowed simultaneously - the guard's `Deref` can't
+        // split-borrow.
+        let scr = &mut *audio;
+
         // Convert MIDI events. AU v2 `SysEx` input arrives through
         // `MusicDeviceSysEx` (the shim's `au_v2_sysex` → `cb_au_push_sysex_input`)
         // before this render, so preserve any queued `SysEx` instead of
         // clearing it; otherwise clear the previous block's events
         // before appending short MIDI.
-        if inst.sysex_inputs_pending {
-            inst.sysex_inputs_pending = false;
+        if scr.sysex_inputs_pending {
+            scr.sysex_inputs_pending = false;
         } else {
-            inst.event_list.clear();
+            scr.event_list.clear();
         }
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
             for ev in event_slice {
                 if let Some(body) = decode_short_message(ev.status, ev.data1, ev.data2) {
-                    inst.event_list.push(Event {
+                    scr.event_list.push(Event {
                         sample_offset: ev.sample_offset,
                         port: 0,
                         body,
@@ -568,7 +602,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // (mt 0x5) variable-length streams that the assembler
         // reconstitutes into one `EventBody::SysEx` per logical
         // message. Utility / system / data UMPs are still skipped.
-        inst.sysex_assembler.reset();
+        scr.sysex_assembler.reset();
         if !events2.is_null() && num_events2 > 0 {
             let slice2 = slice::from_raw_parts(events2, num_events2 as usize);
             for ev in slice2 {
@@ -576,7 +610,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 match mt {
                     0x4 => {
                         if let Some(body) = decode_ump_channel_voice_2(ev.words) {
-                            inst.event_list.push(Event {
+                            scr.event_list.push(Event {
                                 sample_offset: ev.sample_offset,
                                 port: 0,
                                 body,
@@ -584,20 +618,20 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         }
                     }
                     0x3 => {
-                        let feed = inst
+                        let feed = scr
                             .sysex_assembler
                             .push_sysex7_packet([ev.words[0], ev.words[1]]);
                         if let SysExFeed::Complete(p) = feed {
                             // `push_sysex` failure here would mean the
                             // pool is full mid-block; drop the
                             // message rather than corrupt-splitting it.
-                            let _ = inst.event_list.push_sysex(ev.sample_offset, p.bytes);
+                            let _ = scr.event_list.push_sysex(ev.sample_offset, p.bytes);
                         }
                     }
                     0x5 => {
-                        let feed = inst.sysex_assembler.push_sysex8_packet(ev.words);
+                        let feed = scr.sysex_assembler.push_sysex8_packet(ev.words);
                         if let SysExFeed::Complete(p) = feed {
-                            let _ = inst.event_list.push_sysex(ev.sample_offset, p.bytes);
+                            let _ = scr.event_list.push_sysex(ev.sample_offset, p.bytes);
                         }
                     }
                     _ => {
@@ -625,7 +659,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         if !param_events.is_null() && num_param_events > 0 {
             let pe_slice = slice::from_raw_parts(param_events, num_param_events as usize);
             for pe in pe_slice {
-                inst.event_list.push(Event {
+                scr.event_list.push(Event {
                     sample_offset: pe.sample_offset,
                     port: 0,
                     body: EventBody::ParamChange {
@@ -636,16 +670,16 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             }
         }
 
-        inst.event_list.ensure_sorted_by_offset();
+        scr.event_list.ensure_sorted_by_offset();
 
         // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
         debug_assert!(
-            num_frames <= inst.max_block_size,
+            num_frames <= scr.max_block_size,
             "host violated AU contract: render() got {num_frames} frames \
              but kAudioUnitProperty_MaximumFramesPerSlice declared max {}",
-            inst.max_block_size
+            scr.max_block_size
         );
-        let mut audio_buffer = inst.scratch.build(
+        let mut audio_buffer = scr.scratch.build(
             inputs,
             outputs,
             num_input_channels,
@@ -668,8 +702,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 position_samples: sample_pos_i64(t.position_samples),
                 // Derived from samples for a consistent cross-format value
                 // (CLAP fills it directly). Guard the pre-reset zero SR.
-                position_seconds: if inst.sample_rate > 0.0 {
-                    t.position_samples / inst.sample_rate
+                position_seconds: if scr.sample_rate > 0.0 {
+                    t.position_samples / scr.sample_rate
                 } else {
                     0.0
                 },
@@ -682,21 +716,21 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         } else {
             TransportInfo::default()
         };
-        inst.output_events.clear();
-        inst.ump_drain_cursor = UmpDrainCursor::HEAD;
+        scr.output_events.clear();
+        scr.ump_drain_cursor = UmpDrainCursor::HEAD;
         inst.transport_slot.write(&transport);
 
         let mut transport_snap = transport;
         let chunk_args = ChunkedProcess {
-            events: &inst.event_list,
-            sub_event_scratch: &mut inst.sub_event_scratch,
+            events: &scr.event_list,
+            sub_event_scratch: &mut scr.sub_event_scratch,
             transport: &mut transport_snap,
-            sample_rate: inst.sample_rate,
+            sample_rate: scr.sample_rate,
             // Host offline flag, forwarded by the shim (`cb_set_render_
             // mode`); read per block so a mid-session toggle applies to
             // the next block without waiting on a re-prep.
             process_mode: ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed)),
-            output_events: &mut inst.output_events,
+            output_events: &mut scr.output_events,
             params_fn: None,
             meters_fn: None,
             param_infos: &inst.param_infos,
@@ -711,7 +745,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         let _ = audio_buffer;
         // Narrow rendered f64 output back to host f32 when needed.
         // No-op for `f32` plugins.
-        inst.scratch
+        scr.scratch
             .finish_widening(outputs, num_output_channels, len_u32(num_frames));
 
         // AU v2 (macOS): hand process-emitted parameter changes to the
@@ -725,7 +759,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         #[cfg(target_os = "macos")]
         if let Some(notifier) = &inst.param_notify {
             let mut pushed = false;
-            for event in inst.output_events.iter() {
+            for event in scr.output_events.iter() {
                 if let EventBody::ParamChange { id, value } = event.body {
                     // `value` is plain, as AU wants.
                     if notifier.queue.push((id, f32::from_f64(value))).is_ok() {
@@ -948,7 +982,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     len: u32,
 ) {
     run_extern_callback_with::<P, ()>("au", "load_state", (), || unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let inst = &*ctx.cast::<AuInstance<P>>();
         // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
         // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
         if data.is_null() || len == 0 {
@@ -975,7 +1009,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // blob - see the `pending_state` field comment for why
             // newest-wins is the right policy.
             let _ = inst.pending_state.force_push(deserialized);
-            if let Some(ref mut editor) = inst.editor {
+            if let Some(ref mut editor) = inst.gui.enter().editor {
                 editor.state_changed();
             }
         }
@@ -1012,7 +1046,7 @@ unsafe extern "C" fn cb_state_load_foreign<P: PluginExport>(
     len: u32,
 ) -> i32 {
     run_extern_callback_with::<P, i32>("au", "migrate_state", 0, || unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let inst = &*ctx.cast::<AuInstance<P>>();
         if key.is_null() || data.is_null() || len == 0 {
             return 0;
         }
@@ -1030,7 +1064,7 @@ unsafe extern "C" fn cb_state_load_foreign<P: PluginExport>(
         let deserialized: state::DeserializedState = migrated.into();
         state::apply_params(&*inst.params_arc, &deserialized);
         let _ = inst.pending_state.force_push(deserialized);
-        if let Some(ref mut editor) = inst.editor {
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();
         }
         1
@@ -1183,7 +1217,7 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
     index: u32,
 ) -> i32 {
     run_extern_callback_with::<P, i32>("au", "factory_preset_load", 0, || unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let inst = &*ctx.cast::<AuInstance<P>>();
         let Some(entry) = factory_presets::<P>().get(index as usize) else {
             return 0;
         };
@@ -1195,7 +1229,7 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
         // handoff, editor notified.
         state::apply_params(&*inst.params_arc, &deserialized);
         let _ = inst.pending_state.force_push(deserialized);
-        if let Some(ref mut editor) = inst.editor {
+        if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.state_changed();
         }
         1
@@ -1292,7 +1326,8 @@ unsafe extern "C" fn cb_tail_samples<P: PluginExport>(ctx: *mut std::ffi::c_void
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let n = inst
+        let audio = inst.audio.enter();
+        let n = audio
             .output_events
             .iter()
             .filter(|e| try_encode_au_midi(e).is_some())
@@ -1308,7 +1343,8 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        if let Some(mut packet) = inst
+        let audio = inst.audio.enter();
+        if let Some(mut packet) = audio
             .output_events
             .iter()
             .filter_map(try_encode_au_midi)
@@ -1461,7 +1497,8 @@ unsafe extern "C" fn cb_output_ump_count<P: PluginExport>(
 ) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let list = &inst.output_events;
+        let audio = inst.audio.enter();
+        let list = &audio.output_events;
         let protocol = UmpProtocol::from_wire(protocol);
         len_u32(
             list.iter()
@@ -1478,12 +1515,14 @@ unsafe extern "C" fn cb_output_ump_at<P: PluginExport>(
     out: *mut AuUmpEvent,
 ) {
     unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        let mut audio = inst.audio.enter();
+        let scr = &mut *audio;
         if let Some(mut packet) = au_ump_packet_at(
-            &inst.output_events,
+            &scr.output_events,
             index as usize,
             UmpProtocol::from_wire(protocol),
-            &mut inst.ump_drain_cursor,
+            &mut scr.ump_drain_cursor,
         ) {
             // Route the cable like the byte path (out-of-range lands
             // on 0); the appex passes it to `midiOutputEventListBlock`.
@@ -1506,27 +1545,31 @@ unsafe extern "C" fn cb_au_push_sysex_input<P: PluginExport>(
     len: u32,
 ) {
     unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let inst = &*ctx.cast::<AuInstance<P>>();
         if bytes.is_null() || len == 0 {
             return;
         }
+        let mut audio = inst.audio.enter();
+        let scr = &mut *audio;
         // First SysEx of the block clears the previous block's events
         // and flags `cb_process` to keep what we queue here rather than
         // clearing again.
-        if !inst.sysex_inputs_pending {
-            inst.event_list.clear();
-            inst.sysex_inputs_pending = true;
+        if !scr.sysex_inputs_pending {
+            scr.event_list.clear();
+            scr.sysex_inputs_pending = true;
         }
         let slice = std::slice::from_raw_parts(bytes, len as usize);
-        let _ = inst.event_list.push_sysex(sample_offset, slice);
+        let _ = scr.event_list.push_sysex(sample_offset, slice);
     }
 }
 
 unsafe extern "C" fn cb_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
+        let audio = inst.audio.enter();
         len_u32(
-            inst.output_events
+            audio
+                .output_events
                 .iter()
                 .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
                 .count(),
@@ -1543,13 +1586,14 @@ unsafe extern "C" fn cb_output_sysex_at<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        if let Some(event) = inst
+        let audio = inst.audio.enter();
+        if let Some(event) = audio
             .output_events
             .iter()
             .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
             .nth(index as usize)
         {
-            let bytes = inst.output_events.sysex_bytes(&event.body);
+            let bytes = audio.output_events.sysex_bytes(&event.body);
             *out_delta_frames = event.sample_offset;
             *out_bytes = bytes.as_ptr();
             *out_len = len_u32(bytes.len());
@@ -1568,14 +1612,15 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if ctx.is_null() {
             return 0;
         }
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
-        if inst.editor.is_none() {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        let mut gui = inst.gui.enter();
+        if gui.editor.is_none() {
             // Built from the lock-free param store the wrapper already
             // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
-            inst.editor = (inst.editor_builder)(inst.params_arc.clone());
+            gui.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
-        i32::from(inst.editor.is_some())
+        i32::from(gui.editor.is_some())
     })
 }
 
@@ -1591,7 +1636,13 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
             return 0;
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
-        i32::from(inst.editor.as_ref().is_some_and(|e| e.can_resize()))
+        i32::from(
+            inst.gui
+                .enter()
+                .editor
+                .as_ref()
+                .is_some_and(|e| e.can_resize()),
+        )
     })
 }
 
@@ -1608,8 +1659,8 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
         if ctx.is_null() || w == 0 || h == 0 {
             return;
         }
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
-        if let Some(ref mut editor) = inst.editor
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        if let Some(ref mut editor) = inst.gui.enter().editor
             && editor.can_resize()
         {
             let (cw, ch) = fit_logical_size(w, h, editor.as_ref());
@@ -1636,14 +1687,15 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         // `inst.editor == None` and silently receive a 0x0 view,
         // which shows up as "plugin reports invalid size" in their
         // reports.
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
-        if inst.editor.is_none() {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        let mut gui = inst.gui.enter();
+        if gui.editor.is_none() {
             // Built from the lock-free param store the wrapper already
             // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
-            inst.editor = (inst.editor_builder)(inst.params_arc.clone());
+            gui.editor = (inst.editor_builder)(inst.params_arc.clone());
         }
-        if let Some(ref editor) = inst.editor {
+        if let Some(ref editor) = gui.editor {
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
             // container at logical-point coordinates and AppKit handles
             // the Retina backing transparently. Report the editor size
@@ -1676,8 +1728,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         }
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         unsafe {
-            let inst = &mut *ctx.cast::<AuInstance<P>>();
-            if let Some(ref mut editor) = inst.editor {
+            let inst = &*ctx.cast::<AuInstance<P>>();
+            let mut gui = inst.gui.enter();
+            if let Some(ref mut editor) = gui.editor {
                 let params = Arc::clone(&inst.params_arc);
                 let meter_store = Arc::clone(&inst.meter_store);
                 let snapshot = Arc::clone(&inst.snapshot);
@@ -1766,8 +1819,12 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             if w == 0 || h == 0 {
                                 return false;
                             }
-                            let inst = &mut *ctx_raw.as_ptr().cast_mut().cast::<AuInstance<P>>();
-                            inst.editor.as_mut().is_some_and(|e| e.set_size(w, h))
+                            let inst = &*ctx_raw.as_ptr().cast::<AuInstance<P>>();
+                            inst.gui
+                                .enter()
+                                .editor
+                                .as_mut()
+                                .is_some_and(|e| e.set_size(w, h))
                         }),
                         get_param: Box::new(move |id| {
                             params_for_get.get_normalized(id).unwrap_or(0.0)
@@ -1823,8 +1880,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
-        let inst = &mut *ctx.cast::<AuInstance<P>>();
-        if let Some(editor) = inst.editor.as_mut() {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        let mut gui = inst.gui.enter();
+        if let Some(editor) = gui.editor.as_mut() {
             // Same boundary-protection as `cb_destroy`: any panic
             // during `editor.close()` (wgpu surface drop, baseview
             // window close, NSView removal) would otherwise cross
