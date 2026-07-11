@@ -11,6 +11,7 @@ Notable changes per release.
 - VST2 process scratch is sized to the widest declared bus layout, not the default one, so a wider layout selection can't allocate on the audio thread.
 - GUI resize/scale entries are panic-guarded: CLAP `gui_set_scale`/`gui_get_size`/`gui_can_resize`/`gui_get_resize_hints`/`gui_set_size`/`gui_adjust_size` and every AAX `editor_*` entry now firewall author `Editor` calls instead of unwinding through the host during a resize.
 - iOS editor thunks (tick, touch, and keyboard selectors on the built-in, egui, iced, and slint backends) catch panics at the UIKit boundary, so author view code or an allocation failure can't abort the AUv3 host.
+- LV2: `time:Position` / `patch:Set` property decoders bound each atom value against the bytes remaining in the object body, not just the atom's claimed size, so a truncated trailing property can no longer over-read up to 8 bytes past the host atom-port buffer on the audio thread.
 
 ## 6.1.0
 
