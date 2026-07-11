@@ -46,6 +46,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use truce_core::buffer::RawBufferScratch;
+use truce_core::bus::BusLayout;
 #[cfg(feature = "wav")]
 use truce_core::cast::sample_rate_u32;
 use truce_core::cast::{len_u32, sample_count_usize};
@@ -56,6 +57,32 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::plugin::PluginRuntime;
 use truce_params::Params;
+
+/// Sidechain (non-main) input width for the declared layout whose main
+/// input width equals `main_channels`. Reading this from the layout the
+/// resolved main width actually belongs to - rather than always layout 0 -
+/// keeps `num_in = main + sidechain` a shape the plugin declared: a
+/// multi-layout plugin driven at a non-default main width would otherwise
+/// pair that width with layout 0's sidechain, an undeclared configuration.
+/// Returns 0 when no declared layout has that main width (drive at an
+/// arbitrary width and there is no sidechain to borrow).
+fn default_sidechain_channels(layouts: &[BusLayout], main_channels: usize) -> usize {
+    layouts
+        .iter()
+        .find(|l| {
+            l.inputs
+                .first()
+                .map_or(0, |b| b.channels.channel_count() as usize)
+                == main_channels
+        })
+        .map_or(0, |l| {
+            l.inputs
+                .iter()
+                .skip(1)
+                .map(|b| b.channels.channel_count() as usize)
+                .sum()
+        })
+}
 
 // ---------------------------------------------------------------------------
 // InputSource
@@ -776,17 +803,14 @@ impl<P: PluginExport> PluginDriver<P> {
         // always present at its declared width - silent when nothing
         // drives it - so an effect that declares one runs with the extra
         // input channels even under the default silent source. `channels`
-        // is the main-bus width; `num_in` = main + sidechain.
+        // is the main-bus width; `num_in` = main + sidechain. The default
+        // is read from the layout whose main width matches `channels`, not
+        // always layout 0, so a plugin driven at a non-default width
+        // (`.channels(...)`) doesn't combine a main width and a sidechain
+        // width from two different layouts into an undeclared shape.
         let sidechain_channels = if is_effect {
-            self.sidechain_channels.unwrap_or_else(|| {
-                let layouts = P::bus_layouts();
-                layouts[0]
-                    .inputs
-                    .iter()
-                    .skip(1)
-                    .map(|b| b.channels.channel_count() as usize)
-                    .sum()
-            })
+            self.sidechain_channels
+                .unwrap_or_else(|| default_sidechain_channels(&P::bus_layouts(), channels))
         } else {
             0
         };
@@ -1209,5 +1233,43 @@ fn fill_input_block(
                 b.fill(0.0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_sidechain_channels;
+    use truce_core::bus::{BusLayout, ChannelConfig};
+
+    /// A multi-layout plugin driven at a non-default main width must take
+    /// its sidechain width from the layout that width belongs to, not
+    /// always layout 0 - otherwise `.channels(1)` on a stereo-first plugin
+    /// pairs a mono main with a stereo sidechain (an undeclared 3-in shape).
+    #[test]
+    fn sidechain_width_follows_the_matching_layout() {
+        let layouts = [
+            BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo),
+            BusLayout::mono().with_sidechain_input("Sidechain", ChannelConfig::Mono),
+        ];
+        // Stereo main -> stereo layout's stereo sidechain.
+        assert_eq!(default_sidechain_channels(&layouts, 2), 2);
+        // Mono main -> mono layout's mono sidechain, not layout 0's stereo.
+        assert_eq!(default_sidechain_channels(&layouts, 1), 1);
+    }
+
+    /// A width no declared layout has yields no sidechain, rather than one
+    /// borrowed from an unrelated layout.
+    #[test]
+    fn unmatched_width_has_no_sidechain() {
+        let layouts =
+            [BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo)];
+        assert_eq!(default_sidechain_channels(&layouts, 6), 0);
+    }
+
+    /// A plugin with no sidechain bus resolves to 0 at its declared width.
+    #[test]
+    fn no_sidechain_bus_is_zero() {
+        let layouts = [BusLayout::stereo()];
+        assert_eq!(default_sidechain_channels(&layouts, 2), 0);
     }
 }
