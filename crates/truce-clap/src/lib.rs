@@ -3739,96 +3739,103 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
 /// # Safety
 /// Called by the host through the factory. The descriptor must remain valid
 /// for the lifetime of the returned plugin.
+#[must_use]
 pub unsafe fn create_plugin_instance<P: PluginExport>(
     descriptor: *const clap_plugin_descriptor,
     host: *const clap_host,
 ) -> *const clap_plugin {
-    let instance = P::create();
-    let info = P::info();
-    let plugin_id_hash = state::hash_plugin_id(info.clap_id);
-    let param_infos = instance.params().param_infos();
-    let params_arc = instance.params_arc();
-    let meter_store = instance.meter_store();
-    let snapshot = instance.snapshot_slot();
-    let task_spawner = instance.task_spawner();
-    let editor_builder = instance.editor_builder();
-    let latency_cache = AtomicU32::new(instance.latency());
-    let tail_cache = AtomicU32::new(instance.tail());
+    // Author `create` runs here (its `init` is guarded separately in
+    // `clap_plugin_init`). Guard the constructor too - the factory's
+    // extern "C" caller is bare, so a panic would abort the host. A null
+    // return tells the host construction failed.
+    run_extern_callback_with::<P, *const clap_plugin>("CLAP", "create", ptr::null(), || {
+        let instance = P::create();
+        let info = P::info();
+        let plugin_id_hash = state::hash_plugin_id(info.clap_id);
+        let param_infos = instance.params().param_infos();
+        let params_arc = instance.params_arc();
+        let meter_store = instance.meter_store();
+        let snapshot = instance.snapshot_slot();
+        let task_spawner = instance.task_spawner();
+        let editor_builder = instance.editor_builder();
+        let latency_cache = AtomicU32::new(instance.latency());
+        let tail_cache = AtomicU32::new(instance.tail());
 
-    // Pre-size the per-block channel-slice scratch from the worst-case
-    // bus layout the plugin advertises. Without this, the first
-    // `clap_plugin_process` call after activate hits the global
-    // allocator on the audio thread for every channel push; this
-    // amortizes the cost into instance creation, where it belongs.
-    let layouts = P::bus_layouts();
-    let max_in = layouts
-        .iter()
-        .map(|l| l.total_input_channels() as usize)
-        .max()
-        .unwrap_or(0);
-    let max_out = layouts
-        .iter()
-        .map(|l| l.total_output_channels() as usize)
-        .max()
-        .unwrap_or(0);
+        // Pre-size the per-block channel-slice scratch from the worst-case
+        // bus layout the plugin advertises. Without this, the first
+        // `clap_plugin_process` call after activate hits the global
+        // allocator on the audio thread for every channel push; this
+        // amortizes the cost into instance creation, where it belongs.
+        let layouts = P::bus_layouts();
+        let max_in = layouts
+            .iter()
+            .map(|l| l.total_input_channels() as usize)
+            .max()
+            .unwrap_or(0);
+        let max_out = layouts
+            .iter()
+            .map(|l| l.total_output_channels() as usize)
+            .max()
+            .unwrap_or(0);
 
-    let data = Box::new(ClapPluginData::<P> {
-        plugin: shared_plugin(instance),
-        params_arc,
-        meter_store,
-        snapshot,
-        task_spawner,
-        editor_builder,
-        latency_cache,
-        tail_cache,
-        selected_config: AtomicU32::new(0),
-        event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sounding_notes: SoundingNotes::new(info.midi_input_ports),
-        output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        param_infos,
-        sample_rate: 44100.0,
-        max_block_size: 1024,
-        info,
-        plugin_id_hash,
-        editor: None,
-        gui_created: false,
-        host,
-        host_params: ptr::null(),
-        host_latency: ptr::null(),
-        host_tail: ptr::null(),
-        latency_dirty: AtomicBool::new(false),
-        gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
-        pending_state: Arc::new(StateLoadQueue::new(1)),
-        active: AtomicBool::new(false),
-        render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
-        needs_rescan: Arc::new(AtomicBool::new(false)),
-        transport_slot: TransportSlot::new(),
-        host_scale: 1.0,
-        host_scale_set_by_host: false,
-        input_slices: Vec::with_capacity(max_in),
-        output_slices: Vec::with_capacity(max_out),
-        input_widen: Vec::with_capacity(max_in),
-        output_narrow: Vec::with_capacity(max_out),
-        host_out_ptrs: Vec::with_capacity(max_out),
-    });
+        let data = Box::new(ClapPluginData::<P> {
+            plugin: shared_plugin(instance),
+            params_arc,
+            meter_store,
+            snapshot,
+            task_spawner,
+            editor_builder,
+            latency_cache,
+            tail_cache,
+            selected_config: AtomicU32::new(0),
+            event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+            sounding_notes: SoundingNotes::new(info.midi_input_ports),
+            output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+            sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+            param_infos,
+            sample_rate: 44100.0,
+            max_block_size: 1024,
+            info,
+            plugin_id_hash,
+            editor: None,
+            gui_created: false,
+            host,
+            host_params: ptr::null(),
+            host_latency: ptr::null(),
+            host_tail: ptr::null(),
+            latency_dirty: AtomicBool::new(false),
+            gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
+            pending_state: Arc::new(StateLoadQueue::new(1)),
+            active: AtomicBool::new(false),
+            render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
+            needs_rescan: Arc::new(AtomicBool::new(false)),
+            transport_slot: TransportSlot::new(),
+            host_scale: 1.0,
+            host_scale_set_by_host: false,
+            input_slices: Vec::with_capacity(max_in),
+            output_slices: Vec::with_capacity(max_out),
+            input_widen: Vec::with_capacity(max_in),
+            output_narrow: Vec::with_capacity(max_out),
+            host_out_ptrs: Vec::with_capacity(max_out),
+        });
 
-    let clap = Box::new(clap_plugin {
-        desc: descriptor,
-        plugin_data: Box::into_raw(data).cast::<c_void>(),
-        init: Some(clap_plugin_init::<P>),
-        destroy: Some(clap_plugin_destroy::<P>),
-        activate: Some(clap_plugin_activate::<P>),
-        deactivate: Some(clap_plugin_deactivate::<P>),
-        start_processing: Some(clap_plugin_start_processing::<P>),
-        stop_processing: Some(clap_plugin_stop_processing::<P>),
-        reset: Some(clap_plugin_reset::<P>),
-        process: Some(clap_plugin_process::<P>),
-        get_extension: Some(clap_plugin_get_extension::<P>),
-        on_main_thread: Some(clap_plugin_on_main_thread::<P>),
-    });
+        let clap = Box::new(clap_plugin {
+            desc: descriptor,
+            plugin_data: Box::into_raw(data).cast::<c_void>(),
+            init: Some(clap_plugin_init::<P>),
+            destroy: Some(clap_plugin_destroy::<P>),
+            activate: Some(clap_plugin_activate::<P>),
+            deactivate: Some(clap_plugin_deactivate::<P>),
+            start_processing: Some(clap_plugin_start_processing::<P>),
+            stop_processing: Some(clap_plugin_stop_processing::<P>),
+            reset: Some(clap_plugin_reset::<P>),
+            process: Some(clap_plugin_process::<P>),
+            get_extension: Some(clap_plugin_get_extension::<P>),
+            on_main_thread: Some(clap_plugin_on_main_thread::<P>),
+        });
 
-    Box::into_raw(clap).cast_const()
+        Box::into_raw(clap).cast_const()
+    })
 }
 
 // ---------------------------------------------------------------------------

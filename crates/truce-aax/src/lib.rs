@@ -927,53 +927,70 @@ pub unsafe fn _get_param_info(index: u32, out: *mut TruceAaxParamInfo) {
 
 #[must_use]
 pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
-    let mut plugin = P::create();
-    plugin.init();
-    let info = P::info();
-    let param_infos = plugin.params().param_infos();
-    let params_arc = plugin.params_arc();
-    let meter_store = plugin.meter_store();
-    let snapshot = plugin.snapshot_slot();
-    let task_spawner = plugin.task_spawner();
-    let editor_builder = plugin.editor_builder();
-    let latency_cache = AtomicU32::new(plugin.latency());
-    let tail_cache = AtomicU32::new(plugin.tail());
-    let instance = Box::new(AaxInstance::<P> {
-        plugin: shared_plugin(plugin),
-        params_arc,
-        snapshot,
-        task_spawner,
-        editor_builder,
-        meter_store,
-        latency_cache,
-        tail_cache,
-        render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
-        event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sysex_inputs_pending: false,
-        output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        param_infos,
-        min_subblock_samples: info.automation.min_subblock_samples,
-        plugin_id_hash: state::shared_plugin_state_hash(&info),
-        sample_rate: 44100.0,
-        max_block_size: 8192,
-        prepared: false,
-        scratch: RawBufferScratch::default(),
-        editor: None,
-        transport_slot: TransportSlot::new(),
-        state_cache: Mutex::new(None),
-        // Start at 1 so the first cached entry (revision 0) never
-        // matches and we always serialize on the first save_state call.
-        state_revision: AtomicU64::new(1),
-        pending_state: Arc::new(StateLoadQueue::new(1)),
-    });
-    Box::into_raw(instance).cast::<std::ffi::c_void>()
+    // Author `create` / `init` run here; the extern "C" macro wrapper is
+    // bare, so a panic would abort Pro Tools. A null return tells the host
+    // construction failed.
+    run_extern_callback_with::<P, *mut std::ffi::c_void>(
+        "aax",
+        "create",
+        std::ptr::null_mut(),
+        || {
+            let mut plugin = P::create();
+            plugin.init();
+            let info = P::info();
+            let param_infos = plugin.params().param_infos();
+            let params_arc = plugin.params_arc();
+            let meter_store = plugin.meter_store();
+            let snapshot = plugin.snapshot_slot();
+            let task_spawner = plugin.task_spawner();
+            let editor_builder = plugin.editor_builder();
+            let latency_cache = AtomicU32::new(plugin.latency());
+            let tail_cache = AtomicU32::new(plugin.tail());
+            let instance = Box::new(AaxInstance::<P> {
+                plugin: shared_plugin(plugin),
+                params_arc,
+                snapshot,
+                task_spawner,
+                editor_builder,
+                meter_store,
+                latency_cache,
+                tail_cache,
+                render_mode: AtomicU8::new(ProcessMode::Realtime.as_u8()),
+                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sysex_inputs_pending: false,
+                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                param_infos,
+                min_subblock_samples: info.automation.min_subblock_samples,
+                plugin_id_hash: state::shared_plugin_state_hash(&info),
+                sample_rate: 44100.0,
+                max_block_size: 8192,
+                prepared: false,
+                scratch: RawBufferScratch::default(),
+                editor: None,
+                transport_slot: TransportSlot::new(),
+                state_cache: Mutex::new(None),
+                // Start at 1 so the first cached entry (revision 0) never
+                // matches and we always serialize on the first save_state call.
+                state_revision: AtomicU64::new(1),
+                pending_state: Arc::new(StateLoadQueue::new(1)),
+            });
+            Box::into_raw(instance).cast::<std::ffi::c_void>()
+        },
+    )
 }
 
 pub unsafe fn _destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
-    if !ctx.is_null() {
-        unsafe { drop(Box::from_raw(ctx.cast::<AaxInstance<P>>())) };
-    }
+    // Dropping the instance cascades into the editor's `Drop` (wgpu surface /
+    // NSView / runloop-timer teardown). A panic there would abort Pro Tools -
+    // the host where a GUI-teardown crash is most painful. Hosts destroy
+    // instances routinely mid-session (removing a plugin, closing a session),
+    // not just at quit, so swallow it; the instance is going away regardless.
+    run_extern_callback_with::<P, ()>("aax", "destroy", (), || unsafe {
+        if !ctx.is_null() {
+            drop(Box::from_raw(ctx.cast::<AaxInstance<P>>()));
+        }
+    });
 }
 
 pub unsafe fn _reset<P: PluginExport>(
