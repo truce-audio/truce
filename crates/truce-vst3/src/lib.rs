@@ -36,8 +36,8 @@ use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
     ParamCStrings, SharedPlugin, copy_c_str, default_io_channels, enter_plugin, find_bus_layout,
-    log_missing_bus_layout, run_audio_block, run_extern_callback_with, run_register, save_extra,
-    shared_plugin,
+    log_missing_bus_layout, max_io_channels, run_audio_block, run_extern_callback_with,
+    run_register, save_extra, shared_plugin,
 };
 use truce_params::MidiSource;
 use truce_params::sample::{Float, Sample};
@@ -410,10 +410,13 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let max_frames = (max_frames as usize).max(1024);
         inst.sample_rate = sample_rate;
         inst.max_block_size = max_frames;
-        // Grow per-block scratch to cover this layout's channel count
-        // and block size before the first process() call so the audio
-        // thread stays alloc-free.
-        let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
+        // Grow per-block scratch to cover the *widest* declared layout and
+        // this block size before the first process() call so the audio
+        // thread stays alloc-free. VST3 negotiates layouts at runtime
+        // (setBusArrangements), so a later, wider layout than the default
+        // must not grow the per-channel Vecs on the audio thread - size to
+        // `max_io_channels` like the AU / AAX wrappers, not the first layout.
+        let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
         inst.scratch
             .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         {
