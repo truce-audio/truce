@@ -36,6 +36,7 @@ members = [
     "crates/truce-font",
     "crates/truce-utils",
     "examples/truce-example-gain",
+    "examples/truce-example-gain-inplace",
     "examples/truce-example-block-gain",
     "examples/truce-example-block-saturate",
     "examples/truce-example-block-drywet",
