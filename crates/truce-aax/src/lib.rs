@@ -1798,7 +1798,10 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
 // ---------------------------------------------------------------------------
 
 pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceAaxEditorInfo) {
-    unsafe {
+    // The editor builder + `Editor::size` are author code; firewall them so a
+    // panic can't unwind across the C ABI (leaving `*out` untouched, which
+    // the shim zero-inits to "no editor").
+    run_extern_callback_with::<P, ()>("aax", "editor_create", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
         let mut gui = inst.gui.enter();
         // Built from the lock-free param store the wrapper already
@@ -1825,7 +1828,7 @@ pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceA
             },
         };
         *out = info;
-    }
+    });
 }
 
 pub unsafe fn _editor_open<P: PluginExport>(
@@ -1834,7 +1837,9 @@ pub unsafe fn _editor_open<P: PluginExport>(
     platform: i32,
     callbacks: *const TruceAaxGuiCallbacks,
 ) {
-    unsafe {
+    // `editor.open` runs author GUI-construction code that can panic;
+    // firewall it so the panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("aax", "editor_open", (), || unsafe {
         // Defensive null checks - the AAX template is in-tree so the
         // contract is between matched halves, but every other format
         // wrapper guards parent + callback pointers (CLAP `:1455`,
@@ -1927,29 +1932,32 @@ pub unsafe fn _editor_open<P: PluginExport>(
         };
 
         editor.open(handle, context);
-    }
+    });
 }
 
 pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
-    unsafe {
+    // `editor.close` runs author teardown code that can panic; firewall it.
+    run_extern_callback_with::<P, ()>("aax", "editor_close", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
         if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.close();
         }
-    }
+    });
 }
 
 pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
-    unsafe {
+    // `editor.idle` runs author code that can panic; firewall it.
+    run_extern_callback_with::<P, ()>("aax", "editor_idle", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
         if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.idle();
         }
-    }
+    });
 }
 
 pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32 {
-    unsafe {
+    // `Editor::size` is author code; firewall it (0 = "size unavailable").
+    run_extern_callback_with::<P, i32>("aax", "editor_get_size", 0, || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
         match &inst.gui.enter().editor {
             Some(editor) => {
@@ -1962,7 +1970,7 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
             }
             None => 0,
         }
-    }
+    })
 }
 
 /// Free a state blob handed out by [`_save_state`].
