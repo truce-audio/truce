@@ -127,9 +127,13 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
         ch < 64 && (self.in_place_mask >> ch) & 1 == 1
     }
 
-    /// Read+write slice for an in-place channel - the same memory the
-    /// host gave us for both input and output. Each sample reads as
-    /// the input value before the plugin overwrites it.
+    /// Read+write slice for an in-place channel. Each sample reads as the
+    /// input value before the plugin overwrites it: on a same-precision wire
+    /// this is the host's shared in/out buffer directly (zero-copy); on a
+    /// precision-converting wire it's a per-channel scratch seeded with the
+    /// converted input and narrowed back to the host on output. Either way
+    /// the contract - `is_in_place(ch)` true, `input(ch)` empty, data reached
+    /// through here - holds.
     ///
     /// Only meaningful when [`Self::is_in_place`] returns `true`. On a
     /// non-in-place channel this returns the output slice with no
@@ -746,11 +750,16 @@ impl<S: Sample> RawBufferScratch<S> {
                     if ch < 64 {
                         in_place_mask |= 1 << ch;
                     }
-                    if supports_in_place && same_precision {
-                        // Plugin opted in: hand it nothing through
-                        // input(ch); it must read+write via in_out_mut.
-                        // Only supported in the same-precision case;
-                        // the cross-precision path always copies.
+                    if supports_in_place {
+                        // Plugin opted in: hand it nothing through input(ch);
+                        // it reads+writes the shared buffer via in_out_mut.
+                        // Same-precision reinterprets the host buffer directly
+                        // (true zero-copy); a precision-converting wire can't,
+                        // so the output loop seeds its conversion scratch with
+                        // the converted input below - keeping in_out_mut's
+                        // "reads as the input value" contract on every wire,
+                        // and input(ch) empty for the documented is_in_place
+                        // branch regardless of precision.
                         &[]
                     } else {
                         // Snapshot the input (converting precision if
@@ -820,6 +829,20 @@ impl<S: Sample> RawBufferScratch<S> {
                     let buf = &mut self.output_buffers[ch];
                     buf.clear();
                     buf.resize(nf, S::default());
+                    // For an opted-in in-place channel, `input(ch)` is the
+                    // empty sentinel, so `in_out_mut(ch)` (this scratch) is the
+                    // plugin's only view of its data. The host output pointer
+                    // aliases the input and still holds the input samples at
+                    // build time, so seed the scratch with the converted input
+                    // - otherwise a `supports_in_place` plugin on a converting
+                    // wire would read (and emit) silence. Same-precision needs
+                    // no seed: it reinterprets the host buffer directly above.
+                    if supports_in_place && ch < 64 && (in_place_mask >> ch) & 1 == 1 {
+                        let host = std::slice::from_raw_parts(ptr.cast_const(), nf);
+                        for (dst, &h) in buf.iter_mut().zip(host) {
+                            *dst = S::from_f64(h.to_f64());
+                        }
+                    }
                     let p = buf.as_mut_ptr();
                     let l = buf.len();
                     std::slice::from_raw_parts_mut(p, l)
@@ -1011,6 +1034,45 @@ mod tests {
             for s in io_ch.iter_mut() {
                 *s *= 10.0; // read the current (input) value, write in place
             }
+        }
+        assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn in_place_true_path_cross_precision_seeds_input() {
+        // The documented in-place contract on a precision-converting wire: an
+        // f64 plugin (S) on an f32 host (H), aliased, supports_in_place = true.
+        // The `is_in_place` + `in_out_mut` branch must read the INPUT (not the
+        // zeroed conversion scratch) and write correct output back to the f32
+        // host. Before the fix this emitted silence in every f32-wire host.
+        let mut io: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
+        let in_ptrs = [io.as_ptr()];
+        let mut out_ptrs = [io.as_mut_ptr()];
+        let mut scratch = RawBufferScratch::<f64>::default();
+        // SAFETY: the aliased f32 pointer addresses 4 valid samples that
+        // outlive the buffer; `finish_widening` reuses the same layout.
+        unsafe {
+            {
+                // H = f32 (host pointers), S = f64 (scratch): cross-precision.
+                let mut buf = scratch.build(in_ptrs.as_ptr(), out_ptrs.as_mut_ptr(), 1, 1, 4, true);
+                assert!(buf.is_in_place(0));
+                assert!(
+                    buf.input(0).is_empty(),
+                    "in-place input(ch) is empty on any wire"
+                );
+                let io_ch = buf.in_out_mut(0);
+                assert_eq!(
+                    io_ch.to_vec(),
+                    vec![1.0, 2.0, 3.0, 4.0],
+                    "in_out_mut reads the converted input, not zeros"
+                );
+                for s in io_ch.iter_mut() {
+                    *s *= 10.0;
+                }
+            }
+            // Narrow the f64 scratch the plugin wrote back to the f32 host.
+            scratch.finish_widening(out_ptrs.as_mut_ptr(), 1, 4);
         }
         assert_eq!(io, vec![10.0, 20.0, 30.0, 40.0]);
     }
