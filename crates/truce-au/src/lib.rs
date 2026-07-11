@@ -1922,6 +1922,40 @@ fn midi_status_byte(source: MidiSource) -> u8 {
     }
 }
 
+/// Per-layout `(main-in, main-out)` channel widths AU may negotiate, plus
+/// the single sidechain width and how many layouts were dropped.
+///
+/// AU wires ONE sidechain width: element 1's stream format is fixed at
+/// descriptor time and isn't renegotiated when the host picks a different
+/// main layout. A layout whose sidechain width differs from the first
+/// layout's therefore can't be advertised - the host could negotiate its
+/// main width yet leave the first layout's (wrong) sidechain width wired,
+/// feeding the process callback more flat input channels than that layout
+/// declares. So only layouts matching the first layout's sidechain width
+/// are offered; the rest are dropped (with a one-line warning at the call
+/// site). The main input width is the first input bus; the sidechain width
+/// is the sum of the remaining input buses.
+fn au_negotiable_layouts(layouts: &[BusLayout]) -> (Vec<i16>, Vec<i16>, u32, usize) {
+    fn main_in(l: &BusLayout) -> u32 {
+        l.inputs.first().map_or(0, |b| b.channels.channel_count())
+    }
+    fn sidechain(l: &BusLayout) -> u32 {
+        l.inputs
+            .iter()
+            .skip(1)
+            .map(|b| b.channels.channel_count())
+            .sum()
+    }
+    // AU channel counts are small (mono..7.1.4); saturating cast is safe.
+    let ch = |c: u32| i16::try_from(c).unwrap_or(0);
+    let sc0 = layouts.first().map_or(0, sidechain);
+    let kept: Vec<&BusLayout> = layouts.iter().filter(|&l| sidechain(l) == sc0).collect();
+    let dropped = layouts.len() - kept.len();
+    let ins = kept.iter().map(|l| ch(main_in(l))).collect();
+    let outs = kept.iter().map(|l| ch(l.total_output_channels())).collect();
+    (ins, outs, sc0, dropped)
+}
+
 fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let info = P::info();
 
@@ -1988,13 +2022,17 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // separate input element, not summed into the main width. The main
     // input bus is the first input bus of a layout.
     let main_in_of = |l: &BusLayout| l.inputs.first().map_or(0, |b| b.channels.channel_count());
-    let (layout_in_channels, layout_out_channels, num_layouts) = if layouts.len() > 1 {
-        let ch = |c: u32| i16::try_from(c).unwrap_or(0);
-        let ins: Vec<i16> = layouts.iter().map(|l| ch(main_in_of(l))).collect();
-        let outs: Vec<i16> = layouts
-            .iter()
-            .map(|l| ch(l.total_output_channels()))
-            .collect();
+    // Only layouts sharing the first layout's sidechain width are
+    // negotiable on AU (element 1's width is fixed for the instance).
+    let (ins, outs, sidechain_in, dropped) = au_negotiable_layouts(&layouts);
+    if dropped > 0 {
+        eprintln!(
+            "[truce AU] {}: {dropped} layout(s) dropped - their sidechain width differs from the \
+             default layout's ({sidechain_in}); AU wires a single fixed sidechain width",
+            std::any::type_name::<P>(),
+        );
+    }
+    let (layout_in_channels, layout_out_channels, num_layouts) = if ins.len() > 1 {
         let n = len_u32(ins.len());
         (
             Box::leak(ins.into_boxed_slice()).as_ptr(),
@@ -2005,17 +2043,10 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         (std::ptr::null(), std::ptr::null(), 0)
     };
 
-    // Main input bus width (element 0) and the summed width of any
-    // sidechain input buses (element 1). `num_inputs` is the main width;
-    // a plain effect (one input bus) leaves `sidechain_in` at 0.
+    // Main input bus width (element 0); `num_inputs` is the main width of
+    // the default layout. A plain effect (one input bus) leaves
+    // `sidechain_in` at 0.
     let num_inputs = layouts.first().map_or(num_inputs, main_in_of);
-    let sidechain_in: u32 = layouts.first().map_or(0, |l| {
-        l.inputs
-            .iter()
-            .skip(1)
-            .map(|b| b.channels.channel_count())
-            .sum()
-    });
 
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
@@ -2156,7 +2187,54 @@ mod tests {
     use truce_core::events::{Event, EventBody, EventList};
     use truce_shim_types::AU_SHIM_TYPES_H;
 
-    use super::{UmpDrainCursor, UmpProtocol, au_ump_packet_at, au_ump_packet_count};
+    use super::{
+        UmpDrainCursor, UmpProtocol, au_negotiable_layouts, au_ump_packet_at, au_ump_packet_count,
+    };
+    use truce_core::bus::{BusLayout, ChannelConfig};
+
+    /// AU wires one fixed sidechain width, so only layouts sharing the
+    /// first layout's sidechain width may be negotiated. A layout whose
+    /// sidechain differs is dropped rather than advertised (which would let
+    /// the host pick its main width but keep the wrong sidechain width).
+    #[test]
+    fn au_drops_layouts_with_a_differing_sidechain_width() {
+        let layouts = [
+            BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo),
+            BusLayout::mono().with_sidechain_input("Sidechain", ChannelConfig::Mono),
+        ];
+        let (ins, outs, sidechain, dropped) = au_negotiable_layouts(&layouts);
+        // Only the first layout survives (stereo main, stereo sidechain);
+        // the mono/mono-sidechain layout is dropped.
+        assert_eq!(sidechain, 2);
+        assert_eq!(dropped, 1);
+        assert_eq!(ins, vec![2]);
+        assert_eq!(outs, vec![2]);
+    }
+
+    /// Layouts that share the sidechain width (a mono sidechain across a
+    /// mono and a stereo main) are all kept.
+    #[test]
+    fn au_keeps_layouts_with_a_consistent_sidechain_width() {
+        let layouts = [
+            BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Mono),
+            BusLayout::mono().with_sidechain_input("Sidechain", ChannelConfig::Mono),
+        ];
+        let (ins, outs, sidechain, dropped) = au_negotiable_layouts(&layouts);
+        assert_eq!(sidechain, 1);
+        assert_eq!(dropped, 0);
+        assert_eq!(ins, vec![2, 1]);
+        assert_eq!(outs, vec![2, 1]);
+    }
+
+    /// No sidechain: every layout is kept, sidechain width 0.
+    #[test]
+    fn au_no_sidechain_keeps_all_layouts() {
+        let layouts = [BusLayout::stereo(), BusLayout::mono()];
+        let (ins, _outs, sidechain, dropped) = au_negotiable_layouts(&layouts);
+        assert_eq!(sidechain, 0);
+        assert_eq!(dropped, 0);
+        assert_eq!(ins, vec![2, 1]);
+    }
 
     #[test]
     fn ump_output_flattens_sysex_into_packet_chain() {
