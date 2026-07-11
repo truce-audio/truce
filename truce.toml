@@ -88,6 +88,24 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 ios_url = "https://truce.audio/"
 
+# Gain demonstrating the experimental (not recommended) zero-copy
+# in-place buffer path. See examples/truce-example-gain-inplace/src/lib.rs.
+[[plugin]]
+name = "Truce Gain In-Place"
+bundle_id = "gain-inplace"
+crate = "truce-example-gain-inplace"
+category = "effect"
+fourcc = "TGnP"
+au3_subtype = "TGP3"
+au_tag = "Effects"
+aax_category = "Dynamics"
+vst3_subcategory = "Tools"
+au3_name = "Truce Gain In-Place (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+ios_url = "https://truce.audio/"
+
 [[plugin]]
 name = "Truce Gain SIMD"
 bundle_id = "gain-simd"

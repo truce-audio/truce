@@ -4297,6 +4297,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-gain-inplace"
+version = "6.1.1"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-gui-zoo"
 version = "6.1.0"
 dependencies = [
