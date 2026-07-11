@@ -81,6 +81,19 @@ report() {
     fi
 }
 
+# cargo-deny relocated `--config` from a `check` subcommand flag (through
+# ~0.19) to a top-level flag that must precede the subcommand (newer
+# releases). CI installs whatever's latest, so detect which form the
+# installed version accepts rather than pin a version.
+if cargo deny check --help 2>&1 | grep -q -- '--config'; then
+    run_deny() { cargo deny check --config "$1"; }
+elif cargo deny --help 2>&1 | grep -q -- '--config'; then
+    run_deny() { cargo deny --config "$1" check; }
+else
+    printf 'error: cargo-deny exposes no --config flag in either position; update this script\n' >&2
+    exit 1
+fi
+
 printf '\n########## cargo audit ##########\n'
 while IFS= read -r ws; do
     label="$(ws_label "$ws")"
@@ -94,7 +107,7 @@ while IFS= read -r ws; do
     label="$(ws_label "$ws")"
     cfg="$(deny_config_for "$ws")"
     printf '\n=== cargo deny check [%s] (%s) ===\n' "$label" "${cfg#"$root_dir"/}"
-    ( cd "$ws" && cargo deny check --config "$cfg" )
+    ( cd "$ws" && run_deny "$cfg" )
     report "$label" "$?"
 done < <(audit_workspaces "$root_dir")
 
