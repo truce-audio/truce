@@ -483,6 +483,13 @@ class TruceAUAudioUnit: AUAudioUnit {
         // side for an MT 0x2 stream.
         hostWantsMidi1: Bool
     ) -> AUAudioUnitStatus {
+        // Reject a block larger than the scratch was sized for: writing
+        // frameCount frames at the scMaxFrames stride would overrun the
+        // main-input / sidechain scratch. Mirrors the v2 shim's
+        // kAudioUnitErr_TooManyFramesToProcess guard (au_v2_shim.c).
+        if frameCount > UInt32(scMaxFrames) {
+            return kAudioUnitErr_TooManyFramesToProcess
+        }
         if numIn > 0, let pull = pull {
             var f = AudioUnitRenderActionFlags()
             if let mainInScratch = mainInScratch, let mainInABL = mainInABL {
@@ -790,8 +797,20 @@ class TruceAUAudioUnit: AUAudioUnit {
     override var internalRenderBlock: AUInternalRenderBlock {
         let ctx = rustCtx!
         let cb = g_callbacks!
-        let numIn = g_descriptor?.pointee.num_inputs ?? 0
-        let numOut = g_descriptor?.pointee.num_outputs ?? 2
+        // Widths from the NEGOTIATED bus formats, not the descriptor's first
+        // layout: a multi-layout plugin the host ran narrower (or wider)
+        // than layout 0 must stage its main input at the width actually set
+        // on bus 0. Using the descriptor width here would build a pull ABL
+        // wider than the bus - a stale/dropped channel, or a failed pull -
+        // and pick the wrong in-place vs separate-staging branch. Fall back
+        // to the descriptor when a direction has no bus (an instrument's
+        // input).
+        let numIn = _inputBusArray.count > 0
+            ? UInt32(_inputBusArray[0].format.channelCount)
+            : (g_descriptor?.pointee.num_inputs ?? 0)
+        let numOut = _outputBusArray.count > 0
+            ? UInt32(_outputBusArray[0].format.channelCount)
+            : (g_descriptor?.pointee.num_outputs ?? 2)
         let inPtrs = UnsafeMutablePointer<UnsafePointer<Float>?>.allocate(capacity: 32)
         let outPtrs = UnsafeMutablePointer<UnsafeMutablePointer<Float>?>.allocate(capacity: 32)
         let midiBuf = UnsafeMutablePointer<AuMidiEvent>.allocate(capacity: 256)
@@ -821,7 +840,13 @@ class TruceAUAudioUnit: AUAudioUnit {
         // scratch to pull into and append after the main channels. Sized
         // once to the render-graph's max frame count.
         let scCh = Int(g_descriptor?.pointee.sidechain_in_channels ?? 0)
-        let scMaxFrames = max(Int(self.maximumFramesToRender), 4096)
+        // Size to the authoritative max captured in allocateRenderResources
+        // (`_maxFrames`), not `maximumFramesToRender` sampled now: the host
+        // may have finalized the max after a smaller default, and this
+        // getter can run before that. Never below 4096. The render block
+        // rejects a frameCount past this, so an over-declared render can't
+        // overrun the scratch.
+        let scMaxFrames = max(Int(_maxFrames), Int(self.maximumFramesToRender), 4096)
         let scScratch: UnsafeMutablePointer<Float>? =
             scCh > 0 ? UnsafeMutablePointer<Float>.allocate(capacity: scCh * scMaxFrames) : nil
         let scABL: UnsafeMutableAudioBufferListPointer? =

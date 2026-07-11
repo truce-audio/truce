@@ -140,11 +140,17 @@ typedef struct {
     // Render-notify callbacks (kAudioUnitAddRenderNotify). Invoked with
     // kAudioUnitRenderAction_PreRender before processing and _PostRender
     // after, which AUGraph metering / offline harnesses depend on.
+    // Host threads add/remove (legal during playback) while the render
+    // thread iterates - guarded by a seqlock (`renderNotifySeq`): writers
+    // bump it odd->even around each mutation, the render thread copies a
+    // consistent snapshot and retries if a write straddled the copy.
     struct {
         AURenderCallback proc;
         void *userData;
     } renderNotifies[32];
     uint32_t renderNotifyCount;
+    // Seqlock sequence: even = stable, odd = a writer is mid-update.
+    uint32_t renderNotifySeq;
 } TruceAUv2;
 
 // ---------------------------------------------------------------------------
@@ -2004,6 +2010,21 @@ static OSStatus au_v2_remove_property_listener_with_data(void *self_, AudioUnitP
     return noErr;
 }
 
+// Seqlock write-side bracket. Writers (host threads, assumed serialized by
+// the AU property contract) bump the sequence odd before mutating and even
+// after, with release fences so the render-thread reader observes either
+// the pre- or post-mutation state, never a torn slot or count.
+static inline void au_v2_rn_write_begin(TruceAUv2 *inst) {
+    uint32_t s = __atomic_load_n(&inst->renderNotifySeq, __ATOMIC_RELAXED);
+    __atomic_store_n(&inst->renderNotifySeq, s + 1, __ATOMIC_RELAXED);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+}
+static inline void au_v2_rn_write_end(TruceAUv2 *inst) {
+    uint32_t s = __atomic_load_n(&inst->renderNotifySeq, __ATOMIC_RELAXED);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_store_n(&inst->renderNotifySeq, s + 1, __ATOMIC_RELAXED);
+}
+
 static OSStatus au_v2_add_render_notify(void *self_, AURenderCallback proc, void *userData) {
     TruceAUv2 *inst = (TruceAUv2 *)self_;
     if (!proc) return kAudioUnitErr_InvalidParameter;
@@ -2012,10 +2033,12 @@ static OSStatus au_v2_add_render_notify(void *self_, AURenderCallback proc, void
         if (inst->renderNotifies[i].proc == proc &&
             inst->renderNotifies[i].userData == userData)
             return noErr;
-    if (inst->renderNotifyCount >= 32) return kAudioUnitErr_TooManyFramesToProcess;
+    if (inst->renderNotifyCount >= 32) return kAudio_MemFullError;
+    au_v2_rn_write_begin(inst);
     inst->renderNotifies[inst->renderNotifyCount].proc = proc;
     inst->renderNotifies[inst->renderNotifyCount].userData = userData;
     inst->renderNotifyCount++;
+    au_v2_rn_write_end(inst);
     return noErr;
 }
 
@@ -2024,10 +2047,12 @@ static OSStatus au_v2_remove_render_notify(void *self_, AURenderCallback proc, v
     for (uint32_t i = 0; i < inst->renderNotifyCount; i++) {
         if (inst->renderNotifies[i].proc == proc &&
             inst->renderNotifies[i].userData == userData) {
+            au_v2_rn_write_begin(inst);
             // Compact the tail down over the removed slot.
             for (uint32_t j = i + 1; j < inst->renderNotifyCount; j++)
                 inst->renderNotifies[j - 1] = inst->renderNotifies[j];
             inst->renderNotifyCount--;
+            au_v2_rn_write_end(inst);
             return noErr;
         }
     }
@@ -2036,15 +2061,34 @@ static OSStatus au_v2_remove_render_notify(void *self_, AURenderCallback proc, v
 
 // Fire every registered render-notify with `action` (PreRender / PostRender)
 // OR'd onto the current flags - the AUGraph metering / offline convention.
+// Reads the list through the seqlock: copy a consistent snapshot, retrying
+// if a host add/remove straddled the copy, then fire from the copy. Never
+// blocks; if a writer keeps the list unstable it skips this block (a tap
+// misses one block, which is recoverable), and it never calls through a
+// torn/half-removed slot.
 static void au_v2_fire_render_notifies(TruceAUv2 *inst,
                                        AudioUnitRenderActionFlags action,
                                        AudioUnitRenderActionFlags *ioFlags,
                                        const AudioTimeStamp *ts, UInt32 bus,
                                        UInt32 frames, AudioBufferList *ioData) {
-    for (uint32_t i = 0; i < inst->renderNotifyCount; i++) {
+    struct { AURenderCallback proc; void *userData; } local[32];
+    uint32_t count = 0;
+    bool stable = false;
+    for (int attempt = 0; attempt < 4 && !stable; attempt++) {
+        uint32_t s1 = __atomic_load_n(&inst->renderNotifySeq, __ATOMIC_RELAXED);
+        if (s1 & 1u) continue; // a writer is mid-update
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        count = inst->renderNotifyCount;
+        if (count > 32) count = 32;
+        memcpy(local, inst->renderNotifies, count * sizeof(local[0]));
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        uint32_t s2 = __atomic_load_n(&inst->renderNotifySeq, __ATOMIC_RELAXED);
+        stable = (s1 == s2);
+    }
+    if (!stable) return; // couldn't snapshot a stable list; skip this block
+    for (uint32_t i = 0; i < count; i++) {
         AudioUnitRenderActionFlags f = (ioFlags ? *ioFlags : 0) | action;
-        inst->renderNotifies[i].proc(inst->renderNotifies[i].userData,
-                                     &f, ts, bus, frames, ioData);
+        local[i].proc(local[i].userData, &f, ts, bus, frames, ioData);
     }
 }
 
