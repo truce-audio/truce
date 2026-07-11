@@ -1906,6 +1906,16 @@ pub fn register_au<P: PluginExport>() {
             log_missing_bus_layout::<P>("AU");
             return;
         };
+        if au_max_aux_input_buses(&P::bus_layouts()) > 1 {
+            eprintln!(
+                "[truce AU] {}: declares more than one auxiliary input bus. AU exposes a single \
+                 sidechain input element, so multiple aux buses can't be routed independently. \
+                 Declare at most one auxiliary (sidechain) input bus for AU. Plugin will not \
+                 register.",
+                std::any::type_name::<P>(),
+            );
+            return;
+        }
         register_au_inner::<P>(num_inputs, num_outputs);
     });
 }
@@ -1954,6 +1964,20 @@ fn au_negotiable_layouts(layouts: &[BusLayout]) -> (Vec<i16>, Vec<i16>, u32, usi
     let ins = kept.iter().map(|l| ch(main_in(l))).collect();
     let outs = kept.iter().map(|l| ch(l.total_output_channels())).collect();
     (ins, outs, sc0, dropped)
+}
+
+/// Largest number of auxiliary (non-main) input buses across all declared
+/// layouts. AU exposes a single sidechain input element (element 1), so a
+/// plugin declaring more than one aux input bus can't be represented: the
+/// host would see them merged into one wider bus and couldn't feed them
+/// independently. Registration rejects that rather than silently merge -
+/// the plugin still ships VST3/CLAP, which do support multiple aux buses.
+fn au_max_aux_input_buses(layouts: &[BusLayout]) -> usize {
+    layouts
+        .iter()
+        .map(|l| l.inputs.len().saturating_sub(1))
+        .max()
+        .unwrap_or(0)
 }
 
 fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
@@ -2188,9 +2212,42 @@ mod tests {
     use truce_shim_types::AU_SHIM_TYPES_H;
 
     use super::{
-        UmpDrainCursor, UmpProtocol, au_negotiable_layouts, au_ump_packet_at, au_ump_packet_count,
+        UmpDrainCursor, UmpProtocol, au_max_aux_input_buses, au_negotiable_layouts,
+        au_ump_packet_at, au_ump_packet_count,
     };
     use truce_core::bus::{BusLayout, ChannelConfig};
+
+    /// AU exposes one sidechain element, so registration counts aux buses
+    /// to reject a plugin declaring more than one (rather than merging).
+    #[test]
+    fn au_counts_auxiliary_input_buses() {
+        // No aux bus.
+        assert_eq!(au_max_aux_input_buses(&[BusLayout::stereo()]), 0);
+        // One aux bus - supported.
+        assert_eq!(
+            au_max_aux_input_buses(&[
+                BusLayout::stereo().with_sidechain_input("SC", ChannelConfig::Stereo)
+            ]),
+            1
+        );
+        // Two aux buses - rejected at registration.
+        assert_eq!(
+            au_max_aux_input_buses(&[BusLayout::stereo()
+                .with_sidechain_input("A", ChannelConfig::Stereo)
+                .with_sidechain_input("B", ChannelConfig::Mono)]),
+            2
+        );
+        // The max is taken across layouts.
+        assert_eq!(
+            au_max_aux_input_buses(&[
+                BusLayout::mono(),
+                BusLayout::stereo()
+                    .with_sidechain_input("A", ChannelConfig::Stereo)
+                    .with_sidechain_input("B", ChannelConfig::Mono),
+            ]),
+            2
+        );
+    }
 
     /// AU wires one fixed sidechain width, so only layouts sharing the
     /// first layout's sidechain width may be negotiated. A layout whose
