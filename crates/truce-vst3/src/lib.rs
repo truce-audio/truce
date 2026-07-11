@@ -1075,7 +1075,13 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
         match inst.params_arc.format_value(id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
-                let len = bytes.len().min((out_len as usize) - 1);
+                let mut len = bytes.len().min((out_len as usize) - 1);
+                // Truncate on a char boundary: a torn multi-byte UTF-8 tail
+                // (the "°" of a Degrees unit, say) is an invalid C string
+                // that strict hosts reject wholesale.
+                while len > 0 && !text.is_char_boundary(len) {
+                    len -= 1;
+                }
                 std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
                 len_u32(len)

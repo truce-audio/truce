@@ -506,7 +506,12 @@ impl DescriptorHolder {
 
 fn copy_str_to_buf(dst: &mut [c_char], src: &str) {
     let bytes = src.as_bytes();
-    let len = bytes.len().min(dst.len() - 1);
+    let mut len = bytes.len().min(dst.len() - 1);
+    // Truncate on a char boundary so a torn multi-byte UTF-8 tail (a name
+    // like "Détune" cut mid-codepoint) can't emit an invalid C string.
+    while len > 0 && !src.is_char_boundary(len) {
+        len -= 1;
+    }
     for (i, &b) in bytes[..len].iter().enumerate() {
         // `c_char` is signed on most platforms; bytes ≥ 128 wrap to
         // negative values and round-trip correctly through the FFI.
@@ -2365,7 +2370,13 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
             Some(text) => {
                 let bytes = text.as_bytes();
                 let cap = out_buffer_capacity as usize;
-                let len = bytes.len().min(cap - 1);
+                let mut len = bytes.len().min(cap - 1);
+                // Truncate on a char boundary: a torn multi-byte UTF-8 tail
+                // (the "°" of a Degrees unit, say) is an invalid C string
+                // that strict hosts reject wholesale.
+                while len > 0 && !text.is_char_boundary(len) {
+                    len -= 1;
+                }
                 ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out_buffer, len);
                 *out_buffer.add(len) = 0;
                 true
