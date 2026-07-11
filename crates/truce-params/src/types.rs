@@ -483,8 +483,16 @@ impl IntParam {
         self.value.load(Ordering::Relaxed).clamp(0, 255) as u8
     }
 
+    /// Set the value, clamped to the declared range - symmetric with
+    /// `FloatParam::set_value`. A corrupt preset or hostile automation
+    /// value (`i64::MAX` into a `[0, 8]` param) must not reach the plugin,
+    /// where it could index out of range and panic the audio thread. The
+    /// bounds are normalized so a mis-ordered range can't panic `clamp`.
+    #[allow(clippy::cast_possible_truncation)]
     pub fn set_value(&self, v: i64) {
-        self.value.store(v, Ordering::Relaxed);
+        let (lo, hi) = (self.info.range.min() as i64, self.info.range.max() as i64);
+        self.value
+            .store(v.clamp(lo.min(hi), lo.max(hi)), Ordering::Relaxed);
     }
 
     pub fn id(&self) -> u32 {
@@ -775,6 +783,20 @@ mod tests {
     #[should_panic(expected = "outside range")]
     fn int_param_rejects_out_of_range_default() {
         let _ = IntParam::new(info("N", ParamRange::Discrete { min: 0, max: 5 }, 10.0));
+    }
+
+    #[test]
+    fn int_param_set_value_clamps_to_range() {
+        // A corrupt preset restoring a wild value must not land out of range
+        // (symmetric with FloatParam::set_value); the derive stores
+        // `value.round() as i64`, so i64::MAX is a realistic input.
+        let p = IntParam::new(info("N", ParamRange::Discrete { min: 0, max: 8 }, 0.0));
+        p.set_value(i64::MAX);
+        assert_eq!(p.value(), 8, "clamps above max");
+        p.set_value(-1000);
+        assert_eq!(p.value(), 0, "clamps below min");
+        p.set_value(5);
+        assert_eq!(p.value(), 5, "in-range value stored as-is");
     }
 
     fn float(min: f64, max: f64) -> FloatParam {
