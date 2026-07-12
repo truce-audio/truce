@@ -201,6 +201,18 @@ mod plugin_cell {
         /// closure invoked synchronously from within an `Editor` method the
         /// wrapper called while holding the guard). Callers defer the work
         /// (stash it and apply on the next entry) when they get `None`.
+        ///
+        /// # Invariant
+        /// `try_enter` only defends against *same-thread* re-entry. Release
+        /// [`Self::enter`] swaps `held` to `true` unconditionally and ignores
+        /// the prior value (it trusts the host contract), so an `enter` that
+        /// overlapped a `try_enter` on another thread would barge in past a
+        /// live guard with no signal. Every owner of a given cell must
+        /// therefore run on one logical thread of control: today the `audio`
+        /// cell uses only `enter` (audio thread, host-serialized) and the
+        /// `gui` cell uses `enter` + `try_enter` only on the host GUI thread.
+        /// Do not mix `enter` on one thread with `try_enter` on another for
+        /// the same cell.
         pub fn try_enter(&self) -> Option<PluginGuard<'_, T>> {
             self.handoff.load(Ordering::Acquire);
             if self

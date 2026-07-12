@@ -294,6 +294,13 @@ struct ClapPluginData<P: PluginExport> {
     /// `&ClapPluginData` without a `&mut *ctx` - and so it stays outside the
     /// `gui` cell, which the resize closure would otherwise re-enter.
     host_scale: AtomicU64,
+    /// A resize the plugin requested through `PluginContext::request_resize`
+    /// that came back into a GUI callback (`gui_set_size` / `gui_get_size`)
+    /// synchronously - the host answering `request_host_resize` on the same
+    /// thread - while the `gui` cell was already held. Stashed as physical
+    /// `(w << 32) | h` (both non-zero, `0` = none) instead of re-entering the
+    /// cell; `gui_get_size` applies it on the next size query. GUI thread only.
+    pending_resize: AtomicU64,
 }
 
 /// Audio + lifecycle-owned per-block scratch (see [`ClapPluginData::audio`]).
@@ -1565,7 +1572,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
     plugin: *const clap_plugin,
     process: *const clap_process,
 ) -> i32 {
-    run_audio_block_with::<P, i32>("CLAP", CLAP_PROCESS_ERROR, || unsafe {
+    let result = run_audio_block_with::<P, i32>("CLAP", CLAP_PROCESS_ERROR, || unsafe {
         if process.is_null() {
             return CLAP_PROCESS_ERROR;
         }
@@ -2159,7 +2166,53 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             ProcessStatus::Tail(_) => CLAP_PROCESS_TAIL,
             ProcessStatus::KeepAlive => CLAP_PROCESS_CONTINUE_IF_NOT_QUIET,
         }
-    })
+    });
+    // A mid-process panic is caught by `run_audio_block_with`, which returns
+    // the `CLAP_PROCESS_ERROR` fallback - but the plugin may have left the
+    // output buffers half-written. Zero them so the host doesn't play stale
+    // garbage for a block before it reacts to the error, matching VST3 / VST2
+    // / AAX. (`CLAP_PROCESS_ERROR` is otherwise only the null-process guard,
+    // where the zero is a no-op.)
+    if result == CLAP_PROCESS_ERROR {
+        unsafe { zero_clap_output_buffers(process) };
+    }
+    result
+}
+
+/// Zero every output-buffer channel in `process` (both `f32` and `f64` wires).
+/// Used on the process error path so a caught panic doesn't leak stale samples
+/// into the host's speakers.
+///
+/// # Safety
+/// `process`, when non-null, must be a valid `clap_process` whose output
+/// buffers are sized to `frames_count`.
+unsafe fn zero_clap_output_buffers(process: *const clap_process) {
+    if process.is_null() {
+        return;
+    }
+    unsafe {
+        let proc = &*process;
+        let num_frames = proc.frames_count as usize;
+        for bus_idx in 0..proc.audio_outputs_count {
+            let buf = &*proc.audio_outputs.add(bus_idx as usize);
+            let ch_count = buf.channel_count as usize;
+            if !buf.data32.is_null() {
+                for ch in 0..ch_count {
+                    let ptr = *buf.data32.add(ch);
+                    if !ptr.is_null() {
+                        std::ptr::write_bytes(ptr, 0, num_frames);
+                    }
+                }
+            } else if !buf.data64.is_null() {
+                for ch in 0..ch_count {
+                    let ptr = *buf.data64.add(ch);
+                    if !ptr.is_null() {
+                        std::ptr::write_bytes(ptr, 0, num_frames);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Test-only smoke helper for the `rt-paranoid` CI gate: drives a few
@@ -2453,7 +2506,10 @@ unsafe extern "C" fn params_flush<P: PluginExport>(
     in_events: *const clap_input_events,
     out_events: *const clap_output_events,
 ) {
-    unsafe {
+    // Event conversion + `set_plain` run here; firewall the whole sweep so a
+    // panic (a hostile-host event, a param edge) can't unwind across the C ABI
+    // - matching the other `clap_plugin_params` callbacks.
+    run_extern_callback_with::<P, ()>("CLAP", "params_flush", (), || unsafe {
         let data = data_from_plugin::<P>(plugin);
         // `flush` is never concurrent with `process` (CLAP contract), so it
         // owns the audio scratch through the cell for its event conversion.
@@ -2479,7 +2535,7 @@ unsafe extern "C" fn params_flush<P: PluginExport>(
             }
         }
         flush_gui_changes::<P>(data, out_events);
-    }
+    });
 }
 
 fn make_params_extension<P: PluginExport>() -> clap_plugin_params {
@@ -3090,20 +3146,23 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
 unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let mut gui = data.gui.enter();
-        if let Some(editor) = gui.editor.as_mut() {
-            // Same FFI-boundary protection as `clap_plugin_destroy`:
-            // any panic during `editor.close()` (wgpu surface
-            // drop, NSView teardown, baseview window close) would
-            // otherwise become an unhandled Obj-C exception in
-            // the host.
-            let editor_ptr: *mut dyn Editor = editor.as_mut();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (*editor_ptr).close();
-            }));
-        }
-        gui.editor = None;
-        gui.gui_created = false;
+        // Take the editor out under the cell guard, then release the guard
+        // before tearing it down so author teardown code can't re-enter the
+        // cell (e.g. a stray `request_resize`).
+        let editor = {
+            let mut gui = data.gui.enter();
+            gui.gui_created = false;
+            gui.editor.take()
+        };
+        // Both `editor.close()` and the `Box<dyn Editor>` drop run author
+        // teardown (wgpu surface drop, NSView teardown, baseview window
+        // close). Firewall the whole teardown - a panic in either would
+        // otherwise become an unhandled Obj-C exception and abort the host.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            if let Some(mut editor) = editor {
+                editor.close();
+            }
+        }));
     }
 }
 
@@ -3135,7 +3194,31 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
     // across the C ABI (false = "size unavailable").
     run_extern_callback_with::<P, bool>("CLAP", "gui_get_size", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let gui = data.gui.enter();
+        // Re-entered while an outer GUI callback holds the cell (mid-resize):
+        // report the size the plugin just requested through `request_resize`,
+        // leaving the host's value when there is none - never re-enter the cell.
+        let Some(mut gui) = data.gui.try_enter() else {
+            let packed = data.pending_resize.load(Ordering::Relaxed);
+            if packed == 0 {
+                return false;
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                *width = (packed >> 32) as u32;
+                *height = packed as u32;
+            }
+            return true;
+        };
+        // Apply a resize the plugin requested re-entrantly (stashed by
+        // `gui_set_size` because the cell was busy) before reporting.
+        let packed = data.pending_resize.swap(0, Ordering::Relaxed);
+        if packed != 0
+            && let Some(editor) = gui.editor.as_mut()
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let (pw, ph) = ((packed >> 32) as u32, packed as u32);
+            apply_physical_resize(editor.as_mut(), pw, ph, data.host_scale());
+        }
         if let Some(ref editor) = gui.editor {
             let (w, h) = editor.size();
             // Like VST3, the CLAP spec describes gui size as pixels, but
@@ -3287,9 +3370,13 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 }),
                 request_resize: Box::new({
                     let host_ptr = SendPtr::new(data.host);
-                    let host_scale_for_resize = data.host_scale();
+                    let plugin_ptr = SendPtr::new(plugin);
                     move |lw, lh| {
-                        request_host_resize(host_ptr.as_ptr(), host_scale_for_resize, lw, lh)
+                        // Read `host_scale` live (it's atomic) so a
+                        // `gui_set_scale` after the editor opened is reflected
+                        // instead of using a stale snapshot.
+                        let host_scale = data_from_plugin::<P>(plugin_ptr.as_ptr()).host_scale();
+                        request_host_resize(host_ptr.as_ptr(), host_scale, lw, lh)
                     }
                 }),
                 get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
@@ -3529,7 +3616,18 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
     run_extern_callback_with::<P, bool>("CLAP", "gui_set_size", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let host_scale = data.host_scale();
-        let mut gui = data.gui.enter();
+        // A host answering a plugin `request_resize` (`request_host_resize`)
+        // synchronously calls `set_size` back here while an outer GUI callback
+        // (open / set_scale / a re-entrant set_size) still holds the cell.
+        // `try_enter` avoids the same-thread aliasing re-entry: apply when
+        // free, else stash for `gui_get_size` to apply on the next size query.
+        let Some(mut gui) = data.gui.try_enter() else {
+            data.pending_resize.store(
+                (u64::from(width) << 32) | u64::from(height),
+                Ordering::Relaxed,
+            );
+            return true;
+        };
         let Some(editor) = gui.editor.as_mut() else {
             return false;
         };
@@ -3582,7 +3680,14 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
     run_extern_callback_with::<P, bool>("CLAP", "gui_adjust_size", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let host_scale = data.host_scale();
-        let gui = data.gui.enter();
+        // `try_enter`, not `enter`: a host may query the nearest valid size
+        // while an outer GUI callback holds the cell mid resize round-trip
+        // (same hazard the `gui_set_size` / `gui_get_size` siblings guard).
+        // When busy, leave the host's requested `*width`/`*height` unchanged
+        // rather than forming a second `&mut`.
+        let Some(gui) = data.gui.try_enter() else {
+            return false;
+        };
         let Some(editor) = gui.editor.as_ref() else {
             return false;
         };
@@ -3621,6 +3726,18 @@ fn scale_physical_to_logical(pw: u32, ph: u32, host_scale: f64) -> (u32, u32) {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let lh = (f64::from(ph) / host_scale).round() as u32;
     (lw.max(1), lh.max(1))
+}
+
+/// Apply a host-supplied physical `(w, h)` to a resizable editor: convert to
+/// logical points, fit to the editor's on-ratio box, and `set_size`. Shared by
+/// `gui_set_size` (the host's committed size) and the deferred-resize drain in
+/// `gui_get_size`.
+fn apply_physical_resize(editor: &mut dyn Editor, w: u32, h: u32, host_scale: f64) {
+    if editor.can_resize() {
+        let (lw, lh) = scale_physical_to_logical(w, h, host_scale);
+        let (cw, ch) = fit_logical_size(lw, lh, editor);
+        editor.set_size(cw, ch);
+    }
 }
 
 /// Inverse of `scale_physical_to_logical`.
@@ -3890,6 +4007,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             needs_rescan: Arc::new(AtomicBool::new(false)),
             transport_slot: TransportSlot::new(),
             host_scale: AtomicU64::new(1.0f64.to_bits()),
+            pending_resize: AtomicU64::new(0),
             audio: PluginCell::new(ClapAudio {
                 event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
                 sounding_notes: SoundingNotes::new(midi_input_ports),

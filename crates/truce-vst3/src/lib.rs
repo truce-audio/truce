@@ -1538,6 +1538,15 @@ fn midi_proxy_len<P: PluginExport>() -> usize {
     }
 }
 
+// The output-event / sysex drain callbacks below (and `cb_push_sysex_input`)
+// enter the `audio` cell but run no author code, so the only way any of them
+// can panic is the debug-only overlap assert in `PluginCell::enter` - and that
+// fires only if a host queries them off the audio thread while `process` still
+// holds the guard (a host-contract violation). They are deliberately left
+// un-firewalled: in release `enter` never panics (no unwind across the C ABI),
+// and in debug the abort on a contract violation is a wanted canary. The shim
+// calls them from within the process cycle on the audio thread, where the
+// cell is free.
 unsafe extern "C" fn cb_get_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
@@ -1993,7 +2002,15 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
             return;
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        let gui = inst.gui.enter();
+        // `try_enter`, not `enter`: a host answering a plugin `request_resize`
+        // calls `resizeView` -> `checkSizeConstraint` (then `onSize`)
+        // synchronously on this thread, re-entering the cell an outer editor
+        // callback still holds. When busy, leave the host's requested `*w`/`*h`
+        // unchanged (skip the constraint pass this frame) rather than aliasing -
+        // matching the `cb_gui_set_size` / `cb_gui_get_size` siblings.
+        let Some(gui) = inst.gui.try_enter() else {
+            return;
+        };
         let Some(ref editor) = gui.editor else {
             return;
         };
