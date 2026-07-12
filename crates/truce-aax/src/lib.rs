@@ -1020,31 +1020,36 @@ pub unsafe fn _reset<P: PluginExport>(
     sample_rate: f64,
     max_frames: u32,
 ) {
-    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    let mut audio = inst.audio.enter();
-    // Clamp host-supplied max_frames to a sane minimum.
-    let max_frames = (max_frames as usize).max(1024);
-    audio.sample_rate = sample_rate;
-    audio.max_block_size = max_frames;
-    // Size scratch to the widest declared layout: a multi-layout plugin
-    // gets one AAX component per stem, and this instance may be any of
-    // them, so pre-allocating for the max keeps `_process` off the audio
-    // thread's allocator when the stem is wider than the first layout.
-    let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
-    audio
-        .scratch
-        .ensure_capacity(num_in as usize, num_out as usize, max_frames);
-    // Offline-bounce state, set from the host's `EnteringOfflineMode` /
-    // `ExitingOfflineMode` notifications (forwarded by the template).
-    let mode = ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed));
-    {
-        let mut plugin = enter_plugin(&inst.plugin);
-        plugin.reset(&AudioConfig::new(sample_rate, max_frames).with_process_mode(mode));
-        inst.latency_cache
-            .store(plugin.latency(), Ordering::Relaxed);
-        inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
-    }
-    audio.prepared = true;
+    // Author `reset` (prepare-style init) runs here; firewall it so a panic
+    // can't unwind across the C ABI into the Pro Tools template. Hosts call
+    // reset routinely (mains toggle, sample-rate change), matching VST2 / AU.
+    run_extern_callback_with::<P, ()>("aax", "reset", (), || unsafe {
+        let inst = &*ctx.cast::<AaxInstance<P>>();
+        let mut audio = inst.audio.enter();
+        // Clamp host-supplied max_frames to a sane minimum.
+        let max_frames = (max_frames as usize).max(1024);
+        audio.sample_rate = sample_rate;
+        audio.max_block_size = max_frames;
+        // Size scratch to the widest declared layout: a multi-layout plugin
+        // gets one AAX component per stem, and this instance may be any of
+        // them, so pre-allocating for the max keeps `_process` off the audio
+        // thread's allocator when the stem is wider than the first layout.
+        let (num_in, num_out) = max_io_channels::<P>().unwrap_or((2, 2));
+        audio
+            .scratch
+            .ensure_capacity(num_in as usize, num_out as usize, max_frames);
+        // Offline-bounce state, set from the host's `EnteringOfflineMode` /
+        // `ExitingOfflineMode` notifications (forwarded by the template).
+        let mode = ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed));
+        {
+            let mut plugin = enter_plugin(&inst.plugin);
+            plugin.reset(&AudioConfig::new(sample_rate, max_frames).with_process_mode(mode));
+            inst.latency_cache
+                .store(plugin.latency(), Ordering::Relaxed);
+            inst.tail_cache.store(plugin.tail(), Ordering::Relaxed);
+        }
+        audio.prepared = true;
+    });
 }
 
 /// Host entered / left offline-bounce mode. `mode` is a [`ProcessMode`]
@@ -1959,7 +1964,15 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
     // `Editor::size` is author code; firewall it (0 = "size unavailable").
     run_extern_callback_with::<P, i32>("aax", "editor_get_size", 0, || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
-        match &inst.gui.enter().editor {
+        // `try_enter`, not `enter`: an AAX host that services `SetViewSize` by
+        // synchronously calling `GetViewSize` back here would re-enter the cell
+        // an outer editor callback (open / idle, where a `request_resize`
+        // forwards to the host) still holds. Report "size unavailable" (0)
+        // instead of forming a second `&mut`; the host keeps its current size.
+        let Some(gui) = inst.gui.try_enter() else {
+            return 0;
+        };
+        match &gui.editor {
             Some(editor) => {
                 // Logical size. The patched baseview CGLayer path handles
                 // HiDPI internally - same contract as CLAP / VST3 / AU.
