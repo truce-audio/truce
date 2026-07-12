@@ -28,6 +28,13 @@ ignore = [
     # plist release moves to quick-xml >= 0.41.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # rustybuzz - unmaintained, no vulnerability and no upgrade exists.
+    # A text-shaping crate used only for SVG text rendering, riding in via
+    # slint <- i-slint-core <- resvg 0.46 <- usvg <- rustybuzz. resvg 0.46
+    # pins rustybuzz; the `harfrust` migration lives in a newer resvg that
+    # slint hasn't adopted, so there's no upgrade from here. Only truce-slint
+    # pulls it. Drop when slint moves to a harfrust-based resvg.
+    "RUSTSEC-2026-0206",
 ]
 
 [licenses]
