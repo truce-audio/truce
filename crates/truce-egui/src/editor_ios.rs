@@ -275,9 +275,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         }
 
         let typed_ctx = context.with_params(Arc::clone(&self.params));
-        if let Ok(mut ui) = self.ui.lock() {
-            ui.opened(&typed_ctx);
-        }
+        self.ui
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .opened(&typed_ctx);
 
         let inner = Inner {
             child_view: view,
@@ -293,12 +294,20 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             pending_events: Vec::with_capacity(16),
             last_pointer: egui::pos2(-1.0, -1.0),
         };
-        *self.inner.lock().expect("inner mutex") = Some(inner);
+        *self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(inner);
         let _ = slot_ptr; // pin already taken into the ivar
     }
 
     fn close(&mut self) {
-        let Some(inner) = self.inner.lock().expect("inner mutex").take() else {
+        let Some(inner) = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
             return;
         };
         // SAFETY: `child_view`/`display_link` were built by
@@ -319,7 +328,12 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // `CADisplayLink` runs `run_frame` on, so resizing the live
         // view + surface inline here is safe (the tick and this never
         // nest - they take the same `inner` mutex on the same thread).
-        if let Some(inner) = self.inner.lock().expect("inner mutex").as_mut() {
+        if let Some(inner) = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+        {
             resize_inner(inner, width, height);
         }
         true
@@ -743,7 +757,9 @@ unsafe fn set_display_link_paused<P: Params + 'static>(view: &AnyObject, paused:
         let Some(arc) = borrow_inner_arc::<P>(view) else {
             return;
         };
-        let Ok(guard) = arc.lock() else { return };
+        let guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_ref() else { return };
         if inner.display_link.is_null() {
             return;
@@ -754,9 +770,11 @@ unsafe fn set_display_link_paused<P: Params + 'static>(view: &AnyObject, paused:
 
 /// Run an iOS `extern "C"` thunk body under `catch_unwind`. `UIKit` invokes
 /// these selectors across an Obj-C boundary that can't carry a Rust unwind;
-/// an escaping panic (author UI code, an allocation failure) would become an
-/// uncaught Obj-C exception and abort the `AUv3` host. Swallow and log it
-/// instead, matching the desktop handlers.
+/// an escaping panic (a bug in author UI code - a failed `unwrap`, an
+/// out-of-bounds index, a tripped assertion) would become an uncaught Obj-C
+/// exception and abort the `AUv3` host. Swallow and log it instead, matching
+/// the desktop handlers. (An allocation failure aborts through
+/// `handle_alloc_error` without unwinding, so `catch_unwind` can't cover it.)
 fn ffi_firewall(label: &str, f: impl FnOnce()) {
     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         let msg = e
@@ -797,7 +815,9 @@ unsafe extern "C" fn tick_thunk<P: Params + 'static>(
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
             return;
         };
-        let Ok(mut guard) = arc.lock() else { return };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
         run_frame(inner);
     });
@@ -831,9 +851,15 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         .native_pixels_per_point = Some(inner.scale);
 
     let output = inner.egui_ctx.run_ui(raw_input, |root_ui| {
-        if let Ok(mut ui) = inner.ui.lock() {
-            ui.ui(root_ui, &inner.context);
-        }
+        // Recover a poisoned `ui` mutex (into_inner) rather than skip the
+        // frame forever: a panic in author `ui` code is caught by the thunk
+        // firewall, and the editor must keep rendering afterward - matching
+        // the built-in editor's non-poisoning RefCell.
+        inner
+            .ui
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ui(root_ui, &inner.context);
     });
     let clipped = inner
         .egui_ctx
@@ -1011,7 +1037,9 @@ unsafe extern "C" fn insert_text<P: Params + 'static>(
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
             return;
         };
-        let Ok(mut guard) = arc.lock() else { return };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
         inner.pending_events.push(egui::Event::Text(s.to_string()));
     });
@@ -1026,7 +1054,9 @@ unsafe extern "C" fn delete_backward<P: Params + 'static>(self_: &AnyObject, _cm
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
             return;
         };
-        let Ok(mut guard) = arc.lock() else { return };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
         let modifiers = egui::Modifiers::default();
         inner.pending_events.push(egui::Event::Key {
@@ -1055,7 +1085,9 @@ unsafe fn dispatch_touch<P: Params + 'static>(
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
             return;
         };
-        let Ok(mut guard) = arc.lock() else { return };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
 
         // Pick one touch - egui is single-pointer. Real multi-touch

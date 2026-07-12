@@ -101,7 +101,7 @@ mod plugin_cell {
     use std::cell::UnsafeCell;
     use std::marker::PhantomData;
     use std::ops::{Deref, DerefMut};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     pub struct PluginCell<T> {
         data: UnsafeCell<T>,
@@ -112,11 +112,32 @@ mod plugin_cell {
         /// comes from the host contract - `process` never overlaps a
         /// lifecycle callback - not from this counter.
         handoff: AtomicU64,
-        /// Debug-only overlap detector: trips if two owners ever hold the
-        /// cell at once (a host contract violation). Compiled out in
-        /// release, where the contract is trusted.
+        /// Whether the cell is currently held. Tracked in every build (not
+        /// just debug) so [`Self::try_enter`] can decline re-entry in
+        /// release rather than hand out a second aliasing `&mut`. `enter`
+        /// still trusts the host contract (it asserts free only in debug);
+        /// `try_enter` is the safe variant for paths where author code may
+        /// re-enter (e.g. `request_resize` called from inside `set_size`).
+        held: AtomicBool,
+        /// Token of the thread currently holding the cell, for an accurate
+        /// debug overlap message: same-thread re-entry (author code reached
+        /// back into the cell) reads differently than a cross-thread overlap
+        /// (a genuine host contract violation). Debug-only.
         #[cfg(debug_assertions)]
-        held: std::sync::atomic::AtomicBool,
+        owner: AtomicU64,
+    }
+
+    /// A never-zero per-thread token for the debug overlap detector. `0` is
+    /// reserved for "cell free", so the counter starts at 1.
+    #[cfg(debug_assertions)]
+    fn thread_token() -> u64 {
+        thread_local! {
+            static TOKEN: u64 = {
+                static NEXT: AtomicU64 = AtomicU64::new(1);
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            };
+        }
+        TOKEN.with(|&t| t)
     }
 
     // SAFETY: `T` is reached only through a guard, and the host contract
@@ -130,8 +151,9 @@ mod plugin_cell {
             Self {
                 data: UnsafeCell::new(value),
                 handoff: AtomicU64::new(0),
+                held: AtomicBool::new(false),
                 #[cfg(debug_assertions)]
-                held: std::sync::atomic::AtomicBool::new(false),
+                owner: AtomicU64::new(0),
             }
         }
 
@@ -144,16 +166,56 @@ mod plugin_cell {
         )]
         pub fn enter(&self) -> PluginGuard<'_, T> {
             self.handoff.load(Ordering::Acquire);
+            let was_held = self.held.swap(true, Ordering::Relaxed);
             #[cfg(debug_assertions)]
-            assert!(
-                !self.held.swap(true, Ordering::Relaxed),
-                "plugin ownership cell entered while already held: the host \
-                 overlapped process() with a lifecycle callback"
-            );
+            {
+                let me = thread_token();
+                let prev = self.owner.swap(me, Ordering::Relaxed);
+                assert!(
+                    !was_held,
+                    "{}",
+                    if prev == me {
+                        "plugin ownership cell re-entered on the same thread: \
+                         author editor code (e.g. request_resize called from \
+                         set_size / state_changed) reached back into the cell \
+                         while the wrapper still held it"
+                    } else {
+                        "plugin ownership cell entered from another thread while \
+                         held: the host overlapped process() with a lifecycle \
+                         callback"
+                    }
+                );
+            }
+            #[cfg(not(debug_assertions))]
+            let _ = was_held;
             PluginGuard {
                 cell: self,
                 _not_send: PhantomData,
             }
+        }
+
+        /// Take ownership only if the cell is free, returning `None` when it
+        /// is already held. Unlike [`Self::enter`] this never asserts and
+        /// never hands out a second `&mut` - it is the safe primitive for
+        /// paths where author code may re-enter the cell (a `request_resize`
+        /// closure invoked synchronously from within an `Editor` method the
+        /// wrapper called while holding the guard). Callers defer the work
+        /// (stash it and apply on the next entry) when they get `None`.
+        pub fn try_enter(&self) -> Option<PluginGuard<'_, T>> {
+            self.handoff.load(Ordering::Acquire);
+            if self
+                .held
+                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+            {
+                return None;
+            }
+            #[cfg(debug_assertions)]
+            self.owner.store(thread_token(), Ordering::Relaxed);
+            Some(PluginGuard {
+                cell: self,
+                _not_send: PhantomData,
+            })
         }
     }
 
@@ -186,6 +248,7 @@ mod plugin_cell {
     impl<T> Drop for PluginGuard<'_, T> {
         fn drop(&mut self) {
             #[cfg(debug_assertions)]
+            self.cell.owner.store(0, Ordering::Relaxed);
             self.cell.held.store(false, Ordering::Relaxed);
             // Release: publish this owner's writes to the next `Acquire`.
             self.cell.handoff.fetch_add(1, Ordering::Release);
@@ -473,7 +536,30 @@ pub unsafe fn copy_c_str(out: *mut c_char, out_len: usize, text: &str) -> usize 
 mod plugin_cell_tests {
     use std::sync::Arc;
 
-    use super::{enter_plugin, shared_plugin};
+    use super::{PluginCell, enter_plugin, shared_plugin};
+
+    #[test]
+    fn try_enter_declines_while_held_then_accepts_when_free() {
+        // The request_resize re-entry guard: `try_enter` must return `None`
+        // while the cell is held (so the closure defers instead of aliasing)
+        // and `Some` once released.
+        let cell = PluginCell::new(0u32);
+        let guard = cell.enter();
+        assert!(cell.try_enter().is_none(), "held cell declines try_enter");
+        drop(guard);
+        assert!(cell.try_enter().is_some(), "freed cell accepts try_enter");
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "re-entered on the same thread")]
+    fn enter_while_held_reports_same_thread_reentry() {
+        // Author editor code calling back into the cell (request_resize from
+        // set_size) must be blamed accurately, not reported as a host overlap.
+        let cell = PluginCell::new(0u32);
+        let _held = cell.enter();
+        let _reenter = cell.enter();
+    }
 
     #[test]
     fn lock_round_trips_data() {

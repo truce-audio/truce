@@ -10,7 +10,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 // The AU v2 param-notify pump is macOS-only (v2 doesn't exist on iOS).
 #[cfg(target_os = "macos")]
@@ -255,6 +255,13 @@ struct AuInstance<P: PluginExport> {
     /// editor-notify - all run on the host main thread; `cb_process` never
     /// touches it.
     gui: PluginCell<AuGui>,
+    /// Deferred editor resize requested through `PluginContext::request_resize`
+    /// while the `gui` cell was already held (author code re-entering from
+    /// inside `set_size` / `state_changed`). Packed `(w << 32) | h`, both
+    /// non-zero, `0` = none. The closure stashes here rather than re-entering
+    /// the cell; `cb_gui_get_size` applies it before reporting the size. GUI
+    /// thread only; atomic for interior mutability through the shared `&inst`.
+    pending_resize: AtomicU64,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
@@ -403,6 +410,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     scratch: RawBufferScratch::default(),
                 }),
                 gui: PluginCell::new(AuGui { editor: None }),
+                pending_resize: AtomicU64::new(0),
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
                 legacy_key_cstrings: info
@@ -1660,7 +1668,15 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
             return;
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
-        if let Some(ref mut editor) = inst.gui.enter().editor
+        // `try_enter`, not `enter`: if `editor.set_size` (driven by a plugin
+        // `request_resize`) ever makes the host re-drive layout synchronously
+        // back into this callback on the same thread, `enter` would
+        // double-enter the still-held cell. Skipping a re-entrant commit is
+        // safe - the host re-asserts the size on its next layout pass.
+        let Some(mut gui) = inst.gui.try_enter() else {
+            return;
+        };
+        if let Some(editor) = gui.editor.as_mut()
             && editor.can_resize()
         {
             let (cw, ch) = fit_logical_size(w, h, editor.as_ref());
@@ -1688,12 +1704,39 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         // which shows up as "plugin reports invalid size" in their
         // reports.
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let mut gui = inst.gui.enter();
+        // `try_enter`: same synchronous-relayout re-entry guard as
+        // `cb_gui_set_size`. If busy, report the size the plugin last
+        // requested (still pending), leaving the host's value when there is
+        // none - never re-enter the cell.
+        let Some(mut gui) = inst.gui.try_enter() else {
+            let packed = inst.pending_resize.load(Ordering::Relaxed);
+            if packed != 0 {
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    *w = (packed >> 32) as u32;
+                    *h = packed as u32;
+                }
+            }
+            return;
+        };
         if gui.editor.is_none() {
             // Built from the lock-free param store the wrapper already
             // holds outside the plugin, so opening the GUI never
             // stalls the audio thread.
             gui.editor = (inst.editor_builder)(inst.params_arc.clone());
+        }
+        // Apply a resize the plugin requested re-entrantly through
+        // `request_resize` (deferred there because the `gui` cell was held)
+        // before reporting the size, so the host sees the value the plugin
+        // asked for. A re-request from this `set_size` re-stashes and lands on
+        // the next query.
+        let packed = inst.pending_resize.swap(0, Ordering::Relaxed);
+        if packed != 0
+            && let Some(editor) = gui.editor.as_mut()
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let (rw, rh) = ((packed >> 32) as u32, packed as u32);
+            editor.set_size(rw, rh);
         }
         if let Some(ref editor) = gui.editor {
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
@@ -1811,20 +1854,26 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             // SAFETY: `ctx_raw` points at the live
                             // `AuInstance<P>`. The closure runs on the
                             // GUI thread, same as `cb_gui_open` which
-                            // installed it. `editor.set_size` on the
-                            // existing backends writes to an atomic
-                            // cell only - no aliasing UB even if the
-                            // editor's own `update()` holds a borrow
-                            // higher up the stack.
+                            // installed it.
                             if w == 0 || h == 0 {
                                 return false;
                             }
                             let inst = &*ctx_raw.as_ptr().cast::<AuInstance<P>>();
-                            inst.gui
-                                .enter()
-                                .editor
-                                .as_mut()
-                                .is_some_and(|e| e.set_size(w, h))
+                            // An author can call this from inside an `Editor`
+                            // method (`set_size`, `state_changed`) that a GUI
+                            // callback invoked while holding the `gui` cell -
+                            // re-entering `enter()` there is same-thread
+                            // aliasing UB. `try_enter` applies the resize when
+                            // the cell is free (the common editor-loop path)
+                            // and otherwise stashes it for `cb_gui_get_size` to
+                            // apply on the next size query.
+                            if let Some(mut gui) = inst.gui.try_enter() {
+                                gui.editor.as_mut().is_some_and(|e| e.set_size(w, h))
+                            } else {
+                                inst.pending_resize
+                                    .store((u64::from(w) << 32) | u64::from(h), Ordering::Relaxed);
+                                true
+                            }
                         }),
                         get_param: Box::new(move |id| {
                             params_for_get.get_normalized(id).unwrap_or(0.0)

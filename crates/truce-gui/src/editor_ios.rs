@@ -487,9 +487,11 @@ unsafe fn borrow_inner_arc<P: Params + 'static>(
 
 /// Run an iOS `extern "C"` thunk body under `catch_unwind`. `UIKit` invokes
 /// these selectors across an Obj-C boundary that can't carry a Rust unwind;
-/// an escaping panic (author view code, an allocation failure) would become
-/// an uncaught Obj-C exception and abort the `AUv3` host. Swallow and log it
-/// instead, matching the desktop baseview handlers.
+/// an escaping panic (a bug in author view code - a failed `unwrap`, an
+/// out-of-bounds index, a tripped assertion) would become an uncaught Obj-C
+/// exception and abort the `AUv3` host. Swallow and log it instead, matching
+/// the desktop baseview handlers. (An allocation failure aborts through
+/// `handle_alloc_error` without unwinding, so `catch_unwind` can't cover it.)
 fn ffi_firewall(label: &str, f: impl FnOnce()) {
     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         let msg = e

@@ -964,9 +964,14 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
         // either we observe `Some(_)` here (close hasn't taken it yet,
         // editor still alive) or we observe `None` and return without
         // touching `self.editor`. Either way the deref below is sound.
-        let Ok(mut guard) = self.backend.lock() else {
-            return;
-        };
+        // Recover a poisoned lock (a caught render panic) rather than skip
+        // every frame forever - the `on_frame` firewall catches author /
+        // GridLayout panics, and the editor must keep rendering afterward.
+        // The `None`-check below still handles the `close` race.
+        let mut guard = self
+            .backend
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if guard.is_none() {
             // Editor already dropped the backend in its close path.
             // Nothing to do - baseview will tear us down next.
@@ -1208,9 +1213,12 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
         // the backend cell is the synchronization point with
         // `BuiltinEditor::close`. If the cell is `None`, the editor
         // pointer is no longer guaranteed valid and we must not deref.
-        let Ok(mut guard) = self.backend.lock() else {
-            return baseview::EventStatus::Ignored;
-        };
+        // Recover a poisoned lock (see `on_frame`) rather than ignore every
+        // event forever.
+        let mut guard = self
+            .backend
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if guard.is_none() {
             return baseview::EventStatus::Ignored;
         }
@@ -1561,9 +1569,9 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 // calls our build closure), the None-check on the
                 // mutex side will simply replace Some(None) → Some
                 // and everything drops at the usual time.
-                if let Ok(mut guard) = shared_for_handler.lock() {
-                    *guard = backend;
-                }
+                *shared_for_handler
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = backend;
 
                 BuiltinWindowHandler {
                     editor: editor_addr as *mut BuiltinEditor<P>,
@@ -1618,9 +1626,13 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // the pump (which owns and releases the surface / swap chain /
         // CAMetalLayer), then queue, then device last - children
         // before parent.
+        // Recover a poisoned lock so teardown still runs - skipping it would
+        // leak the wgpu surface / NSView.
         if let Some(shared) = self.blit_backend.take()
-            && let Ok(mut guard) = shared.lock()
-            && let Some(backend) = guard.take()
+            && let Some(backend) = shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
         {
             let BlitBackend {
                 client,
