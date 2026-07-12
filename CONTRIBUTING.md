@@ -117,10 +117,12 @@ before merge.
 
 ## Releases
 
-`main` always tracks the latest release. Feature branches and their
-PRs don't target `main` directly; they merge into the branch for the
-upcoming version, which then opens its own PR into `main` when the
-release is cut.
+`main` always tracks the latest release. Open your PR against `main` -
+that's the branch to target and to base your work on. If it's accepted,
+a maintainer merges it into the branch for the upcoming version rather
+than into `main` directly. That release branch lands in `main` only when
+the release is cut, so your change ships to `main` as part of the next
+version.
 
 ## Code submissions and the dual-license contributor grant
 
