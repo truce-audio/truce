@@ -215,9 +215,10 @@ struct ClapPluginData<P: PluginExport> {
     /// every callback reaches it through a shared `&ClapPluginData` - never a
     /// whole-struct `&mut`, which would alias a concurrent host-thread `&`
     /// (param reads, GUI) and is UB under the aliasing model. The CLAP host
-    /// contract serializes its owners (process on the audio thread; activate /
-    /// reset / deactivate on the main thread while stopped), so the cell is
-    /// never held twice at once.
+    /// contract serializes its owners: `process` and `reset` on the audio
+    /// thread (`reset` is `[audio-thread & active]`, never concurrent with
+    /// `process`), `activate` / `deactivate` on the main thread while
+    /// stopped - so the cell is never held twice at once.
     audio: PluginCell<ClapAudio<P>>,
     /// Cached parameter infos (built once at init).
     param_infos: Vec<ParamInfo>,

@@ -512,6 +512,19 @@ impl<P: ?Sized> PluginContext<P> {
         self.bridge.set_param(id, normalized);
         self.bridge.end_edit(id);
     }
+    /// Ask the host to resize the editor to `(w, h)` logical points.
+    /// Returns `true` if the request was accepted.
+    ///
+    /// **Re-entrancy:** call this from your editor's own event / render loop,
+    /// not synchronously from inside an [`Editor`] method the host drives
+    /// (`open`, `set_size`, `size`, `state_changed`, `close`). Several
+    /// wrappers hold an internal editor lock across those calls, and on some
+    /// formats `request_resize` reaches back into it - directly (AU) or via a
+    /// host that answers `resizeView` synchronously (VST3). Such a re-entrant
+    /// call is deferred (applied on a later frame) rather than applied inline,
+    /// so a "correct my aspect ratio from within `set_size`" pattern won't
+    /// take effect immediately; do that shaping by returning the adjusted size
+    /// or requesting from the next frame instead.
     #[must_use]
     pub fn request_resize(&self, w: u32, h: u32) -> bool {
         self.bridge.request_resize(w, h)

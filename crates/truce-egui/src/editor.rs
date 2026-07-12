@@ -703,9 +703,14 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         let ui_arc = &self.ui;
         let context = &self.context;
         let output = self.egui_ctx.run_ui(raw_input, |ui| {
-            if let Ok(mut ui_fn) = ui_arc.lock() {
-                ui_fn.ui(ui, context);
-            }
+            // Recover a poisoned `ui` mutex (into_inner) rather than skip the
+            // frame forever: a panic in author `ui` code is caught by the
+            // baseview `on_frame` firewall, and the editor must keep rendering
+            // afterward - matching the built-in editor's `RefCell` recovery.
+            ui_arc
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .ui(ui, context);
         });
 
         let repaint_delay = output
@@ -1354,9 +1359,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         // --- baseview + wgpu ---
         let ui = Arc::clone(&self.ui);
-        if let Ok(mut ui_fn) = ui.lock() {
-            ui_fn.opened(&typed_ctx);
-        }
+        ui.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .opened(&typed_ctx);
         let size = self.size;
 
         let options = WindowOpenOptions {
@@ -1554,10 +1559,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 
     fn state_changed(&mut self) {
-        if let Some(ref ctx) = self.context
-            && let Ok(mut ui) = self.ui.lock()
-        {
-            ui.state_changed(ctx);
+        if let Some(ref ctx) = self.context {
+            self.ui
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .state_changed(ctx);
         }
     }
 
@@ -1586,9 +1592,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             self.font,
             self.visuals.clone(),
             move |root_ui, state| {
-                if let Ok(mut ui) = ui.lock() {
-                    ui.ui(root_ui, state);
-                }
+                ui.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .ui(root_ui, state);
             },
         )
     }

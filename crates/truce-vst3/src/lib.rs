@@ -152,6 +152,13 @@ struct Vst3Instance<P: PluginExport> {
     /// `&mut *ctx` - and so it stays outside the `gui` cell, which the
     /// resize closure would otherwise re-enter while `cb_gui_open` holds it.
     host_scale: AtomicU64,
+    /// Editor resize the plugin requested through `PluginContext::request_resize`
+    /// that landed back in a GUI callback (`onSize` → `cb_gui_set_size`)
+    /// synchronously while the `gui` cell was already held - the wrapper stashes
+    /// the physical `(w << 32) | h` here (both non-zero, `0` = none) instead of
+    /// re-entering the cell, and `cb_gui_get_size` applies it on the next size
+    /// query. GUI thread only; atomic for interior mutability through `&Inst`.
+    pending_resize: AtomicU64,
     /// Audio + lifecycle-owned per-block scratch. Behind a `PluginCell` so
     /// every callback reaches it through a shared `&Vst3Instance` - never a
     /// whole-struct `&mut *ctx`, which would alias a concurrent host-thread
@@ -362,6 +369,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     })
                     .collect(),
                 host_scale: AtomicU64::new(1.0f64.to_bits()),
+                pending_resize: AtomicU64::new(0),
                 audio: PluginCell::new(Vst3Scratch {
                     event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
                     sysex_inputs_pending: false,
@@ -1870,7 +1878,31 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     // across the C ABI.
     run_extern_callback_with::<P, ()>("vst3", "gui_get_size", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        let gui = inst.gui.enter();
+        // A host can query the size synchronously while an outer GUI callback
+        // holds the cell (mid-resize). If so, report the size the plugin just
+        // requested through `request_resize` (still pending), leaving the
+        // host's value untouched when there is none - never re-enter the cell.
+        let Some(mut gui) = inst.gui.try_enter() else {
+            let packed = inst.pending_resize.load(Ordering::Relaxed);
+            if packed != 0 {
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    *w = (packed >> 32) as u32;
+                    *h = packed as u32;
+                }
+            }
+            return;
+        };
+        // Apply a resize the plugin requested re-entrantly (stashed by
+        // `cb_gui_set_size` because the cell was busy) before reporting.
+        let packed = inst.pending_resize.swap(0, Ordering::Relaxed);
+        if packed != 0
+            && let Some(editor) = gui.editor.as_mut()
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let (pw, ph) = ((packed >> 32) as u32, packed as u32);
+            apply_physical_resize(editor.as_mut(), pw, ph, inst.host_scale());
+        }
         if let Some(ref editor) = gui.editor {
             let (ew, eh) = editor.size();
             // VST3 `ViewRect` is documented as "in pixels". That's literally
@@ -2007,12 +2039,20 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let host_scale = inst.host_scale();
-        if let Some(ref mut editor) = inst.gui.enter().editor
-            && editor.can_resize()
-        {
-            let (lw, lh) = phys_to_logical(w, h, host_scale);
-            let (cw, ch) = clamp_logical_size(lw, lh, editor.as_ref());
-            editor.set_size(cw, ch);
+        // A host answering a plugin `request_resize` (resizeView) synchronously
+        // lands `onSize` here while an outer GUI callback still holds the cell.
+        // `try_enter` avoids the same-thread aliasing re-entry: apply when free,
+        // else stash for `cb_gui_get_size` to apply on the next size query.
+        match inst.gui.try_enter() {
+            Some(mut gui) => {
+                if let Some(editor) = gui.editor.as_mut() {
+                    apply_physical_resize(editor.as_mut(), w, h, host_scale);
+                }
+            }
+            None => {
+                inst.pending_resize
+                    .store((u64::from(w) << 32) | u64::from(h), Ordering::Relaxed);
+            }
         }
     });
 }
@@ -2091,6 +2131,18 @@ fn logical_to_phys(lw: u32, lh: u32, host_scale: f64) -> (u32, u32) {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let ph = (f64::from(lh) * host_scale).round() as u32;
     (pw.max(1), ph.max(1))
+}
+
+/// Apply a host-supplied physical `(w, h)` to a resizable editor: convert to
+/// logical points, clamp to the editor's min/max, and `set_size`. Shared by
+/// `cb_gui_set_size` (the host's `onSize`) and the deferred-resize drain in
+/// `cb_gui_get_size`.
+fn apply_physical_resize(editor: &mut dyn Editor, w: u32, h: u32, host_scale: f64) {
+    if editor.can_resize() {
+        let (lw, lh) = phys_to_logical(w, h, host_scale);
+        let (cw, ch) = clamp_logical_size(lw, lh, editor);
+        editor.set_size(cw, ch);
+    }
 }
 
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(

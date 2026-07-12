@@ -233,11 +233,19 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
             last_pointer: LogicalPosition::new(-1.0, -1.0),
             pending_events: RefCell::new(Vec::with_capacity(16)),
         };
-        *self.inner.lock().expect("inner mutex") = Some(inner);
+        *self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(inner);
     }
 
     fn close(&mut self) {
-        let Some(inner) = self.inner.lock().expect("inner mutex").take() else {
+        let Some(inner) = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        else {
             return;
         };
         unsafe {
@@ -270,7 +278,12 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // `CADisplayLink` runs `tick` on, so resizing the live view +
         // window inline here is safe (the tick and this never nest -
         // they take the same `inner` mutex on the same thread).
-        if let Some(inner) = self.inner.lock().expect("inner mutex").as_mut() {
+        if let Some(inner) = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+        {
             resize_inner(inner, width, height);
         }
         true
@@ -474,9 +487,11 @@ unsafe fn borrow_inner_arc<P: Params + 'static>(
 
 /// Run an iOS `extern "C"` thunk body under `catch_unwind`. `UIKit` invokes
 /// these selectors across an Obj-C boundary that can't carry a Rust unwind;
-/// an escaping panic (author UI code, an allocation failure) would become an
-/// uncaught Obj-C exception and abort the `AUv3` host. Swallow and log it
-/// instead, matching the desktop handlers.
+/// an escaping panic (a bug in author UI code - a failed `unwrap`, an
+/// out-of-bounds index, a tripped assertion) would become an uncaught Obj-C
+/// exception and abort the `AUv3` host. Swallow and log it instead, matching
+/// the desktop handlers. (An allocation failure aborts through
+/// `handle_alloc_error` without unwinding, so `catch_unwind` can't cover it.)
 fn ffi_firewall(label: &str, f: impl FnOnce()) {
     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         let msg = e
@@ -497,7 +512,9 @@ unsafe extern "C" fn tick_thunk<P: Params + 'static>(
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
             return;
         };
-        let Ok(mut guard) = arc.lock() else { return };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
         run_frame(inner);
     });
@@ -597,7 +614,9 @@ unsafe fn dispatch_touch<P: Params + 'static>(
         let Some(arc) = borrow_inner_arc::<P>(self_) else {
             return;
         };
-        let Ok(mut guard) = arc.lock() else { return };
+        let mut guard = arc
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(inner) = guard.as_mut() else { return };
 
         let touch: *mut AnyObject = msg_send![touches, anyObject];
