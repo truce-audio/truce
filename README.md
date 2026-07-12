@@ -240,6 +240,9 @@ guide, first-plugin walkthrough, params / processing / GUI / audio
 testing / presets / shipping / hot-reload reference, per-format gotchas
 (CLAP, VST3, VST2, LV2, AU, AAX), and current status.
 
+Upgrading between versions? See the
+[migration guide](https://truce.audio/docs/migrations/).
+
 ## Requirements
 
 - Rust 1.92+ (`rustup update`).
