@@ -14,7 +14,8 @@
 
 <p align="center">
   <a href="https://crates.io/crates/cargo-truce"><img src="https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white" alt="crates.io"></a>
-  <a href="https://truce.audio/docs/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a>
+  <a href="https://truce.audio/docs/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a><br/>
+  Upgrading between versions? See the [migration guide](https://truce.audio/docs/migrations/).
 </p>
 
 ## Quick Start
@@ -239,9 +240,6 @@ Full docs live at **[truce.audio](https://truce.audio/)** — install
 guide, first-plugin walkthrough, params / processing / GUI / audio
 testing / presets / shipping / hot-reload reference, per-format gotchas
 (CLAP, VST3, VST2, LV2, AU, AAX), and current status.
-
-Upgrading between versions? See the
-[migration guide](https://truce.audio/docs/migrations/).
 
 ## Requirements
 
