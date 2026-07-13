@@ -6,13 +6,13 @@ CPU rendering backend for the truce built-in GUI.
 
 Provides `CpuBackend`, a software implementation of
 `truce_gui_types::RenderBackend` built on tiny-skia, plus the skrifa
-glyph cache (`font`) and the `ColorExt` conversions the rasteriser
+glyph cache (`font`) and the `ColorExt` conversions the rasterizer
 needs. This is the default renderer: it works on every platform without
 a usable GPU, and its output is deterministic, which makes it the
 reliable path for screenshot tests.
 
 `truce-cpu` is an implementation detail of
-[`truce-gui`](../truce-gui): `BuiltinEditor` rasterises the widget tree
+[`truce-gui`](../truce-gui): `BuiltinEditor` rasterizes the widget tree
 into a tiny-skia pixmap through this backend and blits it to a wgpu
 surface for compositing. Plugins don't depend on `truce-cpu` directly -
 it's pulled in by `truce-gui`'s default `cpu` feature. Its peer

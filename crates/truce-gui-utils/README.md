@@ -1,6 +1,6 @@
 # truce-gui-utils
 
-Cross-backend host-side platform helpers for truce GUI backends.
+Host-side platform helpers shared by truce GUI backends.
 
 ## Overview
 
@@ -9,8 +9,10 @@ Small helper crate shared by the GUI backends that embed a child view
 each backend (`truce-gui`, `truce-egui`, `truce-iced`, `truce-vizia`) does not
 re-implement the same host-window quirks. No rendering, no widgets.
 
-Currently macOS-only in effect. On Linux and Windows the host manages
-child-window positioning natively, so the helpers compile to no-ops there.
+The re-anchoring helpers are macOS-only: on Linux and Windows the host
+manages child-window positioning natively, so they compile to no-ops
+there. `should_skip_frame` is implemented natively on both macOS and
+Windows.
 
 ## Key functions
 
@@ -23,7 +25,9 @@ child-window positioning natively, so the helpers compile to no-ops there.
 - **`should_skip_frame`** -- host-resize stability check; lets a backend drop
   a frame mid-resize rather than render against a transient surface size
 
-All take a `raw_window_handle::RawWindowHandle` (or raw parent pointer) and
-are no-ops on non-macOS targets, so callers can invoke them unconditionally.
+The re-anchoring helpers take a `raw_window_handle::RawWindowHandle` (or
+raw parent pointer) and are no-ops off macOS, so callers can invoke them
+unconditionally; `should_skip_frame` returns a real answer on macOS and
+Windows and `false` elsewhere.
 
 Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

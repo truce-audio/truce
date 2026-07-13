@@ -12,7 +12,7 @@ Plugin crates do not need a `build.rs` - `truce::plugin_info!()` reads
   for `truce.toml`, used by both `truce-derive` (proc macros) and
   `cargo-truce` (install / build pipeline).
 - **`target_dir(root)`** - resolves cargo's effective target directory
-  for a workspace root, honouring `CARGO_TARGET_DIR` and
+  for a workspace root, honoring `CARGO_TARGET_DIR` and
   `[build].target-dir` in `.cargo/config.toml`. Used by runtime callers
   (cargo-truce, truce-test) that need to anchor artifact paths.
 

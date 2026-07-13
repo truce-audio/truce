@@ -10,8 +10,8 @@ not its impl), `WidgetType`, `WidgetRegion`, `InteractionState`,
 `Theme` / `Color`, `ParamSnapshot`, the `grid!` and `layout!`
 macros. Crates that only need to *describe* layouts and react
 to platform-translated input events depend on this crate; the
-heavy machinery (tiny-skia rasterisation, baseview windowing,
-truce-font / fontdue) stays in the renderer crates (`truce-cpu`,
+heavy machinery (tiny-skia rasterization, baseview windowing,
+truce-font / skrifa) stays in the renderer crates (`truce-cpu`,
 `truce-gpu`) and `truce-gui`.
 
 ## Crate split
@@ -29,12 +29,12 @@ truce-gui   truce-egui / truce-iced / truce-slint  <- alt GUI backends
    |       \
 truce-cpu  truce-gpu  <- RenderBackend impls, pulled by truce-gui's
 (tiny-skia, (wgpu)       cpu (default) / gpu features
- fontdue)
+ skrifa)
 ```
 
 A slint-only plugin's dep tree contains `truce-plugin ->
 truce-gui-types -> truce-core` - `tiny-skia`, `baseview`,
-`fontdue`, `truce-font` don't appear unless the plugin also
+`skrifa`, `truce-font` don't appear unless the plugin also
 depends on `truce-gui`.
 
 ## Key types

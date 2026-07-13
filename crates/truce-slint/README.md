@@ -43,7 +43,7 @@ Add the build-script helper as a build-dependency:
 
 ```toml
 [build-dependencies]
-truce-slint-build = "0.49"
+truce-slint-build = "6.1"
 ```
 
 `build.rs`:

@@ -6,7 +6,7 @@ Plugin runtime + hot-reload infrastructure for truce.
 
 Hot-reload mechanics for truce: dylib loading, ABI canary
 (including a `sample_precision` field that pins `f32` vs `f64`),
-vtable probe, and the shells (`HotShell<P, S>`, `StaticShell<P,
+and the shells (`HotShell<P, S>`, `StaticShell<P,
 L, S>`) that bridge the user-facing leaf traits onto
 `truce_core::PluginRuntime` for format wrappers. Used by every truce
 plugin, in two modes:
@@ -17,7 +17,7 @@ plugin, in two modes:
 - **Hot-reload (opt-in).** `export_plugin!` exports the plugin
   across a `#[no_mangle]` C ABI in a separate dylib; the shell
   loads it via `libloading`, verifies ABI compatibility, and swaps
-  the trait object on rebuild without restarting the DAW.
+  the logic dylib on rebuild without restarting the DAW.
   Preserves audio continuity.
 
 Plugin authors don't reach into this crate directly. They write
@@ -34,19 +34,20 @@ the right `export_*!` call based on the `shell` Cargo feature.
   embeds the plugin at compile time, generic over the sample
   type.
 - **`NativeLoader<S>`** -- the `libloading`-backed dylib loader
-  that holds `Box<dyn PluginLogicCore<S>>` and the canary +
-  vtable-probe machinery.
+  that holds the resolved flat-ABI symbol table (`LogicSymbols<S>`)
+  and the ABI-canary machinery.
 - **`AbiCanary`** -- ABI fingerprint compared between shell and
   dylib before loading. Includes `sample_precision: u8` so a
   prelude64 logic dylib loaded by an f32 shell (or vice versa)
   fails the canary check rather than binding to a wrong-layout
-  vtable.
+  dylib.
 - **`export_static!`** -- emits the `__HotShellWrapper` for static
   mode.
 - **`export_plugin!`** -- emits the `#[no_mangle]` C ABI symbols
-  for shell mode (`truce_create`, `truce_abi_canary_v2`,
-  `truce_vtable_probe`). Each one carries the plugin's chosen
-  precision (via the prelude's `Sample` alias).
+  for shell mode (`truce_init_state`, `truce_process`,
+  `truce_build_editor`, `truce_abi_canary_v2`, ...). Each one
+  carries the plugin's chosen precision (via the prelude's
+  `Sample` alias).
 
 ## Features
 
@@ -54,7 +55,6 @@ the right `export_*!` call based on the `shell` Cargo feature.
 |---------|-------------|
 | `shell` | Enable dylib loading via `libloading` (turns on `HotShell`) |
 | `hot-debug` | Verbose hot-reload diagnostics (load timings, ABI checks) |
-| `gpu` | GPU rendering support in the shell |
 
 ## Usage
 
@@ -62,11 +62,11 @@ Enable the dynamic shell (hot-reload) during development:
 
 ```toml
 [dependencies]
-truce = { version = "0.49", features = ["shell"] }
+truce = { version = "6.1", features = ["shell"] }
 ```
 
-(Cargo's caret resolver expands `"0.49"` to `>=0.49.0, <0.50.0`,
-so you'll pick up every `0.49.x` patch release without re-editing.
+(Cargo's caret resolver expands `"6.1"` to `>=6.1.0, <7.0.0`,
+so you'll pick up every `6.1.x` patch release without re-editing.
 To track an unreleased checkout, swap for
 `git = "https://github.com/truce-audio/truce", branch = "main"`.)
 

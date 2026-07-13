@@ -6,12 +6,16 @@ Main entry point for the truce audio plugin framework.
 
 `truce` is the only dependency most plugin authors need. It re-exports
 `truce-core` (traits and types), `truce-params` (parameter system), and the
-proc macros from `truce-derive` (all four - `Params`, `ParamEnum`, `State`,
-and `plugin_info!()`), giving you a single import path for everything.
+proc macros from `truce-derive` (`Params`, `ParamEnum`, `State` at the
+crate root, plus `plugin_info!()` via the preludes), giving you a single
+import path for everything.
 
 ## Key re-exports
 
-- `Plugin`, `PluginExport`, `AudioBuffer`, `Editor` from truce-core
+- `PluginExport`, `Editor`, `EventList`, `ProcessContext`, `ProcessStatus`
+  and the rest of the core runtime types from truce-core, via the
+  preludes (`AudioBuffer` is a per-prelude precision-pinned type alias
+  rather than a plain re-export)
 - `FloatParam`, `IntParam`, `BoolParam`, `EnumParam`, `Smoother` from truce-params
 - `FloatParamReadF32` / `FloatParamReadF64` extension traits, bringing `param.read()` into scope at the prelude's precision
 - `#[derive(Params)]`, `#[derive(ParamEnum)]`, `#[derive(State)]` from truce-derive (at the crate root); `plugin_info!()` is available via the preludes
@@ -20,7 +24,7 @@ and `plugin_info!()`), giving you a single import path for everything.
 
 ## Preludes
 
-Four flavours, each pinning a different precision combination:
+Four flavors, each pinning a different precision combination:
 
 | Prelude | Audio buffer | `param.read()` returns | When to pick |
 |---|---|---|---|
@@ -53,11 +57,11 @@ the conventional pattern.
 
 ```toml
 [dependencies]
-truce = { version = "0.49", features = ["clap"] }
+truce = { version = "6.1", features = ["clap"] }
 ```
 
-(Cargo's caret resolver expands `"0.49"` to `>=0.49.0, <0.50.0`, so
-you'll pick up every `0.49.x` patch release without re-editing. To
+(Cargo's caret resolver expands `"6.1"` to `>=6.1.0, <7.0.0`, so
+you'll pick up every `6.1.x` patch release without re-editing. To
 track an unreleased checkout, swap the line for
 `truce = { git = "https://github.com/truce-audio/truce", branch = "main", features = ["clap"] }`.
 Or just run `cargo truce new` and let the scaffolder write the

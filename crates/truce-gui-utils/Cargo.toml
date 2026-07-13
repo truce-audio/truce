@@ -1,6 +1,6 @@
 [package]
 name = "truce-gui-utils"
-description = "Cross-backend host-side helpers for truce GUI backends (macOS NSView anchoring, etc)."
+description = "Host-side platform helpers shared by truce GUI backends (macOS NSView anchoring, etc)."
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true

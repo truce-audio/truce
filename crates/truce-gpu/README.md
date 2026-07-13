@@ -27,8 +27,8 @@ Opt into GPU rendering by enabling the `gpu` feature on `truce-gui`:
 
 ```toml
 [dependencies]
-truce     = { version = "0.49", features = ["clap"] }
-truce-gui = { version = "0.49", features = ["gpu"] }
+truce     = { version = "6.1", features = ["clap"] }
+truce-gui = { version = "6.1", features = ["gpu"] }
 ```
 
 `truce-gui` pulls in `truce-gpu` transitively and routes the built-in

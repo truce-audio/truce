@@ -7,7 +7,7 @@ Built-in GUI runtime for truce plugins.
 Provides a complete widget toolkit that draws knobs, sliders, meters,
 dropdowns, and XY pads straight from your parameter layout - no custom
 editor code, no pixel math. The `BuiltinEditor` auto-generates a full UI
-from a `GridLayout`. By default it rasterises on the CPU with tiny-skia;
+from a `GridLayout`. By default it rasterizes on the CPU with tiny-skia;
 opt into GPU rendering (wgpu) with the `gpu` feature.
 
 Windowing is handled through baseview. In CPU mode the tiny-skia pixmap
@@ -19,7 +19,7 @@ formats (CLAP, VST3, VST2, AU, LV2, AAX, standalone) use the same path.
 editor types. The renderers themselves live in sibling crates, so a
 plugin only compiles the one it uses:
 
-- the CPU rasteriser (`CpuBackend`, tiny-skia + fontdue) lives in
+- the CPU rasterizer (`CpuBackend`, tiny-skia + skrifa) lives in
   [`truce-cpu`](../truce-cpu), pulled in by the default `cpu` feature;
 - the GPU backend (`WgpuBackend`, wgpu) lives in
   [`truce-gpu`](../truce-gpu), pulled in by the `gpu` feature.
@@ -28,7 +28,7 @@ The lightweight trait + data surface (`GridLayout`, `RenderBackend`,
 `WidgetType`, `Theme`, ...) lives in
 [`truce-gui-types`](../truce-gui-types) so alt-GUI backends
 (`truce-egui` / `truce-iced` / `truce-slint`) and plugin authors using a
-custom editor don't transitively pull in the rasterisation + windowing
+custom editor don't transitively pull in the rasterization + windowing
 stack.
 
 ## Key types
