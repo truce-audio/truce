@@ -309,7 +309,7 @@ pub fn param_dropdown<P: Params + 'static>(
 /// Vertical level meter with one bar per supplied meter id.
 ///
 /// Each bar binds its `padding-top` to a Memo over the shared meter
-/// signal from [`ParamLens::meter_signal`]. The editor's root timer
+/// signal from [`ParamLens::meter_signal`]. The editor's idle poll
 /// (registered in `ViziaEditor::open`) calls
 /// [`ParamLens::refresh_meters`] ~30Hz, which fans the latest store
 /// values into every registered meter signal. vizia's reactive graph

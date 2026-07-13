@@ -3,6 +3,8 @@
 //! DAW-provided parent window.
 
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -271,6 +273,17 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
 
         let parent_wrapper = ParentWindow(parent);
 
+        // Created before the view tree so `on_idle` can poll host-written
+        // params/meters without `cx.add_timer`/`start_timer`. vizia_core
+        // 0.4.0's timer heap has a `modify_timer` infinite-loop bug, and
+        // embedded hosts (Bitwig on Windows) often never deliver timer
+        // ticks to a plug-in child window anyway - LX plugins drive their
+        // own ~33ms cadence via a draw()-based Ticker + `needs_redraw()`,
+        // which does run `on_idle` every frame.
+        let lens = ParamLens::new(typed_ctx.clone());
+        let lens_for_idle = lens.clone();
+        let last_param_poll = Arc::new(Mutex::new(Instant::now()));
+
         let app = Application::new(move |cx| {
             // Register the embedded font, if any, before any view
             // builds - vizia caches font shaping per family.
@@ -293,35 +306,9 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             for css in &stylesheets {
                 let _ = cx.add_stylesheet(*css);
             }
-            let lens = ParamLens::new(typed_ctx.clone());
-
-            // Run the user's setup *first* so the view tree is built
-            // (and meter widgets have registered their signals via
-            // `lens.meter_signal(id)`) before the polling timer can
-            // fire. Calling `start_timer` ahead of `(setup)` raced
-            // against the initial style / layout / draw passes and
-            // sometimes left the standalone window grey on first
-            // paint.
+            // Run setup first so widgets register `value_signal` /
+            // `meter_signal` handles before the first idle poll.
             (setup)(cx, lens.clone());
-
-            // Single root timer drives every `level_meter` widget and
-            // syncs host-written params into registered `value_signal`s.
-            // The tick callback fans the latest store values into every
-            // registered meter/param signal once per frame; vizia's
-            // reactive graph then re-evaluates bound widgets. ~30Hz is
-            // plenty for visible motion and cheaper than a render-rate tick.
-            let lens_for_timer = lens;
-            let timer = cx.add_timer(
-                std::time::Duration::from_millis(33),
-                None,
-                move |_ev, action| {
-                    if matches!(action, TimerAction::Tick(_)) {
-                        lens_for_timer.refresh_params();
-                        lens_for_timer.refresh_meters();
-                    }
-                },
-            );
-            cx.start_timer(timer);
         })
         .inner_size((lw, lh));
 
@@ -349,27 +336,42 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             None => app,
         };
 
-        // Per-frame re-anchor on macOS: pin every child NSView of the
-        // host's plug-in pane to the parent's top so a canvas that
-        // grows under host/user resize doesn't drift its top edge
-        // above the visible area (clipping the editor's header /
-        // first row). No-op on other platforms.
-        //
-        // The parent pointer lives in a shared atomic that `close()` /
-        // `Drop` zero, so a late idle tick fired after teardown reads 0
-        // and skips instead of messaging a freed `NSView`.
+        // ~30 Hz idle poll: host→store→`value_signal` / `meter_signal`
+        // sync plus macOS child-view re-anchor. Replaces the old
+        // `cx.add_timer` path (see `lens` comment above).
         #[cfg(target_os = "macos")]
-        let app = {
+        {
             self.reanchor_parent
                 .store(parent_for_reanchor, Ordering::Relaxed);
-            let reanchor = Arc::clone(&self.reanchor_parent);
-            app.on_idle(move |_cx| {
+        }
+        let last_param_poll = Arc::clone(&last_param_poll);
+        #[cfg(target_os = "macos")]
+        let reanchor = Arc::clone(&self.reanchor_parent);
+        let app = app.on_idle(move |_cx| {
+            let now = Instant::now();
+            let due = last_param_poll
+                .lock()
+                .map(|mut last| {
+                    if now.duration_since(*last) >= Duration::from_millis(33) {
+                        *last = now;
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
+            if due {
+                lens_for_idle.refresh_params();
+                lens_for_idle.refresh_meters();
+            }
+            #[cfg(target_os = "macos")]
+            {
                 let ptr = reanchor.load(Ordering::Relaxed);
                 if ptr != 0 {
                     truce_gui_utils::reanchor_all_children_to_top(ptr as *mut std::ffi::c_void);
                 }
-            })
-        };
+            }
+        });
 
         // Catch panics at the FFI boundary, like the other GUI
         // backends' handlers: this `open` runs inside the plugin

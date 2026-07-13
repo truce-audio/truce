@@ -9,7 +9,7 @@
 //! on first use - widgets call `value_signal(id)` during view build
 //! (inside vizia's setup context) and cache the returned handle.
 //! Host-driven changes are polled into those signals by
-//! [`ParamLens::refresh_params`] on the editor's root timer (see
+//! [`ParamLens::refresh_params`] on the editor's `on_idle` hook (see
 //! `ViziaEditor::open`), matching the meter path in
 //! [`ParamLens::refresh_meters`].
 
@@ -33,7 +33,7 @@ pub struct ParamLens<P: Params + ?Sized> {
     /// widget bound to the same id through vizia's reactive graph.
     signals: Arc<Mutex<HashMap<u32, Signal<f32>>>>,
     /// Per-meter display-value signals (`level_meter`). Updated from
-    /// the editor's root polling timer (see `ViziaEditor::open`).
+    /// the editor's idle poll (see `ViziaEditor::open`).
     meter_signals: Arc<Mutex<HashMap<u32, Signal<f32>>>>,
     /// Params with an open `begin_edit`…`end_edit` gesture. Skipped by
     /// [`Self::refresh_params`] so a mid-drag knob is not rebuilt from a
@@ -125,8 +125,8 @@ impl<P: Params + 'static> ParamLens<P> {
 
     /// Shared `Signal<f32>` for a meter id. First access creates the
     /// Signal seeded from the current store value; subsequent accesses
-    /// return the same handle. The editor's root polling timer (set up
-    /// in `ViziaEditor::open` via [`Self::refresh_meters`]) updates
+    /// return the same handle. The editor's idle poll (set up in
+    /// `ViziaEditor::open` via [`Self::refresh_meters`]) updates
     /// every registered meter signal once per tick so vizia's reactive
     /// graph re-renders bars in real time.
     ///
@@ -152,7 +152,7 @@ impl<P: Params + 'static> ParamLens<P> {
     }
 
     /// Push the current store meter values into every registered meter
-    /// signal. Called once per timer tick by `ViziaEditor::open`.
+    /// signal. Called from `ViziaEditor::open`'s idle poll.
     ///
     /// # Panics
     /// Panics if the internal signal-map `Mutex` was poisoned.
@@ -168,7 +168,7 @@ impl<P: Params + 'static> ParamLens<P> {
 
     /// Push current store param values into every registered
     /// [`Self::value_signal`], except params mid-gesture. Called on the
-    /// same ~30 Hz timer as [`Self::refresh_meters`] so host automation,
+    /// same ~30 Hz idle poll as [`Self::refresh_meters`] so host automation,
     /// preset recall, and remote-control pages repaint widgets bound to
     /// those signals without a plugin-side poll.
     ///
