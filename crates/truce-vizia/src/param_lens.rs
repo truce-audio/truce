@@ -312,10 +312,22 @@ impl<P: Params + 'static> ParamLens<P> {
 
     /// Mid-drag value write. Caller must have called `begin_edit`
     /// first; otherwise host automation gates may reject the edit.
+    ///
+    /// Does not push the shared [`Self::value_signal`] while the param is
+    /// mid-gesture: vizia `Binding`s keyed to that signal would rebuild the
+    /// knob/slider subtree on every move, destroying the captured widget and
+    /// wedging all further pointer input until the host releases capture.
     pub fn set(&self, id: impl Into<u32>, normalized: f64) {
         let id_u32: u32 = id.into();
         self.ctx.set_param(id_u32, normalized);
-        self.push_value_signal(id_u32, normalized as f32);
+        let skip_push = self
+            .editing
+            .lock()
+            .expect("ParamLens editing set poisoned")
+            .contains(&id_u32);
+        if !skip_push {
+            self.push_value_signal(id_u32, normalized as f32);
+        }
     }
 
     /// End a continuous drag.
