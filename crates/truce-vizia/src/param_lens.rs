@@ -8,13 +8,17 @@
 //! param without any extra wiring. The Signal map is lazily populated
 //! on first use - widgets call `value_signal(id)` during view build
 //! (inside vizia's setup context) and cache the returned handle.
+//! Host-driven changes are polled into those signals by
+//! [`ParamLens::refresh_params`] on the editor's root timer (see
+//! `ViziaEditor::open`), matching the meter path in
+//! [`ParamLens::refresh_meters`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use truce_core::editor::{PluginContext, PluginContextReadF32};
 use truce_params::Params;
-use vizia::prelude::{Signal, SignalUpdate};
+use vizia::prelude::{Signal, SignalGet, SignalUpdate};
 
 /// Reactive handle to the plugin's `Params` for vizia views.
 ///
@@ -29,9 +33,18 @@ pub struct ParamLens<P: Params + ?Sized> {
     /// widget bound to the same id through vizia's reactive graph.
     signals: Arc<Mutex<HashMap<u32, Signal<f32>>>>,
     /// Per-meter display-value signals (`level_meter`). Updated from
-    /// the editor's idle tick (see `ViziaEditor::open`).
+    /// the editor's root polling timer (see `ViziaEditor::open`).
     meter_signals: Arc<Mutex<HashMap<u32, Signal<f32>>>>,
+    /// Params with an open `begin_edit`…`end_edit` gesture. Skipped by
+    /// [`Self::refresh_params`] so a mid-drag knob is not rebuilt from a
+    /// host write racing the same param.
+    editing: Arc<Mutex<HashSet<u32>>>,
 }
+
+/// Normalized values below this delta are treated as unchanged during
+/// [`ParamLens::refresh_params`] to avoid spurious reactive rebuilds from
+/// float noise in the atomic param store.
+const PARAM_SYNC_EPS: f32 = 1e-6;
 
 impl<P: Params + ?Sized> Clone for ParamLens<P> {
     fn clone(&self) -> Self {
@@ -39,6 +52,7 @@ impl<P: Params + ?Sized> Clone for ParamLens<P> {
             ctx: self.ctx.clone(),
             signals: Arc::clone(&self.signals),
             meter_signals: Arc::clone(&self.meter_signals),
+            editing: Arc::clone(&self.editing),
         }
     }
 }
@@ -49,6 +63,14 @@ impl<P: Params + 'static> ParamLens<P> {
             ctx,
             signals: Arc::new(Mutex::new(HashMap::new())),
             meter_signals: Arc::new(Mutex::new(HashMap::new())),
+            editing: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    fn push_value_signal(&self, id: u32, normalized: f32) {
+        let map = self.signals.lock().expect("ParamLens signal map poisoned");
+        if let Some(signal) = map.get(&id) {
+            signal.set(normalized);
         }
     }
 
@@ -103,10 +125,10 @@ impl<P: Params + 'static> ParamLens<P> {
 
     /// Shared `Signal<f32>` for a meter id. First access creates the
     /// Signal seeded from the current store value; subsequent accesses
-    /// return the same handle. The editor's idle tick (set up in
-    /// `ViziaEditor::open` via [`Self::refresh_meters`]) updates every
-    /// registered meter signal once per tick so vizia's reactive graph
-    /// re-renders bars in real time.
+    /// return the same handle. The editor's root polling timer (set up
+    /// in `ViziaEditor::open` via [`Self::refresh_meters`]) updates
+    /// every registered meter signal once per tick so vizia's reactive
+    /// graph re-renders bars in real time.
     ///
     /// Must be called from inside a vizia setup context (i.e. while
     /// building a view tree).
@@ -130,7 +152,7 @@ impl<P: Params + 'static> ParamLens<P> {
     }
 
     /// Push the current store meter values into every registered meter
-    /// signal. Called once per idle tick by `ViziaEditor::open`.
+    /// signal. Called once per timer tick by `ViziaEditor::open`.
     ///
     /// # Panics
     /// Panics if the internal signal-map `Mutex` was poisoned.
@@ -144,19 +166,28 @@ impl<P: Params + 'static> ParamLens<P> {
         }
     }
 
-    /// Push the current store value into every registered param signal,
-    /// so host-driven automation (a DAW LFO / envelope, or an undo)
-    /// moves the bound widgets - a value `Signal` is otherwise only
-    /// written by the widget's own gesture. Called once per idle tick by
-    /// `ViziaEditor::open`. `set_if_changed` skips signals whose value is
-    /// unchanged, so an idle editor never repaints on this account.
+    /// Push current store param values into every registered
+    /// [`Self::value_signal`], except params mid-gesture. Called on the
+    /// same ~30 Hz timer as [`Self::refresh_meters`] so host automation,
+    /// preset recall, and remote-control pages repaint widgets bound to
+    /// those signals without a plugin-side poll.
     ///
     /// # Panics
-    /// Panics if the internal signal-map `Mutex` was poisoned.
+    /// Panics if an internal `Mutex` was poisoned.
     pub fn refresh_params(&self) {
+        let editing = self
+            .editing
+            .lock()
+            .expect("ParamLens editing set poisoned");
         let map = self.signals.lock().expect("ParamLens signal map poisoned");
         for (id, signal) in map.iter() {
-            signal.set_if_changed(self.ctx.get_param(*id));
+            if editing.contains(id) {
+                continue;
+            }
+            let store = self.ctx.get_param(*id);
+            if (signal.get() - store).abs() > PARAM_SYNC_EPS {
+                signal.set(store);
+            }
         }
     }
 
@@ -262,24 +293,39 @@ impl<P: Params + 'static> ParamLens<P> {
     /// Emit a host-automation gesture: `begin_edit`, set, `end_edit`
     /// in one call. Use for one-shot edits like clicking a toggle.
     pub fn automate(&self, id: impl Into<u32>, normalized: f64) {
-        self.ctx.automate(id, normalized);
+        let id_u32: u32 = id.into();
+        self.ctx.automate(id_u32, normalized);
+        self.push_value_signal(id_u32, normalized as f32);
     }
 
     /// Start a continuous drag (knob, slider, XY pad). Call once on
     /// pointer-down; pair with `set` per pointer-move and `end_edit`
     /// on pointer-up.
     pub fn begin_edit(&self, id: impl Into<u32>) {
-        self.ctx.begin_edit(id);
+        let id_u32: u32 = id.into();
+        self.editing
+            .lock()
+            .expect("ParamLens editing set poisoned")
+            .insert(id_u32);
+        self.ctx.begin_edit(id_u32);
     }
 
     /// Mid-drag value write. Caller must have called `begin_edit`
     /// first; otherwise host automation gates may reject the edit.
     pub fn set(&self, id: impl Into<u32>, normalized: f64) {
-        self.ctx.set_param(id, normalized);
+        let id_u32: u32 = id.into();
+        self.ctx.set_param(id_u32, normalized);
+        self.push_value_signal(id_u32, normalized as f32);
     }
 
     /// End a continuous drag.
     pub fn end_edit(&self, id: impl Into<u32>) {
-        self.ctx.end_edit(id);
+        let id_u32: u32 = id.into();
+        self.editing
+            .lock()
+            .expect("ParamLens editing set poisoned")
+            .remove(&id_u32);
+        self.ctx.end_edit(id_u32);
+        self.push_value_signal(id_u32, self.ctx.get_param(id_u32));
     }
 }
