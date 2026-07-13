@@ -304,18 +304,19 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             // paint.
             (setup)(cx, lens.clone());
 
-            // Single root timer drives every `level_meter` widget.
-            // The tick callback fans the latest store values into
-            // every registered meter signal once per frame; vizia's
-            // reactive graph then re-evaluates the Memos driving the
-            // bar heights. ~30Hz is plenty for visible motion and
-            // cheaper than a render-rate tick.
+            // Single root timer drives every `level_meter` widget and
+            // syncs host-written params into registered `value_signal`s.
+            // The tick callback fans the latest store values into every
+            // registered meter/param signal once per frame; vizia's
+            // reactive graph then re-evaluates bound widgets. ~30Hz is
+            // plenty for visible motion and cheaper than a render-rate tick.
             let lens_for_timer = lens;
             let timer = cx.add_timer(
                 std::time::Duration::from_millis(33),
                 None,
                 move |_ev, action| {
                     if matches!(action, TimerAction::Tick(_)) {
+                        lens_for_timer.refresh_params();
                         lens_for_timer.refresh_meters();
                     }
                 },

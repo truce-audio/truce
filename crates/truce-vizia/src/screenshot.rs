@@ -105,9 +105,10 @@ pub(crate) fn render_with_state<P: Params + 'static>(
         let lens = ParamLens::new(typed_ctx);
         (setup)(inner, lens.clone());
         // No event loop runs in the screenshot path, so the editor's
-        // timer never fires. Push current meter values into the
-        // signals once so the rendered bars reflect the live store
-        // value rather than the on-build snapshot.
+        // timer never fires. Push current param/meter values into the
+        // signals once so rendered widgets reflect the live store
+        // rather than the on-build snapshot.
+        lens.refresh_params();
         lens.refresh_meters();
     }
 
