@@ -5,6 +5,7 @@ Notable changes per release.
 ## 6.1.4
 
 - `cargo truce new` now scaffolds stateful plugins as `type DspState = Self` instead of an explicit DspState struct
+- Slint editors no longer panic on HiDPI displays.
 
 ## 6.1.2
 
