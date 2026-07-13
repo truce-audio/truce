@@ -14,8 +14,7 @@
 
 <p align="center">
   <a href="https://crates.io/crates/cargo-truce"><img src="https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white" alt="crates.io"></a>
-  <a href="https://truce.audio/docs/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a><br/>
-  Upgrading between major versions? See the <a href="https://truce.audio/docs/migrations/">migration guide</a>.
+  <a href="https://truce.audio/docs/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a>
 </p>
 
 ## Quick Start
@@ -155,11 +154,6 @@ pub struct GainParams {
 
 use GainParamsParamId as P;
 
-// A stateless descriptor. Parameters live in `GainParams`; this gain
-// carries no per-instance DSP state, so it implements `PurePluginLogic`.
-// (A plugin with DSP state - filter memory, oscillator phase - puts it
-// in a `#[derive(Default)] struct GainDspState { .. }` and implements
-// `PluginLogic` with `type DspState = GainDspState` instead.)
 pub struct Gain;
 
 impl PurePluginLogic for Gain {
