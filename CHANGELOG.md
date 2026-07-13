@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.1.4
+
+- `cargo truce new` now scaffolds stateful plugins as `type DspState = Self` instead of an explicit DspState struct
+
 ## 6.1.2
 
 - A panic in your plugin's code - editor build/open/close, resize/scale, iOS touch and keyboard handling, or DSP `reset`/prepare - is now caught at the host boundary on every format instead of crashing the DAW, and a caught editor panic no longer freezes or leaks the editor. `request_resize` is safe to call from inside an editor method; it applies on the next frame.

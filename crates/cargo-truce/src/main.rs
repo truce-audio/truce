@@ -81,9 +81,9 @@ Scaffold:
       Scaffold a new single-plugin project. Defaults include the
       `standalone` feature + `src/main.rs` host; pass --no-standalone
       to skip those (saves the bin entry, the dep, and the file).
-      `--stateful` (default) implements `PluginLogic` with a
-      `#[derive(Default)]` DSP-state struct pre-wired; `--pure`
-      implements the stateless `PurePluginLogic`.
+      `--stateful` (default) implements `PluginLogic` where the plugin
+      struct is its own DSP state (`type DspState = Self`), pre-wired;
+      `--pure` implements the stateless `PurePluginLogic`.
       `--vendor` / `--vendor-id` populate `truce.toml` directly;
       omit them to get a `My Company` / `com.mycompany` placeholder
       to edit by hand.
@@ -98,7 +98,7 @@ Scaffold:
         --vendor-id <id>            Reverse-domain vendor ID (defaults to com.<name>)
         --instrument                Default all plugins to instrument type
         --midi                      Default all plugins to midi type
-        --pure | --stateful         PurePluginLogic vs PluginLogic + DSP-state struct (default)
+        --pure | --stateful         PurePluginLogic vs PluginLogic (type DspState = Self) (default)
         --no-standalone             Skip the standalone feature + host bin in every plugin
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
@@ -321,11 +321,11 @@ Options:
   --instrument            Default plugin kind is `instrument` (synth).
   --midi                  Default plugin kind is `midi`.
   --pure                  Implement `PurePluginLogic` - params only, no
-                          DSP-state struct.
-  --stateful              Implement `PluginLogic` with a
-                          `#[derive(Default)]` DSP-state struct and a
-                          `state` argument on `process`, pre-wired. This
-                          is the default.
+                          DSP state.
+  --stateful              Implement `PluginLogic` where the plugin struct
+                          is its own DSP state (`type DspState = Self`)
+                          with a `state` argument on `process`, pre-wired.
+                          This is the default.
   --no-standalone         Skip generating a standalone runner crate.
   --workspace             Multi-plugin workspace mode (positional args
                           after the name are plugin names).
@@ -370,9 +370,10 @@ struct NewArgs {
     name: String,
     plugin_names: Vec<String>,
     default_kind: PluginKind,
-    /// `PluginLogic` with an explicit DSP-state struct (default) vs the
-    /// stateless `PurePluginLogic`. Set by `--stateful` / `--pure`;
-    /// applies to every plugin in the scaffold.
+    /// `PluginLogic` where the plugin struct is its own DSP state
+    /// (`type DspState = Self`, default) vs the stateless
+    /// `PurePluginLogic`. Set by `--stateful` / `--pure`; applies to
+    /// every plugin in the scaffold.
     default_statefulness: Statefulness,
     vendor_name: Option<String>,
     vendor_id: Option<String>,
