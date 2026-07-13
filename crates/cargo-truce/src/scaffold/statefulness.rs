@@ -1,8 +1,8 @@
 //! Statefulness axis - whether the scaffolded plugin implements the
-//! stateless `PurePluginLogic` sugar or the full `PluginLogic` with an
-//! explicit `#[derive(Default)]` DSP-state struct. Drives the impl
-//! header, the DSP-state declaration, and the `process` signature the
-//! scaffold's lib.rs emits.
+//! stateless `PurePluginLogic` sugar or the full `PluginLogic` where the
+//! descriptor is its own DSP state (`type DspState = Self`). Drives the
+//! descriptor struct, the `type DspState` line, and the `process`
+//! signature the scaffold's lib.rs emits.
 
 /// Which leaf trait the scaffold's plugin implements.
 #[derive(Clone, Copy, PartialEq)]
@@ -10,9 +10,10 @@ pub enum Statefulness {
     /// `impl PurePluginLogic` - no `DspState`, no `state` argument, for
     /// a params-only effect.
     Pure,
-    /// `impl PluginLogic` with `type DspState = <Name>DspState` and a
-    /// `state: &mut Self::DspState` argument on `process`. The default:
-    /// most plugins grow DSP state, so the plumbing is pre-wired.
+    /// `impl PluginLogic` where the descriptor is its own DSP state
+    /// (`type DspState = Self`) and `process` takes `state: &mut
+    /// Self::DspState`. The default: most plugins grow DSP state, so the
+    /// plumbing is pre-wired.
     Stateful,
 }
 
@@ -26,25 +27,35 @@ impl Statefulness {
         }
     }
 
-    /// Text emitted immediately above `pub struct <Name>;` - the
-    /// DSP-state struct (stateful only) plus the descriptor's doc
-    /// comment. Always ends in a newline so the struct declaration
-    /// starts its own line.
+    /// Doc comment emitted immediately above the descriptor struct.
+    /// Always ends in a newline so the struct starts its own line.
     #[must_use]
-    pub fn descriptor_block(self, struct_name: &str) -> String {
+    pub fn descriptor_block(self) -> String {
         match self {
             Self::Pure => PURE_DESCRIPTOR.to_string(),
-            Self::Stateful => STATEFUL_DESCRIPTOR.replace("{struct_name}", struct_name),
+            Self::Stateful => STATEFUL_DESCRIPTOR.to_string(),
+        }
+    }
+
+    /// The descriptor struct declaration itself. A pure plugin is a unit
+    /// struct; a stateful plugin folds its DSP state into the descriptor
+    /// (`type DspState = Self`), so the struct carries `#[derive(Default)]`
+    /// and a field block. No trailing newline - the template supplies it.
+    #[must_use]
+    pub fn struct_decl(self, struct_name: &str) -> String {
+        match self {
+            Self::Pure => format!("pub struct {struct_name};"),
+            Self::Stateful => STATEFUL_STRUCT.replace("{struct_name}", struct_name),
         }
     }
 
     /// The `type DspState = ...;` line inside the impl block, or empty
     /// for a pure plugin. Ends in a newline when present.
     #[must_use]
-    pub fn dsp_state_type(self, struct_name: &str) -> String {
+    pub fn dsp_state_type(self) -> String {
         match self {
             Self::Pure => String::new(),
-            Self::Stateful => format!("    type DspState = {struct_name}DspState;\n"),
+            Self::Stateful => "    type DspState = Self;\n".to_string(),
         }
     }
 
@@ -67,20 +78,21 @@ impl Statefulness {
 
 const PURE_DESCRIPTOR: &str = "\
 // Stateless descriptor. When your DSP needs per-instance state
-// (filters, voices, phase), scaffold with `--stateful` - or add a
-// `#[derive(Default)]` DSP-state struct, switch the impl header to
-// `PluginLogic`, add `type DspState`, and take `state: &mut
+// (filters, voices, phase), scaffold with `--stateful` - or give this
+// struct fields, add `#[derive(Default)]`, switch the impl header to
+// `PluginLogic`, add `type DspState = Self`, and take `state: &mut
 // Self::DspState` as the first `process` argument.
 ";
 
 const STATEFUL_DESCRIPTOR: &str = "\
-// Per-instance DSP state - filters, delay lines, phase counters. The
-// shell owns it and keeps it alive across a hot-reload, so a code-only
-// reload preserves reverb tails and oscillator phase. Fields need
-// `Default`: derive it, or hand-write `Default` when a fresh state has
-// non-zero values.
-#[derive(Default)]
-pub struct {struct_name}DspState {}
-
-// Stateless descriptor - the DSP state above lives in the shell.
+// The plugin struct is its own DSP state (`type DspState = Self`). The
+// shell owns it and preserves it across a hot-reload, so a code-only
+// reload keeps reverb tails and oscillator phase alive.
 ";
+
+const STATEFUL_STRUCT: &str = "\
+#[derive(Default)]
+pub struct {struct_name} {
+    // Per-instance DSP state - filters, delay lines, phase counters.
+    // Fields need `Default`. Add them as your DSP grows.
+}";

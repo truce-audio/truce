@@ -755,10 +755,11 @@ fn single_plugin_clippy_clean() {
     s.cargo_clippy().unwrap();
 }
 
-// `--stateful` (the default) emits `impl PluginLogic` with an empty
-// `#[derive(Default)]` DSP-state struct and a `_state` argument. Clippy
-// -D warnings on the result guards that path: a scaffold mustn't inherit
-// a warning from the empty state or the unused `_state`.
+// `--stateful` (the default) emits `impl PluginLogic` where the plugin
+// struct is its own DSP state (`type DspState = Self`, empty for a fresh
+// scaffold) with a `_state` argument. Clippy -D warnings on the result
+// guards that path: a scaffold mustn't inherit a warning from the empty
+// state or the unused `_state`.
 #[test]
 fn single_plugin_stateful_clippy_clean() {
     let s = Scaffold::new("single-stateful", "demo_stateful").arg("--stateful");

@@ -60,10 +60,12 @@ pub(crate) struct PluginScaffoldingContext {
     /// Leaf trait the `impl ... for` header names (`PurePluginLogic`
     /// or `PluginLogic`).
     pub impl_trait: &'static str,
-    /// DSP-state struct + descriptor doc comment emitted above the
-    /// `pub struct <Name>;` line. Empty of a state struct for a pure
-    /// plugin.
+    /// Descriptor doc comment emitted above the descriptor struct.
     pub descriptor_block: String,
+    /// The descriptor struct declaration: a unit struct for a pure
+    /// plugin, or a `#[derive(Default)]` struct that is its own DSP state
+    /// (`type DspState = Self`) for a stateful one.
+    pub struct_decl: String,
     /// `type DspState = ...;` line inside the impl block; empty for a
     /// pure plugin.
     pub dsp_state_type: String,
@@ -101,8 +103,9 @@ impl PluginScaffoldingContext {
             dep_args: dep_args(dep_form, pins.tag, pins.version),
             params_struct: kind.params_struct(&struct_name),
             impl_trait: statefulness.impl_trait(),
-            descriptor_block: statefulness.descriptor_block(&struct_name),
-            dsp_state_type: statefulness.dsp_state_type(&struct_name),
+            descriptor_block: statefulness.descriptor_block(),
+            struct_decl: statefulness.struct_decl(&struct_name),
+            dsp_state_type: statefulness.dsp_state_type(),
             process_body: statefulness.wrap_process(kind.process_body()),
             bus_layouts_method: kind.bus_layouts_method(),
             layout_knob: kind.layout_knob(),

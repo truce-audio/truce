@@ -5,7 +5,7 @@ use truce_gui_types::layout::\{GridLayout, knob, widgets};
 
 use {struct_name}ParamsParamId as P;
 
-{descriptor_block | unescaped}pub struct {struct_name};
+{descriptor_block | unescaped}{struct_decl | unescaped}
 
 impl {impl_trait} for {struct_name} \{
     type Params = {struct_name}Params;
