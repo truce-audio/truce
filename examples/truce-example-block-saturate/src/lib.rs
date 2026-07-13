@@ -46,27 +46,48 @@ pub struct SaturateParams {
     pub meter_right: MeterSlot,
 }
 
-/// Stateless descriptor - saturation carries no DSP state, only params.
+/// Descriptor; the SIMD scratch lives in [`SaturateDsp`], sized in `reset`.
 pub struct Saturate;
 
-const MAX_BLOCK: usize = 1024;
+/// Per-instance SIMD scratch, sized to the host's max block in `reset`.
+/// `sx` holds the driven input, `sy` holds `tanh(sx)`; the three-stage
+/// chain (drive -> tanh -> output) can't alias the audio output with the
+/// tanh input, so a distinct scratch pair is the cleanest shape.
+#[derive(Default)]
+pub struct SaturateDsp {
+    sx: Vec<f32>,
+    sy: Vec<f32>,
+    drive_db: Vec<f32>,
+    output_db: Vec<f32>,
+    drive_lin_buf: Vec<f32>,
+    output_lin_buf: Vec<f32>,
+}
 
-impl PurePluginLogic for Saturate {
+impl PluginLogic for Saturate {
     type Params = SaturateParams;
+    type DspState = SaturateDsp;
+
+    fn reset(state: &mut SaturateDsp, _params: &SaturateParams, config: &AudioConfig) {
+        for buf in [
+            &mut state.sx,
+            &mut state.sy,
+            &mut state.drive_db,
+            &mut state.output_db,
+            &mut state.drive_lin_buf,
+            &mut state.output_lin_buf,
+        ] {
+            buf.clear();
+            buf.resize(config.max_block_size, 0.0);
+        }
+    }
 
     fn process(
+        state: &mut SaturateDsp,
         params: &SaturateParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Two scratch buffers: sx holds the driven input, sy holds
-        // tanh(sx). Three-stage chain (drive → tanh → output) can't
-        // alias the audio output buffer with the tanh input, so a
-        // pair of stack scratches is the cleanest shape.
-        let mut sx = [0.0_f32; MAX_BLOCK];
-        let mut sy = [0.0_f32; MAX_BLOCK];
-
         if !params.drive.is_smoothing() && !params.output.is_smoothing() {
             // Fast path: constant drive + output gains.
             let drive_lin = db_to_linear(params.drive.value());
@@ -74,11 +95,9 @@ impl PurePluginLogic for Saturate {
 
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
-                let n = inp.len().min(MAX_BLOCK);
-                let inp = &inp[..n];
-                let sx = &mut sx[..n];
-                let sy = &mut sy[..n];
-                let out = &mut out[..n];
+                let n = inp.len();
+                let sx = &mut state.sx[..n];
+                let sy = &mut state.sy[..n];
                 ops::scale_block(sx, inp, drive_lin); // sx = inp * drive
                 math::tanh_block(sy, sx); // sy = tanh(sx)
                 ops::scale_block(out, sy, output_lin); // out = sy * output
@@ -87,25 +106,19 @@ impl PurePluginLogic for Saturate {
             // Slow path: per-sample drive + output envelopes.
             // `read_into` advances each smoother by exactly `n`, so the
             // value doesn't step at the next block edge.
-            let n = buffer.num_samples().min(MAX_BLOCK);
-            let mut drive_db = [0.0_f32; MAX_BLOCK];
-            let mut output_db = [0.0_f32; MAX_BLOCK];
-            params.drive.read_into(&mut drive_db[..n]);
-            params.output.read_into(&mut output_db[..n]);
-            let mut drive_lin_buf = [0.0_f32; MAX_BLOCK];
-            let mut output_lin_buf = [0.0_f32; MAX_BLOCK];
-            math::db_to_linear_block(&mut drive_lin_buf[..n], &drive_db[..n]);
-            math::db_to_linear_block(&mut output_lin_buf[..n], &output_db[..n]);
+            let n = buffer.num_samples();
+            params.drive.read_into(&mut state.drive_db[..n]);
+            params.output.read_into(&mut state.output_db[..n]);
+            math::db_to_linear_block(&mut state.drive_lin_buf[..n], &state.drive_db[..n]);
+            math::db_to_linear_block(&mut state.output_lin_buf[..n], &state.output_db[..n]);
 
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
-                let nn = inp.len().min(n);
-                let inp = &inp[..nn];
-                let drive_lin = &drive_lin_buf[..nn];
-                let output_lin = &output_lin_buf[..nn];
-                let sx = &mut sx[..nn];
-                let sy = &mut sy[..nn];
-                let out = &mut out[..nn];
+                let nn = inp.len();
+                let drive_lin = &state.drive_lin_buf[..nn];
+                let output_lin = &state.output_lin_buf[..nn];
+                let sx = &mut state.sx[..nn];
+                let sy = &mut state.sy[..nn];
                 ops::mul_block(sx, inp, drive_lin); // sx = inp * drive
                 math::tanh_block(sy, sx); // sy = tanh(sx)
                 ops::mul_block(out, sy, output_lin); // out = sy * output
@@ -162,6 +175,26 @@ mod tests {
                 })
                 .run()
         });
+    }
+
+    #[test]
+    fn large_block_processes_full_buffer() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+        // A block larger than the former hard-coded 1024 scratch. The whole
+        // block must be written, not truncated at 1024 samples.
+        let result = driver!(Plugin)
+            .block_size(2048)
+            .duration(Duration::from_millis(100))
+            .input(InputSource::Constant(0.5))
+            .run();
+        assertions::assert_no_nans(&result);
+        let ch0 = &result.output[0];
+        assert!(ch0.len() >= 2048);
+        assert!(
+            ch0[1024..2048].iter().all(|&s| s != 0.0),
+            "output past 1024 samples was not processed"
+        );
     }
 
     #[test]

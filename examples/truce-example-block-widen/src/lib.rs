@@ -37,15 +37,29 @@ pub struct WidenParams {
     pub meter_right: MeterSlot,
 }
 
-/// Stateless descriptor - the widener carries no DSP state, only params.
+/// Descriptor; the mid/side scratch lives in [`WidenDsp`], sized in `reset`.
 pub struct Widen;
 
-const MAX_BLOCK: usize = 1024;
+/// Per-instance mid/side scratch, sized to the host's max block in `reset`.
+#[derive(Default)]
+pub struct WidenDsp {
+    mid: Vec<f32>,
+    side: Vec<f32>,
+}
 
-impl PurePluginLogic for Widen {
+impl PluginLogic for Widen {
     type Params = WidenParams;
+    type DspState = WidenDsp;
+
+    fn reset(state: &mut WidenDsp, _params: &WidenParams, config: &AudioConfig) {
+        state.mid.clear();
+        state.mid.resize(config.max_block_size, 0.0);
+        state.side.clear();
+        state.side.resize(config.max_block_size, 0.0);
+    }
 
     fn process(
+        state: &mut WidenDsp,
         params: &WidenParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
@@ -62,7 +76,7 @@ impl PurePluginLogic for Widen {
             return ProcessStatus::Normal;
         }
 
-        let n = buffer.num_samples().min(MAX_BLOCK);
+        let n = buffer.num_samples();
         // Width is applied block-constant; `read_after(n)` advances
         // the smoother by the whole block so the wall-clock
         // convergence time matches the smoother declaration.
@@ -70,14 +84,12 @@ impl PurePluginLogic for Widen {
 
         // Build mid + side from input. Scalar loop autovectorizes
         // (LLVM packs the four ops per iteration into NEON / AVX).
-        let mut mid = [0.0_f32; MAX_BLOCK];
-        let mut side = [0.0_f32; MAX_BLOCK];
         {
             let in_l = buffer.input(0);
             let in_r = buffer.input(1);
             for i in 0..n {
-                mid[i] = 0.5 * (in_l[i] + in_r[i]);
-                side[i] = 0.5 * (in_l[i] - in_r[i]);
+                state.mid[i] = 0.5 * (in_l[i] + in_r[i]);
+                state.side[i] = 0.5 * (in_l[i] - in_r[i]);
             }
         }
 
@@ -85,13 +97,13 @@ impl PurePluginLogic for Widen {
         // The mac_block pair is what this example exists to show.
         {
             let (_, out_l) = buffer.io(0);
-            ops::copy_block(&mut out_l[..n], &mid[..n]);
-            ops::mac_block(&mut out_l[..n], &side[..n], width);
+            ops::copy_block(&mut out_l[..n], &state.mid[..n]);
+            ops::mac_block(&mut out_l[..n], &state.side[..n], width);
         }
         {
             let (_, out_r) = buffer.io(1);
-            ops::copy_block(&mut out_r[..n], &mid[..n]);
-            ops::mac_block(&mut out_r[..n], &side[..n], -width);
+            ops::copy_block(&mut out_r[..n], &state.mid[..n]);
+            ops::mac_block(&mut out_r[..n], &state.side[..n], -width);
         }
 
         if buffer.num_output_channels() >= 1 {
@@ -141,6 +153,26 @@ mod tests {
                 })
                 .run()
         });
+    }
+
+    #[test]
+    fn large_block_processes_full_buffer() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+        // A block larger than the former hard-coded 1024 scratch. The whole
+        // block must be written, not truncated at 1024 samples.
+        let result = driver!(Plugin)
+            .block_size(2048)
+            .duration(Duration::from_millis(100))
+            .input(InputSource::Constant(0.5))
+            .run();
+        assertions::assert_no_nans(&result);
+        let ch0 = &result.output[0];
+        assert!(ch0.len() >= 2048);
+        assert!(
+            ch0[1024..2048].iter().all(|&s| s != 0.0),
+            "output past 1024 samples was not processed"
+        );
     }
 
     #[test]

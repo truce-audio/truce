@@ -196,6 +196,12 @@ impl SynthDspState {
         let sustain = params.envelope.sustain.value();
         let release = params.envelope.release.value();
 
+        // Steal the oldest voice *before* pushing, so `len` never exceeds
+        // the pre-reserved capacity - a push past capacity would reallocate
+        // on the audio thread.
+        if self.voices.len() >= MAX_VOICES {
+            self.voices.remove(0);
+        }
         self.voices.push(Voice::new(
             note,
             freq,
@@ -206,9 +212,6 @@ impl SynthDspState {
             sustain,
             release,
         ));
-        if self.voices.len() > MAX_VOICES {
-            self.voices.remove(0);
-        }
     }
 
     fn note_off(&mut self, note: u8) {
@@ -366,6 +369,26 @@ mod tests {
                     s.set_param(P::Waveform, 0.1);
                     s.wait_ms(15);
                     s.note_off(60);
+                })
+                .run()
+        });
+    }
+
+    #[test]
+    fn voice_overflow_is_allocation_free() {
+        use std::time::Duration;
+        use truce_test::{assert_no_audio_alloc, driver};
+        // More simultaneous notes than the 16-voice pool: stealing the
+        // oldest voice must happen before the push, so `voices` never grows
+        // past its reserved capacity and reallocates on the audio thread.
+        assert_no_audio_alloc(|| {
+            driver!(Plugin)
+                .duration(Duration::from_millis(20))
+                .script(|s| {
+                    for note in 48..72u8 {
+                        s.note_on(note, 0.8);
+                    }
+                    s.wait_ms(10);
                 })
                 .run()
         });

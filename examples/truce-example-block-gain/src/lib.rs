@@ -11,9 +11,9 @@
 //! residual gap between this design and the pre-vectorization
 //! baseline; routing through the vectorized math closes it.
 //!
-//! Trade-off vs. a scalar precompute: one extra stack allocation
-//! (`lin: [f32; MAX_BLOCK]`) and one extra pass over the envelope.
-//! Net win measurable when N smoothers ≥ ~4.
+//! Trade-off vs. a scalar precompute: one extra scratch buffer
+//! (`lin`) and one extra pass over the envelope. Net win measurable
+//! when N smoothers ≥ ~4.
 
 use truce::prelude::*;
 use truce_core::buffer::ChunkItem;
@@ -44,16 +44,41 @@ pub struct GainParams {
     pub meter_right: MeterSlot,
 }
 
-/// Stateless descriptor - gain carries no DSP state, only params.
+/// Descriptor; the SIMD scratch lives in [`GainDsp`], sized in `reset`.
 pub struct Gain;
 
 const N: usize = 32;
-const MAX_BLOCK: usize = 1024;
 
-impl PurePluginLogic for Gain {
+/// Per-instance SIMD scratch, sized to the host's max block in `reset`
+/// so the envelope precompute never assumes a fixed block length.
+#[derive(Default)]
+pub struct GainDsp {
+    gain_db: Vec<f32>,
+    pan: Vec<f32>,
+    lin: Vec<f32>,
+    g_l: Vec<f32>,
+    g_r: Vec<f32>,
+}
+
+impl PluginLogic for Gain {
     type Params = GainParams;
+    type DspState = GainDsp;
+
+    fn reset(state: &mut GainDsp, _params: &GainParams, config: &AudioConfig) {
+        for buf in [
+            &mut state.gain_db,
+            &mut state.pan,
+            &mut state.lin,
+            &mut state.g_l,
+            &mut state.g_r,
+        ] {
+            buf.clear();
+            buf.resize(config.max_block_size, 0.0);
+        }
+    }
 
     fn process(
+        state: &mut GainDsp,
         params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
@@ -78,11 +103,9 @@ impl PurePluginLogic for Gain {
             // apply via chunks_mut. `read_into` advances each
             // smoother by exactly `n` (matching what we consume), so
             // the gain doesn't step at the next block edge.
-            let n = buffer.num_samples().min(MAX_BLOCK);
-            let mut gain_db = [0.0_f32; MAX_BLOCK];
-            let mut pan = [0.0_f32; MAX_BLOCK];
-            params.gain.read_into(&mut gain_db[..n]);
-            params.pan.read_into(&mut pan[..n]);
+            let n = buffer.num_samples();
+            params.gain.read_into(&mut state.gain_db[..n]);
+            params.pan.read_into(&mut state.pan[..n]);
 
             // Vectorize the transcendental into `lin`. This is the
             // only step in the slow path that doesn't autovectorize
@@ -90,16 +113,13 @@ impl PurePluginLogic for Gain {
             // db_to_linear_block routes through wide's native
             // `exp`, so the dB → linear conversion runs in f32x8
             // chunks (or NEON on aarch64).
-            let mut lin = [0.0_f32; MAX_BLOCK];
-            math::db_to_linear_block(&mut lin[..n], &gain_db[..n]);
+            math::db_to_linear_block(&mut state.lin[..n], &state.gain_db[..n]);
 
             // The pan split (max/min/sub/mul) autovectorizes
             // cleanly under -O; no explicit SIMD needed.
-            let mut g_l = [0.0_f32; MAX_BLOCK];
-            let mut g_r = [0.0_f32; MAX_BLOCK];
             for i in 0..n {
-                g_l[i] = lin[i] * (1.0 - pan[i].max(0.0));
-                g_r[i] = lin[i] * (1.0 + pan[i].min(0.0));
+                state.g_l[i] = state.lin[i] * (1.0 - state.pan[i].max(0.0));
+                state.g_r[i] = state.lin[i] * (1.0 + state.pan[i].min(0.0));
             }
 
             let mut chunks = buffer.chunks_mut::<N>();
@@ -118,7 +138,7 @@ impl PurePluginLogic for Gain {
                         out,
                     } => (ch, sample, inp, out),
                 };
-                let env = if ch == 0 { &g_l } else { &g_r };
+                let env = if ch == 0 { &state.g_l } else { &state.g_r };
                 ops::mul_block(out, inp, &env[sample..sample + inp.len()]);
             }
         }
@@ -174,6 +194,32 @@ mod tests {
                 })
                 .run()
         });
+    }
+
+    #[test]
+    fn large_block_slow_path_processes_full_buffer() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+        // A block larger than the former hard-coded 1024 scratch. With a
+        // smoother active (the slow path), the envelope apply used to index
+        // out of bounds and panic on the audio thread.
+        let result = driver!(Plugin)
+            .block_size(2048)
+            .duration(Duration::from_millis(100))
+            .input(InputSource::Constant(0.5))
+            .script(|s| {
+                s.set_param(P::Gain, 0.9);
+                s.wait_ms(5);
+                s.set_param(P::Gain, 0.2);
+            })
+            .run();
+        assertions::assert_no_nans(&result);
+        let ch0 = &result.output[0];
+        assert!(ch0.len() >= 2048);
+        assert!(
+            ch0[1024..2048].iter().all(|&s| s != 0.0),
+            "output past 1024 samples was not processed"
+        );
     }
 
     #[test]

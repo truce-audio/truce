@@ -53,27 +53,36 @@ pub struct DryWetParams {
     pub meter_right: MeterSlot,
 }
 
-/// Stateless descriptor - dry/wet carries no DSP state, only params.
+/// Descriptor; the SIMD scratch lives in [`DryWetDsp`], sized in `reset`.
 pub struct DryWet;
 
-const MAX_BLOCK: usize = 1024;
+/// Per-instance SIMD scratch, sized to the host's max block in `reset`.
+#[derive(Default)]
+pub struct DryWetDsp {
+    /// Holds the saturated signal; `tanh_block` wants distinct in/out,
+    /// then `mix_block` folds wet and dry into out in one SIMD pass.
+    wet: Vec<f32>,
+    driven: Vec<f32>,
+}
 
-impl PurePluginLogic for DryWet {
+impl PluginLogic for DryWet {
     type Params = DryWetParams;
+    type DspState = DryWetDsp;
+
+    fn reset(state: &mut DryWetDsp, _params: &DryWetParams, config: &AudioConfig) {
+        state.wet.clear();
+        state.wet.resize(config.max_block_size, 0.0);
+        state.driven.clear();
+        state.driven.resize(config.max_block_size, 0.0);
+    }
 
     fn process(
+        state: &mut DryWetDsp,
         params: &DryWetParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Wet scratch holds the saturated signal. `tanh_block`
-        // wants distinct in/out so a stack scratch is the natural
-        // shape; mix_block then folds wet and dry into out in one
-        // SIMD pass.
-        let mut wet = [0.0_f32; MAX_BLOCK];
-        let mut driven = [0.0_f32; MAX_BLOCK];
-
         // Both mix and drive are applied block-constant, so
         // `read_after(n)` advances each smoother by the whole block
         // in one atomic pair - matching the per-block consumption
@@ -92,11 +101,9 @@ impl PurePluginLogic for DryWet {
 
         for ch in 0..buffer.channels() {
             let (inp, out) = buffer.io(ch);
-            let n = inp.len().min(MAX_BLOCK);
-            let inp = &inp[..n];
-            let driven = &mut driven[..n];
-            let wet = &mut wet[..n];
-            let out = &mut out[..n];
+            let n = inp.len();
+            let driven = &mut state.driven[..n];
+            let wet = &mut state.wet[..n];
             ops::scale_block(driven, inp, drive_lin); // driven = inp * drive
             math::tanh_block(wet, driven); // wet = tanh(driven)
             ops::mix_block(out, inp, dry_g, wet, wet_g); // out = inp * dry_g + wet * wet_g
@@ -152,6 +159,26 @@ mod tests {
                 })
                 .run()
         });
+    }
+
+    #[test]
+    fn large_block_processes_full_buffer() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+        // A block larger than the former hard-coded 1024 scratch. The whole
+        // block must be written, not truncated at 1024 samples.
+        let result = driver!(Plugin)
+            .block_size(2048)
+            .duration(Duration::from_millis(100))
+            .input(InputSource::Constant(0.5))
+            .run();
+        assertions::assert_no_nans(&result);
+        let ch0 = &result.output[0];
+        assert!(ch0.len() >= 2048);
+        assert!(
+            ch0[1024..2048].iter().all(|&s| s != 0.0),
+            "output past 1024 samples was not processed"
+        );
     }
 
     #[test]
