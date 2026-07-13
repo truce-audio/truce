@@ -799,19 +799,34 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     }
                     self.pending_size
                         .store(pack_size((fw, fh)), Ordering::Release);
-                    // Mirror the OS-reported scale into the shared
-                    // cell (so a follow-up host `set_scale_factor`
-                    // reads a fresh baseline) and bump `last_applied`
-                    // so `on_frame`'s diff-check stays a no-op.
+                    // Mirror the OS-reported scale into the shared cell
+                    // (so a follow-up host `set_scale_factor` reads a
+                    // fresh baseline) and let `on_frame`'s scale-change
+                    // branch own the physical reconcile.
+                    //
+                    // Deliberately NOT bumped here: `last_applied_scale`,
+                    // and NOT dispatched here: `ScaleFactorChanged`. A
+                    // HiDPI display often delivers a scale change
+                    // (physical size grows) while the *logical* size is
+                    // unchanged - e.g. open-time scale 1.0 corrected to
+                    // 2.0 on the first `Resized`. In that case the
+                    // `pending_size` branch in `on_frame` is a no-op (its
+                    // guard skips when the logical size matches), so the
+                    // ONLY thing that resizes the slint window / wgpu
+                    // surface / pixel buffers to the new physical extent
+                    // is the `scale.take_change` branch. If we pre-bumped
+                    // `last_applied_scale` (or dispatched the scale event
+                    // eagerly, growing the slint window's physical size)
+                    // that branch would see no change and skip too -
+                    // leaving `last_phys_*` stale while slint expects the
+                    // larger extent, which panics the software renderer
+                    // ("buffer too small") on the next render and
+                    // cascades into a wgpu swapchain-semaphore panic on
+                    // the device-loss respawn. Leaving `last_applied_scale`
+                    // stale lets `take_change` fire and run the full,
+                    // ordered reconcile (dispatch scale + set_size +
+                    // surface/blit resize) in one place.
                     self.scale.set(scale);
-                    #[allow(clippy::cast_possible_truncation)]
-                    let scale_f32 = scale as f32;
-                    self.last_applied_scale = scale_f32;
-                    self.slint_window
-                        .window()
-                        .dispatch_event(WindowEvent::ScaleFactorChanged {
-                            scale_factor: scale_f32,
-                        });
                 }
                 EventStatus::Ignored
             }
