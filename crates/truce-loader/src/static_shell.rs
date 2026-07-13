@@ -456,6 +456,9 @@ macro_rules! export_static {
             fn get_meter(&self, meter_id: u32) -> f32 {
                 self.inner.get_meter(meter_id)
             }
+            fn republish_snapshot(&mut self) {
+                self.inner.republish_snapshot();
+            }
         }
 
         impl $crate::__macro_deps::truce_core::export::PluginExport for __HotShellWrapper {
