@@ -44,15 +44,13 @@ pub struct GainParams {
     pub meter_right: MeterSlot,
 }
 
-/// Descriptor; the SIMD scratch lives in [`GainDsp`], sized in `reset`.
-pub struct Gain;
-
-const N: usize = 32;
-
-/// Per-instance SIMD scratch, sized to the host's max block in `reset`
-/// so the envelope precompute never assumes a fixed block length.
+/// Descriptor that is its own DSP state: holds the SIMD scratch, sized to
+/// the host's max block in `reset` so the envelope precompute never assumes
+/// a fixed block length.
+// `gain_db` is named for the `gain` param, not redundantly for the struct.
+#[allow(clippy::struct_field_names)]
 #[derive(Default)]
-pub struct GainDsp {
+pub struct Gain {
     gain_db: Vec<f32>,
     pan: Vec<f32>,
     lin: Vec<f32>,
@@ -60,11 +58,13 @@ pub struct GainDsp {
     g_r: Vec<f32>,
 }
 
+const N: usize = 32;
+
 impl PluginLogic for Gain {
     type Params = GainParams;
-    type DspState = GainDsp;
+    type DspState = Self;
 
-    fn reset(state: &mut GainDsp, _params: &GainParams, config: &AudioConfig) {
+    fn reset(state: &mut Self, _params: &GainParams, config: &AudioConfig) {
         for buf in [
             &mut state.gain_db,
             &mut state.pan,
@@ -78,7 +78,7 @@ impl PluginLogic for Gain {
     }
 
     fn process(
-        state: &mut GainDsp,
+        state: &mut Self,
         params: &GainParams,
         buffer: &mut AudioBuffer,
         _events: &EventList,
