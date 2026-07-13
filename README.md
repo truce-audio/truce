@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://crates.io/crates/cargo-truce"><img src="https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white" alt="crates.io"></a>
   <a href="https://truce.audio/docs/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a><br/>
-  Upgrading between versions? See the <a href="https://truce.audio/docs/migrations/">migration guide</a>.
+  Upgrading between major versions? See the <a href="https://truce.audio/docs/migrations/">migration guide</a>.
 </p>
 
 ## Quick Start
