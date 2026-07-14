@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.1.6
+
+- Vizia editors: widgets bound to `ParamLens::value_signal` (knobs, sliders, labels) now repaint in real time when the host automates a parameter (a DAW LFO / envelope), instead of freezing until the editor is reopened. Host-to-UI sync moved off a timer - which embedded plug-in windows like Bitwig on Windows never ticked - onto vizia's render loop.
+
 ## 6.1.5
 
 - VST3 editors on HiDPI Linux hosts that report content scale late (e.g. REAPER) no longer render 1x inside a 2x frame with mismatched click targets; every editor backend now reconciles the late scale (relies on baseview-truce upgrade to 0.1.1-truce.13).

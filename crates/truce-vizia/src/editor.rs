@@ -302,6 +302,11 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
 
         let parent_wrapper = ParentWindow(parent);
 
+        // Build the lens up front so the view-building setup closure and
+        // the idle tick (below) share the same signal maps.
+        let lens = ParamLens::new(typed_ctx);
+        let lens_setup = lens.clone();
+
         let app = Application::new(move |cx| {
             // Register the embedded font, if any, before any view
             // builds - vizia caches font shaping per family.
@@ -324,16 +329,10 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             for css in &stylesheets {
                 let _ = cx.add_stylesheet(*css);
             }
-            let lens = ParamLens::new(typed_ctx.clone());
-
-            // Run the user's setup *first* so the view tree is built
-            // (and meter widgets have registered their signals via
-            // `lens.meter_signal(id)`) before the polling timer can
-            // fire. Calling `start_timer` ahead of `(setup)` raced
-            // against the initial style / layout / draw passes and
-            // sometimes left the standalone window grey on first
-            // paint.
-            (setup)(cx, lens.clone());
+            // Build the user's view tree; its widgets register their
+            // value / meter signals into the shared `lens` here, before
+            // the idle tick starts fanning store values into them.
+            (setup)(cx, lens_setup.clone());
 
             // Stash a proxy into vizia's event loop so `idle()` can push
             // a late host content-scale change back in as
@@ -344,24 +343,6 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             if let Ok(mut slot) = scale_proxy.lock() {
                 *slot = Some(cx.get_proxy());
             }
-
-            // Single root timer drives every `level_meter` widget.
-            // The tick callback fans the latest store values into
-            // every registered meter signal once per frame; vizia's
-            // reactive graph then re-evaluates the Memos driving the
-            // bar heights. ~30Hz is plenty for visible motion and
-            // cheaper than a render-rate tick.
-            let lens_for_timer = lens;
-            let timer = cx.add_timer(
-                std::time::Duration::from_millis(33),
-                None,
-                move |_ev, action| {
-                    if matches!(action, TimerAction::Tick(_)) {
-                        lens_for_timer.refresh_meters();
-                    }
-                },
-            );
-            cx.start_timer(timer);
         })
         .inner_size((lw, lh));
 
@@ -394,27 +375,45 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         // real DPI and needs no correction.
         self.opened_scale = policy_scale;
 
-        // Per-frame re-anchor on macOS: pin every child NSView of the
-        // host's plug-in pane to the parent's top so a canvas that
-        // grows under host/user resize doesn't drift its top edge
-        // above the visible area (clipping the editor's header /
-        // first row). No-op on other platforms.
+        // vizia's render-loop idle callback drives host->UI sync. We use
+        // it instead of `cx.add_timer` because an embedded plug-in child
+        // window (notably Bitwig on Windows) never delivers timer ticks,
+        // which left automation-driven `value_signal` widgets frozen
+        // until the editor was reopened. Throttled to ~30Hz;
+        // `refresh_params` uses `set_if_changed`, so an idle editor
+        // doesn't repaint on this account.
         //
-        // The parent pointer lives in a shared atomic that `close()` /
-        // `Drop` zero, so a late idle tick fired after teardown reads 0
-        // and skips instead of messaging a freed `NSView`.
+        // On macOS the same tick also re-anchors every child NSView of
+        // the host's plug-in pane to the parent's top, so a canvas that
+        // grows under host/user resize doesn't drift its top edge out of
+        // view (clipping the header / first row). The parent pointer
+        // lives in a shared atomic that `close()` / `Drop` zero, so a
+        // late tick fired after teardown reads 0 and skips instead of
+        // messaging a freed `NSView`.
         #[cfg(target_os = "macos")]
-        let app = {
-            self.reanchor_parent
-                .store(parent_for_reanchor, Ordering::Relaxed);
-            let reanchor = Arc::clone(&self.reanchor_parent);
-            app.on_idle(move |_cx| {
+        self.reanchor_parent
+            .store(parent_for_reanchor, Ordering::Relaxed);
+        #[cfg(target_os = "macos")]
+        let reanchor = Arc::clone(&self.reanchor_parent);
+        let idle_lens = lens;
+        let last_refresh = std::cell::Cell::new(std::time::Instant::now());
+        let app = app.on_idle(move |_cx| {
+            #[cfg(target_os = "macos")]
+            {
                 let ptr = reanchor.load(Ordering::Relaxed);
                 if ptr != 0 {
                     truce_gui_utils::reanchor_all_children_to_top(ptr as *mut std::ffi::c_void);
                 }
-            })
-        };
+            }
+            // Throttle the store->signal fan-out; `on_idle` can fire at
+            // the full frame rate, faster than the UI needs.
+            let now = std::time::Instant::now();
+            if now.duration_since(last_refresh.get()) >= std::time::Duration::from_millis(33) {
+                last_refresh.set(now);
+                idle_lens.refresh_params();
+                idle_lens.refresh_meters();
+            }
+        });
 
         // Catch panics at the FFI boundary, like the other GUI
         // backends' handlers: this `open` runs inside the plugin
