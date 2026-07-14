@@ -79,6 +79,7 @@ pub struct PresetRef {
 /// | macOS | `~/Library/Audio/Presets/truce/<vendor>/<plugin>/` | `~/Library/Audio/Presets/Acme/MySynth/` |
 /// | Windows | `%APPDATA%\truce\<vendor>\<plugin>\presets\` | `%APPDATA%\Acme\MySynth\` |
 /// | Linux | `$XDG_DATA_HOME/truce/<vendor>/<plugin>/presets/` | `$XDG_DATA_HOME/truce/Acme/MySynth/` |
+/// | iOS | `<container>/Library/Application Support/truce/<vendor>/<plugin>/presets/` | `<container>/Library/Application Support/Acme/MySynth/` |
 ///
 /// (`$XDG_DATA_HOME` falls back to `~/.local/share` when unset.)
 /// The override replaces the whole default subpath and no `presets`
@@ -104,6 +105,15 @@ pub fn user_preset_root(
             .join(safe_filename(plugin_name))
     });
 
+    #[cfg(target_os = "ios")]
+    {
+        let app_support = ios_application_support_dir()?;
+        let mut root = app_support.join(subpath);
+        if !has_override {
+            root.push("presets");
+        }
+        Some(root)
+    }
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME")?;
@@ -123,7 +133,7 @@ pub fn user_preset_root(
         }
         Some(root)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(target_os = "ios", target_os = "macos", target_os = "windows")))]
     {
         let data_home = std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
@@ -138,6 +148,31 @@ pub fn user_preset_root(
         }
         Some(root)
     }
+}
+
+#[cfg(target_os = "ios")]
+fn ios_application_support_dir() -> Option<PathBuf> {
+    ios_container_home(std::env::var_os("TMPDIR"), std::env::var_os("HOME"))
+        .map(|home| home.join("Library/Application Support"))
+}
+
+// An AUv3 app-extension sandbox has no reliable `HOME`, but its `TMPDIR`
+// is always `<container>/tmp/`, so the container root is that parent.
+// Anything else (no `TMPDIR`, or a non-appex shape) falls back to `HOME`.
+#[cfg(any(target_os = "ios", test))]
+fn ios_container_home(
+    tmpdir: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    if let Some(tmpdir) = tmpdir {
+        let tmpdir = PathBuf::from(tmpdir);
+        if tmpdir.file_name().and_then(|s| s.to_str()) == Some("tmp")
+            && let Some(parent) = tmpdir.parent()
+        {
+            return Some(parent.to_path_buf());
+        }
+    }
+    home.map(PathBuf::from)
 }
 
 /// Sanitize a `[plugin.presets]` `user_dir` override into a safe
@@ -901,6 +936,46 @@ mod tests {
         assert!(overridden.ends_with("AcmeAudio/Synth"));
         // Unusable override falls back to the default path.
         assert_eq!(unusable, default);
+    }
+
+    #[test]
+    fn ios_container_home_prefers_tmpdir_container() {
+        let tmpdir = std::ffi::OsString::from(
+            "/private/var/mobile/Containers/Data/PluginKitPlugin/ABCDEF/tmp/",
+        );
+        let home = std::ffi::OsString::from("/var/mobile");
+
+        let root = ios_container_home(Some(tmpdir), Some(home)).unwrap();
+
+        assert_eq!(
+            root,
+            PathBuf::from("/private/var/mobile/Containers/Data/PluginKitPlugin/ABCDEF")
+        );
+    }
+
+    #[test]
+    fn ios_container_home_falls_back_to_home() {
+        let home =
+            std::ffi::OsString::from("/private/var/mobile/Containers/Data/Application/ABCDEF");
+
+        let root = ios_container_home(None, Some(home)).unwrap();
+
+        assert_eq!(
+            root,
+            PathBuf::from("/private/var/mobile/Containers/Data/Application/ABCDEF")
+        );
+    }
+
+    #[test]
+    fn ios_container_home_ignores_non_tmp_tmpdir() {
+        // A `TMPDIR` that isn't the appex `<container>/tmp/` shape must not
+        // be treated as a container anchor; fall back to `HOME`.
+        let tmpdir = std::ffi::OsString::from("/tmp/scratch/");
+        let home = std::ffi::OsString::from("/var/mobile");
+
+        let root = ios_container_home(Some(tmpdir), Some(home)).unwrap();
+
+        assert_eq!(root, PathBuf::from("/var/mobile"));
     }
 
     #[test]
