@@ -2,9 +2,9 @@
 //! a `vizia::Application` mounted via `baseview-truce` onto the
 //! DAW-provided parent window.
 
-use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_params::Params;
@@ -62,6 +62,23 @@ pub struct ViziaEditor<P: Params + ?Sized> {
     /// Linux, or when the host reported a scale.
     use_system_scale: bool,
     window: Option<vizia::WindowHandle>,
+    /// Live handle to vizia's event loop, captured from the setup
+    /// closure on `open()` and zeroed on `close()` / `Drop`. Lets
+    /// `idle()` push a late host scale change into vizia via
+    /// `WindowEvent::SetUserScale` - the only rescale entry point for
+    /// an already-open vizia window (its `WindowScalePolicy` is frozen
+    /// at open). Shared because the closure runs on baseview's window
+    /// thread while `idle()` runs on the host GUI thread.
+    scale_proxy: Arc<Mutex<Option<ContextProxy>>>,
+    /// The scale vizia's window opened at (its `ScaleFactor` policy).
+    /// `idle()` compares the live host scale against this to derive the
+    /// compensating user-scale. `None` when the window opened under the
+    /// OS `SystemScaleFactor` (standalone), where late host scale
+    /// reports don't apply.
+    opened_scale: Option<f64>,
+    /// Last user-scale pushed via `SetUserScale`, so `idle()` re-emits
+    /// only on an actual change (init `1.0` = no compensation).
+    last_user_scale: f64,
     /// Host parent `NSView` pointer the `on_idle` re-anchor walks.
     /// Shared with the idle closure and zeroed on `close()` / `Drop`
     /// so a late idle tick (queued past window teardown) can't message
@@ -99,6 +116,9 @@ impl<P: Params + 'static> ViziaEditor<P> {
             scale: None,
             use_system_scale: false,
             window: None,
+            scale_proxy: Arc::new(Mutex::new(None)),
+            opened_scale: None,
+            last_user_scale: 1.0,
             #[cfg(target_os = "macos")]
             reanchor_parent: Arc::new(AtomicUsize::new(0)),
         }
@@ -259,6 +279,17 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         let font = self.font;
         let typed_ctx = context.with_params(self.params.clone());
 
+        // Reset the late-scale channel for this open. The setup closure
+        // (below) restocks the proxy once vizia's context exists; clear
+        // any stale one from a prior open so `idle()` can't emit through
+        // a dead event loop before the new window is up, and reset the
+        // last-pushed user-scale to the identity baseline.
+        if let Ok(mut slot) = self.scale_proxy.lock() {
+            *slot = None;
+        }
+        self.last_user_scale = 1.0;
+        let scale_proxy = Arc::clone(&self.scale_proxy);
+
         // Capture the parent NSView pointer (macOS only) as `usize`
         // so vizia's `on_idle` closure can move it across the `Send`
         // bound. The pointer is an opaque AppKit handle, not a Rust
@@ -304,6 +335,16 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             // paint.
             (setup)(cx, lens.clone());
 
+            // Stash a proxy into vizia's event loop so `idle()` can push
+            // a late host content-scale change back in as
+            // `WindowEvent::SetUserScale`. Captured here because this
+            // closure runs on baseview's window thread, where the live
+            // `Context` exists; `idle()` (host GUI thread) only ever
+            // holds the shared slot.
+            if let Ok(mut slot) = scale_proxy.lock() {
+                *slot = Some(cx.get_proxy());
+            }
+
             // Single root timer drives every `level_meter` widget.
             // The tick callback fans the latest store values into
             // every registered meter signal once per frame; vizia's
@@ -347,6 +388,11 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             Some(scale) => app.with_scale_policy(WindowScalePolicy::ScaleFactor(scale)),
             None => app,
         };
+        // Remember the scale the window is pinned to so `idle()` can
+        // detect a later host scale report and compensate. `None`
+        // (OS `SystemScaleFactor`) opts out - that path already tracks
+        // real DPI and needs no correction.
+        self.opened_scale = policy_scale;
 
         // Per-frame re-anchor on macOS: pin every child NSView of the
         // host's plug-in pane to the parent's top so a canvas that
@@ -399,14 +445,44 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         // ordered ahead of any later idle tick).
         #[cfg(target_os = "macos")]
         self.reanchor_parent.store(0, Ordering::Relaxed);
+        // Drop the event-loop proxy so a late `idle()` can't emit into a
+        // window that's tearing down.
+        if let Ok(mut slot) = self.scale_proxy.lock() {
+            *slot = None;
+        }
         if let Some(mut window) = self.window.take() {
             window.close();
         }
     }
 
     fn idle(&mut self) {
-        // vizia drives its own event loop via baseview - no idle
-        // tick needed from truce.
+        // vizia drives its own repaint loop via baseview, so no tick is
+        // needed for that. The one thing truce must forward is a *late*
+        // host content-scale report: REAPER on Linux only calls
+        // `IPlugViewContentScaleSupport::setContentScaleFactor` after
+        // the view is attached, so the window opens at the wrong scale -
+        // a 1x editor stranded in the host's 2x frame. vizia's
+        // `WindowScalePolicy` is frozen at open, so the only correction
+        // path is `WindowEvent::SetUserScale(host / opened)`, which
+        // re-DPIs the tree and resizes the child to fill the host frame.
+        // The common case (scale already correct at open) yields `1.0`
+        // and emits nothing.
+        let (Some(opened), Some(host)) = (self.opened_scale, self.scale) else {
+            return;
+        };
+        if opened <= 0.0 {
+            return;
+        }
+        let user_scale = host / opened;
+        if (user_scale - self.last_user_scale).abs() <= 1.0e-3 {
+            return;
+        }
+        if let Ok(mut slot) = self.scale_proxy.lock()
+            && let Some(proxy) = slot.as_mut()
+            && proxy.emit(WindowEvent::SetUserScale(user_scale)).is_ok()
+        {
+            self.last_user_scale = user_scale;
+        }
     }
 }
 
@@ -418,6 +494,9 @@ impl<P: Params + ?Sized> Drop for ViziaEditor<P> {
         // doesn't leak the underlying CFRunLoop source.
         #[cfg(target_os = "macos")]
         self.reanchor_parent.store(0, Ordering::Relaxed);
+        if let Ok(mut slot) = self.scale_proxy.lock() {
+            *slot = None;
+        }
         if let Some(mut window) = self.window.take() {
             window.close();
         }

@@ -293,6 +293,16 @@ struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
     /// `runtime`); kept here too so `on_frame` can read it without
     /// borrowing `runtime`.
     scale: EditorScale,
+    /// Whether the window's scale is host-driven (baseview
+    /// `WindowScalePolicy::ScaleFactor`, i.e. an embedded plug-in) rather
+    /// than OS-detected (`SystemScaleFactor`, i.e. the standalone). When
+    /// true, the host's `set_scale_factor` is authoritative and baseview's
+    /// echoed `info.scale()` must NOT overwrite it - instead the `Resized`
+    /// handler pushes the host scale into baseview (via
+    /// `Window::set_scale_factor`) when the two diverge, so a late
+    /// `IPlugViewContentScaleSupport` report (REAPER on Linux) is applied
+    /// without the editor and baseview fighting over the scale.
+    host_driven_scale: bool,
     last_cursor: Option<baseview::MouseCursor>,
     /// Constraint copy from the parent `IcedEditor`, applied to
     /// host-driven `Resized` events that bypassed the format's
@@ -427,6 +437,16 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     self.runtime.reconfigure_surface_px(pw, ph);
                 }
             }
+            // Belt-and-suspenders for the `Resized`-handler push: if the host
+            // reported a new scale via `set_scale_factor` with no following
+            // `Resized`, push it into baseview so its mouse-coordinate mapping
+            // tracks the host. `tick()` below reconfigures the render side. A
+            // no-op on Windows/macOS and when baseview already matches.
+            if self.host_driven_scale
+                && (self.scale.get() - self.runtime.last_applied_scale).abs() > 1.0e-9
+            {
+                window.set_scale_factor(self.scale.get());
+            }
             self.runtime.tick();
             if let Some(ref render) = self.runtime.render {
                 let cursor = iced_interaction_to_cursor(render.interaction);
@@ -456,6 +476,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
         // Catch panics at the FFI boundary, like `on_frame`; report the event
         // as `Ignored` on panic instead of aborting the host.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let host_driven_scale = self.host_driven_scale;
             let runtime = &mut self.runtime;
 
             match event {
@@ -521,14 +542,38 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     baseview::EventStatus::Captured
                 }
                 baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
+                    // In host-driven (plug-in) mode the host's reported scale
+                    // is authoritative; baseview's echoed `info.scale()` is the
+                    // value we pinned at creation. If the host has since
+                    // reported a different scale (a late
+                    // `IPlugViewContentScaleSupport` call from REAPER on
+                    // Linux), baseview is stale and this event's physical size
+                    // is at the wrong scale. Push the host scale into baseview
+                    // and drop the event; baseview re-emits a `Resized` at the
+                    // corrected scale (X11 only - a no-op elsewhere, where this
+                    // branch also never triggers because scale is OS-driven).
+                    let bv_scale = info.scale();
+                    let host_scale = runtime.scale.get_f32();
+                    #[allow(clippy::cast_possible_truncation)]
+                    if host_driven_scale && (host_scale - bv_scale as f32).abs() > 1.0e-3 {
+                        window.set_scale_factor(f64::from(host_scale));
+                        return baseview::EventStatus::Ignored;
+                    }
                     crate::platform::note_linux_scale_factor(info.scale());
-                    // Mirror the OS-reported scale into the shared cell
-                    // (so a follow-up `set_scale_factor` from the host
-                    // reads a fresh baseline) and bump `last_applied_scale`
-                    // so `tick()`'s diff-check stays a no-op - we apply
-                    // the reconfigure inline below.
-                    runtime.scale.set(info.scale());
-                    runtime.last_applied_scale = info.scale();
+                    // Mirror the OS-reported scale into the shared cell (so a
+                    // follow-up `set_scale_factor` from the host reads a fresh
+                    // baseline) and bump `last_applied_scale` so `tick()`'s
+                    // diff-check stays a no-op - we apply the reconfigure inline
+                    // below. ONLY in system-scale (standalone) mode: in
+                    // host-driven mode the host owns the cell and we confirmed
+                    // above that baseview agrees, so writing here (and bumping
+                    // `last_applied_scale`) would clobber a concurrent host
+                    // update and suppress `tick()`'s render reconcile (the race
+                    // that stranded the editor at 1x).
+                    if !host_driven_scale {
+                        runtime.scale.set(info.scale());
+                        runtime.last_applied_scale = info.scale();
+                    }
                     // A host that resized the embed window directly never
                     // ran the format's constraint preflight - fit here,
                     // push the corrected size back to the host, and queue
@@ -653,6 +698,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         } else {
             baseview::WindowScalePolicy::SystemScaleFactor
         };
+        // Host-driven scale = pinned `ScaleFactor` policy (embedded plug-in).
+        // In that mode baseview's echoed `info.scale()` is our own pinned
+        // value, not new information, so the `Resized` handler must not let it
+        // overwrite a later host-reported scale.
+        let host_driven_scale = matches!(scale_policy, baseview::WindowScalePolicy::ScaleFactor(_));
 
         // Everything the handler needs is moved into the builder
         // closure, which baseview runs on the handler's own thread. The
@@ -714,6 +764,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                     runtime,
                     pending_size,
                     scale,
+                    host_driven_scale,
                     last_cursor: None,
                     min_size,
                     max_size,

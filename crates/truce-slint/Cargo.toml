@@ -59,7 +59,7 @@ log = "0.4"
 # we haven't wired up here yet. Non-iOS targets keep the full
 # stack; iOS gets the lightweight stub editor in `editor_ios.rs`.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
-baseview = { package = "baseview-truce", version = "0.1.1-truce.5" }
+baseview = { package = "baseview-truce", version = "0.1.1-truce.13" }
 wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 pollster = "0.4"
 # Translate baseview key events into Slint key events. Pinned to the same

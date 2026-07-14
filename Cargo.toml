@@ -176,7 +176,7 @@ wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 # `crates/truce-vizia/` (its own Cargo workspace). Whatever patch
 # wiring vizia ends up needing belongs there, not here - keeping the
 # parent lockfile + iOS bake free of the vizia mess.
-baseview = { package = "baseview-truce", version = "0.1.1-truce.12" }
+baseview = { package = "baseview-truce", version = "0.1.1-truce.13" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features

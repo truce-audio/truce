@@ -262,8 +262,8 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "baseview"
-version = "0.1.1-truce.11"
-source = "git+https://github.com/truce-audio/baseview.git?branch=baseview-truce-vizia#0eee5e73ddd9976520ce048ed120e49ef2dfe480"
+version = "0.1.1-truce.13"
+source = "git+https://github.com/truce-audio/baseview.git?branch=baseview-truce-vizia#18fa79b71bda8d1c6a1de70cd155acefebfc3d3f"
 dependencies = [
  "keyboard-types",
  "nix",
@@ -282,9 +282,9 @@ dependencies = [
 
 [[package]]
 name = "baseview-truce"
-version = "0.1.1-truce.12"
+version = "0.1.1-truce.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bff8aa761c17ba5e7d572efd8fb7b77f6cb282ac3b44fa5731c38f85e2f79576"
+checksum = "5dc830ece0415c778e700c97d38bb28f4d8af0280f9d140f50ea094d0fed3e27"
 dependencies = [
  "keyboard-types",
  "nix",
@@ -810,7 +810,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2348,7 +2348,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2666,7 +2666,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3620,7 +3620,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

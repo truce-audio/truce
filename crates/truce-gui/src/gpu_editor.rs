@@ -120,6 +120,16 @@ struct GpuWindowHandler<P: Params> {
     /// `WgpuBackend::set_scale` + `resize` when they diverge.
     scale: EditorScale,
     last_applied_scale: f32,
+    /// Whether the window's scale is host-driven (baseview
+    /// `WindowScalePolicy::ScaleFactor`, i.e. an embedded plug-in) rather
+    /// than OS-detected (`SystemScaleFactor`, i.e. the standalone). When
+    /// true, the host's `set_scale_factor` is authoritative and baseview's
+    /// echoed `info.scale()` must NOT overwrite it - instead the `Resized`
+    /// handler pushes the host scale into baseview (via
+    /// `Window::set_scale_factor`) when the two diverge, so a late
+    /// `IPlugViewContentScaleSupport` report (REAPER on Linux) is applied
+    /// without the editor and baseview fighting over the scale.
+    host_driven_scale: bool,
     /// Paces paints to the compositor's measured consumption rate so
     /// the per-tick render/present can't park the host's GUI thread in
     /// the swapchain acquire - see [`crate::PaintPacer`].
@@ -165,6 +175,14 @@ impl<P: Params + 'static> GpuWindowHandler<P> {
             if let Some(cur_scale) = self.scale.take_change(&mut self.last_applied_scale) {
                 gpu.set_scale(cur_scale);
                 gpu.resize(self.current_size.0, self.current_size.1);
+                // Push the corrected scale into baseview so its window /
+                // mouse-coordinate mapping tracks the host. Without this, a
+                // host that reports its content scale only after the view is
+                // attached (REAPER on Linux, via
+                // `IPlugViewContentScaleSupport`) leaves baseview pinned to the
+                // creation-time scale and the two fight, flickering
+                // 1x-in-a-2x-frame until it settles. No-op on Windows/macOS.
+                window.set_scale_factor(f64::from(cur_scale));
             }
 
             if let Ok(mut inner) = self.inner.lock() {
@@ -237,7 +255,7 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
         }
     }
 
-    fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+    fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(_) => {
                 let Some(input) = self.translator.translate(&event) else {
@@ -257,7 +275,34 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                     // monitor boundary needs to land on the new DPI. Write
                     // through to the shared cell so `on_frame`'s
                     // `take_change` path calls `set_scale` + `resize`.
-                    self.scale.set(info.scale());
+                    //
+                    // In host-driven (plug-in) mode the host's reported scale
+                    // is authoritative; baseview's echoed `info.scale()` is the
+                    // value we pinned at creation. If the host has since
+                    // reported a different scale (a late
+                    // `IPlugViewContentScaleSupport` call from REAPER on
+                    // Linux), baseview is stale and this event's physical size
+                    // is at the wrong scale. Push the host scale into baseview
+                    // and drop the event; baseview re-emits a `Resized` at the
+                    // corrected scale (X11 only - a no-op elsewhere, where this
+                    // branch also never triggers because scale is OS-driven).
+                    let bv_scale = info.scale();
+                    let host_scale = self.scale.get_f32();
+                    #[allow(clippy::cast_possible_truncation)]
+                    if self.host_driven_scale && (host_scale - bv_scale as f32).abs() > 1.0e-3 {
+                        window.set_scale_factor(f64::from(host_scale));
+                        return EventStatus::Ignored;
+                    }
+                    // Mirror baseview's scale into the shared cell ONLY in
+                    // system-scale (standalone) mode, where `info.scale()` is
+                    // the authoritative OS-detected value. In host-driven mode
+                    // the host owns the cell and we confirmed above that
+                    // baseview agrees, so writing here would clobber a
+                    // concurrent host update (the race that stranded the editor
+                    // at 1x).
+                    if !self.host_driven_scale {
+                        self.scale.set(info.scale());
+                    }
                     crate::platform::note_linux_scale_factor(info.scale());
 
                     // When the editor opts into resize, route the new
@@ -370,6 +415,11 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 .set(crate::platform::query_backing_scale(&parent));
             WindowScalePolicy::SystemScaleFactor
         };
+        // Host-driven scale = pinned `ScaleFactor` policy (embedded plug-in).
+        // In that mode baseview's echoed `info.scale()` is our own pinned
+        // value, not new information, so the `Resized` handler must not let it
+        // overwrite a later host-reported scale.
+        let host_driven_scale = matches!(scale_policy, WindowScalePolicy::ScaleFactor(_));
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
@@ -420,6 +470,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                     current_size: size,
                     scale: scale_handle,
                     last_applied_scale: scale,
+                    host_driven_scale,
                     pacer: crate::platform::PaintPacer::default(),
                 }
             },

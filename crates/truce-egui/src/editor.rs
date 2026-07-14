@@ -399,6 +399,16 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     /// `Resized` event (Reaper on Windows is the typical case).
     scale: EditorScale,
     last_applied_scale: f32,
+    /// Whether the window's scale is host-driven (baseview
+    /// `WindowScalePolicy::ScaleFactor`, i.e. an embedded plug-in) rather
+    /// than OS-detected (`SystemScaleFactor`, i.e. the standalone). When
+    /// true, the host's `set_scale_factor` is authoritative and baseview's
+    /// echoed `info.scale()` must NOT overwrite it - instead the `Resized`
+    /// handler pushes the host scale into baseview (via
+    /// `Window::set_scale_factor`) when the two diverge, so a late
+    /// `IPlugViewContentScaleSupport` report (REAPER on Linux) is applied
+    /// without the editor and baseview fighting over the scale.
+    host_driven_scale: bool,
     last_cursor_pos: egui::Pos2,
     /// Raised by the renderer's device-lost callback (or a swallowed render
     /// panic). Polled in `on_frame`, which rebuilds the renderer + recreates
@@ -653,7 +663,7 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     /// next frame, a finite delay schedules one, and `Duration::MAX`
     /// means idle.
     #[allow(clippy::cast_precision_loss)]
-    fn run_frame(&mut self) -> Option<std::time::Duration> {
+    fn run_frame(&mut self, window: &mut Window) -> Option<std::time::Duration> {
         if !self.painter_ready() {
             return None;
         }
@@ -667,6 +677,14 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             let phys_w = truce_gui::to_physical_px(self.size.0, f64::from(cur_scale));
             let phys_h = truce_gui::to_physical_px(self.size.1, f64::from(cur_scale));
             self.painter_resize(phys_w, phys_h);
+            // Push the corrected scale into baseview so its window /
+            // mouse-coordinate mapping tracks the host. Without this, a host
+            // that reports its content scale only after the view is attached
+            // (REAPER on Linux, via `IPlugViewContentScaleSupport`) leaves
+            // baseview pinned to the creation-time scale and the two fight,
+            // flickering 1x-in-a-2x-frame until it settles. No-op on
+            // Windows/macOS (OS-driven DPI).
+            window.set_scale_factor(f64::from(cur_scale));
         }
 
         let ppp = self.last_applied_scale;
@@ -931,7 +949,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             if !self.should_paint() {
                 return;
             }
-            let repaint_delay = self.run_frame();
+            let repaint_delay = self.run_frame(window);
             self.force_paint = false;
             self.pacer.record_acquire(self.painter_acquire_wait());
             // Schedule the next forced paint from egui's reported delay:
@@ -1092,6 +1110,24 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 }
                 Event::Window(win) => {
                     if let baseview::WindowEvent::Resized(info) = win {
+                        // In host-driven (plug-in) mode the host's reported
+                        // scale is authoritative; baseview's echoed
+                        // `info.scale()` is the value we pinned at creation. If
+                        // the host has since reported a different scale (a late
+                        // `IPlugViewContentScaleSupport` call from REAPER on
+                        // Linux), baseview is stale and this event's physical
+                        // size is at the wrong scale. Push the host scale into
+                        // baseview and drop the event; baseview re-emits a
+                        // `Resized` at the corrected scale (X11 only - a no-op
+                        // elsewhere, where this branch also never triggers
+                        // because scale is OS-driven).
+                        let bv_scale = info.scale();
+                        let host_scale = self.scale.get_f32();
+                        #[allow(clippy::cast_possible_truncation)]
+                        if self.host_driven_scale && (host_scale - bv_scale as f32).abs() > 1.0e-3 {
+                            _window.set_scale_factor(f64::from(host_scale));
+                            return EventStatus::Ignored;
+                        }
                         let pw = info.physical_size().width;
                         let ph = info.physical_size().height;
                         // Any change in the window's physical extent (re)arms
@@ -1168,8 +1204,15 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                             let _ = (rw, rh);
                         }
                         // Write through to the shared scale so `on_frame` /
-                        // `run_frame` convert with the OS-reported DPI.
-                        self.scale.set(info.scale());
+                        // `run_frame` convert with the OS-reported DPI. Only in
+                        // system-scale (standalone) mode: in host-driven mode
+                        // the host owns the cell and we confirmed above that
+                        // baseview agrees, so writing here would clobber a
+                        // concurrent host update (the race that stranded the
+                        // editor at 1x).
+                        if !self.host_driven_scale {
+                            self.scale.set(info.scale());
+                        }
                         // Defer the surface reconfigure to `on_frame` (via the
                         // same `pending_size` cell `set_size` uses) instead of
                         // calling `renderer.resize()` inline here. A fast
@@ -1354,6 +1397,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                 .set(crate::platform::query_backing_scale(&parent));
             WindowScalePolicy::SystemScaleFactor
         };
+        // Host-driven scale = pinned `ScaleFactor` policy (embedded plug-in).
+        // In that mode baseview's echoed `info.scale()` is our own pinned
+        // value, not new information, so the `Resized` handler must not let it
+        // overwrite a later host-reported scale.
+        let host_driven_scale = matches!(scale_policy, WindowScalePolicy::ScaleFactor(_));
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
@@ -1468,6 +1516,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     pending_size,
                     scale: scale_handle,
                     last_applied_scale: scale,
+                    host_driven_scale,
                     last_cursor_pos: egui::Pos2::ZERO,
                     device_lost,
                     font,
