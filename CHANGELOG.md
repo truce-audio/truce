@@ -4,7 +4,8 @@ Notable changes per release.
 
 ## 6.1.6
 
-- Vizia editors: widgets bound to `ParamLens::value_signal` (knobs, sliders, labels) now repaint in real time when the host automates a parameter (a DAW LFO / envelope), instead of freezing until the editor is reopened. Host-to-UI sync moved off a timer - which embedded plug-in windows like Bitwig on Windows never ticked - onto vizia's render loop.
+- Vizia widgets now repaint on host parameter automation, instead of showing stale values until the editor is reopened.
+- iOS AUv3 user presets save and load correctly (resolve inside the app-extension sandbox container).
 
 ## 6.1.5
 
