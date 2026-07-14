@@ -449,7 +449,7 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         if let Ok(mut slot) = self.scale_proxy.lock() {
             *slot = None;
         }
-        if let Some(mut window) = self.window.take() {
+        if let Some(window) = self.window.take() {
             window.close();
         }
     }
@@ -496,7 +496,7 @@ impl<P: Params + ?Sized> Drop for ViziaEditor<P> {
         if let Ok(mut slot) = self.scale_proxy.lock() {
             *slot = None;
         }
-        if let Some(mut window) = self.window.take() {
+        if let Some(window) = self.window.take() {
             window.close();
         }
     }
