@@ -29,7 +29,7 @@ pub struct ParamLens<P: Params + ?Sized> {
     /// widget bound to the same id through vizia's reactive graph.
     signals: Arc<Mutex<HashMap<u32, Signal<f32>>>>,
     /// Per-meter display-value signals (`level_meter`). Updated from
-    /// the editor's root polling timer (see `ViziaEditor::open`).
+    /// the editor's idle tick (see `ViziaEditor::open`).
     meter_signals: Arc<Mutex<HashMap<u32, Signal<f32>>>>,
 }
 
@@ -103,10 +103,10 @@ impl<P: Params + 'static> ParamLens<P> {
 
     /// Shared `Signal<f32>` for a meter id. First access creates the
     /// Signal seeded from the current store value; subsequent accesses
-    /// return the same handle. The editor's root polling timer (set up
-    /// in `ViziaEditor::open` via [`Self::refresh_meters`]) updates
-    /// every registered meter signal once per tick so vizia's reactive
-    /// graph re-renders bars in real time.
+    /// return the same handle. The editor's idle tick (set up in
+    /// `ViziaEditor::open` via [`Self::refresh_meters`]) updates every
+    /// registered meter signal once per tick so vizia's reactive graph
+    /// re-renders bars in real time.
     ///
     /// Must be called from inside a vizia setup context (i.e. while
     /// building a view tree).
@@ -130,7 +130,7 @@ impl<P: Params + 'static> ParamLens<P> {
     }
 
     /// Push the current store meter values into every registered meter
-    /// signal. Called once per timer tick by `ViziaEditor::open`.
+    /// signal. Called once per idle tick by `ViziaEditor::open`.
     ///
     /// # Panics
     /// Panics if the internal signal-map `Mutex` was poisoned.
@@ -141,6 +141,22 @@ impl<P: Params + 'static> ParamLens<P> {
             .expect("ParamLens meter-signal map poisoned");
         for (id, signal) in map.iter() {
             signal.set(self.ctx.get_meter(*id));
+        }
+    }
+
+    /// Push the current store value into every registered param signal,
+    /// so host-driven automation (a DAW LFO / envelope, or an undo)
+    /// moves the bound widgets - a value `Signal` is otherwise only
+    /// written by the widget's own gesture. Called once per idle tick by
+    /// `ViziaEditor::open`. `set_if_changed` skips signals whose value is
+    /// unchanged, so an idle editor never repaints on this account.
+    ///
+    /// # Panics
+    /// Panics if the internal signal-map `Mutex` was poisoned.
+    pub fn refresh_params(&self) {
+        let map = self.signals.lock().expect("ParamLens signal map poisoned");
+        for (id, signal) in map.iter() {
+            signal.set_if_changed(self.ctx.get_param(*id));
         }
     }
 
