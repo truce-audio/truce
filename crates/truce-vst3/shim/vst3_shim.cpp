@@ -37,7 +37,11 @@
 // dispatch source. Message queues are per-thread on Windows, so no
 // plug-frame run loop is needed.
 #define WIN32_LEAN_AND_MEAN
+// mingw's headers predefine NOMINMAX; guard so a cross build stays
+// warning-free.
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 

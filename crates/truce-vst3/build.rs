@@ -8,7 +8,10 @@ fn main() {
         build.flag("/std:c++17");
     } else {
         build.flag("-std=c++17");
-        if cfg!(target_os = "macos") {
+        // `cfg!` in a build script reads the *host*, so cross-compiling
+        // from macOS handed this macOS-only flag to e.g. the mingw g++.
+        // Gate on the target via `CARGO_CFG_TARGET_OS` instead.
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
             // Match the workspace's Apple deployment floor. 10.13 was
             // honored by Xcode <= 14 but newer Xcode SDKs reject it,
             // breaking with `cstdint not found` since no matching

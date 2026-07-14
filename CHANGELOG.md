@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.1.7
+
+- VST3 plugins now cross-compile from macOS to Windows (`x86_64-pc-windows-gnu`); the C++ shim build no longer hands a macOS-only flag to the mingw compiler.
+
 ## 6.1.6
 
 - Vizia widgets now repaint on host parameter automation, instead of showing stale values until the editor is reopened.
