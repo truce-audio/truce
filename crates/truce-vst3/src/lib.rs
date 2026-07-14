@@ -2172,6 +2172,23 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let mut gui = inst.gui.enter();
         if let Some(ref mut editor) = gui.editor {
+            // Re-sync the editor's content scale to the host's current
+            // value right before opening. `host_scale` lives on the
+            // persistent instance and can already be set by the time the
+            // host attaches (REAPER on Linux reports it via
+            // `setContentScaleFactor` around `getSize`, *before* this
+            // `open`), but the editor's own copy only got the value if a
+            // `setContentScaleFactor` / `has_editor` replay happened to
+            // land after the editor object existed and before now. When
+            // it didn't - editor built while `host_scale` was still 1.0,
+            // host bumped it to 2.0, then attached - the editor would open
+            // pinned to 1.0 and render a half-size view in the host's 2x
+            // frame (with 2x-off click targets). Applying it here makes
+            // the open-time scale authoritative regardless of callback
+            // ordering. Skip macOS: Retina is driven through AppKit there
+            // and `host_scale` stays 1.0, so pinning would force 1x.
+            #[cfg(not(target_os = "macos"))]
+            editor.set_scale_factor(inst.host_scale());
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);
             let snapshot = Arc::clone(&inst.snapshot);

@@ -339,12 +339,22 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     rgba_buf: Vec<u8>,
     width: u32,
     height: u32,
-    /// Shared with the parent `SlintEditor`; both `set_scale_factor`
-    /// (host) and the `Resized` handler write here. `on_frame`
-    /// compares against `last_applied_scale` to pick up host-driven
-    /// changes that didn't come through a `Resized` event.
+    /// Shared with the parent `SlintEditor`; `set_scale_factor` (host)
+    /// writes here, and in system-scale mode the `Resized` handler does
+    /// too. `on_frame` compares against `last_applied_scale` to pick up
+    /// host-driven changes that didn't come through a `Resized` event.
     scale: EditorScale,
     last_applied_scale: f32,
+    /// Whether the window's scale is host-driven (baseview
+    /// `WindowScalePolicy::ScaleFactor`, i.e. an embedded plug-in) rather
+    /// than OS-detected (`SystemScaleFactor`, i.e. the standalone). When
+    /// true, the host's `set_scale_factor` is authoritative and baseview's
+    /// echoed `info.scale()` must NOT overwrite it - instead the `Resized`
+    /// handler pushes the host scale into baseview (via
+    /// `Window::set_scale_factor`) when the two diverge, which is how a
+    /// late `IPlugViewContentScaleSupport` report (REAPER on Linux) gets
+    /// applied without the editor and baseview fighting over the scale.
+    host_driven_scale: bool,
     /// Cached physical extents derived from `(width, height,
     /// last_applied_scale)`. Updated only when the scale-change branch
     /// fires - `on_frame`'s render path reads these directly instead
@@ -571,6 +581,18 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
             }
             self.last_phys_w = phys_w;
             self.last_phys_h = phys_h;
+            // Push the corrected scale into baseview so its window /
+            // mouse-coordinate mapping tracks the host. Without this, a host
+            // that reports its content scale only after the view is attached
+            // (REAPER on Linux, via `IPlugViewContentScaleSupport`) leaves
+            // baseview pinned to the creation-time scale: the editor renders
+            // at the new scale but baseview keeps dividing mouse coords by the
+            // old one and re-asserts the old scale in every `Resized`, so the
+            // two fight and the editor flickers 1x-in-a-2x-frame until it
+            // happens to settle. `set_scale_factor` re-interprets the child at
+            // the new scale so subsequent `Resized` / pointer events use it.
+            // No-op on Windows/macOS (OS-driven DPI).
+            window.set_scale_factor(f64::from(cur_scale));
         }
 
         // Compositor pacing veto - see `pacer`. Resize / scale
@@ -753,7 +775,28 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 if let baseview::WindowEvent::Resized(info) = win {
                     let phys_w = info.physical_size().width;
                     let phys_h = info.physical_size().height;
-                    let scale = info.scale();
+                    let bv_scale = info.scale();
+                    // In host-driven (plug-in) mode the host's reported scale
+                    // is authoritative; baseview's echoed `info.scale()` is the
+                    // value we pinned at creation. If the host has since
+                    // reported a different scale (a late
+                    // `IPlugViewContentScaleSupport` call from REAPER on
+                    // Linux), baseview is stale and this event's physical size
+                    // is at the wrong scale. Push the host scale into baseview
+                    // and drop the event; baseview re-emits a `Resized` at the
+                    // corrected scale (X11 only - a no-op elsewhere, where this
+                    // branch also never triggers because scale is OS-driven).
+                    // Without this the editor renders at the host scale while
+                    // baseview keeps dividing mouse coords by - and re-asserting
+                    // in every `Resized` - the stale scale, so the two fight
+                    // and the editor flickers 1x-in-a-2x-frame.
+                    let host_scale = self.scale.get_f32();
+                    #[allow(clippy::cast_possible_truncation)]
+                    if self.host_driven_scale && (host_scale - bv_scale as f32).abs() > 1.0e-3 {
+                        _window.set_scale_factor(f64::from(host_scale));
+                        return EventStatus::Ignored;
+                    }
+                    let scale = bv_scale;
                     truce_gui::platform::note_linux_scale_factor(scale);
                     // Logical dimensions stay below `u32::MAX` and
                     // display scale never exceeds 4.0.
@@ -799,34 +842,28 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     }
                     self.pending_size
                         .store(pack_size((fw, fh)), Ordering::Release);
-                    // Mirror the OS-reported scale into the shared cell
-                    // (so a follow-up host `set_scale_factor` reads a
-                    // fresh baseline) and let `on_frame`'s scale-change
-                    // branch own the physical reconcile.
-                    //
-                    // Deliberately NOT bumped here: `last_applied_scale`,
-                    // and NOT dispatched here: `ScaleFactorChanged`. A
-                    // HiDPI display often delivers a scale change
-                    // (physical size grows) while the *logical* size is
-                    // unchanged - e.g. open-time scale 1.0 corrected to
-                    // 2.0 on the first `Resized`. In that case the
-                    // `pending_size` branch in `on_frame` is a no-op (its
-                    // guard skips when the logical size matches), so the
-                    // ONLY thing that resizes the slint window / wgpu
-                    // surface / pixel buffers to the new physical extent
-                    // is the `scale.take_change` branch. If we pre-bumped
-                    // `last_applied_scale` (or dispatched the scale event
-                    // eagerly, growing the slint window's physical size)
-                    // that branch would see no change and skip too -
-                    // leaving `last_phys_*` stale while slint expects the
-                    // larger extent, which panics the software renderer
-                    // ("buffer too small") on the next render and
-                    // cascades into a wgpu swapchain-semaphore panic on
-                    // the device-loss respawn. Leaving `last_applied_scale`
-                    // stale lets `take_change` fire and run the full,
-                    // ordered reconcile (dispatch scale + set_size +
-                    // surface/blit resize) in one place.
-                    self.scale.set(scale);
+                    // Mirror baseview's scale into the shared cell ONLY in
+                    // system-scale (standalone) mode, where baseview's
+                    // `info.scale()` is the authoritative OS-detected value. In
+                    // host-driven (plug-in) mode the host owns this cell and we
+                    // already confirmed above that baseview agrees with it, so
+                    // writing here would risk clobbering a concurrent host
+                    // `set_scale_factor` (the exact race that stranded the
+                    // editor at 1x). Either way we do NOT bump
+                    // `last_applied_scale` or dispatch `ScaleFactorChanged`
+                    // here, so `on_frame`'s `scale.take_change` branch still
+                    // owns the physical reconcile - the same reason we don't
+                    // pre-bump `last_applied_scale` or dispatch
+                    // `ScaleFactorChanged` here: a HiDPI display can deliver a
+                    // scale change while the logical size is unchanged, and
+                    // `take_change` is then the only thing that resizes the
+                    // slint window / wgpu surface / pixel buffers to the new
+                    // physical extent. (Pre-bumping would make it skip and
+                    // strand `last_phys_*`, panicking the software renderer
+                    // with a buffer-too-small.)
+                    if !self.host_driven_scale {
+                        self.scale.set(scale);
+                    }
                 }
                 EventStatus::Ignored
             }
@@ -956,6 +993,11 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
             self.scale.set(platform::query_backing_scale(&parent));
             WindowScalePolicy::SystemScaleFactor
         };
+        // Host-driven scale = pinned `ScaleFactor` policy (embedded plug-in).
+        // In that mode baseview's echoed `info.scale()` is our own pinned
+        // value, not new information, so the `Resized` handler must not let it
+        // overwrite a later host-reported scale.
+        let host_driven_scale = matches!(scale_policy, WindowScalePolicy::ScaleFactor(_));
         let scale = self.scale.get();
         let typed_ctx = context.with_params(self.params.clone());
         let setup = Arc::clone(&self.setup);
@@ -1036,6 +1078,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     height: lh,
                     scale: scale_handle,
                     last_applied_scale: scale_f32,
+                    host_driven_scale,
                     last_phys_w: phys_w,
                     last_phys_h: phys_h,
                     pacer: truce_gui::PaintPacer::default(),

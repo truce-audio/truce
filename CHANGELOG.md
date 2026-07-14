@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.1.5
+
+- VST3 editors on HiDPI Linux hosts that report content scale late (e.g. REAPER) no longer render 1x inside a 2x frame with mismatched click targets; every editor backend now reconciles the late scale (relies on baseview-truce upgrade to 0.1.1-truce.13).
+
 ## 6.1.4
 
 - `cargo truce new` now scaffolds stateful plugins as `type DspState = Self` instead of an explicit DspState struct

@@ -932,6 +932,16 @@ struct BuiltinWindowHandler<P: Params> {
     /// guards the lifecycle, so reading `editor.scale` is the
     /// canonical access path.
     last_applied_scale: f32,
+    /// Whether the window's scale is host-driven (baseview
+    /// `WindowScalePolicy::ScaleFactor`, i.e. an embedded plug-in) rather
+    /// than OS-detected (`SystemScaleFactor`, i.e. the standalone). When
+    /// true, the host's `set_scale_factor` is authoritative and baseview's
+    /// echoed `info.scale()` must NOT overwrite it - instead the `Resized`
+    /// handler pushes the host scale into baseview (via
+    /// `Window::set_scale_factor`) when the two diverge, so a late
+    /// `IPlugViewContentScaleSupport` report (REAPER on Linux) is applied
+    /// without the editor and baseview fighting over the scale.
+    host_driven_scale: bool,
     /// Enforces min/max/aspect on host resizes that bypassed the
     /// format's negotiation hooks (Linux hosts resizing the embed
     /// window directly).
@@ -1061,6 +1071,14 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 backend.resize(phys_w, phys_h);
             }
             editor.request_repaint();
+            // Push the corrected scale into baseview so its window /
+            // mouse-coordinate mapping tracks the host. Without this, a host
+            // that reports its content scale only after the view is attached
+            // (REAPER on Linux, via `IPlugViewContentScaleSupport`) leaves
+            // baseview pinned to the creation-time scale and the two fight,
+            // flickering 1x-in-a-2x-frame until it happens to settle. No-op on
+            // Windows/macOS (OS-driven DPI).
+            window.set_scale_factor(f64::from(cur_scale));
         }
 
         update_interaction(editor);
@@ -1245,7 +1263,31 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 //    `set_size` so the grid reflows; fixed-size
                 //    editors stay pinned.
                 let editor = unsafe { &mut *self.editor };
-                editor.scale.set(info.scale());
+                // In host-driven (plug-in) mode the host's reported scale is
+                // authoritative; baseview's echoed `info.scale()` is the value
+                // we pinned at creation. If the host has since reported a
+                // different scale (a late `IPlugViewContentScaleSupport` call
+                // from REAPER on Linux), baseview is stale and this event's
+                // physical size is at the wrong scale. Push the host scale into
+                // baseview and drop the event; baseview re-emits a `Resized` at
+                // the corrected scale (X11 only - a no-op elsewhere, where this
+                // branch also never triggers because scale is OS-driven).
+                let bv_scale = info.scale();
+                let host_scale = editor.scale.get_f32();
+                #[allow(clippy::cast_possible_truncation)]
+                if self.host_driven_scale && (host_scale - bv_scale as f32).abs() > 1.0e-3 {
+                    window.set_scale_factor(f64::from(host_scale));
+                    return baseview::EventStatus::Ignored;
+                }
+                // Mirror baseview's scale into the shared cell ONLY in
+                // system-scale (standalone) mode, where `info.scale()` is the
+                // authoritative OS-detected value. In host-driven mode the host
+                // owns the cell and we confirmed above that baseview agrees, so
+                // writing here would clobber a concurrent host update (the race
+                // that stranded the editor at 1x).
+                if !self.host_driven_scale {
+                    editor.scale.set(info.scale());
+                }
                 crate::platform::note_linux_scale_factor(info.scale());
                 let phys = info.physical_size();
                 if editor.can_resize() {
@@ -1474,6 +1516,11 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 .set(crate::platform::query_backing_scale(&parent));
             baseview::WindowScalePolicy::SystemScaleFactor
         };
+        // Host-driven scale = pinned `ScaleFactor` policy (embedded plug-in).
+        // In that mode baseview's echoed `info.scale()` is our own pinned
+        // value, not new information, so the `Resized` handler must not let it
+        // overwrite a later host-reported scale.
+        let host_driven_scale = matches!(scale_policy, baseview::WindowScalePolicy::ScaleFactor(_));
         let scale = self.scale.get();
         let scale_f32 = self.scale.get_f32();
         self.backend = CpuBackend::new(w, h, scale_f32);
@@ -1578,6 +1625,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     backend: shared_for_handler.clone(),
                     translator: crate::interaction::BaseviewTranslator::default(),
                     last_applied_scale: scale_f32,
+                    host_driven_scale,
                     pacer: crate::platform::PaintPacer::default(),
                     resize_corrector: ResizeCorrector::default(),
                     #[cfg(target_os = "windows")]
