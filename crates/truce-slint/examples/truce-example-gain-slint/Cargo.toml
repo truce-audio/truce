@@ -2,7 +2,7 @@
 name = "truce-example-gain-slint"
 # Internal-only - workspace demonstrations not for crates.io.
 publish = false
-version = "6.1.4"
+version = "6.1.5"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
@@ -28,26 +28,26 @@ standalone = ["dep:truce-standalone"]
 shell = ["truce/shell"]
 
 [dependencies]
-truce = { version = "6.1.4", path = "../../../truce", default-features = false }
-truce-core = { version = "6.1.4", path = "../../../truce-core" }
-truce-params = { version = "6.1.4", path = "../../../truce-params" }
-truce-clap = { version = "6.1.4", path = "../../../truce-clap", optional = true }
-truce-vst3 = { version = "6.1.4", path = "../../../truce-vst3", optional = true }
-truce-vst2 = { version = "6.1.4", path = "../../../truce-vst2", optional = true }
-truce-aax = { version = "6.1.4", path = "../../../truce-aax", optional = true }
-truce-au = { version = "6.1.4", path = "../../../truce-au", optional = true }
-truce-lv2 = { version = "6.1.4", path = "../../../truce-lv2", optional = true }
+truce = { version = "6.1.5", path = "../../../truce", default-features = false }
+truce-core = { version = "6.1.5", path = "../../../truce-core" }
+truce-params = { version = "6.1.5", path = "../../../truce-params" }
+truce-clap = { version = "6.1.5", path = "../../../truce-clap", optional = true }
+truce-vst3 = { version = "6.1.5", path = "../../../truce-vst3", optional = true }
+truce-vst2 = { version = "6.1.5", path = "../../../truce-vst2", optional = true }
+truce-aax = { version = "6.1.5", path = "../../../truce-aax", optional = true }
+truce-au = { version = "6.1.5", path = "../../../truce-au", optional = true }
+truce-lv2 = { version = "6.1.5", path = "../../../truce-lv2", optional = true }
 clap-sys = { version = "0.5", optional = true }
-truce-standalone = { version = "6.1.4", path = "../../../truce-standalone", features = ["gui"], optional = true }
-truce-loader = { version = "6.1.4", path = "../../../truce-loader" }
-truce-slint = { version = "6.1.4", path = "../.." }
+truce-standalone = { version = "6.1.5", path = "../../../truce-standalone", features = ["gui"], optional = true }
+truce-loader = { version = "6.1.5", path = "../../../truce-loader" }
+truce-slint = { version = "6.1.5", path = "../.." }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 
 [build-dependencies]
-truce-slint-build = { version = "6.1.4", path = "../../build" }
+truce-slint-build = { version = "6.1.5", path = "../../build" }
 
 [dev-dependencies]
-truce-test = { version = "6.1.4", path = "../../../truce-test" }
+truce-test = { version = "6.1.5", path = "../../../truce-test" }
 
 [lints]
 workspace = true
