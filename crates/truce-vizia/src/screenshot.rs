@@ -80,10 +80,7 @@ pub(crate) fn render_with_state<P: Params + 'static>(
     // draw pass produces a clear-to-white frame and quits.
     backend.context().windows.insert(
         Entity::root(),
-        WindowState {
-            window_description: win_desc.clone(),
-            ..Default::default()
-        },
+        WindowState::new(win_desc.clone()),
     );
 
     {
