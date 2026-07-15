@@ -50,10 +50,12 @@ truce-font = { version = "6.1.7", path = "../truce-font" }
 # anchoring helper). Doesn't drag in any renderer.
 truce-gui-utils = { version = "6.1.7", path = "../truce-gui-utils" }
 
-# Local vizia-audio fork (LX-Audiolabs/vizia-audio) supplies the
-# baseview backend via `vizia_baseview`, pinned to baseview 0.2.2 from
-# crates.io and raw-window-handle 0.6.
-vizia = { path = "C:/Users/lxndr/Documents/LX-AudioLabs/vizia-audio", default-features = false, features = ["baseview"] }
+# LX fork: vizia-audio (not upstream vizia). DAW baseview + parented DPI.
+# Git pin so LX-Audiolabs/truce main works for any consumer (no machine paths).
+# Local path override: in the plugin workspace
+#   [patch."https://github.com/LX-Audiolabs/vizia-audio"]
+#   vizia = { path = "../vizia-audio" }
+vizia = { git = "https://github.com/LX-Audiolabs/vizia-audio", branch = "main", default-features = false, features = ["baseview"] }
 # raw-window-handle 0.6 matches what baseview 0.2.2 + vizia_baseview
 # expose publicly. The platform.rs newtype bridges truce-core's own
 # `RawWindowHandle` enum to rwh's `HasWindowHandle` trait.
