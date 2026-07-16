@@ -115,11 +115,14 @@ pub trait PluginRuntime: Send + 'static {
     /// bridge is a passthrough rather than an `Option<Vec<u8>>` to
     /// `Vec<u8>` translation.
     ///
-    /// **Concurrency contract.** Called on a host or GUI thread under
-    /// the wrapper's plugin lock, so it never runs concurrently with
-    /// `process()` - any field is safe to read. The flip side: an
-    /// audio block that arrives mid-save waits for this to return, so
-    /// keep it cheap (copy bytes out; don't compute or compress here).
+    /// **Who calls this.** Only LV2 (whose host serializes save against
+    /// `run`) calls it on the save path. CLAP / VST3 / AU never do - they
+    /// persist from the lock-free snapshot slot the shell publishes from
+    /// the audio thread, so a host save never stalls audio. A plugin that
+    /// overrides only the user-facing `save_state` still round-trips
+    /// there: the shell falls back to it when `snapshot_into` publishes
+    /// nothing, running it on the audio thread - which is why
+    /// `snapshot_into` is the preferred custom-state path.
     fn save_state(&self) -> Vec<u8> {
         Vec::new()
     }

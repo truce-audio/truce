@@ -287,8 +287,33 @@ pub(crate) fn publish_snapshot<S, L>(
 {
     let version = L::snapshot_version(state);
     publish_snapshot_with(slot, try_snapshot, last_version, version, |buf| {
-        L::snapshot_into(state, buf)
+        snapshot_or_save_state(buf, |b| L::snapshot_into(state, b), || L::save_state(state))
     });
+}
+
+/// Fill `buf` with the plugin's custom-state bytes for the inline
+/// snapshot lane. Prefers `snapshot_into` (the RT-safe path). A legacy
+/// plugin that overrides only `save_state` writes nothing through
+/// `snapshot_into`, so fall back to `save_state` - otherwise CLAP / VST3
+/// / AU (which persist from this slot and never call `save_state`) would
+/// silently save empty custom state. The fallback runs `save_state` on
+/// the audio thread, which is why `snapshot_into` is the recommended
+/// path. Returns whether any bytes were written.
+pub(crate) fn snapshot_or_save_state(
+    buf: &mut Vec<u8>,
+    snapshot_into: impl FnOnce(&mut Vec<u8>) -> bool,
+    save_state: impl FnOnce() -> Vec<u8>,
+) -> bool {
+    if snapshot_into(buf) {
+        return true;
+    }
+    let bytes = save_state();
+    if bytes.is_empty() {
+        return false;
+    }
+    buf.clear();
+    buf.extend_from_slice(&bytes);
+    true
 }
 
 /// Latch logic behind [`publish_snapshot`], parameterized over the raw
@@ -546,9 +571,39 @@ macro_rules! export_static {
 
 #[cfg(test)]
 mod tests {
-    use super::publish_snapshot_with;
+    use super::{publish_snapshot_with, snapshot_or_save_state};
     use std::cell::Cell;
     use truce_core::snapshot::SnapshotSlot;
+
+    #[test]
+    fn snapshot_or_save_state_prefers_snapshot_then_falls_back() {
+        // `snapshot_into` wins when it writes.
+        let mut buf = Vec::new();
+        assert!(snapshot_or_save_state(
+            &mut buf,
+            |b| {
+                b.extend_from_slice(b"inline");
+                true
+            },
+            || b"legacy".to_vec(),
+        ));
+        assert_eq!(buf, b"inline");
+
+        // Legacy `save_state`-only: `snapshot_into` writes nothing, so the
+        // slot is populated from `save_state` (this is the H1 fix).
+        let mut buf = Vec::new();
+        assert!(snapshot_or_save_state(
+            &mut buf,
+            |_| false,
+            || b"legacy".to_vec()
+        ));
+        assert_eq!(buf, b"legacy");
+
+        // No custom state at all: nothing written, returns false.
+        let mut buf = Vec::new();
+        assert!(!snapshot_or_save_state(&mut buf, |_| false, Vec::new));
+        assert!(buf.is_empty());
+    }
 
     #[test]
     fn non_opt_in_latches_off_on_first_block() {
