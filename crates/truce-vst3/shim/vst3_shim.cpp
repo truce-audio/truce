@@ -472,15 +472,19 @@ struct Vst3ProcessContext {
     // chord + key signature fields follow but we don't need them
 };
 
-// ProcessContext state flags
+// ProcessContext state flags. Values from the VST3 SDK
+// (ivstprocesscontext.h StatesAndFlags) - kBarPositionValid and
+// kTimeSigValid are NOT adjacent, and kCycleActive (loop engaged) is
+// distinct from kCycleValid (loop markers hold valid positions).
 enum {
     kPlaying          = 1 << 1,
+    kCycleActive      = 1 << 2,
     kRecording        = 1 << 3,
-    kTempoValid       = 1 << 10,
-    kTimeSigValid     = 1 << 11,
     kProjectTimeMusicValid = 1 << 9,
-    kBarPositionValid = 1 << 13,
+    kTempoValid       = 1 << 10,
+    kBarPositionValid = 1 << 11,
     kCycleValid       = 1 << 12,
+    kTimeSigValid     = 1 << 13,
 };
 
 struct ProcessData {
@@ -1160,7 +1164,9 @@ public:
             transport.bar_start_beats = (pc->state & kBarPositionValid) ? pc->barPositionMusic : 0.0;
             transport.cycle_start_beats = (pc->state & kCycleValid) ? pc->cycleStartMusic : 0.0;
             transport.cycle_end_beats = (pc->state & kCycleValid) ? pc->cycleEndMusic : 0.0;
-            transport.cycle_active = (pc->state & kCycleValid) ? 1 : 0;
+            // kCycleActive is "loop engaged"; kCycleValid only says the
+            // marker positions are readable (hosts set it with loop off).
+            transport.cycle_active = (pc->state & kCycleActive) ? 1 : 0;
             transportPtr = &transport;
         }
 

@@ -5,6 +5,7 @@ Notable changes per release.
 ## 6.1.10
 
 - `save_state` is deprecated in favor of `snapshot_into`.
+- VST3 transport now reads the correct time signature and bar position (their validity flags were swapped), and `cycle_active` reflects whether the loop is engaged rather than merely present.
 
 ## 6.1.9
 
