@@ -866,20 +866,25 @@ impl<S: Sample> RawBufferScratch<S> {
     /// allocation-free for buses up to `num_in` × `num_out` channels
     /// and blocks up to `max_frames`. Idempotent and growth-only.
     pub fn ensure_capacity(&mut self, num_in: usize, num_out: usize, max_frames: usize) {
+        // `reserve_exact(n)` guarantees `capacity >= len() + n`, so the
+        // amount to reserve is measured from `len()`, not `capacity()`:
+        // with `len() < capacity()` (e.g. a fresh Default vec, or one
+        // cleared between blocks) subtracting `capacity()` under-reserves
+        // and leaves `build` to allocate on the audio thread.
         if self.input_slices.capacity() < num_in {
             self.input_slices
-                .reserve_exact(num_in - self.input_slices.capacity());
+                .reserve_exact(num_in - self.input_slices.len());
         }
         if self.output_slices.capacity() < num_out {
             self.output_slices
-                .reserve_exact(num_out - self.output_slices.capacity());
+                .reserve_exact(num_out - self.output_slices.len());
         }
         while self.input_copies.len() < num_in {
             self.input_copies.push(Vec::with_capacity(max_frames));
         }
         for buf in &mut self.input_copies {
             if buf.capacity() < max_frames {
-                buf.reserve_exact(max_frames - buf.capacity());
+                buf.reserve_exact(max_frames - buf.len());
             }
         }
         while self.output_buffers.len() < num_out {
@@ -887,7 +892,7 @@ impl<S: Sample> RawBufferScratch<S> {
         }
         for buf in &mut self.output_buffers {
             if buf.capacity() < max_frames {
-                buf.reserve_exact(max_frames - buf.capacity());
+                buf.reserve_exact(max_frames - buf.len());
             }
         }
         // Shared silence for unconnected input channels, kept block-sized
@@ -1223,6 +1228,46 @@ mod tests {
             for s in buf.output(1) {
                 *s = 1.0;
             }
+        }
+    }
+
+    /// `ensure_capacity` must reach `capacity() >= target` even when the
+    /// vecs start with `len() < capacity()`. `reserve_exact` is relative
+    /// to `len()`, so reserving `target - capacity()` under-reserves and
+    /// leaves `build` to malloc on the audio thread. A fresh Default
+    /// scratch (len 0, capacity 2) is the trigger for buses wider than
+    /// two channels - the repo's stereo-main + stereo-sidechain shape.
+    #[test]
+    fn ensure_capacity_reaches_target_when_len_below_capacity() {
+        let (num_in, num_out, max_frames) = (4usize, 4usize, 512usize);
+        let mut scratch = RawBufferScratch::<f32>::default();
+        // Default seeds capacity 2 at len 0 - the len < capacity case.
+        assert!(scratch.input_slices.capacity() < num_in);
+
+        scratch.ensure_capacity(num_in, num_out, max_frames);
+
+        assert!(scratch.input_slices.capacity() >= num_in);
+        assert!(scratch.output_slices.capacity() >= num_out);
+        assert_eq!(scratch.input_copies.len(), num_in);
+        assert_eq!(scratch.output_buffers.len(), num_out);
+        for buf in &scratch.input_copies {
+            assert!(buf.capacity() >= max_frames);
+        }
+        for buf in &scratch.output_buffers {
+            assert!(buf.capacity() >= max_frames);
+        }
+
+        // Re-activation with a larger block, with an inner scratch buffer
+        // carrying leftover len from a prior block (len < new target) -
+        // the same relative-to-len reservation bug applies to the copies.
+        scratch.input_copies[0].resize(200, 0.0);
+        let bigger = 1024;
+        scratch.ensure_capacity(num_in, num_out, bigger);
+        for buf in &scratch.input_copies {
+            assert!(buf.capacity() >= bigger);
+        }
+        for buf in &scratch.output_buffers {
+            assert!(buf.capacity() >= bigger);
         }
     }
 }

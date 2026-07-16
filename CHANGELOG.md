@@ -6,6 +6,7 @@ Notable changes per release.
 
 - `save_state` is deprecated in favor of `snapshot_into`.
 - VST3 transport now reads the correct time signature and bar position (their validity flags were swapped), and `cycle_active` reflects whether the loop is engaged rather than merely present.
+- Plugins with more than two channels per direction (e.g. a stereo sidechain) no longer allocate on the audio thread on the first block after activation.
 
 ## 6.1.9
 
