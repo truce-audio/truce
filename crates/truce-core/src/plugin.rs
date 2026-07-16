@@ -115,16 +115,29 @@ pub trait PluginRuntime: Send + 'static {
     /// bridge is a passthrough rather than an `Option<Vec<u8>>` to
     /// `Vec<u8>` translation.
     ///
-    /// **Who calls this.** Only LV2 (whose host serializes save against
-    /// `run`) calls it on the save path. CLAP / VST3 / AU never do - they
-    /// persist from the lock-free snapshot slot the shell publishes from
-    /// the audio thread, so a host save never stalls audio. A plugin that
-    /// overrides only the user-facing `save_state` still round-trips
-    /// there: the shell falls back to it when `snapshot_into` publishes
-    /// nothing, running it on the audio thread - which is why
-    /// `snapshot_into` is the preferred custom-state path.
+    /// The legacy custom-state serializer. [`Self::snapshot_into`] (whose
+    /// user-facing default delegates here) is the path every format now
+    /// uses: CLAP / VST3 / AU read the lock-free snapshot slot the shell
+    /// publishes from the audio thread, and LV2 serializes live through
+    /// `snapshot_into` off its non-realtime save thread - so a host save
+    /// never stalls audio. Overriding only the user-facing `save_state`
+    /// still round-trips, it just runs on the audio thread for the RT
+    /// slot, which is why `snapshot_into` is the preferred path.
     fn save_state(&self) -> Vec<u8> {
         Vec::new()
+    }
+
+    /// Serialize the plugin's custom state into `buf` (cleared on entry) -
+    /// the real-time path CLAP / VST3 / AU publish to the lock-free slot.
+    /// Returns whether the plugin publishes snapshots at all (see
+    /// `truce_plugin::PluginLogic::snapshot_into`), whose default delegates
+    /// to `save_state`, so this covers legacy `save_state`-only plugins
+    /// too. Exposed so non-realtime save paths (LV2, the standalone host)
+    /// can compute live state here instead of reading the version-gated
+    /// slot. Default: no snapshot.
+    fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+        let _ = buf;
+        false
     }
 
     /// Restore extra state. Matches the user-facing

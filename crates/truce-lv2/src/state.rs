@@ -9,7 +9,7 @@ use std::ffi::c_void;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use truce_core::export::PluginExport;
+use truce_core::export::{PluginExport, read_custom_state_offthread};
 use truce_core::state::{
     DeserializedState, ForeignState, PluginFormat, deserialize_state, parse_or_migrate,
     serialize_state,
@@ -108,26 +108,20 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
     _flags: u32,
     _features: *const *const crate::types::LV2Feature,
 ) -> u32 {
-    // Guard the user's `save_state()` against panics so a stray
-    // `unwrap` in custom-state code reports a state error instead of
-    // aborting the host across this `extern "C"` boundary.
+    // Guard the plugin's custom-state serialization against panics so a
+    // stray `unwrap` in custom-state code reports a state error instead
+    // of aborting the host across this `extern "C"` boundary.
     run_extern_callback_with::<P, u32>("LV2", "save_state", LV2_STATE_ERR_UNKNOWN, || unsafe {
         if instance.is_null() {
             return 0;
         }
         let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let (ids, values) = inst.plugin.params().collect_values();
-        // Prefer the off-thread (publisher) lane: a plugin publishing
-        // MB-scale state via `InitContext::snapshot_publisher()` never puts
-        // it in `save_state()`, so reading the plugin directly (LV2's
-        // non-realtime default) would drop it. The inline lane still goes
-        // through the live `save_state()` below, which LV2 can afford
-        // off-thread and which sidesteps the inline version gate.
-        let extra = inst
-            .plugin
-            .snapshot_slot()
-            .read_offthread()
-            .unwrap_or_else(|| inst.plugin.save_state());
+        // Non-realtime save: prefer the off-thread publisher lane, else
+        // serialize live via `snapshot_into`. LV2 can afford this off its
+        // save thread, and computing live sidesteps the inline slot's
+        // version gate.
+        let extra = read_custom_state_offthread(&inst.plugin);
         let persist = inst.plugin.params().serialize_persist();
         let blob = serialize_state(inst.plugin_id_hash, &ids, &values, &extra, &persist);
 

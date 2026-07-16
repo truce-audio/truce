@@ -221,7 +221,7 @@ pub fn apply_params<P: truce_params::Params>(params: &P, state: &DeserializedSta
 // restore + custom-state plumbing every host needs to do anyway.
 // ---------------------------------------------------------------------------
 
-use crate::export::PluginExport;
+use crate::export::{PluginExport, read_custom_state_offthread};
 use truce_params::Params;
 
 /// Errors `restore_plugin` can return.
@@ -252,8 +252,8 @@ impl std::fmt::Display for RestoreError {
 impl std::error::Error for RestoreError {}
 
 /// Serialize a plugin instance into the canonical state envelope -
-/// parameter values + optional `Plugin::save_state()` payload, with
-/// the magic / version / plugin-ID header `serialize_state` writes.
+/// parameter values + optional custom-state payload, with the magic /
+/// version / plugin-ID header `serialize_state` writes.
 ///
 /// Same shape every format wrapper produces, so a `.state` file
 /// written by one host loads in any other (subject to the
@@ -261,7 +261,7 @@ impl std::error::Error for RestoreError {}
 pub fn snapshot_plugin<P: PluginExport>(plugin: &P) -> Vec<u8> {
     use truce_params::Params;
     let (ids, values) = plugin.params().collect_values();
-    let extra = plugin.save_state();
+    let extra = read_custom_state_offthread(plugin);
     let persist = plugin.params().serialize_persist();
     serialize_state(
         hash_plugin_id(P::info().clap_id),

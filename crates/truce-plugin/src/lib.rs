@@ -307,18 +307,16 @@ macro_rules! plugin_logic_leaf_trait {
             ///
             /// **Prefer [`Self::snapshot_into`].** That is the
             /// real-time-safe path and the one CLAP / VST3 / AU actually
-            /// persist from. Overriding only `save_state` still
-            /// round-trips - the shell falls back to it - but then it runs
-            /// on the **audio thread** each changed block, so keep it
-            /// cheap (copy bytes out; no compute or compress) and reach
-            /// for `snapshot_into` (or the off-thread
+            /// persist from - [`Self::snapshot_into`]'s default delegates
+            /// here, so overriding only `save_state` still round-trips. The
+            /// catch: it then runs on the **audio thread** each changed
+            /// block, so keep it cheap (copy bytes out; no compute or
+            /// compress) and reach for `snapshot_into` (or the off-thread
             /// `InitContext::snapshot_publisher()` for MB-scale state) for
-            /// anything non-trivial. Default: delegates to
-            /// [`Self::snapshot_into`] (empty when neither is overridden).
+            /// anything non-trivial. Default: empty (no extra state).
             fn save_state(state: &Self::DspState) -> Vec<u8> {
-                let mut buf = Vec::new();
-                let _ = Self::snapshot_into(state, &mut buf);
-                buf
+                let _ = state;
+                Vec::new()
             }
 
             /// Opt into lock-free state save. `buf` arrives **cleared**,
@@ -329,14 +327,13 @@ macro_rules! plugin_logic_leaf_trait {
             ///
             /// The return value is a *static capability*, not a
             /// per-block flag: `true` means "this plugin publishes
-            /// snapshots", `false` means "it never does" (the default).
-            /// Once you return `true` you must return `true` for the
-            /// plugin's whole lifetime - if the custom state empties out,
-            /// return `true` with `buf` left empty (an empty blob), don't
-            /// return `false`. The shell latches the opt-in on the first
-            /// published block; a later `false` is a contract violation
-            /// that would otherwise leave the host reading a stale
-            /// snapshot forever.
+            /// snapshots", `false` means "it never does". Once you return
+            /// `true` you must return `true` for the plugin's whole
+            /// lifetime - if the custom state empties out, return `true`
+            /// with `buf` left empty (an empty blob), don't return `false`.
+            /// The shell latches the opt-in on the first published block; a
+            /// later `false` is a contract violation that would otherwise
+            /// leave the host reading a stale snapshot forever.
             ///
             /// Called on the **audio thread** after each process block
             /// whose [`Self::snapshot_version`] changed, under the same
@@ -344,8 +341,13 @@ macro_rules! plugin_logic_leaf_trait {
             /// allocation. The wrapper publishes the result into a
             /// lock-free slot the host reads without ever taking the
             /// plugin lock, so saving state while audio runs never stalls
-            /// the audio thread. The default [`Self::save_state`]
-            /// delegates here.
+            /// the audio thread.
+            ///
+            /// **Default.** Delegates to [`Self::save_state`], so a plugin
+            /// that overrides only the legacy `save_state` still publishes
+            /// through this slot - at the cost of running `save_state` on
+            /// the audio thread. A plugin overriding neither publishes
+            /// nothing (its empty `save_state`).
             ///
             /// **Size regime.** This inline lane copies the whole buffer
             /// on every *changed* block, so it is for **KB-scale** state (a
@@ -356,8 +358,13 @@ macro_rules! plugin_logic_leaf_trait {
             /// `InitContext::snapshot_publisher()` (a background-serialized,
             /// pointer-swapped buffer) and leave this at the default.
             fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
-                let _ = (state, buf);
-                false
+                let bytes = Self::save_state(state);
+                if bytes.is_empty() {
+                    false
+                } else {
+                    buf.extend_from_slice(&bytes);
+                    true
+                }
             }
 
             /// Generation token for the state [`Self::snapshot_into`]

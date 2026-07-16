@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.1.10
+
+- `save_state` is deprecated in favor of `snapshot_into`.
+
 ## 6.1.9
 
 - CLAP plugins expose `remote-controls` pages built from `#[param(group = "...")]`, so hosts (e.g. Bitwig) map each group onto the eight controller knobs. Based on [#178](https://github.com/truce-audio/truce/pull/178) by @lxndrbe.
