@@ -359,13 +359,7 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             &mut self.try_snapshot,
             &mut self.last_snapshot_version,
             version,
-            |buf| {
-                crate::static_shell::snapshot_or_save_state(
-                    buf,
-                    |b| loader.snapshot_into(state, b),
-                    || loader.save_state(state),
-                )
-            },
+            |buf| loader.snapshot_into(state, buf),
         );
 
         // Refresh latency / tail caches so host-thread queries don't
@@ -393,6 +387,18 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         loader.save_state(self.state.cast_const())
     }
 
+    fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+        // Same bounded-lock trade-off as `save_state`: on a hot-reload
+        // miss return "no snapshot" rather than hang the host.
+        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+            return false;
+        };
+        if self.state.is_null() {
+            return false;
+        }
+        loader.snapshot_into(self.state.cast_const(), buf)
+    }
+
     fn republish_snapshot(&mut self) {
         let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
             return;
@@ -407,13 +413,7 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             &mut self.try_snapshot,
             &mut self.last_snapshot_version,
             version,
-            |buf| {
-                crate::static_shell::snapshot_or_save_state(
-                    buf,
-                    |b| loader.snapshot_into(state, b),
-                    || loader.save_state(state),
-                )
-            },
+            |buf| loader.snapshot_into(state, buf),
         );
     }
 

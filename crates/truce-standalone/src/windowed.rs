@@ -23,7 +23,7 @@ use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
 
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
 use truce_core::events::EventBody;
-use truce_core::export::PluginExport;
+use truce_core::export::{PluginExport, read_custom_state_offthread};
 use truce_core::info::PluginCategory;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_params::Params;
@@ -1032,7 +1032,7 @@ where
                 // Poisoned (audio thread panicked) degrades to empty.
                 plugin_save
                     .lock()
-                    .map(|p| p.save_state())
+                    .map(|p| read_custom_state_offthread(&*p))
                     .unwrap_or_default()
             }),
             set_state: Box::new(move |bytes| {

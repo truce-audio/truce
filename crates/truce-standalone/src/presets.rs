@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use truce_core::export::PluginExport;
+use truce_core::export::{PluginExport, read_custom_state_offthread};
 use truce_core::presets::{PresetScope, PresetStore, mint_uuid, user_preset_root};
 use truce_core::state::{apply_state, hash_plugin_id, serialize_state};
 use truce_params::Params;
@@ -118,7 +118,7 @@ pub fn load_into<P: PluginExport>(store: &PresetStore, plugin: &Arc<Mutex<P>>, s
     apply_selected(store, &mut *guard, sel)
 }
 
-/// Snapshot the live plugin (params + `save_state`) and write it to
+/// Snapshot the live plugin (params + custom state) and write it to
 /// the user scope as a `.trucepreset`. `meta.name` is the only
 /// required field; a same-name save keeps the preset's uuid.
 /// Returns the saved preset's uri (its stable selection handle).
@@ -130,7 +130,7 @@ pub fn save_user<P: PluginExport>(
     let (ids, values, extra) = {
         let guard = plugin.lock().ok()?;
         let (ids, values) = guard.params().collect_values();
-        (ids, values, guard.save_state())
+        (ids, values, read_custom_state_offthread(&*guard))
     };
     let params: Vec<(u32, f64)> = ids.into_iter().zip(values).collect();
     match store.save(meta, &params, &extra) {
@@ -433,7 +433,7 @@ impl PresetController {
 fn snapshot<P: PluginExport>(plugin: &Arc<Mutex<P>>, hash: u64) -> Option<Vec<u8>> {
     let guard = plugin.lock().ok()?;
     let (ids, values) = guard.params().collect_values();
-    let extra = guard.save_state();
+    let extra = read_custom_state_offthread(&*guard);
     Some(serialize_state(hash, &ids, &values, &extra, &[]))
 }
 

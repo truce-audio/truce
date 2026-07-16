@@ -371,11 +371,19 @@ macro_rules! __plugin_hot_reload {
                 self.inner.save_state()
             }
 
+            fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
+                self.inner.snapshot_into(buf)
+            }
+
             fn load_state(
                 &mut self,
                 data: &[u8],
             ) -> Result<(), $crate::core::state::StateLoadError> {
                 self.inner.load_state(data)
+            }
+
+            fn republish_snapshot(&mut self) {
+                self.inner.republish_snapshot();
             }
 
             fn latency(&self) -> u32 {
