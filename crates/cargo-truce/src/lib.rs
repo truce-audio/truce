@@ -79,6 +79,9 @@ pub(crate) use util::read_workspace_version;
 // powers macOS universal lipo, Windows x64+arm64, and Linux dual-arch
 // `--target` builds. Always available.
 pub(crate) use util::release_lib_for_target;
+// `target_os_of` maps a target triple to its OS so the build + staging
+// pipeline lays out bundles by target, not the build host. Always available.
+pub(crate) use util::target_os_of;
 #[cfg(target_os = "macos")]
 pub(crate) use util::{release_bundle_bin, release_static_for_target};
 
