@@ -235,11 +235,15 @@ pub(crate) fn build_format_dylibs(
         // produce a real MH_BUNDLE at the canonical bundle-bin path
         // that stage / install steps read from. AU2 / AAX keep the
         // cdylib (their loaders are happy with MH_DYLIB).
+        // Only for a macOS *target* - cross-compiling to Windows / Linux
+        // keeps the cdylib, and `clang -bundle` can't relink a foreign-arch
+        // static archive anyway.
         #[cfg(target_os = "macos")]
         if matches!(
             format,
             BuildFormat::Clap | BuildFormat::Vst3 | BuildFormat::Vst2
-        ) {
+        ) && crate::target_os_of(target.unwrap_or_else(|| truce_build::host_triple())) == "macos"
+        {
             link_macos_bundle_for_plugin(root, p, format, target)?;
         }
 

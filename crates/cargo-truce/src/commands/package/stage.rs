@@ -194,27 +194,41 @@ pub(crate) fn stage_clap(
     identity: &str,
     target: Option<&str>,
 ) -> Res {
-    #[cfg(not(target_os = "macos"))]
-    let dylib = crate::release_lib_for_target(root, &format!("{}_clap", p.dylib_stem()), target);
-    #[cfg(target_os = "macos")]
-    let dylib = {
-        let _ = target;
-        crate::release_bundle_bin(root, &p.dylib_stem(), "_clap")
-    };
+    // Branch on the *target* OS, not the host: macOS ships an
+    // `MH_BUNDLE` `.clap` directory, Linux / Windows a single-file
+    // `.clap` (the cdylib renamed). A cross build must lay out the
+    // target's shape, not the host's.
+    let triple = target.unwrap_or_else(|| truce_build::host_triple());
+    let bundle = staging.join(format!("{}.clap", p.file_stem()));
+    if crate::target_os_of(triple) == "macos" {
+        stage_clap_macos(root, p, config, &bundle, identity)
+    } else {
+        stage_clap_shared_lib(root, p, config, staging, &bundle, target)
+    }
+}
+
+/// macOS `.clap`: an `MH_BUNDLE` under `Contents/MacOS` + plist + sealed
+/// factory presets + codesign. Needs a macOS host (`clang -bundle` +
+/// `codesign`).
+#[cfg(target_os = "macos")]
+fn stage_clap_macos(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    bundle: &Path,
+    identity: &str,
+) -> Res {
+    let dylib = crate::release_bundle_bin(root, &p.dylib_stem(), "_clap");
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = staging.join(format!("{}.clap", p.file_stem()));
+    let macos_dir = bundle.join("Contents/MacOS");
+    fs::create_dir_all(&macos_dir)?;
+    let exec_name = p.file_stem();
+    fs::copy(&dylib, macos_dir.join(&exec_name))?;
 
-    #[cfg(target_os = "macos")]
-    {
-        let macos_dir = bundle.join("Contents/MacOS");
-        fs::create_dir_all(&macos_dir)?;
-        let exec_name = p.file_stem();
-        fs::copy(&dylib, macos_dir.join(&exec_name))?;
-
-        let plist = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -230,41 +244,62 @@ pub(crate) fn stage_clap(
     <string>1</string>
 </dict>
 </plist>"#,
-            display_name = xml_escape(&p.name),
-            bundle_id = p.bundle_id,
-            vendor_id = xml_escape(&config.vendor.id),
-            exec_name = xml_escape(&exec_name),
-        );
-        fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-        // Presets are part of the bundle's sealed Resources - emit
-        // before codesign so the signature covers them.
-        if let Some(fp) = presets::load_factory_presets(root, p, config)? {
-            presets::emit_trucepreset_tree(
-                &fp,
-                &bundle.join("Contents/Resources/Presets"),
-                false,
-                &format!("{}-clap", p.bundle_id),
-            )?;
-        }
-        codesign_bundle(bundle.to_str().unwrap(), identity, false)?;
+        display_name = xml_escape(&p.name),
+        bundle_id = p.bundle_id,
+        vendor_id = xml_escape(&config.vendor.id),
+        exec_name = xml_escape(&exec_name),
+    );
+    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+    // Presets are part of the bundle's sealed Resources - emit before
+    // codesign so the signature covers them.
+    if let Some(fp) = presets::load_factory_presets(root, p, config)? {
+        presets::emit_trucepreset_tree(
+            &fp,
+            &bundle.join("Contents/Resources/Presets"),
+            false,
+            &format!("{}-clap", p.bundle_id),
+        )?;
     }
+    codesign_bundle(bundle.to_str().unwrap(), identity, false)?;
+    Ok(())
+}
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        fs::copy(&dylib, &bundle)?;
-        // Single-file `.clap`; presets land in a `<stem>.presets/`
-        // sibling, where the discovery provider looks.
-        if let Some(fp) = presets::load_factory_presets(root, p, config)? {
-            presets::emit_trucepreset_tree(
-                &fp,
-                &staging.join(format!("{}.presets", p.file_stem())),
-                false,
-                &format!("{}-clap", p.bundle_id),
-            )?;
-        }
-        codesign_bundle(bundle.to_str().unwrap(), identity, false)?;
+#[cfg(not(target_os = "macos"))]
+fn stage_clap_macos(
+    _root: &Path,
+    _p: &PluginDef,
+    _config: &Config,
+    _bundle: &Path,
+    _identity: &str,
+) -> Res {
+    Err("cargo-truce: building a macOS CLAP bundle requires a macOS host".into())
+}
+
+/// Single-file `.clap` for Linux / Windows: the cdylib renamed to
+/// `<name>.clap`, with factory presets in a `<name>.presets/` sibling
+/// where the discovery provider looks. No codesign (not a macOS
+/// bundle), so it runs on any build host - including a macOS cross build.
+fn stage_clap_shared_lib(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    staging: &Path,
+    bundle: &Path,
+    target: Option<&str>,
+) -> Res {
+    let dylib = crate::release_lib_for_target(root, &format!("{}_clap", p.dylib_stem()), target);
+    if !dylib.exists() {
+        return Err(format!("Missing: {}", dylib.display()).into());
     }
-
+    fs::copy(&dylib, bundle)?;
+    if let Some(fp) = presets::load_factory_presets(root, p, config)? {
+        presets::emit_trucepreset_tree(
+            &fp,
+            &staging.join(format!("{}.presets", p.file_stem())),
+            false,
+            &format!("{}-clap", p.bundle_id),
+        )?;
+    }
     Ok(())
 }
 
@@ -279,32 +314,36 @@ pub(crate) fn stage_vst3(
     staging: &Path,
     target: Option<&str>,
 ) -> Res {
-    #[cfg(not(target_os = "macos"))]
-    let dylib = crate::release_lib_for_target(root, &format!("{}_vst3", p.dylib_stem()), target);
-    #[cfg(target_os = "macos")]
+    // VST3 bundle layout is platform-specific (Steinberg "Bundle Locations"):
+    //   macOS:   Contents/MacOS/<name>             (Mach-O, no extension)
+    //   Linux:   Contents/<arch>-linux/<name>.so   (ELF, .so)
+    //   Windows: Contents/<arch>-win/<name>.vst3   (PE, .vst3)
+    // Branch on the *target* OS, not the host, so a cross build lays out
+    // the bundle for where it will load.
+    let triple = target.unwrap_or_else(|| truce_build::host_triple());
+    let bundle = staging.join(format!("{}.vst3", p.file_stem()));
+    if crate::target_os_of(triple) == "macos" {
+        stage_vst3_macos(root, p, config, &bundle)
+    } else {
+        stage_vst3_shared_lib(root, p, &bundle, triple, target)
+    }
+}
+
+/// macOS `.vst3`: an `MH_BUNDLE` under `Contents/MacOS` + plist +
+/// codesign. Needs a macOS host.
+#[cfg(target_os = "macos")]
+fn stage_vst3_macos(root: &Path, p: &PluginDef, config: &Config, bundle: &Path) -> Res {
     let dylib = crate::release_bundle_bin(root, &p.dylib_stem(), "_vst3");
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = staging.join(format!("{}.vst3", p.file_stem()));
+    let macos_dir = bundle.join("Contents/MacOS");
+    fs::create_dir_all(&macos_dir)?;
+    let exec_name = p.file_stem();
+    fs::copy(&dylib, macos_dir.join(&exec_name))?;
 
-    // VST3 bundle layout is platform-specific (Steinberg "Bundle Locations"
-    // section of the SDK docs):
-    //   macOS:   Contents/MacOS/<name>             (Mach-O, no extension)
-    //   Linux:   Contents/<arch>-linux/<name>.so   (ELF, .so)
-    //   Windows: Contents/<arch>-win/<name>.vst3   (PE, .vst3)
-    // The earlier "always Contents/MacOS/<name>" layout produced bundles
-    // that hosts on Linux refused to load - VST3 hosts pick the inner
-    // binary from the arch-specific subdir and fall back to nothing.
-    #[cfg(target_os = "macos")]
-    {
-        let macos_dir = bundle.join("Contents/MacOS");
-        fs::create_dir_all(&macos_dir)?;
-        let exec_name = p.file_stem();
-        fs::copy(&dylib, macos_dir.join(&exec_name))?;
-
-        let plist = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -320,39 +359,49 @@ pub(crate) fn stage_vst3(
     <string>1</string>
 </dict>
 </plist>"#,
-            display_name = xml_escape(&p.name),
-            bundle_id = p.bundle_id,
-            vendor_id = xml_escape(&config.vendor.id),
-            exec_name = xml_escape(&exec_name),
-        );
-        fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-        codesign_bundle(
-            bundle.to_str().unwrap(),
-            &crate::application_identity(),
-            false,
-        )?;
+        display_name = xml_escape(&p.name),
+        bundle_id = p.bundle_id,
+        vendor_id = xml_escape(&config.vendor.id),
+        exec_name = xml_escape(&exec_name),
+    );
+    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+    codesign_bundle(
+        bundle.to_str().unwrap(),
+        &crate::application_identity(),
+        false,
+    )?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stage_vst3_macos(_root: &Path, _p: &PluginDef, _config: &Config, _bundle: &Path) -> Res {
+    Err("cargo-truce: building a macOS VST3 bundle requires a macOS host".into())
+}
+
+/// Linux / Windows `.vst3`: the cdylib into
+/// `Contents/<arch>-{linux,win}/<name>.{so,vst3}` per the SDK "Bundle
+/// Locations" spec. No macOS host tools, so it runs on any build host.
+fn stage_vst3_shared_lib(
+    root: &Path,
+    p: &PluginDef,
+    bundle: &Path,
+    triple: &str,
+    target: Option<&str>,
+) -> Res {
+    let dylib = crate::release_lib_for_target(root, &format!("{}_vst3", p.dylib_stem()), target);
+    if !dylib.exists() {
+        return Err(format!("Missing: {}", dylib.display()).into());
     }
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    {
-        let _ = config; // unused on these platforms
-        let triple: &str = match target {
-            Some(t) => t,
-            None => truce_build::host_triple(),
-        };
-        let arch_dir = bundle.join("Contents").join(vst3_arch_subdir(triple));
-        fs::create_dir_all(&arch_dir)?;
-        let inner_filename = format!("{}.{}", p.file_stem(), vst3_inner_extension(triple));
-        fs::copy(&dylib, arch_dir.join(inner_filename))?;
-    }
-    #[cfg(target_os = "macos")]
-    let _ = target; // macOS uses Contents/MacOS regardless of arch (lipo'd later).
+    let arch_dir = bundle.join("Contents").join(vst3_arch_subdir(triple));
+    fs::create_dir_all(&arch_dir)?;
+    let inner_filename = format!("{}.{}", p.file_stem(), vst3_inner_extension(triple));
+    fs::copy(&dylib, arch_dir.join(inner_filename))?;
     Ok(())
 }
 
 /// VST3 bundle inner-directory name per the VST3 SDK "Bundle Locations"
 /// spec. Maps a cargo target triple to the bundle's `Contents/<dir>/`.
 /// macOS callers don't reach this - they use the special `MacOS` dir.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn vst3_arch_subdir(triple: &str) -> &'static str {
     match triple {
         "x86_64-unknown-linux-gnu" | "x86_64-unknown-linux-musl" => "x86_64-linux",
@@ -368,7 +417,6 @@ fn vst3_arch_subdir(triple: &str) -> &'static str {
 
 /// VST3 inner-binary extension per the VST3 SDK spec. Linux uses
 /// `.so`; Windows uses `.vst3`.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn vst3_inner_extension(triple: &str) -> &'static str {
     if triple.contains("linux") {
         "so"

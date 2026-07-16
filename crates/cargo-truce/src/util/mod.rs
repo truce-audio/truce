@@ -138,15 +138,45 @@ pub(crate) fn arg_value<'a>(
         .ok_or_else(|| format!("{flag} requires a value").into())
 }
 
-/// Return the platform-specific shared library filename for a given stem.
-/// macOS: `lib{stem}.dylib`, Windows: `{stem}.dll`, Linux: `lib{stem}.so`
+/// Shared library filename for a stem on the *host*. macOS:
+/// `lib{stem}.dylib`, Windows: `{stem}.dll`, Linux: `lib{stem}.so`.
 pub(crate) fn shared_lib_name(stem: &str) -> String {
-    if cfg!(target_os = "windows") {
-        format!("{stem}.dll")
+    let host_os = if cfg!(target_os = "windows") {
+        "windows"
     } else if cfg!(target_os = "linux") {
-        format!("lib{stem}.so")
+        "linux"
     } else {
-        format!("lib{stem}.dylib")
+        "macos"
+    };
+    shared_lib_name_for_os(stem, host_os)
+}
+
+/// Shared library filename for a stem targeting `os`. Keyed on the
+/// *target* OS so a cross build names the artifact for where it will
+/// run, not the build host - `cfg!(target_os)` in a builder would read
+/// the host.
+fn shared_lib_name_for_os(stem: &str, os: &str) -> String {
+    match os {
+        "windows" => format!("{stem}.dll"),
+        "linux" => format!("lib{stem}.so"),
+        _ => format!("lib{stem}.dylib"),
+    }
+}
+
+/// The OS component of a cargo target triple, used to drive bundle
+/// layout and artifact naming by *target* rather than the build host's
+/// `cfg!(target_os)`. Defaults to `"macos"` for Apple triples and for
+/// anything unrecognized (host-native builds resolve the triple via
+/// [`truce_build::host_triple`]).
+pub(crate) fn target_os_of(triple: &str) -> &'static str {
+    if triple.contains("windows") {
+        "windows"
+    } else if triple.contains("linux") || triple.contains("android") {
+        "linux"
+    } else if triple.contains("ios") {
+        "ios"
+    } else {
+        "macos"
     }
 }
 
@@ -398,7 +428,7 @@ pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&st
         Some(t) => truce_build::target_dir(root)
             .join(t)
             .join(profile_subdir())
-            .join(shared_lib_name(stem)),
+            .join(shared_lib_name_for_os(stem, target_os_of(t))),
         None => release_lib(root, stem),
     }
 }
