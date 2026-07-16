@@ -522,6 +522,29 @@ fn parse_range_value(
             .map_err(|e| format!("enum count: {e}"))?;
         return Ok(Lv2Range::Enum { count });
     }
+    // LV2's `lv2:range` carries only linear bounds - no skew, no
+    // reversal. Skewed / symmetrical-skewed tapers degrade to their
+    // linear min/max; the power-law shaping is a host-UI concern the
+    // TTL can't express.
+    if let Some(inner) = s.strip_prefix("skewed(").and_then(|x| x.strip_suffix(')')) {
+        let (lo, hi) = parse_leading_pair_f64(inner)?;
+        return Ok(Lv2Range::Linear { min: lo, max: hi });
+    }
+    if let Some(inner) = s
+        .strip_prefix("sym_skewed(")
+        .and_then(|x| x.strip_suffix(')'))
+    {
+        let (lo, hi) = parse_leading_pair_f64(inner)?;
+        return Ok(Lv2Range::Linear { min: lo, max: hi });
+    }
+    // Reversal flips only the normalized mapping; the numeric bounds
+    // (and thus the LV2 range) are the wrapped shape's, so recurse.
+    if let Some(inner) = s
+        .strip_prefix("reversed(")
+        .and_then(|x| x.strip_suffix(')'))
+    {
+        return parse_range_value(inner.trim(), kind, enum_type, sidecar_dir);
+    }
     match kind {
         "Bool" => Ok(Lv2Range::Discrete { min: 0.0, max: 1.0 }),
         // A range-less `EnumParam<T>`: recover the variant count from
@@ -534,6 +557,10 @@ fn parse_range_value(
         "Enum" => Ok(Lv2Range::Enum {
             count: enum_variant_count(enum_type, sidecar_dir).unwrap_or(0),
         }),
+        // A range-less numeric param: the `#[param]` parser defaults the
+        // runtime to Linear{0,1} and the sidecar carries an empty range
+        // string. Mirror that default here rather than failing the build.
+        _ if s.trim().is_empty() => Ok(Lv2Range::Linear { min: 0.0, max: 1.0 }),
         _ => Err(format!("unrecognised range `{s}`")),
     }
 }
@@ -586,6 +613,19 @@ fn parse_pair_f64(s: &str) -> Result<(f64, f64), String> {
     let parts: Vec<&str> = s.split(',').map(str::trim).collect();
     if parts.len() != 2 {
         return Err(format!("expected two args, got `{s}`"));
+    }
+    let lo: f64 = parts[0].parse().map_err(|e| format!("lo: {e}"))?;
+    let hi: f64 = parts[1].parse().map_err(|e| format!("hi: {e}"))?;
+    Ok((lo, hi))
+}
+
+/// Parse the leading `min, max` pair from a skew range's argument list,
+/// ignoring the trailing `factor` (and `center`). LV2's `lv2:range` has
+/// no skew concept, so only the linear bounds survive.
+fn parse_leading_pair_f64(s: &str) -> Result<(f64, f64), String> {
+    let parts: Vec<&str> = s.split(',').map(str::trim).collect();
+    if parts.len() < 2 {
+        return Err(format!("expected at least two args, got `{s}`"));
     }
     let lo: f64 = parts[0].parse().map_err(|e| format!("lo: {e}"))?;
     let hi: f64 = parts[1].parse().map_err(|e| format!("hi: {e}"))?;
@@ -675,4 +715,84 @@ fn sidecar_dir_for(pkg_name: &str, truce_toml: &std::path::Path) -> Option<PathB
     let workspace_root = truce_toml.parent()?;
     let target_dir = truce_build::target_dir(workspace_root);
     Some(target_dir.join("lv2-meta").join(pkg_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_range_value;
+    use truce_build::lv2::Lv2Range;
+
+    /// `truce::plugin!` expands the LV2 emitter unconditionally (no `lv2`
+    /// feature gate), so every range shape the runtime `#[param]` parser
+    /// accepts must resolve here too - otherwise a legal shape becomes a
+    /// `compile_error!` that fails the whole plugin build. Skewed tapers
+    /// and reversal have no LV2 equivalent, so they degrade to linear /
+    /// the wrapped shape's bounds; a range-less param mirrors the
+    /// runtime's `Linear{0, 1}` default.
+    #[test]
+    fn every_runtime_range_shape_resolves() {
+        let dummy = std::path::Path::new("");
+        let cases: &[(&str, &str, Lv2Range)] = &[
+            (
+                "linear(-60, 6)",
+                "Float",
+                Lv2Range::Linear {
+                    min: -60.0,
+                    max: 6.0,
+                },
+            ),
+            (
+                "log(20, 20000)",
+                "Float",
+                Lv2Range::Logarithmic {
+                    min: 20.0,
+                    max: 20000.0,
+                },
+            ),
+            (
+                "discrete(0, 7)",
+                "Int",
+                Lv2Range::Discrete { min: 0.0, max: 7.0 },
+            ),
+            ("enum(4)", "Enum", Lv2Range::Enum { count: 4 }),
+            (
+                "skewed(0, 1, 0.3)",
+                "Float",
+                Lv2Range::Linear { min: 0.0, max: 1.0 },
+            ),
+            (
+                "sym_skewed(-1, 1, 2, 0)",
+                "Float",
+                Lv2Range::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
+            ),
+            (
+                "reversed(linear(0, 1))",
+                "Float",
+                Lv2Range::Linear { min: 0.0, max: 1.0 },
+            ),
+            (
+                "reversed(log(20, 20000))",
+                "Float",
+                Lv2Range::Logarithmic {
+                    min: 20.0,
+                    max: 20000.0,
+                },
+            ),
+            (
+                "reversed(skewed(0, 1, 0.3))",
+                "Float",
+                Lv2Range::Linear { min: 0.0, max: 1.0 },
+            ),
+            // Range-less numeric param: the sidecar carries an empty string.
+            ("", "Float", Lv2Range::Linear { min: 0.0, max: 1.0 }),
+        ];
+        for (input, kind, expected) in cases {
+            let got = parse_range_value(input, kind, "", dummy)
+                .unwrap_or_else(|e| panic!("`{input}` (kind {kind}) must resolve, got err: {e}"));
+            assert_eq!(got, *expected, "range `{input}` (kind {kind})");
+        }
+    }
 }

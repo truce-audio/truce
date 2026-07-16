@@ -116,7 +116,7 @@ pub enum Lv2MidiSource {
     ProgramChange,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Lv2Range {
     Linear { min: f64, max: f64 },
     Logarithmic { min: f64, max: f64 },
