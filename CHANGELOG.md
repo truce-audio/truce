@@ -11,6 +11,7 @@ Notable changes per release.
 - `AudioBuffer::chunks_mut` no longer panics on asymmetric buses (instruments, mono-in/stereo-out); output channels with no matching input read as silence.
 - The editor-facing transport slot no longer hands back a torn tempo/position for a frame under weak memory ordering (Apple Silicon); the seqlock's two memory fences were missing.
 - `AudioTap::drain_with` now always hands consumers whole frames; a drain landing mid-frame no longer channel-swaps the analyzer's chunk (the trailing partial frame carries to the next drain).
+- VST3 sample-accurate automation of `CHUNKED` params is no longer heard up to a buffer early: the shim stopped pre-committing each queue's end-of-block value before the sub-block chunker runs.
 
 ## 6.1.9
 

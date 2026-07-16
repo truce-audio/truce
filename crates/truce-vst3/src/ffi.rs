@@ -333,6 +333,13 @@ pub struct Vst3Callbacks {
         out_channels: *const u32,
         num_out: u32,
     ) -> i32,
+    /// Is a parameter flagged `ParamFlags::CHUNKED` (sample-accurate
+    /// automation)? Non-zero when the plugin requests sub-block splitting
+    /// on this id, so the shim defers its per-offset commits to
+    /// `process_chunked` rather than pre-writing the block's end value at
+    /// collection time - which would make a mid-block step audible from
+    /// sample 0.
+    pub param_is_chunked: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> i32,
 }
 
 unsafe extern "C" {
