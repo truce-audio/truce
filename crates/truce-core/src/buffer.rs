@@ -251,10 +251,10 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
     /// let mut chunks = buffer.chunks_mut::<32>();
     /// while let Some(chunk) = chunks.next() {
     ///     match chunk {
-    ///         ChunkItem::Full { ch, inp, out } => {
+    ///         ChunkItem::Full { ch, inp, out, .. } => {
     ///             // SIMD-friendly path, inp / out are &[f32; 32]
     ///         }
-    ///         ChunkItem::Tail { ch, inp, out } => {
+    ///         ChunkItem::Tail { ch, inp, out, .. } => {
     ///             // scalar fallback for the trailing samples
     ///         }
     ///     }
@@ -269,6 +269,7 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
             buffer: self,
             ch: 0,
             pos: 0,
+            silence: [S::default(); N],
         }
     }
 
@@ -497,6 +498,12 @@ pub struct ChunksMut<'b, 'a, S: Sample, const N: usize> {
     /// to `num_samples` for the Tail (or directly past it when
     /// `num_samples` is a multiple of N).
     pos: usize,
+    /// Zero-filled read source for output channels that have no matching
+    /// input (an instrument's 0-in/N-out, or any asymmetric bus where
+    /// `inputs.len() < outputs.len()`). Mirrors the block-length silence
+    /// `input(ch)` hands out for an unconnected bus, kept on the iterator
+    /// so `inp` can borrow it without allocating.
+    silence: [S; N],
 }
 
 impl<S: Sample, const N: usize> ChunksMut<'_, '_, S, N> {
@@ -525,8 +532,16 @@ impl<S: Sample, const N: usize> ChunksMut<'_, '_, S, N> {
             let ch = self.ch;
             let sample = self.pos;
 
-            self.buffer.debug_assert_not_in_place(ch);
-            let inp_slice = &self.buffer.inputs[ch][abs_start..abs_end];
+            // An output channel past the last input (an instrument, or a
+            // mono-in/stereo-out effect) reads as silence, matching the
+            // unconnected-bus contract `input(ch)` upholds. Indexing
+            // `inputs[ch]` here would panic - the bug this guards.
+            let inp_slice: &[S] = if ch < self.buffer.inputs.len() {
+                self.buffer.debug_assert_not_in_place(ch);
+                &self.buffer.inputs[ch][abs_start..abs_end]
+            } else {
+                &self.silence[..take]
+            };
             let out_slice: &mut [S] = &mut self.buffer.outputs[ch][abs_start..abs_end];
 
             self.pos += take;
@@ -1269,5 +1284,79 @@ mod tests {
         for buf in &scratch.output_buffers {
             assert!(buf.capacity() >= bigger);
         }
+    }
+
+    /// An instrument (0-in / N-out) must walk every output channel through
+    /// `chunks_mut` without panicking - `inputs.len() < outputs.len()`
+    /// previously indexed `inputs[ch]` out of range. Missing inputs read
+    /// as silence, mirroring the unconnected-bus `input(ch)` contract.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn chunks_mut_instrument_zero_in_reads_silence_and_writes_all_outputs() {
+        // num_samples 6 with N 4 gives one Full (4) + one Tail (2) per
+        // channel, exercising both variants on the missing-input path.
+        let nf = 6;
+        let mut o0 = vec![9.0f32; nf];
+        let mut o1 = vec![9.0f32; nf];
+        let inputs: [&[f32]; 0] = [];
+        let mut outputs: [&mut [f32]; 2] = [&mut o0, &mut o1];
+        let mut buf = AudioBuffer::<f32>::from_slices_checked(&inputs, &mut outputs, nf);
+
+        let mut visited = Vec::new();
+        let mut chunks = buf.chunks_mut::<4>();
+        while let Some(chunk) = chunks.next() {
+            match chunk {
+                ChunkItem::Full { ch, inp, out, .. } => {
+                    assert!(inp.iter().all(|&s| s == 0.0), "missing input reads silence");
+                    out.fill(1.0);
+                    visited.push(ch);
+                }
+                ChunkItem::Tail { ch, inp, out, .. } => {
+                    assert!(
+                        inp.iter().all(|&s| s == 0.0),
+                        "missing input tail is silence"
+                    );
+                    out.fill(1.0);
+                    visited.push(ch);
+                }
+            }
+        }
+
+        assert_eq!(
+            visited,
+            vec![0, 0, 1, 1],
+            "both output channels fully walked"
+        );
+        assert!(o0.iter().all(|&s| s == 1.0), "channel 0 was written");
+        assert!(o1.iter().all(|&s| s == 1.0), "channel 1 was written");
+    }
+
+    /// A mono-in / stereo-out effect: channel 0 sees the real input,
+    /// channel 1 (no matching input) reads silence rather than panicking.
+    #[allow(clippy::float_cmp)]
+    #[test]
+    fn chunks_mut_mono_in_stereo_out_feeds_silence_for_extra_output() {
+        let nf = 8;
+        let input = vec![0.5f32; nf];
+        let mut o0 = vec![0.0f32; nf];
+        let mut o1 = vec![0.0f32; nf];
+        let inputs: [&[f32]; 1] = [&input];
+        let mut outputs: [&mut [f32]; 2] = [&mut o0, &mut o1];
+        let mut buf = AudioBuffer::<f32>::from_slices_checked(&inputs, &mut outputs, nf);
+
+        let mut chunks = buf.chunks_mut::<4>();
+        while let Some(chunk) = chunks.next() {
+            if let ChunkItem::Full { ch, inp, out, .. } = chunk {
+                let expected = if ch == 0 { 0.5 } else { 0.0 };
+                assert!(
+                    inp.iter().all(|&s| s == expected),
+                    "channel {ch} input mismatch",
+                );
+                out.copy_from_slice(inp);
+            }
+        }
+
+        assert!(o0.iter().all(|&s| s == 0.5), "input channel passed through");
+        assert!(o1.iter().all(|&s| s == 0.0), "silent channel stayed silent");
     }
 }

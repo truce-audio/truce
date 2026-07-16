@@ -8,6 +8,7 @@ Notable changes per release.
 - VST3 transport now reads the correct time signature and bar position (their validity flags were swapped), and `cycle_active` reflects whether the loop is engaged rather than merely present.
 - Plugins with more than two channels per direction (e.g. a stereo sidechain) no longer allocate on the audio thread on the first block after activation.
 - Rangeless params and `skewed` / `sym_skewed` / `reversed` ranges no longer fail the build (the LV2 metadata emitter runs unconditionally and rejected these shapes).
+- `AudioBuffer::chunks_mut` no longer panics on asymmetric buses (instruments, mono-in/stereo-out); output channels with no matching input read as silence.
 
 ## 6.1.9
 
