@@ -11,19 +11,28 @@
 //! }
 //! ```
 //!
-//! Then use it in your plugin's `save_state`/`load_state`:
+//! Then persist it through your plugin's `snapshot_into`/`load_state` -
+//! the real-time-safe custom-state path. `snapshot_into` publishes into a
+//! lock-free slot the host reads without stalling audio, and CLAP / VST3
+//! / AU persist from it:
 //!
 //! ```ignore
-//! fn save_state(&self) -> Vec<u8> {
-//!     self.persistent.serialize()
+//! fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
+//!     buf.extend_from_slice(&state.persistent.serialize());
+//!     true
 //! }
-//! fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
+//! fn load_state(state: &mut Self::DspState, data: &[u8]) -> Result<(), StateLoadError> {
 //!     match MyState::deserialize(data) {
-//!         Some(s) => { self.persistent = s; Ok(()) }
+//!         Some(s) => { state.persistent = s; Ok(()) }
 //!         None => Err(StateLoadError::Malformed("MyState")),
 //!     }
 //! }
 //! ```
+//!
+//! For MB-scale state (a sampler's audio, big wavetables), publish it off
+//! the audio thread via `InitContext::snapshot_publisher()` instead. The
+//! older `save_state` still works, but on CLAP / VST3 / AU it runs on the
+//! audio thread, so prefer `snapshot_into`.
 //!
 //! ## Schema evolution
 //!

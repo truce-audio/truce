@@ -303,17 +303,18 @@ macro_rules! plugin_logic_leaf_trait {
             ) -> $crate::__plugin_logic_deps::ProcessStatus;
 
             /// Serialize plugin-specific state (DSP state, not params -
-            /// those are saved automatically). Default: delegates to
-            /// [`Self::snapshot_into`] (empty when neither is
-            /// overridden).
+            /// those are saved automatically).
             ///
-            /// Runs on a host or GUI thread while the audio thread is
-            /// paused at a block boundary (the wrapper's plugin lock),
-            /// so reading any field is safe - but an audio block that
-            /// arrives mid-save waits for this to return. Keep it
-            /// cheap: copy bytes out, don't compute or compress here.
-            /// To take this off the plugin lock entirely, override
-            /// [`Self::snapshot_into`] instead.
+            /// **Prefer [`Self::snapshot_into`].** That is the
+            /// real-time-safe path and the one CLAP / VST3 / AU actually
+            /// persist from. Overriding only `save_state` still
+            /// round-trips - the shell falls back to it - but then it runs
+            /// on the **audio thread** each changed block, so keep it
+            /// cheap (copy bytes out; no compute or compress) and reach
+            /// for `snapshot_into` (or the off-thread
+            /// `InitContext::snapshot_publisher()` for MB-scale state) for
+            /// anything non-trivial. Default: delegates to
+            /// [`Self::snapshot_into`] (empty when neither is overridden).
             fn save_state(state: &Self::DspState) -> Vec<u8> {
                 let mut buf = Vec::new();
                 let _ = Self::snapshot_into(state, &mut buf);

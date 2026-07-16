@@ -359,7 +359,13 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             &mut self.try_snapshot,
             &mut self.last_snapshot_version,
             version,
-            |buf| loader.snapshot_into(state, buf),
+            |buf| {
+                crate::static_shell::snapshot_or_save_state(
+                    buf,
+                    |b| loader.snapshot_into(state, b),
+                    || loader.save_state(state),
+                )
+            },
         );
 
         // Refresh latency / tail caches so host-thread queries don't
@@ -401,7 +407,13 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             &mut self.try_snapshot,
             &mut self.last_snapshot_version,
             version,
-            |buf| loader.snapshot_into(state, buf),
+            |buf| {
+                crate::static_shell::snapshot_or_save_state(
+                    buf,
+                    |b| loader.snapshot_into(state, b),
+                    || loader.save_state(state),
+                )
+            },
         );
     }
 
