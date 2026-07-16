@@ -2559,12 +2559,12 @@ fn make_params_extension<P: PluginExport>() -> clap_plugin_params {
 
 /// Splits a `ParamInfo::group` into a CLAP remote-controls
 /// `(section_name, page_name)` pair on its first `/`, mirroring the
-/// convention CLAP's own `clap_param_info::module` path already uses
+/// convention the `params` extension's `module` path already uses
 /// ("/" as a tree separator). `"EQ/Lo Shelf"` becomes section `"EQ"`,
 /// page `"Lo Shelf"` - a host can offer one "EQ" button that cycles
-/// through each band's page (see `clap.remote-controls`'s own
-/// `[section:osc]` / `[name:osc1]` example). A group with no `/` is
-/// its own single-page section, e.g. `"Compressor"` stays as-is.
+/// through each band's page. A group with no `/` is its own single-page
+/// section, e.g. `"Compressor"` stays as-is. Only the first slash
+/// splits, so a page name may itself contain one.
 fn split_group(group: &str) -> (&str, &str) {
     match group.split_once('/') {
         Some((section, page)) => (section, page),
@@ -2574,13 +2574,22 @@ fn split_group(group: &str) -> (&str, &str) {
 
 /// Chunks a plugin's params into pages of at most
 /// `CLAP_REMOTE_CONTROLS_COUNT` (8), one run of pages per distinct
-/// non-empty `ParamInfo::group`. Ungrouped params (`group == ""`)
-/// get no page - the host's generic param list already covers them,
-/// and an unnamed page would collide with itself across the plugin.
+/// non-empty `ParamInfo::group`. A remote-control slot is a scarce
+/// performance control (8 per page), so a param is skipped when it has
+/// no group (opt-out; the host's generic list covers it) or is `HIDDEN`
+/// / `READONLY`. `group` has two consumers - the `params` extension's
+/// `module` path (pure tree organization, sensible even for a hidden
+/// param) and these slots - so grouping a hidden param for tidiness must
+/// not silently burn one of the user's knobs on something they can't
+/// see or move.
 fn remote_control_pages(infos: &[ParamInfo]) -> Vec<(&str, Vec<u32>)> {
     let mut pages: Vec<(&str, Vec<u32>)> = Vec::new();
     for info in infos {
-        if info.group.is_empty() {
+        if info.group.is_empty()
+            || info
+                .flags
+                .intersects(ParamFlags::HIDDEN | ParamFlags::READONLY)
+        {
             continue;
         }
         let existing = pages
@@ -2594,12 +2603,12 @@ fn remote_control_pages(infos: &[ParamInfo]) -> Vec<(&str, Vec<u32>)> {
     pages
 }
 
-/// Deterministic page id from the group name and its chunk index
-/// among same-named pages, so a page's id survives an unrelated
-/// reorder of `Params::param_infos()`. Hand-rolled FNV-1a rather than
-/// `std`'s `DefaultHasher` - that one's keyed by `RandomState` and
-/// isn't guaranteed stable across processes, which a host may use
-/// `page_id` to remember a user's page choice across.
+/// Deterministic page id from the group name and its chunk index among
+/// same-named pages, so a page's id survives an unrelated reorder of
+/// `Params::param_infos()`. Hand-rolled FNV-1a rather than `std`'s
+/// `DefaultHasher` - that one is keyed by `RandomState` and isn't
+/// guaranteed stable across processes, which a host may use `page_id`
+/// to remember a user's page choice across.
 fn remote_controls_page_id(group: &str, chunk_index: usize) -> clap_id {
     let mut hash: u32 = 0x811c_9dc5;
     for &b in group.as_bytes() {
@@ -2635,8 +2644,8 @@ unsafe extern "C" fn remote_controls_get<P: PluginExport>(
         let group: &str = pages[page_index].0;
         let ids: &[u32] = &pages[page_index].1;
 
-        // Chunk index among pages sharing this group name, so two
-        // pages from the same >8-param group get distinct, stable ids.
+        // Chunk index among pages sharing this group name, so two pages
+        // from the same >8-param group get distinct, stable ids.
         let chunk_index = pages[..page_index]
             .iter()
             .filter(|page| page.0 == group)
@@ -4578,6 +4587,21 @@ mod remote_controls_tests {
     }
 
     #[test]
+    fn hidden_and_readonly_grouped_params_take_no_slot() {
+        // A grouped-but-hidden / read-only param organizes the param
+        // tree but isn't a performance control, so it must not burn one
+        // of a page's eight slots.
+        let mut hidden = info(0, "EQ");
+        hidden.flags = ParamFlags::HIDDEN;
+        let visible = info(1, "EQ");
+        let mut readonly = info(2, "EQ");
+        readonly.flags = ParamFlags::READONLY;
+        let infos = [hidden, visible, readonly];
+        let pages = remote_control_pages(&infos);
+        assert_eq!(pages, vec![("EQ", vec![1])]);
+    }
+
+    #[test]
     fn group_over_eight_params_splits_into_two_pages() {
         let infos: Vec<ParamInfo> = (0..10).map(|id| info(id, "EQ")).collect();
         let pages = remote_control_pages(&infos);
@@ -4610,18 +4634,18 @@ mod remote_controls_tests {
 
     #[test]
     fn page_id_is_stable_and_distinguishes_chunks() {
-        // Same inputs -> same id (host may persist `page_id` across
-        // sessions to remember a user's chosen page).
+        // Deterministic: identical inputs hash identically (a host
+        // persists this across processes).
         assert_eq!(
             remote_controls_page_id("EQ", 0),
             remote_controls_page_id("EQ", 0)
         );
-        // Different chunk of the same group, or a different group
-        // entirely, must not collide.
+        // The two pages of a >8-param group get distinct ids.
         assert_ne!(
             remote_controls_page_id("EQ", 0),
             remote_controls_page_id("EQ", 1)
         );
+        // Distinct group names get distinct ids.
         assert_ne!(
             remote_controls_page_id("EQ", 0),
             remote_controls_page_id("DYN", 0)

@@ -8,7 +8,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
 dependencies = [
- "uuid",
+ "uuid 1.23.4",
 ]
 
 [[package]]
@@ -262,37 +262,31 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "baseview"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fee31c5ff593b43ef62afbaea18a6b3fa62e84171d00aaf014b9d4ea128776e"
+version = "0.1.1-truce.13"
+source = "git+https://github.com/truce-audio/baseview.git?branch=baseview-truce-vizia#18fa79b71bda8d1c6a1de70cd155acefebfc3d3f"
 dependencies = [
- "block2",
- "bytemuck",
- "dispatch2",
- "dpi",
- "keyboard-types 0.8.3",
+ "keyboard-types",
+ "nix",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-foundation",
- "percent-encoding",
- "polling",
- "raw-window-handle 0.6.2",
- "windows 0.62.2",
- "windows-core 0.62.2",
+ "raw-window-handle 0.5.2",
+ "uuid 0.8.2",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
  "windows-sys 0.61.2",
  "x11-dl",
  "x11rb",
- "xkbcommon-dl",
 ]
 
 [[package]]
 name = "baseview-truce"
-version = "0.1.1-truce.12"
+version = "0.1.1-truce.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bff8aa761c17ba5e7d572efd8fb7b77f6cb282ac3b44fa5731c38f85e2f79576"
+checksum = "5dc830ece0415c778e700c97d38bb28f4d8af0280f9d140f50ea094d0fed3e27"
 dependencies = [
- "keyboard-types 0.7.0",
+ "keyboard-types",
  "nix",
  "objc2",
  "objc2-app-kit",
@@ -756,12 +750,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dpi"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
-
-[[package]]
 name = "dtoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -822,7 +810,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1349,16 +1337,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keyboard-types"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
-dependencies = [
- "bitflags 2.13.0",
- "serde",
-]
-
-[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1521,7 +1499,7 @@ dependencies = [
 [[package]]
 name = "morphorm"
 version = "0.8.0"
-source = "git+https://github.com/vizia/morphorm.git?rev=ff08ec25b79e1bd6c638270b36317d092da861e8#ff08ec25b79e1bd6c638270b36317d092da861e8"
+source = "git+https://github.com/vizia/morphorm.git?rev=f48333f042e346cff64a8a563b791a5b4c18163b#f48333f042e346cff64a8a563b791a5b4c18163b"
 dependencies = [
  "smallvec",
 ]
@@ -2370,7 +2348,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2396,9 +2374,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "selectors"
-version = "0.39.0"
+version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bad7c25c97cc59c4858df8724a3789caa6ee509b628dfe6df34e8a8084c8a84e"
+checksum = "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d"
 dependencies = [
  "bitflags 2.13.0",
  "cssparser",
@@ -2549,9 +2527,9 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skia-bindings"
-version = "0.99.0"
+version = "0.97.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e2d1c3ebd697c0cbded0145e9204a38fa6b268446051b7196d0a096414ea7f3"
+checksum = "e6a38f4d460276ea40588c958396a9de0eec808c679009a5b52afdf6ebf34132"
 dependencies = [
  "bindgen",
  "cc",
@@ -2566,9 +2544,9 @@ dependencies = [
 
 [[package]]
 name = "skia-safe"
-version = "0.99.0"
+version = "0.97.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f512ac418a64194842dd05566320805dad1c957c521039db2486fd6368865bc"
+checksum = "1ecfc54fcd40dc5dea15dd2a84f8422cdb0f76c6a51ebb8835ce0b7ef590a21f"
 dependencies = [
  "base64",
  "bitflags 2.13.0",
@@ -2688,7 +2666,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2852,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "truce"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "truce-core",
  "truce-derive",
@@ -2864,7 +2842,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "crossbeam-queue",
  "truce-aax-bridge",
@@ -2874,11 +2852,11 @@ dependencies = [
 
 [[package]]
 name = "truce-aax-bridge"
-version = "6.1.4"
+version = "6.1.9"
 
 [[package]]
 name = "truce-au"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -2889,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "base64",
  "serde",
@@ -2899,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "truce-clap"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -2911,7 +2889,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
@@ -2922,7 +2900,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "tiny-skia",
  "truce-core",
@@ -2932,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "truce-derive"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2945,7 +2923,7 @@ dependencies = [
 
 [[package]]
 name = "truce-driver"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "truce-core",
  "truce-params",
@@ -2953,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-vizia"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "clap-sys",
  "truce",
@@ -2974,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-vizia"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "clap-sys",
  "truce",
@@ -2995,7 +2973,7 @@ dependencies = [
 
 [[package]]
 name = "truce-font"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "skrifa",
  "tiny-skia",
@@ -3003,7 +2981,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "baseview-truce",
  "log",
@@ -3025,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-types"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "objc2",
  "truce-core",
@@ -3033,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-utils"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
@@ -3042,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "crc32fast",
  "libloading 0.9.0",
@@ -3056,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "truce-lv2"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "base64",
  "objc",
@@ -3068,14 +3046,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "bitflags 2.13.0",
 ]
 
 [[package]]
 name = "truce-plugin"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -3084,17 +3062,17 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "6.1.4"
+version = "6.1.9"
 
 [[package]]
 name = "truce-standalone"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "baseview-truce",
  "cpal",
  "crossbeam-queue",
  "dirs",
- "keyboard-types 0.7.0",
+ "keyboard-types",
  "midir",
  "objc",
  "pico-args",
@@ -3110,7 +3088,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "png",
  "toml",
@@ -3123,14 +3101,14 @@ dependencies = [
 
 [[package]]
 name = "truce-utils"
-version = "6.1.4"
+version = "6.1.9"
 
 [[package]]
 name = "truce-vizia"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "log",
- "raw-window-handle 0.6.2",
+ "raw-window-handle 0.5.2",
  "truce-core",
  "truce-font",
  "truce-gui-utils",
@@ -3140,7 +3118,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst2"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -3150,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "6.1.4"
+version = "6.1.9"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -3247,6 +3225,15 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "uuid"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+dependencies = [
+ "getrandom 0.2.17",
+]
+
+[[package]]
+name = "uuid"
 version = "1.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
@@ -3265,6 +3252,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vizia"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "skia-safe",
  "vizia_baseview",
@@ -3274,10 +3262,11 @@ dependencies = [
 [[package]]
 name = "vizia_baseview"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "baseview",
  "gl",
- "raw-window-handle 0.6.2",
+ "raw-window-handle 0.5.2",
  "skia-safe",
  "vizia_core",
  "vizia_id",
@@ -3287,6 +3276,7 @@ dependencies = [
 [[package]]
 name = "vizia_core"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "accesskit",
  "bitflags 2.13.0",
@@ -3316,19 +3306,22 @@ dependencies = [
 [[package]]
 name = "vizia_id"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 
 [[package]]
 name = "vizia_input"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "bitflags 2.13.0",
- "keyboard-types 0.8.3",
+ "keyboard-types",
  "vizia_id",
 ]
 
 [[package]]
 name = "vizia_reactive"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "parking_lot",
  "smallvec",
@@ -3337,6 +3330,7 @@ dependencies = [
 [[package]]
 name = "vizia_storage"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "vizia_id",
 ]
@@ -3344,6 +3338,7 @@ dependencies = [
 [[package]]
 name = "vizia_style"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "bitflags 2.13.0",
  "cssparser",
@@ -3358,6 +3353,7 @@ dependencies = [
 [[package]]
 name = "vizia_window"
 version = "0.4.0"
+source = "git+https://github.com/vizia/vizia.git?rev=24c47433098fcc8e29668a22fcb71771807d86d6#24c47433098fcc8e29668a22fcb71771807d86d6"
 dependencies = [
  "bitflags 2.13.0",
  "vizia_input",
@@ -3624,7 +3620,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -4161,25 +4157,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
 
 [[package]]
-name = "xkbcommon-dl"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d039de8032a9a8856a6be89cea3e5d12fdd82306ab7c94d74e6deab2460651c5"
-dependencies = [
- "bitflags 2.13.0",
- "dlib",
- "log",
- "once_cell",
- "xkeysym",
-]
-
-[[package]]
-name = "xkeysym"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
-
-[[package]]
 name = "xml-rs"
 version = "0.8.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4212,7 +4189,7 @@ dependencies = [
  "serde_repr",
  "tracing",
  "uds_windows",
- "uuid",
+ "uuid 1.23.4",
  "windows-sys 0.61.2",
  "winnow",
  "zbus_macros",

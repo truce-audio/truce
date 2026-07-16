@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 6.1.9
+
+- CLAP plugins expose `remote-controls` pages built from `#[param(group = "...")]`, so hosts (e.g. Bitwig) map each group onto the eight controller knobs. Based on [#178](https://github.com/truce-audio/truce/pull/178) by @lxndrbe.
+
+## 6.1.8
+
+- `cargo truce build --target` now stages VST3 and CLAP bundles for the target platform, not the build host, so cross-compiling a Windows VST3/CLAP from macOS produces the correct bundle layout.
+
 ## 6.1.7
 
 - VST3 plugins now cross-compile from macOS to Windows (`x86_64-pc-windows-gnu`); the C++ shim build no longer hands a macOS-only flag to the mingw compiler.

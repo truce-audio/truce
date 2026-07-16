@@ -31,7 +31,7 @@ pedantic = { level = "warn", priority = -1 }
 
 [package]
 name = "truce-vizia"
-version = "6.1.7"
+version = "6.1.9"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
@@ -43,12 +43,12 @@ homepage = "https://github.com/truce-audio/truce"
 crate-type = ["rlib"]
 
 [dependencies]
-truce-core = { version = "6.1.7", path = "../truce-core" }
-truce-params = { version = "6.1.7", path = "../truce-params" }
-truce-font = { version = "6.1.7", path = "../truce-font" }
+truce-core = { version = "6.1.9", path = "../truce-core" }
+truce-params = { version = "6.1.9", path = "../truce-params" }
+truce-font = { version = "6.1.9", path = "../truce-font" }
 # Pulled in only for `reanchor_all_children_to_top` (macOS NSView
 # anchoring helper). Doesn't drag in any renderer.
-truce-gui-utils = { version = "6.1.7", path = "../truce-gui-utils" }
+truce-gui-utils = { version = "6.1.9", path = "../truce-gui-utils" }
 
 # LX fork: vizia-audio (not upstream vizia). DAW baseview + parented DPI.
 # Git pin so LX-Audiolabs/truce main works for any consumer (no machine paths).
