@@ -383,6 +383,11 @@ struct Vst3Callbacks {
     // setBusArrangements so a sidechain bus is matched on its own width.
     int32_t (*match_bus_layout_perbus)(const uint32_t* /*in_channels*/, uint32_t /*num_in*/,
                                        const uint32_t* /*out_channels*/, uint32_t /*num_out*/);
+    // Non-zero when a param is CHUNKED (sample-accurate automation). The
+    // shim skips its block-rate pre-commit for these on a processing
+    // block, so process_chunked applies each point at its sample offset
+    // instead of the end value landing from sample 0.
+    int32_t (*param_is_chunked)(void*, uint32_t);
 };
 
 // ---------------------------------------------------------------------------
@@ -1114,6 +1119,18 @@ public:
         // negotiated in setupProcessing.
         if (data->symbolicSampleSize != procSampleSize) return kResultFalse;
 
+        // Whether this call renders audio, versus a parameter flush
+        // (numSamples <= 0, or a suspended effect device the host flushes
+        // with no audio buses). On a flush process_chunked never runs, so
+        // the shim must commit every param's block value itself; when we DO
+        // process, CHUNKED params are committed per-offset by
+        // process_chunked and must NOT be pre-committed here, or a mid-block
+        // step is heard from sample 0.
+        const bool suspendedFlush =
+            g_desc && (g_desc->num_inputs > 0 || g_desc->num_outputs > 0)
+            && data->numInputs == 0 && data->numOutputs == 0;
+        const bool willProcess = data->numSamples > 0 && !suspendedFlush;
+
         // Collect ALL param change points (sample-accurate automation)
         Vst3ParamChange paramChanges[512];
         uint32_t numParamChanges = 0;
@@ -1141,8 +1158,14 @@ public:
                         paramChanges[numParamChanges].sample_offset = sampleOffset;
                         paramChanges[numParamChanges].value = plain;
                         numParamChanges++;
-                        // Also set the atomic value for the last point
-                        if (j == numPoints - 1)
+                        // Block-rate commit of the queue's final value.
+                        // Skipped for CHUNKED params on a processing block:
+                        // process_chunked commits those at their sample
+                        // offset, so pre-writing the end value here would
+                        // make a mid-block step audible from sample 0. On a
+                        // flush (no process_chunked) we still commit them.
+                        if (j == numPoints - 1
+                                && !(willProcess && g_cb->param_is_chunked(ctx, paramId)))
                             g_cb->param_set_value(ctx, paramId, plain);
                     }
                 }
@@ -1184,8 +1207,7 @@ public:
          * never negotiated. Only bail when the plug-in declared audio
          * buses: a pure-MIDI note effect (no audio buses by design)
          * legitimately processes every block with this shape. */
-        if (g_desc && (g_desc->num_inputs > 0 || g_desc->num_outputs > 0)
-                && data->numInputs == 0 && data->numOutputs == 0)
+        if (suspendedFlush)
             return kResultOk;
 
         // Collect input/output channel pointers. channelBuffers32 /
