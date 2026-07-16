@@ -17,7 +17,7 @@
 use std::cell::UnsafeCell;
 use std::ptr::{read_volatile, write_volatile};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering, fence};
 
 use crate::events::TransportInfo;
 
@@ -68,11 +68,17 @@ impl TransportSlot {
         // to mark "write in progress", do the write, then bump to the
         // next even value to publish.
         let s = self.seq.load(Ordering::Relaxed);
-        // First store: just signals "write in progress" to readers.
-        // The data write that follows is published by the *second*
-        // store's Release - readers acquire on that one. This first
-        // store's only job is to flip parity, so Relaxed is enough.
+        // First store: flip parity to odd ("write in progress"). Relaxed
+        // on its own, because the release fence below is what orders this
+        // store before the data write - a plain store would otherwise be
+        // free to reorder after it on a weak model (AArch64), letting a
+        // reader see even seq while the data is torn.
         self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
+        // Order the odd-parity store before the data write, so any reader
+        // that observes the in-progress data also observes the odd seq
+        // and retries. Without it the two can reorder and a torn read
+        // validates.
+        fence(Ordering::Release);
         // SAFETY: single-writer invariant means no other thread writes
         // `data` concurrently. Readers detect mid-update via the odd
         // seq value, but Rust's memory model treats a non-atomic write
@@ -120,11 +126,91 @@ impl TransportSlot {
             // the producer side - see that doc-comment for the data-
             // race rationale.
             let snapshot = unsafe { read_volatile(self.data.get()) };
+            // Keep the data copy above from sinking below the second seq
+            // load. An Acquire *load* only bars later ops from moving up;
+            // this fence bars the preceding copy from moving down, so a
+            // concurrent write started during the copy is always caught
+            // by the s1 != s2 check.
+            fence(Ordering::Acquire);
             let s2 = self.seq.load(Ordering::Acquire);
             if s1 == s2 {
                 return Some(snapshot);
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TransportSlot;
+    use crate::events::TransportInfo;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Encode one counter into every numeric/bool field, so a whole
+    /// (untorn) read has all fields agreeing on the same `n`. A torn read
+    /// mixes fields from two writes and fails the check. This is a soak
+    /// test, not a proof: on a weak-memory host (`AArch64`) the missing
+    /// seqlock fences let torn reads validate, and enough iterations
+    /// surface one; on `x86` it mainly guards the retry/volatile logic.
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
+    #[test]
+    fn concurrent_reads_never_observe_a_torn_write() {
+        let slot = TransportSlot::new();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let writer = {
+            let slot = Arc::clone(&slot);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                for n in 1i64..2_000_000 {
+                    let f = n as f64;
+                    slot.write(&TransportInfo {
+                        playing: n % 2 == 0,
+                        recording: n % 2 == 1,
+                        tempo: f,
+                        time_sig_num: 0,
+                        time_sig_den: 0,
+                        position_samples: n,
+                        position_seconds: f,
+                        position_beats: f,
+                        bar_start_beats: f,
+                        loop_active: n % 2 == 0,
+                        loop_start_beats: f,
+                        loop_end_beats: f,
+                    });
+                }
+                stop.store(true, Ordering::Relaxed);
+            })
+        };
+
+        let readers: Vec<_> = (0..3)
+            .map(|_| {
+                let slot = Arc::clone(&slot);
+                let stop = Arc::clone(&stop);
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        if let Some(info) = slot.read() {
+                            let n = info.position_samples;
+                            let f = n as f64;
+                            assert_eq!(info.tempo, f, "torn read: tempo");
+                            assert_eq!(info.position_seconds, f, "torn read: seconds");
+                            assert_eq!(info.position_beats, f, "torn read: beats");
+                            assert_eq!(info.bar_start_beats, f, "torn read: bar");
+                            assert_eq!(info.loop_start_beats, f, "torn read: loop start");
+                            assert_eq!(info.loop_end_beats, f, "torn read: loop end");
+                            assert_eq!(info.playing, n % 2 == 0, "torn read: playing");
+                            assert_eq!(info.recording, n % 2 == 1, "torn read: recording");
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        writer.join().unwrap();
+        for r in readers {
+            r.join().unwrap();
+        }
     }
 }

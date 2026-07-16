@@ -70,7 +70,10 @@ pub struct AudioTap<S> {
     /// first is still running, and a per-sample ring must have one
     /// consumer at a time. `try_lock` makes the second worker bow out
     /// (the first is already draining the same data). Locked only on the
-    /// pool thread, never on the audio thread.
+    /// pool thread, never on the audio thread. Also retains any trailing
+    /// partial frame between drains (see [`Self::drain_with`]): the
+    /// producer pushes a frame's channels one at a time, so a concurrent
+    /// drain can catch it mid-frame, and the leftover reassembles next call.
     scratch: Mutex<Vec<S>>,
     /// The dedicated [`StreamWorker`] thread, if one drains this tap.
     /// `push_frames` unparks it (a lock-free atomic load + unpark) so the
@@ -145,27 +148,43 @@ impl<S: Copy + Send + 'static> AudioTap<S> {
     /// the drain finishes the stale frames - `reset` should follow with
     /// the consumer's own state reset.
     pub fn clear(&self) {
-        let Ok(_guard) = self.scratch.try_lock() else {
+        let Ok(mut guard) = self.scratch.try_lock() else {
             return;
         };
         while self.ring.pop().is_some() {}
+        // Drop any partial frame carried from an interrupted drain, so it
+        // can't prepend stale samples onto post-clear frames.
+        guard.clear();
     }
 
-    /// Drain everything buffered and hand it to `f` as one interleaved
-    /// slice. Runs on the consumer (a pool worker); safe to call from a
-    /// `BackgroundTask::run`. If another worker is already draining
-    /// this tap it returns without double-draining - that worker sees the
-    /// same data. `f` is not called when nothing is buffered.
+    /// Drain the buffered whole frames and hand them to `f` as one
+    /// interleaved slice - always a whole number of frames. Runs on the
+    /// consumer (a pool worker); safe to call from a `BackgroundTask::run`.
+    /// If another worker is already draining this tap it returns without
+    /// double-draining - that worker sees the same data. `f` is not called
+    /// when no whole frame is buffered.
+    ///
+    /// The producer pushes a frame's channels one at a time, so a drain
+    /// running concurrently can catch it mid-frame. Any trailing partial
+    /// frame is held in `scratch` and reassembled on the next drain rather
+    /// than handed to `f` split - a consumer deinterleaving with
+    /// `chunks_exact(channels)` never sees a channel-swapped chunk.
     pub fn drain_with(&self, mut f: impl FnMut(&[S])) {
         let Ok(mut scratch) = self.scratch.try_lock() else {
             return;
         };
-        scratch.clear();
+        // Do NOT clear: `scratch` may hold a partial frame carried from a
+        // previous drain. Append after it so the frame reassembles.
         while let Some(sample) = self.ring.pop() {
             scratch.push(sample);
         }
-        if !scratch.is_empty() {
-            f(&scratch);
+        // Hand off only whole frames; keep any trailing partial for the
+        // next call. `drain` shifts the (sub-channel-count) remainder to
+        // the front and preserves the buffer's capacity for reuse.
+        let whole = scratch.len() - scratch.len() % self.channels;
+        if whole > 0 {
+            f(&scratch[..whole]);
+            scratch.drain(..whole);
         }
     }
 
@@ -318,6 +337,60 @@ mod tests {
         let mut got = Vec::new();
         tap.drain_with(|chunk| got.extend_from_slice(chunk));
         assert_eq!(got, vec![1.0, 2.0]);
+    }
+
+    /// The producer pushes a frame's channels one at a time, so a drain
+    /// running concurrently routinely lands between them. Every chunk
+    /// handed to `f` must still be a whole number of frames - otherwise a
+    /// consumer deinterleaving with `chunks_exact(2)` gets a channel-swapped
+    /// chunk. Sizing the ring for the whole run rules out drops, so the
+    /// reassembled stream must also be the exact FIFO sequence.
+    ///
+    /// Several independent rounds: each producer/consumer start is its own
+    /// race, so a regressed drain (handing off partial frames) is caught
+    /// with high probability, while the correct one always passes.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    #[test]
+    fn concurrent_drain_hands_out_whole_frames() {
+        use std::time::Instant;
+
+        let frames = 100_000usize;
+        for _round in 0..4 {
+            let tap = Arc::new(AudioTap::<i32>::new(frames, 2));
+
+            let producer = {
+                let tap = Arc::clone(&tap);
+                thread::spawn(move || {
+                    // Frame i is [2i, 2i+1]: L even, R odd, values consecutive
+                    // across the stream, so any split or swap is visible.
+                    for i in 0..frames as i32 {
+                        tap.push_frames(&[2 * i, 2 * i + 1]);
+                    }
+                })
+            };
+
+            let mut got: Vec<i32> = Vec::with_capacity(frames * 2);
+            let start = Instant::now();
+            while got.len() < frames * 2 {
+                tap.drain_with(|chunk| {
+                    assert_eq!(
+                        chunk.len() % 2,
+                        0,
+                        "drain handed a partial frame (len {})",
+                        chunk.len()
+                    );
+                    got.extend_from_slice(chunk);
+                });
+                assert!(start.elapsed() < Duration::from_secs(30), "drain stalled");
+            }
+            producer.join().unwrap();
+
+            // No drops (ring sized for the run) means strict FIFO: sample j is j.
+            assert_eq!(got.len(), frames * 2);
+            for (j, &v) in got.iter().enumerate() {
+                assert_eq!(v, j as i32, "sample {j} out of place - frame misaligned");
+            }
+        }
     }
 
     #[test]
