@@ -34,6 +34,10 @@
 //! other instance's background work. Long or blocking work belongs on a
 //! plugin's own thread (`AudioTap::spawn_worker`), not the pool.
 
+#[cfg(any(unix, windows))]
+use std::ffi::c_void;
+#[cfg(unix)]
+use std::ffi::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 use std::sync::{Arc, OnceLock};
 use std::thread::{self, Thread};
@@ -214,9 +218,89 @@ fn pool() -> &'static Pool {
                 }
             }
         }
+        // The workers loop forever with no shutdown path, so pin this
+        // module in memory: a host that `dlclose`s it on last-instance
+        // teardown must not leave a parked worker to wake into unmapped
+        // code. Only once we actually have workers to protect.
+        if !workers.is_empty() {
+            pin_current_module();
+        }
         Pool { shared, workers }
     })
 }
+
+/// Pin the module `truce-core` is linked into (the plugin cdylib in a
+/// static build, or the hot-reload shell cdylib) so it is never
+/// unmapped. The pool's workers loop forever - park + drain - with no
+/// shutdown path and no `JoinHandle`s; if the host `dlclose`d the module
+/// on last-instance teardown while a worker was parked, it would wake
+/// with its program counter in unmapped code and take down the DAW
+/// (Bitwig, Cubase, and JUCE hosts all unload). Pinning trades a small
+/// permanent mapping for eliminating that crash class - the standard fix
+/// for a persistent plugin helper thread. Called once, and only when the
+/// pool actually spawned workers.
+#[cfg(unix)]
+fn pin_current_module() {
+    // Field names mirror the platform's `Dl_info`; only `dli_fname` is
+    // read, the rest are here for correct C layout (`dladdr` writes all).
+    #[repr(C)]
+    #[allow(clippy::struct_field_names)]
+    struct DlInfo {
+        dli_fname: *const c_char,
+        dli_fbase: *mut c_void,
+        dli_sname: *const c_char,
+        dli_saddr: *mut c_void,
+    }
+    unsafe extern "C" {
+        fn dladdr(addr: *const c_void, info: *mut DlInfo) -> c_int;
+        fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
+    }
+    // RTLD_NOLOAD | RTLD_NODELETE: re-reference the already-loaded object
+    // and mark it non-deletable. The flag values differ between glibc and
+    // Darwin.
+    #[cfg(target_os = "linux")]
+    const FLAGS: c_int = 0x0004 | 0x1000;
+    #[cfg(not(target_os = "linux"))]
+    const FLAGS: c_int = 0x0010 | 0x0080;
+
+    // SAFETY: `dladdr` reads the address of a live function in this module
+    // and fills `info` with loader-owned strings valid for the immediate
+    // `dlopen`. NOLOAD only re-references the already-mapped object; the
+    // returned handle is intentionally leaked so NODELETE persists.
+    unsafe {
+        let mut info: DlInfo = core::mem::zeroed();
+        if dladdr(pin_current_module as *const c_void, &raw mut info) != 0
+            && !info.dli_fname.is_null()
+        {
+            let _ = dlopen(info.dli_fname, FLAGS);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn pin_current_module() {
+    unsafe extern "system" {
+        fn GetModuleHandleExW(flags: u32, name: *const u16, module: *mut *mut c_void) -> i32;
+    }
+    // GET_MODULE_HANDLE_EX_FLAG_PIN | ..._FROM_ADDRESS: interpret `name`
+    // as an address inside this module and bump its load count so it
+    // never unloads.
+    const PIN_FROM_ADDRESS: u32 = 0x0000_0001 | 0x0000_0004;
+
+    // SAFETY: `name` is the address of a live function in this module;
+    // `module` receives the pinned handle, which we intentionally leak.
+    unsafe {
+        let mut module: *mut c_void = core::ptr::null_mut();
+        let _ = GetModuleHandleExW(
+            PIN_FROM_ADDRESS,
+            pin_current_module as *const u16,
+            &raw mut module,
+        );
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn pin_current_module() {}
 
 /// Eagerly start the shared pool on the calling thread. The shell calls
 /// this at instantiation (the host/main thread) when a plugin wires a
@@ -550,6 +634,16 @@ mod tests {
             !pool().workers.is_empty(),
             "warming spawns at least one worker"
         );
+    }
+
+    #[test]
+    fn pin_current_module_is_safe_and_idempotent() {
+        // Smoke: pinning must never panic or crash. In the test binary
+        // the loader query resolves to the harness executable (never
+        // unloaded anyway); we only assert the FFI is benign and can run
+        // more than once.
+        super::pin_current_module();
+        super::pin_current_module();
     }
 
     #[test]
