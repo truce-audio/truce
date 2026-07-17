@@ -89,6 +89,65 @@ use ffi::{
 /// after the host already moved on.
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
+/// One `SysEx` message handed from the host thread to the audio thread.
+/// Recycled through a free-list (see [`SysExQueue`]) so the audio thread
+/// never allocates or frees: it copies the bytes into the event pool and
+/// returns the buffer.
+#[derive(Default)]
+struct SysExInput {
+    sample_offset: u32,
+    bytes: Vec<u8>,
+}
+
+/// Lock-free `SysEx` input handoff. `SYSEX_INPUT_SLOTS` buffers cycle
+/// between the *free* queue (empty, ready to fill) and the *ready* queue
+/// (filled, awaiting render). The host thread's `MusicDeviceSysEx`
+/// callback - which AU v2 lets the host call off the render thread - pops
+/// a free buffer, copies the message in, and pushes it ready; the audio
+/// thread drains ready into the event list and returns each buffer to
+/// free. No lock, allocation, or free on the audio thread. Since every
+/// buffer is one of `SYSEX_INPUT_SLOTS` total, the ready/free pushes
+/// always have room; only the host-thread pop can come up empty (queue
+/// saturated), in which case the incoming message is dropped rather than
+/// backlogged.
+type SysExQueue = crossbeam_queue::ArrayQueue<SysExInput>;
+
+/// `SysEx` input buffers cycling through [`SysExQueue`]. Generous for the
+/// small control messages (MMC, device inquiry, MPE config) that are the
+/// realistic input to an effect / instrument between two render blocks.
+const SYSEX_INPUT_SLOTS: usize = 64;
+
+/// Host-thread side of the `SysEx` input handoff: copy one message into a
+/// recycled buffer and queue it. Drops the message if no buffer is free
+/// (the audio thread hasn't drained - queue saturated) rather than
+/// building an unbounded backlog. Never touches the audio-thread scratch,
+/// so it is safe to call from whatever thread the host runs
+/// `MusicDeviceSysEx` on.
+fn queue_sysex_input(free: &SysExQueue, ready: &SysExQueue, sample_offset: u32, bytes: &[u8]) {
+    let Some(mut slot) = free.pop() else {
+        return;
+    };
+    slot.sample_offset = sample_offset;
+    slot.bytes.clear();
+    slot.bytes.extend_from_slice(bytes);
+    // We hold one of the fixed set of buffers, so `ready` has room; the
+    // recycle-on-error keeps the invariant sound regardless.
+    if let Err(slot) = ready.push(slot) {
+        let _ = free.push(slot);
+    }
+}
+
+/// Audio-thread side: drain every queued `SysEx` into `event_list`,
+/// returning each buffer to `free`. Lock-free, and it only copies into
+/// the pre-allocated event pool and moves buffer handles between queues -
+/// no allocation or free on the audio thread.
+fn drain_sysex_input(ready: &SysExQueue, free: &SysExQueue, event_list: &mut EventList) {
+    while let Some(slot) = ready.pop() {
+        let _ = event_list.push_sysex(slot.sample_offset, &slot.bytes);
+        let _ = free.push(slot);
+    }
+}
+
 /// Wait-free queue for AU v2 process-emitted `ParamChange` feedback:
 /// the audio thread pushes `(param_id, plain_value)`, the notifier
 /// thread drains and forwards them to the host. Sized to a full
@@ -270,6 +329,13 @@ struct AuInstance<P: PluginExport> {
     /// `cb_process` and calls [`state::apply_state`]
     /// under its exclusive `&mut plugin`.
     pending_state: Arc<StateLoadQueue>,
+    /// `SysEx` input queued from the host thread (`MusicDeviceSysEx`, which
+    /// AU v2 may call off the render thread) plus the free-list it recycles
+    /// through. Kept off the `audio` cell so the host thread never aliases
+    /// the audio-thread-owned scratch; `cb_process` drains `sysex_ready`
+    /// at the block top. See [`SysExQueue`].
+    sysex_ready: SysExQueue,
+    sysex_free: SysExQueue,
     /// `legacy_au_keys` from `PluginInfo`, NUL-terminated for the
     /// shim's `ClassInfo` foreign-key probe. Built once at create;
     /// pointers handed out via `cb_legacy_state_key_at` stay valid
@@ -280,15 +346,6 @@ struct AuInstance<P: PluginExport> {
 /// Audio + lifecycle-owned per-block scratch (see [`AuInstance::audio`]).
 struct AuAudio<P: PluginExport> {
     event_list: EventList,
-    /// Set when `cb_au_push_sysex_input` has queued `SysEx` for the
-    /// upcoming `cb_process` block. AU v2 hosts deliver `SysEx` input
-    /// through `MusicDeviceSysEx` (the shim's `au_v2_sysex`) before the
-    /// render pulls audio, so `cb_process` must not blindly clear
-    /// `event_list` or it wipes the queued `SysEx`. The first push of a
-    /// block clears + sets this; `cb_process` consumes it instead of
-    /// re-clearing. (AU v3 `SysEx` arrives in-line via `events2` after
-    /// the clear, so it doesn't touch this flag.)
-    sysex_inputs_pending: bool,
     output_events: EventList,
     /// Resume point for the appex's sequential `output_ump_at` drain;
     /// reset alongside `output_events` each block.
@@ -399,7 +456,6 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 plugin_id_hash: state::shared_plugin_state_hash(&info),
                 audio: PluginCell::new(AuAudio {
                     event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                    sysex_inputs_pending: false,
                     output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
                     ump_drain_cursor: UmpDrainCursor::HEAD,
                     sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
@@ -413,6 +469,17 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 pending_resize: AtomicU64::new(0),
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
+                sysex_ready: SysExQueue::new(SYSEX_INPUT_SLOTS),
+                sysex_free: {
+                    // Prefill the free-list so the host thread has a buffer to
+                    // pop; each grows its Vec on first use (host thread) and
+                    // is reused thereafter.
+                    let free = SysExQueue::new(SYSEX_INPUT_SLOTS);
+                    for _ in 0..SYSEX_INPUT_SLOTS {
+                        let _ = free.push(SysExInput::default());
+                    }
+                    free
+                },
                 legacy_key_cstrings: info
                     .legacy_au_keys
                     .iter()
@@ -547,7 +614,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 }
             }
             audio.event_list.clear();
-            audio.sysex_inputs_pending = false;
+            // Not prepared: discard any host-queued `SysEx`, recycling the
+            // buffers so the queue can't accumulate stale messages.
+            while let Some(slot) = inst.sysex_ready.pop() {
+                let _ = inst.sysex_free.push(slot);
+            }
             return;
         }
 
@@ -580,16 +651,16 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // split-borrow.
         let scr = &mut *audio;
 
-        // Convert MIDI events. AU v2 `SysEx` input arrives through
-        // `MusicDeviceSysEx` (the shim's `au_v2_sysex` → `cb_au_push_sysex_input`)
-        // before this render, so preserve any queued `SysEx` instead of
-        // clearing it; otherwise clear the previous block's events
-        // before appending short MIDI.
-        if scr.sysex_inputs_pending {
-            scr.sysex_inputs_pending = false;
-        } else {
-            scr.event_list.clear();
-        }
+        // Start the block's event list fresh, then drain any `SysEx` the
+        // host queued through `MusicDeviceSysEx` (the shim's `au_v2_sysex`
+        // → `cb_au_push_sysex_input`). That callback may run on any host
+        // thread, so it queues rather than touching this scratch: pop each
+        // recycled buffer, copy its bytes into the pre-allocated event
+        // pool, return the buffer to the free list. Lock-free, no alloc or
+        // free on the audio thread. AU v3 `SysEx` arrives in-line via
+        // `events2` below instead.
+        scr.event_list.clear();
+        drain_sysex_input(&inst.sysex_ready, &inst.sysex_free, &mut scr.event_list);
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
             for ev in event_slice {
@@ -687,6 +758,23 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
              but kAudioUnitProperty_MaximumFramesPerSlice declared max {}",
             scr.max_block_size
         );
+        // Fail safe in release: `scratch` is only pre-grown to
+        // `max_block_size` (in `cb_reset`), so a host rendering more frames
+        // than it declared - or after changing the max without
+        // reinitializing - would make `scratch.build` grow on demand (heap
+        // alloc + memcpy) on the audio thread, exactly the RT violation the
+        // wrapper otherwise avoids. Zero the outputs and skip the block
+        // instead of allocating.
+        if num_frames > scr.max_block_size {
+            for ch in 0..num_output_channels as usize {
+                let ptr = *outputs.add(ch);
+                if !ptr.is_null() {
+                    std::ptr::write_bytes(ptr, 0, num_frames);
+                }
+            }
+            scr.event_list.clear();
+            return;
+        }
         let mut audio_buffer = scr.scratch.build(
             inputs,
             outputs,
@@ -1541,34 +1629,30 @@ unsafe extern "C" fn cb_output_ump_at<P: PluginExport>(
 }
 
 /// `SysEx` input for AU v2. The shim's `au_v2_sysex` strips the
-/// `0xF0`/`0xF7` framing and calls this once per complete message
-/// before the render pulls audio; we copy the inner bytes into the
-/// plugin's `EventList` `SysEx` pool synchronously. Pool-full failures
-/// drop the message rather than corrupt-split it. AU v3 takes the
-/// in-line `events2` `SysEx`-7/8 path instead and never calls this.
+/// `0xF0`/`0xF7` framing and calls this once per complete message. AU v2
+/// does **not** serialize `MusicDeviceSysEx` against `AudioUnitRender`,
+/// so the host may call this on any thread while `cb_process` is running
+/// on the audio thread. It must therefore never touch the audio-thread-
+/// owned scratch: it copies the bytes into a recycled buffer and queues
+/// it lock-free ([`SysExQueue`]); `cb_process` drains the queue into the
+/// event pool at the block top. AU v3 takes the in-line `events2`
+/// `SysEx`-7/8 path instead and never calls this.
 unsafe extern "C" fn cb_au_push_sysex_input<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     sample_offset: u32,
     bytes: *const u8,
     len: u32,
 ) {
-    unsafe {
+    // Firewalled like the other extern boundaries: a panic here (unlike
+    // before) must not unwind across the C ABI and abort the host.
+    run_extern_callback_with::<P, ()>("au", "sysex_input", (), || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         if bytes.is_null() || len == 0 {
             return;
         }
-        let mut audio = inst.audio.enter();
-        let scr = &mut *audio;
-        // First SysEx of the block clears the previous block's events
-        // and flags `cb_process` to keep what we queue here rather than
-        // clearing again.
-        if !scr.sysex_inputs_pending {
-            scr.event_list.clear();
-            scr.sysex_inputs_pending = true;
-        }
         let slice = std::slice::from_raw_parts(bytes, len as usize);
-        let _ = scr.event_list.push_sysex(sample_offset, slice);
-    }
+        queue_sysex_input(&inst.sysex_free, &inst.sysex_ready, sample_offset, slice);
+    });
 }
 
 unsafe extern "C" fn cb_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
@@ -2076,6 +2160,21 @@ fn au_max_aux_input_buses(layouts: &[BusLayout]) -> usize {
         .unwrap_or(0)
 }
 
+/// Pack a `"major.minor.patch"` version string into the AU component
+/// version `u32`: `(major << 16) | (minor << 8) | patch`. Hosts (Logic,
+/// `GarageBand`) key their AU validation cache and component registry on
+/// this value, so a shipped update must change it or the host keeps stale
+/// cached validation and metadata. Falls back to `0x0001_0000` (1.0.0)
+/// when a component isn't a plain number (empty string, pre-release
+/// suffix on that component).
+fn au_version_u32(version: &str) -> u32 {
+    let mut parts = version.split('.').map(|p| p.trim().parse::<u32>().ok());
+    let major = parts.next().flatten().unwrap_or(1);
+    let minor = parts.next().flatten().unwrap_or(0);
+    let patch = parts.next().flatten().unwrap_or(0);
+    ((major & 0xFFFF) << 16) | ((minor & 0xFF) << 8) | (patch & 0xFF)
+}
+
 fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let info = P::info();
 
@@ -2174,7 +2273,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         component_manufacturer: info.au_manufacturer,
         name: name.into_raw(),
         vendor: vendor.into_raw(),
-        version: 0x0001_0000, // 1.0.0
+        version: au_version_u32(info.version),
         num_inputs,
         num_outputs,
         bypass_param_id,
@@ -2304,12 +2403,13 @@ macro_rules! export_au {
 #[cfg(test)]
 mod tests {
     use truce_core::SYSEX_POOL_PREALLOC;
-    use truce_core::events::{Event, EventBody, EventList};
+    use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList};
     use truce_shim_types::AU_SHIM_TYPES_H;
 
     use super::{
-        UmpDrainCursor, UmpProtocol, au_max_aux_input_buses, au_negotiable_layouts,
-        au_ump_packet_at, au_ump_packet_count,
+        SYSEX_INPUT_SLOTS, SysExInput, SysExQueue, UmpDrainCursor, UmpProtocol,
+        au_max_aux_input_buses, au_negotiable_layouts, au_ump_packet_at, au_ump_packet_count,
+        au_version_u32, drain_sysex_input, queue_sysex_input,
     };
     use truce_core::bus::{BusLayout, ChannelConfig};
 
@@ -2607,5 +2707,82 @@ mod tests {
 
         // Must stop + join without hanging.
         drop(notifier);
+    }
+
+    /// Build a prefilled free-list mirroring the constructor.
+    fn sysex_queues() -> (SysExQueue, SysExQueue) {
+        let free = SysExQueue::new(SYSEX_INPUT_SLOTS);
+        for _ in 0..SYSEX_INPUT_SLOTS {
+            let _ = free.push(SysExInput::default());
+        }
+        (free, SysExQueue::new(SYSEX_INPUT_SLOTS))
+    }
+
+    /// The host-thread queue and the audio-thread drain round-trip every
+    /// message, in order, and recycle every buffer (no leak, no growth).
+    /// This is the handoff that replaced the direct audio-scratch mutation
+    /// that raced `cb_process`.
+    #[test]
+    fn sysex_input_handoff_delivers_and_recycles() {
+        let (free, ready) = sysex_queues();
+        let msgs: [(u32, &[u8]); 3] = [
+            (0, &[0x7e, 0x00, 0x06, 0x01]), // universal device inquiry
+            (10, &[0x43, 0x12, 0x40]),
+            (0, &[0x11]),
+        ];
+        for (off, bytes) in msgs {
+            queue_sysex_input(&free, &ready, off, bytes);
+        }
+        assert_eq!(ready.len(), 3);
+        assert_eq!(free.len(), SYSEX_INPUT_SLOTS - 3);
+
+        let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        drain_sysex_input(&ready, &free, &mut events);
+
+        let sysex: Vec<&Event> = events
+            .iter()
+            .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+            .collect();
+        assert_eq!(sysex.len(), 3, "every queued message delivered");
+        for (i, (off, bytes)) in msgs.iter().enumerate() {
+            assert_eq!(sysex[i].sample_offset, *off);
+            assert_eq!(events.sysex_bytes(&sysex[i].body), *bytes);
+        }
+
+        // Buffers all recycled: total stays constant, none leaked or freed.
+        assert_eq!(ready.len(), 0);
+        assert_eq!(
+            free.len(),
+            SYSEX_INPUT_SLOTS,
+            "all buffers returned to free"
+        );
+    }
+
+    /// When the audio thread hasn't drained, the queue saturates at
+    /// `SYSEX_INPUT_SLOTS` and further messages drop rather than allocate
+    /// an unbounded backlog.
+    #[allow(clippy::cast_possible_truncation)]
+    #[test]
+    fn sysex_input_drops_when_saturated() {
+        let (free, ready) = sysex_queues();
+        for i in 0..SYSEX_INPUT_SLOTS as u32 + 5 {
+            queue_sysex_input(&free, &ready, i, &[i as u8]);
+        }
+        assert_eq!(ready.len(), SYSEX_INPUT_SLOTS, "capped at the buffer count");
+        assert_eq!(free.len(), 0, "no free buffer left, extras dropped");
+    }
+
+    /// The plugin's declared version packs into the AU component version
+    /// `(major << 16) | (minor << 8) | patch`, so a shipped update changes
+    /// the value hosts key their AU caches on.
+    #[test]
+    fn au_version_packs_semver() {
+        assert_eq!(au_version_u32("1.0.0"), 0x0001_0000);
+        assert_eq!(au_version_u32("1.2.3"), 0x0001_0203);
+        assert_eq!(au_version_u32("2.10.5"), 0x0002_0A05);
+        assert_eq!(au_version_u32("0.38.0"), 0x0000_2600);
+        // Unparseable components fall back per position (major -> 1).
+        assert_eq!(au_version_u32(""), 0x0001_0000);
+        assert_eq!(au_version_u32("1.2.3-beta"), 0x0001_0200);
     }
 }
