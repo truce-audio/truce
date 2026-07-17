@@ -28,8 +28,8 @@ use std::marker::PhantomData;
 use std::mem::transmute;
 use std::path::Path;
 use std::ptr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
 
 use clap_sys::audio_buffer::clap_audio_buffer;
 use clap_sys::events::{
@@ -305,6 +305,14 @@ struct ClapPluginData<P: PluginExport> {
     /// `(w << 32) | h` (both non-zero, `0` = none) instead of re-entering the
     /// cell; `gui_get_size` applies it on the next size query. GUI thread only.
     pending_resize: AtomicU64,
+    /// The immutable extension vtables this instance hands the host from
+    /// `clap_plugin_get_extension`. Stored per-instance rather than in a
+    /// generic function-local static: a static inside a generic fn is
+    /// shared across every monomorphization, so a binary carrying two
+    /// plugin types would reinterpret one type's vtables as the other's.
+    /// The pointers returned point into this box and stay valid for the
+    /// instance's lifetime, which is exactly how long the host uses them.
+    extensions: Extensions<P>,
 }
 
 /// Audio + lifecycle-owned per-block scratch (see [`ClapPluginData::audio`]).
@@ -722,11 +730,25 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
 }
 
 unsafe extern "C" fn clap_plugin_deactivate<P: PluginExport>(plugin: *const clap_plugin) {
-    unsafe {
-        data_from_plugin::<P>(plugin)
-            .active
-            .store(false, Ordering::Relaxed);
-    }
+    // Draining a stranded `pending_state` runs the author's `load_state`;
+    // firewall it so a panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("CLAP", "deactivate", (), || unsafe {
+        let data = data_from_plugin::<P>(plugin);
+        data.active.store(false, Ordering::Relaxed);
+        // A `state_load` while active queues its blob for the audio thread
+        // to drain at the top of the next block. If the host deactivates
+        // before that block runs (sample-rate / buffer change, offline
+        // reconfigure right after a recall), the blob is stranded: it would
+        // resurrect stale state on the next activate, overwriting any newer
+        // state applied while inactive. Drain it now and apply synchronously
+        // (uncontended - no audio thread is processing) so nothing survives
+        // deactivate.
+        if let Some(deserialized) = data.pending_state.pop() {
+            let mut instance = enter_plugin(&data.plugin);
+            state::apply_state(&mut *instance, &deserialized);
+            instance.republish_snapshot();
+        }
+    });
 }
 
 unsafe extern "C" fn clap_plugin_start_processing<P: PluginExport>(
@@ -2689,6 +2711,21 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     // of aborting the host across this `extern "C"` boundary.
     run_extern_callback_with::<P, bool>("CLAP", "save_state", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
+        // While inactive the audio thread never runs, so a state edit the
+        // editor queued through `set_state` (or a load) sits undrained in
+        // `pending_state` and would not reach the snapshot below - the save
+        // would serialize the pre-edit state. Drain and apply it here on the
+        // host thread, which owns the plugin while inactive, then republish
+        // so the snapshot read reflects the edit. While active the audio
+        // thread owns the plugin and drains the queue itself, so we must not
+        // touch it here (read the snapshot only).
+        if !data.active.load(Ordering::Relaxed)
+            && let Some(deserialized) = data.pending_state.pop()
+        {
+            let mut instance = enter_plugin(&data.plugin);
+            state::apply_state(&mut *instance, &deserialized);
+            instance.republish_snapshot();
+        }
         let (ids, values) = data.params_arc.collect_values();
         // Read the custom state from the lock-free snapshot the audio
         // thread publishes each block. Never touches the plugin, so it
@@ -3525,11 +3562,18 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     // The editor sends RAW custom-state bytes - exactly
                     // what `save_state()` emits and `get_state` above
                     // returns - NOT a full `serialize_state` envelope.
-                    // Route them to the plugin's `load_state` on the
-                    // audio thread via the same handoff queue the host
-                    // load path uses (the queue is what avoids aliasing
-                    // `process()`'s `&mut plugin`). No params ride along:
-                    // the editor mutates params through `set_param`.
+                    // Route them to the plugin's `load_state` through the
+                    // handoff queue. No params ride along: the editor
+                    // mutates params through `set_param`.
+                    //
+                    // Always enqueue, never apply here: this closure can run
+                    // on the editor's own thread (baseview drives a separate
+                    // thread on Linux), and the plugin cell must only ever be
+                    // entered from the audio thread (active) or the host main
+                    // thread (inactive) - never a third. The audio thread
+                    // drains the queue while active; while inactive the main
+                    // thread drains it in `state_save` / `deactivate`, so an
+                    // edit made in that window is neither lost nor stranded.
                     let _ = pending_state_for_set.force_push(state::DeserializedState {
                         params: Vec::new(),
                         extra: Some(bytes),
@@ -3985,35 +4029,10 @@ impl<P: PluginExport> Extensions<P> {
             _phantom: PhantomData,
         }
     }
-
-    /// Get or initialize the singleton extensions struct.
-    ///
-    /// Backed by a function-local `OnceLock` keyed off a leaked
-    /// `Box<Self>`. The `OnceLock` itself stores the pointer as
-    /// `usize` because Rust forbids generic statics - a literal
-    /// `OnceLock<Extensions<P>>` static can't reference the outer
-    /// generic parameter, so we erase to `usize` and re-attach the
-    /// type on read. `OnceLock::get_or_init` runs the constructor at
-    /// most once across all threads, so no losing `Box` ever gets
-    /// built-and-thrown-away on a race the way a hand-rolled
-    /// `AtomicPtr<u8>` + `compare_exchange` would.
-    ///
-    /// CLAP libraries only ship one plugin type per shared object, so
-    /// there's exactly one monomorphization and one `OnceLock` per
-    /// binary in practice.
-    fn get() -> &'static Self {
-        static PTR: OnceLock<usize> = OnceLock::new();
-        let raw = *PTR.get_or_init(|| Box::into_raw(Box::new(Self::new())) as usize);
-        // SAFETY: `raw` was produced by `Box::into_raw(Box::new(Self::new()))`
-        // inside `get_or_init`, runs at most once, and is never freed; the
-        // type matches because only one monomorphization of `Extensions<P>`
-        // exists per binary.
-        unsafe { &*(raw as *const Self) }
-    }
 }
 
 unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
-    _plugin: *const clap_plugin,
+    plugin: *const clap_plugin,
     id: *const c_char,
 ) -> *const c_void {
     unsafe {
@@ -4022,7 +4041,7 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         }
         let ext_id = CStr::from_ptr(id);
 
-        let extensions = Extensions::<P>::get();
+        let extensions = &data_from_plugin::<P>(plugin).extensions;
 
         if ext_id == CLAP_EXT_PARAMS {
             return (&raw const extensions.params).cast::<c_void>();
@@ -4140,6 +4159,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             transport_slot: TransportSlot::new(),
             host_scale: AtomicU64::new(1.0f64.to_bits()),
             pending_resize: AtomicU64::new(0),
+            extensions: Extensions::<P>::new(),
             audio: PluginCell::new(ClapAudio {
                 event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
                 sounding_notes: SoundingNotes::new(midi_input_ports),
