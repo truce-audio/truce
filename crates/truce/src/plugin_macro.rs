@@ -199,12 +199,26 @@ macro_rules! __plugin_impl {
             } else {
                 $crate::core::screenshot::DEFAULT_SCREENSHOT_SCALE
             };
-            let (pixels, w, h) = $crate::core::screenshot::render_with_state_at_scale::<Plugin>(
-                state,
-                resolved_scale,
-            );
-            $crate::core::screenshot::save_png(path, &pixels, w, h);
-            0
+            // Panic firewall: `render_with_state_at_scale` panics by
+            // design for editors without screenshot support, and
+            // `save_png` panics on I/O failure. This is an `extern "C"`
+            // boundary the `cargo truce screenshot` process dlopens and
+            // calls, so a bare panic would abort (SIGABRT) it instead of
+            // the documented non-zero return. Catch it and report `2`.
+            $crate::core::wrapper::run_extern_callback_with::<Plugin, u32>(
+                "screenshot",
+                "render",
+                2,
+                || {
+                    let (pixels, w, h) =
+                        $crate::core::screenshot::render_with_state_at_scale::<Plugin>(
+                            state,
+                            resolved_scale,
+                        );
+                    $crate::core::screenshot::save_png(path, &pixels, w, h);
+                    0
+                },
+            )
         }
 
         // Format exports - same wrapper name in both modes.
