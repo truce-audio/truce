@@ -34,9 +34,11 @@
 //! other instance's background work. Long or blocking work belongs on a
 //! plugin's own thread (`AudioTap::spawn_worker`), not the pool.
 
-#[cfg(any(unix, windows))]
+// Gated on `not(miri)` to match `pin_current_module`, which is a no-op
+// under Miri (no dynamic loader to pin), so these FFI types aren't used.
+#[cfg(all(any(unix, windows), not(miri)))]
 use std::ffi::c_void;
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 use std::ffi::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering, fence};
 use std::sync::{Arc, OnceLock};
@@ -239,7 +241,7 @@ fn pool() -> &'static Pool {
 /// permanent mapping for eliminating that crash class - the standard fix
 /// for a persistent plugin helper thread. Called once, and only when the
 /// pool actually spawned workers.
-#[cfg(unix)]
+#[cfg(all(unix, not(miri)))]
 fn pin_current_module() {
     // Field names mirror the platform's `Dl_info`; only `dli_fname` is
     // read, the rest are here for correct C layout (`dladdr` writes all).
@@ -277,7 +279,7 @@ fn pin_current_module() {
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, not(miri)))]
 fn pin_current_module() {
     unsafe extern "system" {
         fn GetModuleHandleExW(flags: u32, name: *const u16, module: *mut *mut c_void) -> i32;
@@ -299,7 +301,10 @@ fn pin_current_module() {
     }
 }
 
-#[cfg(not(any(unix, windows)))]
+// No-op where there's no dynamic loader to pin against, and under Miri -
+// which has no dlopen/dlclose (so nothing can unload the module) and
+// doesn't support `dladdr` / `GetModuleHandleExW`.
+#[cfg(any(miri, not(any(unix, windows))))]
 fn pin_current_module() {}
 
 /// Eagerly start the shared pool on the calling thread. The shell calls

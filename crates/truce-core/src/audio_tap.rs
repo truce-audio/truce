@@ -349,7 +349,15 @@ mod tests {
     /// Several independent rounds: each producer/consumer start is its own
     /// race, so a regressed drain (handing off partial frames) is caught
     /// with high probability, while the correct one always passes.
+    ///
+    /// Skipped under Miri: 400k pushes across two threads per round are
+    /// hour-scale in the interpreter, and the mid-frame race it soaks for
+    /// depends on real thread timing Miri's scheduler doesn't reproduce.
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    #[cfg_attr(
+        miri,
+        ignore = "concurrency soak - too slow under Miri, no timing repro"
+    )]
     #[test]
     fn concurrent_drain_hands_out_whole_frames() {
         use std::time::Instant;
