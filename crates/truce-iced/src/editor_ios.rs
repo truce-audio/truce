@@ -262,9 +262,12 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> Editor for IcedEditor<P, M
             }
             Err(e) => {
                 log::warn!("iced iOS: create_surface_unsafe failed: {e}");
-                unsafe {
-                    let _: () = msg_send![view, removeFromSuperview];
-                }
+                // `install_editor_view` already retained the display link
+                // and scheduled it on the run loop; without a full teardown
+                // it would fire `tick:` forever with the view/Arc leaked.
+                // SAFETY: `view`/`link` came from `install_editor_view` for
+                // this `P`/`M` and are not stored anywhere else on this path.
+                unsafe { teardown_editor_view::<P, M>(view, link) };
                 return;
             }
         }
@@ -290,26 +293,10 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> Editor for IcedEditor<P, M
         else {
             return;
         };
-        unsafe {
-            if !inner.display_link.is_null() {
-                let _: () = msg_send![inner.display_link, invalidate];
-                let _: () = msg_send![inner.display_link, release];
-            }
-            if !inner.child_view.is_null() {
-                // Reclaim the Arc the view's ivar holds.
-                let cls: &AnyClass = msg_send![inner.child_view, class];
-                let base: *const u8 = inner.child_view.cast();
-                let ivar_ptr: *const *mut std::ffi::c_void =
-                    base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
-                let leaked = (*ivar_ptr)
-                    .cast_const()
-                    .cast::<Mutex<Option<Inner<P, M>>>>();
-                if !leaked.is_null() {
-                    let _ = Arc::from_raw(leaked);
-                }
-                let _: () = msg_send![inner.child_view, removeFromSuperview];
-            }
-        }
+        // SAFETY: `child_view`/`display_link` were built by
+        // `install_editor_view` for this `P`/`M`; `take()` above guarantees
+        // no other path touches them.
+        unsafe { teardown_editor_view::<P, M>(inner.child_view, inner.display_link) };
         // IcedRuntime drops here, releasing wgpu surface / device / queue.
         drop(inner);
         log::info!("iced editor closed on iOS");
@@ -553,6 +540,56 @@ unsafe fn install_editor_view<P: Params + 'static, M: IcedPlugin<P> + 'static>(
         let _: () = msg_send![link, addToRunLoop: main, forMode: mode];
 
         (view, layer, link)
+    }
+}
+
+/// Tear down the editor's `UIView` + `CADisplayLink`: invalidate and
+/// release the display link, null and reclaim the ivar `Arc`, detach the
+/// view, then release the alloc/init reference. Shared by `close()` and
+/// `open()`'s surface-failure path. `install_editor_view` retains the
+/// link and schedules it on the run loop *before* `open()` can fail, so
+/// without this a failed open leaves a zombie display link firing `tick:`
+/// forever with the view/layer/`Arc` graph leaked.
+///
+/// SAFETY: `child_view` (if non-null) must be a view built by
+/// `install_editor_view` for the same `P`/`M` (so the ivar holds an
+/// `Arc<Mutex<Option<Inner<P, M>>>>`), and `display_link` (if non-null)
+/// the link returned alongside it. Both pointers are consumed - the link
+/// is released and the ivar `Arc` reclaimed - so callers must not reuse
+/// them afterwards. Must run on the main thread.
+unsafe fn teardown_editor_view<P: Params + 'static, M: IcedPlugin<P> + 'static>(
+    child_view: *mut AnyObject,
+    display_link: *mut AnyObject,
+) {
+    unsafe {
+        if !display_link.is_null() {
+            let _: () = msg_send![display_link, invalidate];
+            let _: () = msg_send![display_link, release];
+        }
+        if !child_view.is_null() {
+            // Reclaim the Arc the view's ivar holds, then null the ivar
+            // *before* dropping it: the view outlives this call until its
+            // own retain is released below, and a late selector delivery
+            // racing teardown would otherwise reconstruct a dangling Arc
+            // from freed memory.
+            let cls: &AnyClass = msg_send![child_view, class];
+            let base: *mut u8 = child_view.cast();
+            let ivar_ptr: *mut *mut std::ffi::c_void =
+                base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
+            let leaked = (*ivar_ptr)
+                .cast_const()
+                .cast::<Mutex<Option<Inner<P, M>>>>();
+            *ivar_ptr = std::ptr::null_mut();
+            if !leaked.is_null() {
+                let _ = Arc::from_raw(leaked);
+            }
+            let _: () = msg_send![child_view, removeFromSuperview];
+            // Balance the alloc/initWithFrame reference from
+            // `install_editor_view`. `removeFromSuperview` dropped the
+            // superview's retain and `invalidate` the display link's, so
+            // this drops the last reference and frees the view + layer.
+            let _: () = msg_send![child_view, release];
+        }
     }
 }
 

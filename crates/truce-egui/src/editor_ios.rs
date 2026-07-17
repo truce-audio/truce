@@ -614,16 +614,26 @@ unsafe fn teardown_editor_view<P: Params + 'static>(
             release_obj(display_link);
         }
         if !child_view.is_null() {
-            // Reclaim the Arc the view's ivar holds.
+            // Reclaim the Arc the view's ivar holds, then null the ivar
+            // *before* dropping it: the view outlives this call until its
+            // own retain is released below, and a late selector delivery
+            // (an in-flight responder/notification racing teardown) would
+            // otherwise reconstruct a dangling Arc from freed memory.
             let cls: &AnyClass = msg_send![child_view, class];
-            let base: *const u8 = child_view.cast();
-            let ivar_ptr: *const *mut std::ffi::c_void =
+            let base: *mut u8 = child_view.cast();
+            let ivar_ptr: *mut *mut std::ffi::c_void =
                 base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
             let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
+            *ivar_ptr = std::ptr::null_mut();
             if !leaked.is_null() {
                 let _ = Arc::from_raw(leaked);
             }
             let _: () = msg_send![child_view, removeFromSuperview];
+            // Balance the alloc/initWithFrame reference from
+            // `install_editor_view`. `removeFromSuperview` dropped the
+            // superview's retain and `invalidate` the display link's, so
+            // this drops the last reference and frees the view + layer.
+            release_obj(child_view);
         }
     }
 }

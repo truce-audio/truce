@@ -821,18 +821,43 @@ const K_CG_BITMAP_BYTE_ORDER_32_BIG: u32 = 4 << 12;
 const K_CG_IMAGE_ALPHA_PREMULTIPLIED_LAST: u32 = 1;
 const K_CG_RENDERING_INTENT_DEFAULT: i32 = 0;
 
+/// `CGDataProviderCreateWithData` release callback. Core Animation calls
+/// this when it is done with the pixel copy (the layer's `contents` is
+/// replaced or the layer torn down), so it fires exactly once and frees
+/// the `Box<[u8]>` handed to it in `blit_pixmap_to_layer`.
+unsafe extern "C" fn release_pixel_copy(
+    _info: *mut std::ffi::c_void,
+    data: *const u8,
+    size: usize,
+) {
+    if data.is_null() {
+        return;
+    }
+    // SAFETY: `data` / `size` are the pointer and length of a `Box<[u8]>`
+    // leaked in `blit_pixmap_to_layer`; freed here exactly once.
+    drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(data.cast_mut(), size)) });
+}
+
 unsafe fn blit_pixmap_to_layer(view: *mut AnyObject, width: u32, height: u32, rgba: &[u8]) {
-    // SAFETY: main-thread Core Graphics + UIKit calls. The pixel
-    // buffer outlives the CGImage because the data provider's
-    // release callback is None - Core Graphics treats the buffer
-    // as borrowed for the image's lifetime, and we release the
-    // image at the end of this fn. The CpuBackend reuses its
-    // pixmap across frames so the buffer pointer stays stable.
+    // SAFETY: main-thread Core Graphics + UIKit calls. `setContents:`
+    // retains the CGImage, so it (and the data provider) outlive this
+    // function even though we release our own refs at the end. The
+    // provider therefore must own stable bytes: `CGDataProviderCreateWithData`
+    // does not copy, and `rgba` borrows the render buffer, which the next
+    // frame overwrites, a resize reallocates, and `close` frees - a resize
+    // or teardown in the same run-loop turn would leave Core Animation
+    // reading freed memory at commit. Hand CA its own copy plus a release
+    // callback that frees it when CA is done.
     unsafe {
         let bytes_per_row = (width as usize) * 4;
+        let owned: Box<[u8]> = Box::from(rgba);
+        let len = owned.len();
+        let ptr: *mut u8 = Box::into_raw(owned).cast();
         let provider =
-            CGDataProviderCreateWithData(std::ptr::null_mut(), rgba.as_ptr(), rgba.len(), None);
+            CGDataProviderCreateWithData(std::ptr::null_mut(), ptr, len, Some(release_pixel_copy));
         if provider.is_null() {
+            // Provider didn't take ownership; free the copy ourselves.
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
             return;
         }
         let cs = CGColorSpaceCreateDeviceRGB();

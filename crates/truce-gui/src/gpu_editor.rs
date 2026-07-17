@@ -256,6 +256,30 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
     }
 
     fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
+        // Same FFI firewall as `on_frame`: baseview dispatches events
+        // from `extern "C-unwind"` AppKit overrides / the Win32
+        // `wnd_proc`, and `dispatch_events` / `set_size` run plugin-author
+        // code (`Params` formatters, grid reflow). A panic there would
+        // unwind uncaught across the boundary and terminate the host.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.on_event_inner(window, event)
+        }))
+        .unwrap_or_else(|e| {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            log::error!("GpuWindowHandler::on_event panic swallowed: {msg}");
+            EventStatus::Ignored
+        })
+    }
+}
+
+impl<P: Params + 'static> GpuWindowHandler<P> {
+    fn on_event_inner(&mut self, window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(_) => {
                 let Some(input) = self.translator.translate(&event) else {
