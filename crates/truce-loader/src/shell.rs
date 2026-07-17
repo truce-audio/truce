@@ -89,17 +89,19 @@ pub struct HotShell<P: Params, S: Sample = f32> {
     /// thread re-resets a freshly hot-swapped dylib so the new instance
     /// prepares for the same render mode.
     process_mode: ProcessMode,
-    /// Last `swap_generation` the audio path observed. When the file
-    /// watcher installs new code this lags behind
-    /// `loader.swap_generation()` until `process()` carries the state
-    /// into the new instance. Keyed on successful swaps only, so a failed
-    /// reload never triggers a spurious carry-over.
-    last_seen_swap: u64,
+    /// The `swap_generation` the live `self.state` allocation was born
+    /// under. Every entry point that runs the current dylib's symbols
+    /// against `self.state` compares this to `loader.swap_generation()`;
+    /// a mismatch means the watcher swapped the dylib since the state was
+    /// made, so the state must be carried over (or, under `&self`, saved
+    /// through its origin dylib) before the new code touches it. Advances
+    /// on successful swaps only, so a failed reload never triggers a
+    /// spurious carry-over.
+    state_generation: u64,
     /// Set when `reset` couldn't take the loader lock (watcher mid-reload)
     /// and returned without re-preparing the dylib's state. `process`
     /// replays the reset once it holds the lock so a sample-rate / block
-    /// -size change is never dropped - the state-preserving reload path
-    /// keeps the live allocation, so nothing else would re-run it.
+    /// -size change is never dropped.
     reset_pending: bool,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()`. Updated by the audio thread on each `process()` so
@@ -152,7 +154,7 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
             sample_rate: 44100.0,
             max_block_size: 1024,
             process_mode: ProcessMode::Realtime,
-            last_seen_swap: initial_swap,
+            state_generation: initial_swap,
             reset_pending: false,
             latency_cache: AtomicU32::new(0),
             tail_cache: AtomicU32::new(0),
@@ -169,6 +171,7 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
         if let Some((st, origin)) = loader.init_state() {
             self.state = st;
             self.state_origin = Some(origin);
+            self.state_generation = loader.swap_generation();
             true
         } else {
             false
@@ -181,6 +184,53 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
             (origin.drop)(self.state);
         }
         self.state = std::ptr::null_mut();
+    }
+
+    /// Bring `self.state` into agreement with the currently loaded dylib,
+    /// then ensure it is allocated. Must hold the loader lock.
+    ///
+    /// The watcher can swap the dylib between audio blocks, so any entry
+    /// point that runs the current dylib's symbols against `self.state`
+    /// must reconcile first - otherwise it runs new code over an
+    /// allocation the previous dylib made, which is UB when the `State`
+    /// layout changed. On a generation mismatch the live state is
+    /// serialized through its origin dylib and restored into
+    /// freshly-init'd state under the new code (a `None` / empty /
+    /// rejected blob just starts fresh), then reset to the current config.
+    /// A no-op when no swap happened since `self.state` was born.
+    ///
+    /// Returns whether live state is available (false only when nothing
+    /// is loaded).
+    fn reconcile_state(&mut self, loader: &NativeLoader<S>) -> bool {
+        let swap = loader.swap_generation();
+        if swap != self.state_generation {
+            let carried = if loader.preserve_dsp_state() && !self.state.is_null() {
+                self.state_origin.map(|o| (o.save)(self.state.cast_const()))
+            } else {
+                None
+            };
+            self.drop_state();
+            if self.ensure_state(loader) {
+                if let Some(bytes) = carried.filter(|b| !b.is_empty())
+                    && let Err(e) = loader.load_state(self.state, &bytes)
+                {
+                    log::warn!(
+                        "truce-hot: reloaded dylib rejected carried state, \
+                         starting fresh: {e}"
+                    );
+                }
+                let config = AudioConfig::new(self.sample_rate, self.max_block_size)
+                    .with_process_mode(self.process_mode);
+                loader.reset(self.state, &config);
+                // The fresh state is prepared for the current config, so a
+                // reset missed under lock contention is satisfied.
+                self.reset_pending = false;
+            }
+            // Mark the swap observed even if nothing is loaded, so a
+            // dead reload doesn't re-trigger every call.
+            self.state_generation = swap;
+        }
+        self.ensure_state(loader)
     }
 
     /// Shared meter storage handle - the GUI-thread-safe channel
@@ -260,7 +310,10 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
             self.reset_pending = true;
             return;
         };
-        if self.ensure_state(&loader) {
+        // Reconcile first: a watcher swap since the last block can leave
+        // `self.state` a previous dylib's allocation, which `loader.reset`
+        // would run new code over.
+        if self.reconcile_state(&loader) {
             loader.reset(self.state, config);
             self.latency_cache
                 .store(loader.latency(self.state), Ordering::Relaxed);
@@ -294,48 +347,15 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
 
         // The watcher thread drives reload directly; the audio thread
         // observes the swap here and carries the live DSP state into the
-        // new code. The old allocation's bytes are never reinterpreted
-        // under the new `State` layout (UB when a same-size field type or
-        // order changed): instead the state is serialized through the
-        // dylib that made it, then restored into freshly-init'd state
-        // under the new code - a save / load round-trip the plugin
-        // already defines. A `None`/empty/rejected blob just leaves the
-        // fresh state (a lost reverb tail, but sound).
-        let swap = loader.swap_generation();
-        if swap != self.last_seen_swap {
-            // `swap_generation` advances only on a successful swap, so new
-            // code is loaded here (a failed reload never reaches this).
-            let config = AudioConfig::new(self.sample_rate, self.max_block_size)
-                .with_process_mode(self.process_mode);
-            let carried = if loader.preserve_dsp_state() && !self.state.is_null() {
-                self.state_origin.map(|o| (o.save)(self.state.cast_const()))
-            } else {
-                None
-            };
-            self.drop_state();
-            if self.ensure_state(&loader) {
-                if let Some(bytes) = carried.filter(|b| !b.is_empty())
-                    && let Err(e) = loader.load_state(self.state, &bytes)
-                {
-                    log::warn!(
-                        "truce-hot: reloaded dylib rejected carried state, \
-                         starting fresh: {e}"
-                    );
-                }
-                loader.reset(self.state, &config);
-                // The fresh state is now prepared for the current config,
-                // so a reset missed under lock contention is satisfied.
-                self.reset_pending = false;
-            }
-            self.last_seen_swap = swap;
-        }
-
-        if !self.ensure_state(&loader) {
+        // new code (serialize through the origin dylib, re-init under the
+        // new one), so the old allocation's bytes are never reinterpreted
+        // under a changed `State` layout.
+        if !self.reconcile_state(&loader) {
             return ProcessStatus::Normal;
         }
 
         // A `reset` that lost the loader lock left `reset_pending` set.
-        // The swap branch above clears it when a reload reset the fresh
+        // `reconcile_state` above clears it when a swap reset the fresh
         // state; if no swap was observed (lock held by a GUI editor build
         // or state save / load), replay it here so the sample-rate /
         // block-size change still reaches the dylib's coefficients.
@@ -403,13 +423,21 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // on miss the host receives an empty blob - same observable
         // shape as a plugin that has no extra state. Matches the host
         // contract better than a UI hang.
-        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+        // The lock still serializes against the audio thread's `process`
+        // (both take the loader mutex), but the save runs through the
+        // dylib that MADE `self.state` - its `state_origin`, not the
+        // currently loaded one. A watcher swap between blocks can leave
+        // `self.state` an older dylib's allocation, and the new dylib's
+        // `save_state` over it would read the old bytes under the new
+        // layout (UB). The origin fn is always correct for `self.state`,
+        // and in the common no-swap case it *is* the current dylib's.
+        let Some(_loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
             return Vec::new();
         };
-        if self.state.is_null() {
-            return Vec::new();
+        match self.state_origin {
+            Some(origin) if !self.state.is_null() => (origin.save)(self.state.cast_const()),
+            _ => Vec::new(),
         }
-        loader.save_state(self.state.cast_const())
     }
 
     fn snapshot_into(&self, buf: &mut Vec<u8>) -> bool {
@@ -418,17 +446,25 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
             return false;
         };
-        if self.state.is_null() {
+        // A watcher swap can leave `self.state` a previous dylib's
+        // allocation; the current dylib's `snapshot_into` over it would
+        // read old bytes under the new layout. Until `process` / `reset`
+        // reconciles, report "no snapshot" - the host falls back to
+        // `save_state`, which serializes through the state's origin dylib.
+        if self.state.is_null() || loader.swap_generation() != self.state_generation {
             return false;
         }
         loader.snapshot_into(self.state.cast_const(), buf)
     }
 
     fn republish_snapshot(&mut self) {
-        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+        let loader_arc = Arc::clone(&self.loader);
+        let Some(loader) = loader_arc.try_lock_for(GUI_LOCK_WAIT) else {
             return;
         };
-        if self.state.is_null() {
+        // Reconcile before snapshotting: the current dylib's symbols must
+        // not run over a previous dylib's allocation.
+        if !self.reconcile_state(&loader) {
             return;
         }
         let state = self.state.cast_const();
@@ -450,10 +486,13 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // load was carrying real preset bytes, the watcher's reload
         // will pull them back from the next user-driven preset
         // refresh; the alternative (UI hang) is worse.
-        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+        let loader_arc = Arc::clone(&self.loader);
+        let Some(loader) = loader_arc.try_lock_for(GUI_LOCK_WAIT) else {
             return Ok(());
         };
-        if self.state.is_null() {
+        // Reconcile before restoring: `self.state` must be an allocation
+        // of the current dylib before its `load_state` writes into it.
+        if !self.reconcile_state(&loader) {
             return Ok(());
         }
         // The loader restores into `state` and fires `state_changed` in
