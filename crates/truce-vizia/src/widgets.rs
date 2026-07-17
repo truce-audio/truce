@@ -80,10 +80,24 @@ pub fn param_knob<P: Params + 'static>(
     #[allow(clippy::cast_precision_loss)]
     let value_slot_w = lens.widest_format_chars(id) as f32 * VALUE_CHAR_W_PX + VALUE_PAD_PX;
 
+    // One begin/set*/end gesture per drag: mouse-down opens it,
+    // mouse-up closes it, and on_change writes bare `set`s in between.
+    // A wheel or arrow nudge produces an on_change with no surrounding
+    // drag, so route those through `automate` (begin+set+end) instead.
+    let lens_down = lens.clone();
+    let lens_up = lens.clone();
+    let dragging = Signal::new(false);
+
     VStack::new(cx, move |cx| {
         Knob::new(cx, initial, value_signal, false)
             .width(Pixels(48.0))
             .height(Pixels(48.0))
+            .on_mouse_down(move |_cx, button| {
+                if button == MouseButton::Left {
+                    dragging.set(true);
+                    lens_down.begin_edit(id_u32);
+                }
+            })
             .on_change(move |_cx, val| {
                 // Discrete params snap to the nearest grid step so
                 // the host sees integer / enum positions, not the
@@ -94,7 +108,11 @@ pub fn param_knob<P: Params + 'static>(
                 // the formatted-value Memo (which keys off
                 // `value_signal` and re-reads `lens.format(id)`)
                 // sees the freshly-automated value, not a stale one.
-                lens.automate(id_u32, f64::from(snapped));
+                if dragging.get() {
+                    lens.set(id_u32, f64::from(snapped));
+                } else {
+                    lens.automate(id_u32, f64::from(snapped));
+                }
                 // vizia's Knob only repaints its track when the
                 // external `value` signal changes; the internal
                 // `continuous_normal` field drives the head but not
@@ -102,6 +120,12 @@ pub fn param_knob<P: Params + 'static>(
                 // signal keeps both halves of the widget in sync
                 // during drag.
                 value_signal.set(snapped);
+            })
+            .on_mouse_up(move |_cx, button| {
+                if button == MouseButton::Left && dragging.get() {
+                    dragging.set(false);
+                    lens_up.end_edit(id_u32);
+                }
             });
         Label::new(cx, display)
             .width(Pixels(value_slot_w))
@@ -152,18 +176,41 @@ pub fn param_slider<P: Params + 'static>(
     // the vizia continuous step (0.01) for non-discrete params.
     let step = step_size(steps);
 
+    // One begin/set*/end gesture per drag (see `param_knob`); wheel /
+    // arrow nudges have no drag bracket, so they take the `automate`
+    // one-shot path.
+    let lens_down = lens.clone();
+    let lens_up = lens.clone();
+    let dragging = Signal::new(false);
+
     VStack::new(cx, move |cx| {
         Label::new(cx, label_text);
         Slider::new(cx, value_signal)
             .range(0.0..1.0)
             .step(step)
+            .on_mouse_down(move |_cx, button| {
+                if button == MouseButton::Left {
+                    dragging.set(true);
+                    lens_down.begin_edit(id_u32);
+                }
+            })
             .on_change(move |_cx, val| {
                 let snapped = snap_normalized(val, steps);
                 // Same ordering rationale as `param_knob`: store
                 // first, signal second, so the value-label Memo
                 // reads the new automated value.
-                lens.automate(id_u32, f64::from(snapped));
+                if dragging.get() {
+                    lens.set(id_u32, f64::from(snapped));
+                } else {
+                    lens.automate(id_u32, f64::from(snapped));
+                }
                 value_signal.set(snapped);
+            })
+            .on_mouse_up(move |_cx, button| {
+                if button == MouseButton::Left && dragging.get() {
+                    dragging.set(false);
+                    lens_up.end_edit(id_u32);
+                }
             });
         Label::new(cx, display);
     })

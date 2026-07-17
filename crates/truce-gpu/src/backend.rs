@@ -1016,6 +1016,14 @@ impl WgpuBackend {
         self.indices.clear();
         self.batches.clear();
         self.clear_color = None;
+        // A caller that never calls clear() (the LoadOp::Load overlay
+        // path) would otherwise never evict an overflowed atlas, so new
+        // glyphs would vanish for the rest of the session. begin_frame
+        // is a frame boundary too - the prior frame's vertex buffer is
+        // already flushed - so the deferred eviction is safe here.
+        if self.glyph_atlas.overflow_pending {
+            self.glyph_atlas.clear();
+        }
 
         if phys_w != self.width || phys_h != self.height {
             self.width = phys_w;

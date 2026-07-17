@@ -70,7 +70,15 @@ impl<'a, M: Clone + Debug + 'static> DropdownWidget<'a, M> {
         let pl = pick_list(self.options, self.selected, move |selected: String| {
             let idx = options.iter().position(|o| *o == selected).unwrap_or(0);
             let norm = truce_core::cast::discrete_norm(idx, count);
-            Message::Param(ParamMessage::SetNormalized(id, norm))
+            // Bracket the write in a begin/end gesture so VST3/AU
+            // hosts record it to an automation lane and log one undo
+            // entry - a bare set_param is ignored in touch/latch write
+            // modes.
+            Message::Param(ParamMessage::Batch(vec![
+                ParamMessage::BeginEdit(id),
+                ParamMessage::SetNormalized(id, norm),
+                ParamMessage::EndEdit(id),
+            ]))
         });
 
         let mut col = column![pl]
