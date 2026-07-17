@@ -4,20 +4,12 @@ Notable changes per release.
 
 ## 6.1.10
 
+- Audio-thread real-time fixes: `#[persist]` state loads on the host thread (no priority-inversion dropout), buses wider than stereo no longer allocate on the first block, and the editor transport slot no longer returns a torn tempo/position under weak memory ordering (Apple Silicon).
+- VST3 host-interface fixes: correct time-signature / bar-position / loop-state transport flags, sample-accurate `CHUNKED` automation is no longer heard up to a buffer early, and `getBusArrangement` reports canonical speaker arrangements (mono, quad, ...).
+- `AudioBuffer::chunks_mut` no longer panics on asymmetric buses (instruments, mono-in/stereo-out), and `AudioTap::drain_with` always hands consumers whole frames (no channel-swapped analyzer chunks).
+- Stronger compile-time parameter validation: out-of-range defaults, non-4-char fourccs, and unknown `flags` values are now compile errors; rangeless and `skewed` / `sym_skewed` / `reversed` ranges build again; a NaN normalized value collapses to the range's low end instead of silently resetting a param.
+- LV2 metadata for nested groups with an explicit `base` now matches the live plugin's ids.
 - `save_state` is deprecated in favor of `snapshot_into`.
-- VST3 transport now reads the correct time signature and bar position (their validity flags were swapped), and `cycle_active` reflects whether the loop is engaged rather than merely present.
-- Plugins with more than two channels per direction (e.g. a stereo sidechain) no longer allocate on the audio thread on the first block after activation.
-- Rangeless params and `skewed` / `sym_skewed` / `reversed` ranges no longer fail the build (the LV2 metadata emitter runs unconditionally and rejected these shapes).
-- `AudioBuffer::chunks_mut` no longer panics on asymmetric buses (instruments, mono-in/stereo-out); output channels with no matching input read as silence.
-- The editor-facing transport slot no longer hands back a torn tempo/position for a frame under weak memory ordering (Apple Silicon); the seqlock's two memory fences were missing.
-- `AudioTap::drain_with` now always hands consumers whole frames; a drain landing mid-frame no longer channel-swaps the analyzer's chunk (the trailing partial frame carries to the next drain).
-- VST3 sample-accurate automation of `CHUNKED` params is no longer heard up to a buffer early: the shim stopped pre-committing each queue's end-of-block value before the sub-block chunker runs.
-- VST3 `getBusArrangement` reports canonical speaker arrangements (mono is `kMono`, 4ch is quad), so hosts and validators that compare arrangements no longer treat mono buses/sidechains as unsupported or mislabel channels.
-- `#[persist]` fields now load on the host thread instead of the audio thread, so a state recall can no longer block `process()` on a lock the editor holds (priority-inversion dropout).
-- `#[derive(Params)]` now rejects a default outside its declared range at compile time (explicit or the omitted 0.0 fallback), instead of panicking inside the DAW or shipping a mis-displayed value; hand-rolled `FloatParam::new` clamps in release.
-- A NaN normalized value from a buggy host no longer silently resets a discrete/bool param: `ParamRange::normalize`/`denormalize` collapse NaN to the range's low end.
-- `plugin_info!` rejects a non-4-ASCII `fourcc` / `au_type` / `au_manufacturer` at compile time (was a host-scan panic), and an unknown `flags = "..."` value is now a compile error rather than a silent fallback to automatable.
-- LV2 metadata for a `#[nested(base = N)]` group followed by an auto-based group now targets the same ids the live plugin uses (the emitter packed later groups from the explicit base instead of the running count); the missing-sidecar error also flags a `plugin!` placed above its params struct.
 
 ## 6.1.9
 
