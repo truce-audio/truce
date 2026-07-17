@@ -614,6 +614,12 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 }
             }
             audio.event_list.clear();
+            // Clear last block's output too: the shim drains
+            // `output_*_count` unconditionally after every render, so
+            // leaving these would re-deliver the previous block's
+            // MIDI/SysEx (duplicated note-ons, stuck notes).
+            audio.output_events.clear();
+            audio.ump_drain_cursor = UmpDrainCursor::HEAD;
             // Not prepared: discard any host-queued `SysEx`, recycling the
             // buffers so the queue can't accumulate stale messages.
             while let Some(slot) = inst.sysex_ready.pop() {
@@ -773,6 +779,12 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 }
             }
             scr.event_list.clear();
+            // Clear last block's output too: the shim drains
+            // `output_*_count` unconditionally after every render, so
+            // leaving these would re-deliver the previous block's
+            // MIDI/SysEx (duplicated note-ons, stuck notes).
+            scr.output_events.clear();
+            scr.ump_drain_cursor = UmpDrainCursor::HEAD;
             return;
         }
         let mut audio_buffer = scr.scratch.build(
