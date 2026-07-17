@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::export::PluginExport;
+use crate::state::restore_plugin;
 
 /// Default scale factor used by all screenshot rendering when no
 /// explicit override is supplied. Pinned to a `HiDPI` value so a
@@ -78,11 +79,11 @@ pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
     render_pixels_for::<P>(&mut plugin)
 }
 
-/// Construct `P`, optionally apply a saved-state blob (`.pluginstate`
-/// bytes), then render at the default screenshot scale. Used by the
-/// `__truce_screenshot` FFI so `cargo truce screenshot --state` can
-/// capture the editor under arbitrary pre-saved state without needing
-/// a test harness.
+/// Construct `P`, optionally restore a saved-state envelope
+/// (`.pluginstate` bytes), then render at the default screenshot
+/// scale. Used by the `__truce_screenshot` FFI so `cargo truce
+/// screenshot --state` can capture the editor under arbitrary
+/// pre-saved state without needing a test harness.
 #[must_use]
 pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32, u32) {
     render_with_state_at_scale::<P>(state, DEFAULT_SCREENSHOT_SCALE)
@@ -99,10 +100,16 @@ pub fn render_with_state_at_scale<P: PluginExport>(
 ) -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();
+    // `state` is a full `.pluginstate` envelope (magic + version +
+    // plugin-id + param block + extra + persist), not the bare
+    // `save_state` extra blob. `restore_plugin` parses the envelope
+    // and restores params + persist before forwarding the extra to
+    // `load_state`; passing the raw bytes to `load_state` would render
+    // parameter defaults and reject the envelope as malformed.
     if let Some(bytes) = state
-        && let Err(e) = plugin.load_state(bytes)
+        && let Err(e) = restore_plugin(&mut plugin, bytes)
     {
-        eprintln!("truce: screenshot load_state failed: {e}");
+        eprintln!("truce: screenshot state restore failed: {e}");
     }
     render_pixels_for_at_scale::<P>(&mut plugin, scale)
 }
