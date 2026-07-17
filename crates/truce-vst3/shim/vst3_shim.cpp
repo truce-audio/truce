@@ -152,11 +152,73 @@ static bool iid_equal(const TUID a, const TUID b) {
     return memcmp(a, b, 16) == 0;
 }
 
-static void str_to_char16(char16* dst, const char* src, int maxLen) {
+// UTF-8 -> UTF-16. A byte-per-unit widen sign-extends non-ASCII (a
+// continuation byte 0x82 becomes 0xFF82 on platforms with signed `char`)
+// and splits every multi-byte sequence into garbage units, so param
+// titles/units ("µs", "±3 dB"), value strings, and bus/vendor names come
+// out mojibake in every host. Decode UTF-8 and emit UTF-16 code units,
+// surrogate pairs for astral code points. Index-based `(unsigned char)`
+// reads (no pointer reinterpret_cast) keep this usable in constant
+// expressions. `maxLen` bounds the output in char16 units, incl. the NUL.
+static constexpr void str_to_char16(char16* dst, const char* src, int maxLen) {
     int i = 0;
-    for (; src[i] && i < maxLen - 1; i++) dst[i] = (char16)src[i];
-    dst[i] = 0;
+    int o = 0;
+    while (src[i] != 0 && o < maxLen - 1) {
+        unsigned int b0 = (unsigned char)src[i];
+        unsigned int b1 = (unsigned char)src[i + 1];
+        unsigned int cp = 0;
+        if (b0 < 0x80) {
+            cp = b0;
+            i += 1;
+        } else if ((b0 & 0xE0) == 0xC0 && (b1 & 0xC0) == 0x80) {
+            cp = ((b0 & 0x1F) << 6) | (b1 & 0x3F);
+            i += 2;
+        } else if ((b0 & 0xF0) == 0xE0 && (b1 & 0xC0) == 0x80
+                   && ((unsigned char)src[i + 2] & 0xC0) == 0x80) {
+            unsigned int b2 = (unsigned char)src[i + 2];
+            cp = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+            i += 3;
+        } else if ((b0 & 0xF8) == 0xF0 && (b1 & 0xC0) == 0x80
+                   && ((unsigned char)src[i + 2] & 0xC0) == 0x80
+                   && ((unsigned char)src[i + 3] & 0xC0) == 0x80) {
+            unsigned int b2 = (unsigned char)src[i + 2];
+            unsigned int b3 = (unsigned char)src[i + 3];
+            cp = ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+            i += 4;
+        } else {
+            // Invalid lead or truncated sequence: emit U+FFFD and resync
+            // one byte, so malformed input can't loop or over-read.
+            cp = 0xFFFD;
+            i += 1;
+        }
+        if (cp <= 0xFFFF) {
+            dst[o++] = (char16)cp;
+        } else {
+            if (o + 2 > maxLen - 1) break;  // don't split a surrogate pair
+            cp -= 0x10000;
+            dst[o++] = (char16)(0xD800 | (cp >> 10));
+            dst[o++] = (char16)(0xDC00 | (cp & 0x3FF));
+        }
+    }
+    dst[o] = 0;
 }
+
+// Lock the decode against the old byte-widen (which mojibake'd µ into
+// 0xFFC2 0xFFB5). BMP two-byte, ASCII, and an astral surrogate pair.
+namespace {
+constexpr bool test_str_to_char16() {
+    // `char16` is a signed 16-bit type, so compare code units as unsigned.
+    char16 b[8] = {};
+    str_to_char16(b, "\xC2\xB5", 8);  // U+00B5 MICRO SIGN
+    if ((uint16_t)b[0] != 0x00B5 || b[1] != 0) return false;
+    str_to_char16(b, "AB", 8);
+    if ((uint16_t)b[0] != 0x41 || (uint16_t)b[1] != 0x42 || b[2] != 0) return false;
+    str_to_char16(b, "\xF0\x9F\x98\x80", 8);  // U+1F600, surrogate pair
+    if ((uint16_t)b[0] != 0xD83D || (uint16_t)b[1] != 0xDE00 || b[2] != 0) return false;
+    return true;
+}
+static_assert(test_str_to_char16(), "str_to_char16 must decode UTF-8, not byte-widen");
+}  // namespace
 
 static void str_to_char8(char8* dst, const char* src, int maxLen) {
     int i = 0;
