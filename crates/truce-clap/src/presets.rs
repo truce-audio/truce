@@ -31,6 +31,7 @@ use clap_sys::version::CLAP_VERSION;
 use truce_core::export::PluginExport;
 use truce_core::presets::{PresetRef, PresetScope, read_preset_ref, user_preset_root};
 use truce_core::state::shared_plugin_state_hash;
+use truce_core::wrapper::run_extern_callback_with;
 
 /// The dylib's own path, captured from `clap_plugin_entry.init`
 /// (which the CLAP spec guarantees runs before any `get_factory`
@@ -191,67 +192,72 @@ unsafe extern "C" fn factory_create<P: PluginExport>(
 unsafe extern "C" fn provider_init<P: PluginExport>(
     provider: *const clap_preset_discovery_provider,
 ) -> bool {
-    let Some(handle) = (unsafe { provider.cast::<ProviderHandle>().as_ref() }) else {
-        return false;
-    };
-    let indexer = unsafe { handle.indexer.as_ref() };
-    let Some(indexer) = indexer else {
-        return false;
-    };
-
-    if let Some(declare_filetype) = indexer.declare_filetype {
-        let name = c"truce preset";
-        let description = c"truce plugin preset (.trucepreset)";
-        let extension = CString::new(truce_core::presets::PRESET_FILE_EXT).unwrap_or_default();
-        let filetype = clap_preset_discovery_filetype {
-            name: name.as_ptr(),
-            description: description.as_ptr(),
-            file_extension: extension.as_ptr(),
-        };
-        if !unsafe { declare_filetype(handle.indexer, &raw const filetype) } {
+    // Declares filetypes/locations through host callbacks and reads
+    // `P::info()`; firewall so a panic degrades to "init failed" instead of
+    // unwinding across this `extern "C"` boundary and aborting the host.
+    run_extern_callback_with::<P, bool>("CLAP", "preset_provider_init", false, || {
+        let Some(handle) = (unsafe { provider.cast::<ProviderHandle>().as_ref() }) else {
             return false;
-        }
-    }
+        };
+        let indexer = unsafe { handle.indexer.as_ref() };
+        let Some(indexer) = indexer else {
+            return false;
+        };
 
-    let Some(declare_location) = indexer.declare_location else {
-        return false;
-    };
-    // Only existing directories are declared: hosts (clap-validator
-    // enforces this) treat a declared location they can't stat as a
-    // crawl error, not as "empty". The user root is not created
-    // here - it appears when the first user preset is saved
-    // (`PresetStore::save` creates it), and hosts pick it up on
-    // their next plugin rescan. Same posture as Surge XT's provider.
-    //
-    // A host rejecting a declaration is not fatal: the remaining
-    // locations (and a zero-location provider) are still valid.
-    // clap-validator rejects spec-compliant Windows paths outright
-    // (it requires a leading '/', while the CLAP header says FILE
-    // locations are OS paths where '\' works on Windows), so
-    // treating rejection as an init failure would kill the whole
-    // provider there.
-    if let Some(root) = factory_preset_root() {
-        declare_dir(
-            handle.indexer,
-            declare_location,
-            &root,
-            c"Factory",
-            CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT,
-        );
-    }
-    let info = P::info();
-    if let Some(root) = user_preset_root(info.vendor, info.name, info.preset_user_dir)
-        && root.is_dir()
-    {
-        declare_dir(
-            handle.indexer,
-            declare_location,
-            &root,
-            c"User",
-            CLAP_PRESET_DISCOVERY_IS_USER_CONTENT,
-        );
-    }
-    true
+        if let Some(declare_filetype) = indexer.declare_filetype {
+            let name = c"truce preset";
+            let description = c"truce plugin preset (.trucepreset)";
+            let extension = CString::new(truce_core::presets::PRESET_FILE_EXT).unwrap_or_default();
+            let filetype = clap_preset_discovery_filetype {
+                name: name.as_ptr(),
+                description: description.as_ptr(),
+                file_extension: extension.as_ptr(),
+            };
+            if !unsafe { declare_filetype(handle.indexer, &raw const filetype) } {
+                return false;
+            }
+        }
+
+        let Some(declare_location) = indexer.declare_location else {
+            return false;
+        };
+        // Only existing directories are declared: hosts (clap-validator
+        // enforces this) treat a declared location they can't stat as a
+        // crawl error, not as "empty". The user root is not created
+        // here - it appears when the first user preset is saved
+        // (`PresetStore::save` creates it), and hosts pick it up on
+        // their next plugin rescan. Same posture as Surge XT's provider.
+        //
+        // A host rejecting a declaration is not fatal: the remaining
+        // locations (and a zero-location provider) are still valid.
+        // clap-validator rejects spec-compliant Windows paths outright
+        // (it requires a leading '/', while the CLAP header says FILE
+        // locations are OS paths where '\' works on Windows), so
+        // treating rejection as an init failure would kill the whole
+        // provider there.
+        if let Some(root) = factory_preset_root() {
+            declare_dir(
+                handle.indexer,
+                declare_location,
+                &root,
+                c"Factory",
+                CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT,
+            );
+        }
+        let info = P::info();
+        if let Some(root) = user_preset_root(info.vendor, info.name, info.preset_user_dir)
+            && root.is_dir()
+        {
+            declare_dir(
+                handle.indexer,
+                declare_location,
+                &root,
+                c"User",
+                CLAP_PRESET_DISCOVERY_IS_USER_CONTENT,
+            );
+        }
+        true
+    })
 }
 
 fn declare_dir(
@@ -300,55 +306,61 @@ unsafe extern "C" fn provider_get_metadata<P: PluginExport>(
     location: *const c_char,
     metadata_receiver: *const clap_preset_discovery_metadata_receiver,
 ) -> bool {
-    if location_kind != CLAP_PRESET_DISCOVERY_LOCATION_FILE
-        || location.is_null()
-        || metadata_receiver.is_null()
-    {
-        return false;
-    }
-    let Ok(location) = (unsafe { CStr::from_ptr(location) }).to_str() else {
-        return false;
-    };
-    let path = Path::new(location);
-    let receiver = unsafe { &*metadata_receiver };
-    let info = P::info();
-
-    // Hosts crawl declared directories and call per-file, but the
-    // spec also allows handing back the directory itself - walk it
-    // ourselves in that case.
-    if path.is_dir() {
-        let scope = if factory_preset_root().is_some_and(|f| path.starts_with(f)) {
-            PresetScope::Factory
-        } else {
-            PresetScope::User
-        };
-        let hash = shared_plugin_state_hash(&info);
-        for preset in
-            truce_core::presets::enumerate_scope(path, scope, info.vendor, info.name, hash)
+    // Parses attacker-controllable on-disk preset files (a malformed
+    // `.trucepreset` dropped into the user preset dir) and runs `P::info()`;
+    // firewall so one bad file during a rescan degrades to "crawl failed"
+    // instead of aborting the host across this `extern "C"` boundary.
+    run_extern_callback_with::<P, bool>("CLAP", "preset_get_metadata", false, || {
+        if location_kind != CLAP_PRESET_DISCOVERY_LOCATION_FILE
+            || location.is_null()
+            || metadata_receiver.is_null()
         {
-            if !report_preset::<P>(receiver, metadata_receiver, &preset) {
-                return false;
-            }
+            return false;
         }
-        return true;
-    }
+        let Ok(location) = (unsafe { CStr::from_ptr(location) }).to_str() else {
+            return false;
+        };
+        let path = Path::new(location);
+        let receiver = unsafe { &*metadata_receiver };
+        let info = P::info();
 
-    // A file we skip - foreign payload (another plugin's export, a
-    // pre-identity-change save), corrupt, or not a preset at all - is
-    // "successfully crawled, nothing to declare": return true without
-    // reporting. `false` means the crawl itself errored, and hosts
-    // (and clap-validator) fail the whole location on it.
-    let Some(preset) = read_preset_ref(
-        path.parent(),
-        path,
-        PresetScope::User,
-        info.vendor,
-        info.name,
-        shared_plugin_state_hash(&info),
-    ) else {
-        return true;
-    };
-    report_preset::<P>(receiver, metadata_receiver, &preset)
+        // Hosts crawl declared directories and call per-file, but the
+        // spec also allows handing back the directory itself - walk it
+        // ourselves in that case.
+        if path.is_dir() {
+            let scope = if factory_preset_root().is_some_and(|f| path.starts_with(f)) {
+                PresetScope::Factory
+            } else {
+                PresetScope::User
+            };
+            let hash = shared_plugin_state_hash(&info);
+            for preset in
+                truce_core::presets::enumerate_scope(path, scope, info.vendor, info.name, hash)
+            {
+                if !report_preset::<P>(receiver, metadata_receiver, &preset) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // A file we skip - foreign payload (another plugin's export, a
+        // pre-identity-change save), corrupt, or not a preset at all - is
+        // "successfully crawled, nothing to declare": return true without
+        // reporting. `false` means the crawl itself errored, and hosts
+        // (and clap-validator) fail the whole location on it.
+        let Some(preset) = read_preset_ref(
+            path.parent(),
+            path,
+            PresetScope::User,
+            info.vendor,
+            info.name,
+            shared_plugin_state_hash(&info),
+        ) else {
+            return true;
+        };
+        report_preset::<P>(receiver, metadata_receiver, &preset)
+    })
 }
 
 fn report_preset<P: PluginExport>(
