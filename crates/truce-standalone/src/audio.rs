@@ -667,6 +667,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let input_setup = setup_input_pipeline(&audio_host, opts, is_effect, channels, sample_rate);
     let input_ring = input_setup.ring;
     let input_enabled = input_setup.enabled;
+    let input_ring_width = input_setup.ring_width;
     let input_controller = input_setup.controller;
     if let Some(spec) = opts.input_channels.as_deref() {
         match ChannelRoute::parse(spec) {
@@ -736,7 +737,10 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // than letting the audio worker silently emit zeros.
     #[cfg(feature = "playback")]
     let playback = match &opts.input_file {
-        Some(path) if is_effect => {
+        // `num_main_in > 0`: a layout with no main input bus has nowhere
+        // to route the file, and decoding to a zero width divides by zero
+        // in `PlaybackSource::from_wav`.
+        Some(path) if is_effect && num_main_in > 0 => {
             // Decode to the plugin's MAIN-bus width, not the device
             // stream width: the callback mixes this into
             // `input_bufs[..num_main_in]`, and a main bus wider than the
@@ -752,9 +756,10 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
             Some(Arc::new(src))
         }
         Some(_) => {
-            // Instrument plugins have no input bus to feed; warn
-            // and ignore rather than failing.
-            eprintln!("--input-file ignored: plugin is not an effect");
+            // A non-effect (no input bus) or a layout with no main input
+            // has nowhere to feed the file; warn and ignore rather than
+            // failing.
+            eprintln!("--input-file ignored: plugin has no main input bus");
             None
         }
         None => None,
@@ -804,6 +809,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         pending_state: Arc::clone(&pending_state),
         input_ring: Arc::clone(&input_ring),
         input_enabled: Arc::clone(&input_enabled),
+        ring_width: Arc::clone(&input_ring_width),
         output_enabled: Arc::clone(&output_enabled),
         transport: transport.clone(),
         current_name: Arc::clone(&output_current_name),
@@ -880,6 +886,11 @@ struct InputSetup {
     controller: InputController,
     ring: Arc<InputRing>,
     enabled: Arc<AtomicBool>,
+    /// Ring frame width (= the live output stream's channel count). The
+    /// output worker updates it on a `SetLayout` switch; the input
+    /// producer reads it so its normalization tracks a runtime width
+    /// change instead of freezing at the launch width.
+    ring_width: Arc<AtomicUsize>,
 }
 
 /// Resolve the initial input device, allocate the input ring + control
@@ -900,6 +911,10 @@ fn setup_input_pipeline(
     // capture device's native width onto it.
     let ring_frames = (sample_count_usize(sample_rate) / 10).max(1);
     let input_ring: Arc<InputRing> = Arc::new(ArrayQueue::new(ring_frames));
+    // Seeded with the launch output width; the output worker restamps it
+    // through `open_output_stream` on every (re)open, so a `SetLayout`
+    // switch propagates the new width to the input producer.
+    let ring_width = Arc::new(AtomicUsize::new(channels));
 
     // Resolve the initial input device name so the menu can show
     // the currently-active device on first open. Worker re-resolves
@@ -934,6 +949,7 @@ fn setup_input_pipeline(
     if is_effect {
         let device_name = initial_input_name.clone();
         let ring = Arc::clone(&input_ring);
+        let ring_width = Arc::clone(&ring_width);
         let enabled_flag = Arc::clone(&input_enabled);
         let current = Arc::clone(&input_current_name);
         std::thread::Builder::new()
@@ -942,7 +958,7 @@ fn setup_input_pipeline(
                 input_worker(
                     input_cmd_rx,
                     device_name,
-                    channels,
+                    ring_width,
                     sample_rate,
                     ring,
                     enabled_flag,
@@ -982,6 +998,7 @@ fn setup_input_pipeline(
         controller,
         ring: input_ring,
         enabled: input_enabled,
+        ring_width,
     }
 }
 
@@ -1000,6 +1017,10 @@ struct OutputResources<P: PluginExport> {
     pending_state: Arc<ArrayQueue<Vec<u8>>>,
     input_ring: Arc<InputRing>,
     input_enabled: Arc<AtomicBool>,
+    /// Mic-ring frame width, restamped by `open_output_stream` on every
+    /// (re)open so a `SetLayout` switch propagates the new output channel
+    /// count to the input producer (shared with the input worker).
+    ring_width: Arc<AtomicUsize>,
     /// Drives the audio callback's mute / unmute decision (UI thread
     /// flips it via `OutputController::set_enabled`).
     output_enabled: Arc<AtomicBool>,
@@ -1105,13 +1126,13 @@ fn output_worker<P: PluginExport>(
                 ) {
                     eprintln!("output device switch failed: {e}; restoring previous device");
                     // Reopen the previous device so a failed switch
-                    // doesn't leave the host permanently silent.
-                    if let Err(e2) = open_output_stream::<P>(
+                    // doesn't leave the host permanently silent; fall back
+                    // to the OS default when its name can't be re-resolved.
+                    if let Err(e2) = reopen_output_or_default::<P>(
                         previous.as_deref(),
                         &config,
                         sample_format,
                         sample_rate,
-                        config.channels as usize,
                         num_in,
                         num_out,
                         num_main_in,
@@ -1177,12 +1198,11 @@ fn output_worker<P: PluginExport>(
                     num_out = old_out;
                     num_main_in = old_main_in;
                     config.channels = old_channels;
-                    if let Err(e2) = open_output_stream::<P>(
+                    if let Err(e2) = reopen_output_or_default::<P>(
                         name.as_deref(),
                         &config,
                         sample_format,
                         sample_rate,
-                        config.channels as usize,
                         num_in,
                         num_out,
                         num_main_in,
@@ -1200,6 +1220,60 @@ fn output_worker<P: PluginExport>(
         }
     }
     drop(stream);
+}
+
+/// Reopen the output, falling back to the OS default when a *named*
+/// device can't be re-resolved. Used on the restore / revert paths: the
+/// ALSA virtual default reports a description ("Default Audio Device")
+/// that isn't in `output_devices()`, so re-resolving a previous name
+/// that was really the unnamed default fails there - and without this
+/// fallback the host stays silent, the exact outcome the restore exists
+/// to prevent.
+#[allow(clippy::too_many_arguments)]
+fn reopen_output_or_default<P: PluginExport>(
+    name: Option<&str>,
+    config: &cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    sample_rate: f64,
+    num_in: usize,
+    num_out: usize,
+    num_main_in: usize,
+    is_effect: bool,
+    force_reset: bool,
+    res: &OutputResources<P>,
+    stream: &mut Option<cpal::Stream>,
+) -> Result<(), String> {
+    let first = open_output_stream::<P>(
+        name,
+        config,
+        sample_format,
+        sample_rate,
+        config.channels as usize,
+        num_in,
+        num_out,
+        num_main_in,
+        is_effect,
+        force_reset,
+        res,
+        stream,
+    );
+    if first.is_ok() || name.is_none() {
+        return first;
+    }
+    open_output_stream::<P>(
+        None,
+        config,
+        sample_format,
+        sample_rate,
+        config.channels as usize,
+        num_in,
+        num_out,
+        num_main_in,
+        is_effect,
+        force_reset,
+        res,
+        stream,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1381,6 +1455,9 @@ fn open_output_stream<P: PluginExport>(
         .map_err(|e| format!("could not start output stream: {e}"))?;
 
     *stream_slot = Some(stream);
+    // Publish the new stream's channel count as the mic-ring frame width
+    // so the input producer normalizes onto it after a layout switch.
+    res.ring_width.store(channels, Ordering::Relaxed);
     if let Ok(mut g) = res.current_name.lock() {
         g.clone_from(&resolved_name);
     }
@@ -1404,7 +1481,7 @@ fn open_output_stream<P: PluginExport>(
 fn input_worker(
     cmd_rx: mpsc::Receiver<InputCmd>,
     initial_device_name: Option<String>,
-    channels: usize,
+    ring_width: Arc<AtomicUsize>,
     sample_rate: f64,
     ring: Arc<InputRing>,
     enabled_flag: Arc<AtomicBool>,
@@ -1422,7 +1499,7 @@ fn input_worker(
                     &mut stream,
                     want_enabled,
                     device_name.as_deref(),
-                    channels,
+                    &ring_width,
                     sample_rate,
                     &ring,
                     &enabled_flag,
@@ -1441,7 +1518,7 @@ fn input_worker(
                         &mut stream,
                         true,
                         device_name.as_deref(),
-                        channels,
+                        &ring_width,
                         sample_rate,
                         &ring,
                         &enabled_flag,
@@ -1464,7 +1541,7 @@ fn apply_input_state(
     stream: &mut Option<cpal::Stream>,
     want: bool,
     device_name: Option<&str>,
-    channels: usize,
+    ring_width: &Arc<AtomicUsize>,
     sample_rate: f64,
     ring: &Arc<InputRing>,
     enabled_flag: &Arc<AtomicBool>,
@@ -1482,7 +1559,12 @@ fn apply_input_state(
         };
         if let Some(dev) = device {
             let resolved = dev.description().map(|d| d.name().to_string()).ok();
-            match build_and_play_input_stream(&dev, channels, sample_rate, Arc::clone(ring)) {
+            match build_and_play_input_stream(
+                &dev,
+                Arc::clone(ring_width),
+                sample_rate,
+                Arc::clone(ring),
+            ) {
                 Ok(s) => {
                     *stream = Some(s);
                     enabled_flag.store(true, Ordering::Relaxed);
@@ -1563,11 +1645,14 @@ fn resolve_input_config(
 /// frames onto it. Called from the worker thread.
 fn build_and_play_input_stream(
     device: &cpal::Device,
-    ring_width: usize,
+    ring_width: Arc<AtomicUsize>,
     sample_rate: f64,
     ring: Arc<InputRing>,
 ) -> Result<cpal::Stream, BoxErr> {
-    let input_config = resolve_input_config(device, ring_width, sample_rate);
+    // Open the physical input at the width preferred when it's enabled;
+    // the mic's channel count (`in_ch`) is fixed for the stream's life.
+    let input_config =
+        resolve_input_config(device, ring_width.load(Ordering::Relaxed), sample_rate);
     let in_ch = input_config.channels as usize;
     let stream = device
         .build_input_stream(
@@ -1576,12 +1661,15 @@ fn build_and_play_input_stream(
                 if in_ch == 0 {
                     return;
                 }
-                // Normalize each native frame onto the ring width and
-                // hand it off. `force_push` drops the oldest frame when
-                // the ring is full - a slow / paused render sheds the
+                // Normalize each native frame onto the *current* ring
+                // width (re-read each block so a `SetLayout` switch that
+                // changed the output channel count reaches the producer)
+                // and hand it off. `force_push` drops the oldest frame
+                // when the ring is full - a slow / paused render sheds the
                 // stalest audio. No lock, no allocation, no O(n) drain.
+                let width = ring_width.load(Ordering::Relaxed);
                 for frame in data.chunks_exact(in_ch) {
-                    ring.force_push(normalize_input_frame(frame, ring_width));
+                    ring.force_push(normalize_input_frame(frame, width));
                 }
             },
             |err| eprintln!("Input error: {err}"),
