@@ -40,12 +40,16 @@ pub enum ForeignState<'a> {
         bytes: &'a [u8],
     },
     /// A valid truce envelope whose `plugin_id_hash` doesn't match:
-    /// the plugin was renamed / re-identified. Params are already
-    /// decoded; the plugin only decides whether to accept them.
+    /// the plugin was renamed / re-identified. Params, extra, and the
+    /// `#[persist]` block are already decoded; the plugin only decides
+    /// whether to accept them. Forward `persist` into the returned
+    /// [`MigratedState`] to keep GUI layout / file paths / instance
+    /// names across the rename.
     MismatchedEnvelope {
         plugin_id_hash: u64,
         params: &'a [(u32, f64)],
         extra: Option<&'a [u8]>,
+        persist: &'a [u8],
     },
 }
 
@@ -54,9 +58,15 @@ pub enum ForeignState<'a> {
 /// restore pipeline as a synthetic [`DeserializedState`]; the next
 /// save writes a regular envelope, so migration is a one-shot door,
 /// not a permanent dual-format reader.
+#[derive(Default)]
 pub struct MigratedState {
     pub params: Vec<(u32, f64)>,
     pub extra: Option<Vec<u8>>,
+    /// Serialized `#[persist]` block to restore. Leave empty when the
+    /// source has no truce persist data (a foreign framework's blob);
+    /// forward [`ForeignState::MismatchedEnvelope::persist`] to carry
+    /// a renamed plugin's persisted fields across the migration.
+    pub persist: Vec<u8>,
 }
 
 impl From<MigratedState> for DeserializedState {
@@ -64,7 +74,7 @@ impl From<MigratedState> for DeserializedState {
         Self {
             params: migrated.params,
             extra: migrated.extra,
-            persist: Vec::new(),
+            persist: migrated.persist,
         }
     }
 }
@@ -182,6 +192,7 @@ pub fn parse_or_migrate<P: PluginExport>(
                 plugin_id_hash: found,
                 params: &state.params,
                 extra: state.extra.as_deref(),
+                persist: &state.persist,
             })
             .map(Into::into)
         }
@@ -326,4 +337,34 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
 #[must_use]
 pub fn shared_plugin_state_hash(info: &crate::PluginInfo) -> u64 {
     hash_plugin_id(info.clap_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DeserializedState, MigratedState};
+
+    // A renamed plugin that forwards its old envelope's `#[persist]`
+    // bytes must keep them: the `From` bridge used to hardcode
+    // `persist: Vec::new()`, silently reverting persisted fields to
+    // default on every migrated load.
+    #[test]
+    fn migrated_state_forwards_persist() {
+        let migrated = MigratedState {
+            params: vec![(0, 1.0)],
+            extra: Some(vec![9, 9]),
+            persist: vec![1, 2, 3],
+        };
+        let restored: DeserializedState = migrated.into();
+        assert_eq!(restored.persist, vec![1, 2, 3]);
+        assert_eq!(restored.extra.as_deref(), Some(&[9, 9][..]));
+        assert_eq!(restored.params, vec![(0, 1.0)]);
+    }
+
+    #[test]
+    fn migrated_state_default_has_empty_persist() {
+        let restored: DeserializedState = MigratedState::default().into();
+        assert!(restored.persist.is_empty());
+        assert!(restored.extra.is_none());
+        assert!(restored.params.is_empty());
+    }
 }
