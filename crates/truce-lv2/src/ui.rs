@@ -673,10 +673,13 @@ unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
     width: i32,
     height: i32,
 ) -> i32 {
-    if handle.is_null() || width <= 0 || height <= 0 {
-        return 1;
-    }
-    unsafe {
+    // Calls straight into author editor resize code; firewall it so a
+    // panic can't unwind across the C ABI into the host UI loop. On
+    // panic report the LV2 error code (non-zero).
+    run_extern_callback_with::<P, i32>("LV2", "ui_resize", 1, || unsafe {
+        if handle.is_null() || width <= 0 || height <= 0 {
+            return 1;
+        }
         let inst = &mut *handle.cast::<Lv2UiInstance<P>>();
         let Some(editor) = inst.editor.as_mut() else {
             return 1;
@@ -685,8 +688,8 @@ unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
         let (req_w, req_h) = (width as u32, height as u32);
         let (cw, ch) = fit_logical_size(req_w, req_h, editor.as_ref());
         editor.set_size(cw, ch);
-    }
-    0
+        0
+    })
 }
 
 // ---------------------------------------------------------------------------
