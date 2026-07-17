@@ -78,18 +78,24 @@ export component ZooUi inherits Window {
     out property <bool> xy-small-dragging: xy-small-pad.dragging;
     callback xy-small-changed-x(float);
     callback xy-small-changed-y(float);
+    callback xy-small-pressed();
+    callback xy-small-released();
 
     in-out property <float> xy-med-x;
     in-out property <float> xy-med-y;
     out property <bool> xy-med-dragging: xy-med-pad.dragging;
     callback xy-med-changed-x(float);
     callback xy-med-changed-y(float);
+    callback xy-med-pressed();
+    callback xy-med-released();
 
     in-out property <float> xy-big-x;
     in-out property <float> xy-big-y;
     out property <bool> xy-big-dragging: xy-big-pad.dragging;
     callback xy-big-changed-x(float);
     callback xy-big-changed-y(float);
+    callback xy-big-pressed();
+    callback xy-big-released();
 
     // --- Self-contained demo state (native widgets + keyboard) ---
     property <int> click-count: 0;
@@ -202,13 +208,16 @@ export component ZooUi inherits Window {
                         spacing: 20px;
                         xy-small-pad := XYPad { width: 80px; height: 92px; label: "small";
                             value-x <=> root.xy-small-x; value-y <=> root.xy-small-y;
-                            changed-x(v) => { root.xy-small-changed-x(v); } changed-y(v) => { root.xy-small-changed-y(v); } }
+                            changed-x(v) => { root.xy-small-changed-x(v); } changed-y(v) => { root.xy-small-changed-y(v); }
+                            pressed => { root.xy-small-pressed(); } released => { root.xy-small-released(); } }
                         xy-med-pad := XYPad { width: 130px; height: 142px; label: "med";
                             value-x <=> root.xy-med-x; value-y <=> root.xy-med-y;
-                            changed-x(v) => { root.xy-med-changed-x(v); } changed-y(v) => { root.xy-med-changed-y(v); } }
+                            changed-x(v) => { root.xy-med-changed-x(v); } changed-y(v) => { root.xy-med-changed-y(v); }
+                            pressed => { root.xy-med-pressed(); } released => { root.xy-med-released(); } }
                         xy-big-pad := XYPad { width: 200px; height: 212px; label: "big";
                             value-x <=> root.xy-big-x; value-y <=> root.xy-big-y;
-                            changed-x(v) => { root.xy-big-changed-x(v); } changed-y(v) => { root.xy-big-changed-y(v); } }
+                            changed-x(v) => { root.xy-big-changed-x(v); } changed-y(v) => { root.xy-big-changed-y(v); }
+                            pressed => { root.xy-big-pressed(); } released => { root.xy-big-released(); } }
                     }
                 }
             }

@@ -73,11 +73,29 @@ impl PurePluginLogic for GainSlint {
             |state: PluginContext<GainParams>| -> SyncFn<GainParams> {
                 let ui = GainUi::new().unwrap();
 
-                // UI → host
+                // UI → host. The knobs edit per-gesture through `automate`;
+                // the XY pad brackets its whole drag as one gesture
+                // (`begin_edit` both axes on press, `set` on move,
+                // `end_edit` on release) so a read-mode host holds the touch
+                // across the drag instead of reclaiming the param each move.
                 let s = state.clone();
                 ui.on_gain_changed(move |v| s.automate(P::Gain, f64::from(v)));
                 let s = state.clone();
                 ui.on_pan_changed(move |v| s.automate(P::Pan, f64::from(v)));
+                let s = state.clone();
+                ui.on_xy_pressed(move || {
+                    s.begin_edit(P::Pan);
+                    s.begin_edit(P::Gain);
+                });
+                let s = state.clone();
+                ui.on_xy_pan_changed(move |v| s.set_param(P::Pan, f64::from(v)));
+                let s = state.clone();
+                ui.on_xy_gain_changed(move |v| s.set_param(P::Gain, f64::from(v)));
+                let s = state.clone();
+                ui.on_xy_released(move || {
+                    s.end_edit(P::Pan);
+                    s.end_edit(P::Gain);
+                });
 
                 // host → UI (params + meters)
                 Box::new(move |state: &PluginContext<GainParams>| {

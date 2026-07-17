@@ -15,6 +15,13 @@ export component XYPad inherits VerticalLayout {
 
     callback changed-x(float);
     callback changed-y(float);
+    // Gesture boundaries. `pressed` fires on pointer-down (before the
+    // first `changed-*`), `released` on pointer-up/cancel, so the host
+    // sees one automation gesture spanning the whole drag - `begin_edit`
+    // on press, `end_edit` on release - instead of a fresh open/close per
+    // move that lets read-mode automation reclaim the param between moves.
+    callback pressed();
+    callback released();
 
     // `preferred-*` lets a parent layout stretch the pad in both
     // axes. `min-*` keeps the pad usable when the editor window
@@ -75,6 +82,10 @@ export component XYPad inherits VerticalLayout {
         touch := TouchArea {
             width: pad.width;
             height: pad.height;
+            // Tracks an in-flight left-button gesture so `released` pairs
+            // with `pressed` exactly once (an `up`/`cancel` with no prior
+            // left `down` is ignored).
+            property <bool> gesture-active: false;
 
             moved => {
                 if self.pressed {
@@ -87,10 +98,16 @@ export component XYPad inherits VerticalLayout {
 
             pointer-event(ev) => {
                 if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left {
+                    self.gesture-active = true;
+                    root.pressed();
                     root.value-x = clamp(touch.mouse-x / pad.width, 0.0, 1.0);
                     root.value-y = clamp(1.0 - touch.mouse-y / pad.height, 0.0, 1.0);
                     root.changed-x(root.value-x);
                     root.changed-y(root.value-y);
+                } else if self.gesture-active
+                        && (ev.kind == PointerEventKind.up || ev.kind == PointerEventKind.cancel) {
+                    self.gesture-active = false;
+                    root.released();
                 }
             }
         }

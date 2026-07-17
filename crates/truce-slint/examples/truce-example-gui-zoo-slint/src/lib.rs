@@ -122,6 +122,9 @@ impl PurePluginLogic for ZooSlint {
         ProcessStatus::Normal
     }
 
+    // Linear widget wiring: one `on_*` handler per control in the zoo.
+    // Splitting it would just thread `ui` / `state` clones through helpers.
+    #[allow(clippy::too_many_lines)]
     fn editor(params: Arc<ZooParams>) -> Box<dyn Editor> {
         SlintEditor::new(
             params.clone(),
@@ -175,19 +178,55 @@ impl PurePluginLogic for ZooSlint {
                     s.automate(P::Mode, norm);
                 });
 
-                // XY pads (3) - each axis is an independent automate call.
+                // XY pads (3) - bracket the whole drag as one automation
+                // gesture per pad: `begin_edit` both axes on press, `set`
+                // on move, `end_edit` on release. A read-mode host then
+                // holds the touch across the drag instead of reclaiming the
+                // param between moves (which a begin+set+end per move does).
                 let s = state.clone();
-                ui.on_xy_small_changed_x(move |v| s.automate(P::KMix, f64::from(v)));
+                ui.on_xy_small_pressed(move || {
+                    s.begin_edit(P::KMix);
+                    s.begin_edit(P::KGain);
+                });
                 let s = state.clone();
-                ui.on_xy_small_changed_y(move |v| s.automate(P::KGain, f64::from(v)));
+                ui.on_xy_small_changed_x(move |v| s.set_param(P::KMix, f64::from(v)));
                 let s = state.clone();
-                ui.on_xy_med_changed_x(move |v| s.automate(P::KFreq, f64::from(v)));
+                ui.on_xy_small_changed_y(move |v| s.set_param(P::KGain, f64::from(v)));
                 let s = state.clone();
-                ui.on_xy_med_changed_y(move |v| s.automate(P::KQ, f64::from(v)));
+                ui.on_xy_small_released(move || {
+                    s.end_edit(P::KMix);
+                    s.end_edit(P::KGain);
+                });
+
                 let s = state.clone();
-                ui.on_xy_big_changed_x(move |v| s.automate(P::KPan, f64::from(v)));
+                ui.on_xy_med_pressed(move || {
+                    s.begin_edit(P::KFreq);
+                    s.begin_edit(P::KQ);
+                });
                 let s = state.clone();
-                ui.on_xy_big_changed_y(move |v| s.automate(P::KPhase, f64::from(v)));
+                ui.on_xy_med_changed_x(move |v| s.set_param(P::KFreq, f64::from(v)));
+                let s = state.clone();
+                ui.on_xy_med_changed_y(move |v| s.set_param(P::KQ, f64::from(v)));
+                let s = state.clone();
+                ui.on_xy_med_released(move || {
+                    s.end_edit(P::KFreq);
+                    s.end_edit(P::KQ);
+                });
+
+                let s = state.clone();
+                ui.on_xy_big_pressed(move || {
+                    s.begin_edit(P::KPan);
+                    s.begin_edit(P::KPhase);
+                });
+                let s = state.clone();
+                ui.on_xy_big_changed_x(move |v| s.set_param(P::KPan, f64::from(v)));
+                let s = state.clone();
+                ui.on_xy_big_changed_y(move |v| s.set_param(P::KPhase, f64::from(v)));
+                let s = state.clone();
+                ui.on_xy_big_released(move || {
+                    s.end_edit(P::KPan);
+                    s.end_edit(P::KPhase);
+                });
 
                 // -- host -> UI: per-frame sync. --
                 // Displayed meter level + last raw slot reading, kept across
