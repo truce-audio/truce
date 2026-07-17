@@ -4,6 +4,8 @@ Notable changes per release.
 
 ## 6.1.11
 
+- `cargo truce screenshot --state`, `ScreenshotTest::state_file`, and the test driver's `state_file` / `state_blob` now decode the `.pluginstate` envelope before rendering instead of passing it to `load_state`, so param and persist values are restored rather than silently rendering defaults.
+- State migration of a renamed plugin's envelope now carries the `#[persist]` block through `MigratedState` instead of dropping it, keeping persisted fields (GUI layout, file paths, instance names).
 - AU v2 SysEx input from the host (`MusicDeviceSysEx`, which a host may call off the render thread) no longer races the render thread and corrupts the event list; it is handed to the audio thread through a lock-free queue instead of mutating the render scratch directly.
 - AU render no longer allocates on the audio thread when a host renders more frames than it declared via `kAudioUnitProperty_MaximumFramesPerSlice`; the oversized block fails safe (zeroed output) instead of growing the scratch.
 - AU components now report the plugin's declared version instead of a hardcoded 1.0.0, so hosts (Logic, GarageBand) see a shipped update as new rather than reusing stale cached validation and metadata.
@@ -13,6 +15,19 @@ Notable changes per release.
 - Built-in GPU editor's `on_event` is now wrapped in the same panic firewall as its siblings, so a plugin-side panic during a mouse/resize event can't unwind across the baseview FFI boundary and terminate the host.
 - iOS editors (egui, iced, Slint) no longer leak a `UIView` + `CALayer` per open/close cycle or leave a dangling ivar pointer in the detached view.
 - iced iOS editor no longer leaves a `CADisplayLink` firing forever (and leaks its view) when surface creation fails during open.
+- Standalone live capture (`--output-file` without `--input-file`) now finalizes the WAV header on Ctrl-C instead of leaving a truncated, unreadable file.
+- Standalone mic input now uses a lock-free ring instead of a mutex-guarded `Vec`, removing the blocking lock, per-block allocation, and O(n) drain from both audio threads.
+- Standalone output device switch reopens the previous device on failure instead of leaving the host permanently silent.
+- Standalone bus-layout switch now `reset()`s the plugin at the new dimensions (and reverts on failure) instead of feeding it buffers of a new channel width with stale state.
+- Standalone `--input-file` decodes to the plugin's main-bus width, matching the offline render, instead of truncating file channels to the device width.
+- Standalone mic enable falls back to the capture device's default config when the output config is unsupported, instead of failing on mismatched hardware.
+- Standalone keyboard shortcuts (transport, notes, octave shift) ignore OS key auto-repeat on macOS / Windows.
+- LV2 output atom ports (MIDI-out, UI notify) always advertise their real body size; paths that skipped the encoders (`run(0)`, a caught plugin panic, a host without `urid:map`, or a notify buffer too small for the transport object) no longer leave the host reading capacity bytes of stale buffer as events.
+- LV2 `ui:resize` callback is now wrapped in the same panic firewall as the crate's other host-facing entry points, so a panic in the editor's resize handler can't abort across the C ABI into the host.
+- VST3 editor preset loads no longer strand while the component is inactive (host device switched off): the blob applies synchronously and `setActive(false)` drains any queued load, so saving the project keeps the GUI-loaded state instead of re-serializing the stale snapshot.
+- VST3 `setContentScaleFactor` and the inactive-`setState` editor notify now use `try_enter`, so a host re-entering the ownership cell during editor open (Windows message pump) can't hand out an aliasing `&mut` in release builds.
+- AAX host state loads (session restore, preset recall) now refresh the custom-state snapshot immediately, so a save before the plugin next renders keeps the loaded state instead of re-serializing the pre-load snapshot.
+- AAX editor host-callback closures are invalidated when the plugin window closes, so a background task calling back after close can't use-after-free the destroyed Pro Tools GUI object.
 
 ## 6.1.10
 

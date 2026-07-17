@@ -1,22 +1,23 @@
-//! Integration test: the hot-reload state-preservation decision.
+//! Integration test: the hot-reload state carry-over.
 //!
-//! `HotShell::process` makes the riskiest call in the loader - on a
-//! dylib swap it either keeps the live DSP state (when the new dylib's
-//! `State` fingerprint matches) or drops it through the *origin* dylib
-//! and re-inits from the new one. This test reproduces that exact
-//! decision at the `NativeLoader` level (deterministic, no watcher
-//! timing) with real dylibs so both branches - and the subtle
-//! drop-through-a-leaked-origin-dylib path - are actually executed:
+//! On a dylib swap `HotShell::process` carries the live DSP state into
+//! the new code by a save / load round-trip through the *origin* dylib -
+//! never by reinterpreting the old bytes under the new `State` layout
+//! (UB when a same-size field type or order changed). This test
+//! reproduces that exact sequence at the `NativeLoader` level
+//! (deterministic, no watcher timing) with real dylibs, so both the
+//! carry-over and the fresh-init fallback - and the subtle
+//! serialize / drop through a leaked origin dylib - are actually run:
 //!
-//! - `keep-a` -> `keep-b`: identical `CounterState` logic from two
-//!   crates, so the fingerprint matches - the state must survive.
-//! - `keep-a` -> `reset`: `ResetState` adds a field, so the fingerprint
-//!   differs - the state must be dropped through keep-a's leaked dylib
-//!   and re-initialized from `reset`.
+//! - `keep-a` -> `keep-b`: identical `CounterLogic` from two crates
+//!   sharing a `save_state` / `load_state` format, so the count carries
+//!   over.
+//! - `keep-b` -> `reset`: `ResetLogic` defines no `load_state`, so the
+//!   carried blob can't be restored and the state starts fresh.
 //!
 //! The fixtures surface their `counter` (advanced once per `process`)
-//! through `latency`, so the test reads it back to tell "kept" from
-//! "reset". Needs the three fixture cdylibs built into `target/debug`
+//! through `latency`, so the test reads it back to tell "carried" from
+//! "fresh". Needs the three fixture cdylibs built into `target/debug`
 //! (`cargo build --workspace`); skips cleanly if they are absent.
 
 #[cfg(feature = "shell")]
@@ -91,7 +92,7 @@ mod test {
     }
 
     #[test]
-    fn reload_keeps_state_on_matching_fingerprint_and_resets_on_change() {
+    fn reload_carries_state_via_save_load_and_falls_back_to_fresh_init() {
         let (keep_a, keep_b, reset) = (
             fixture("reload_fixture_keep_a"),
             fixture("reload_fixture_keep_b"),
@@ -112,13 +113,12 @@ mod test {
 
         let mut loader: NativeLoader = NativeLoader::new(scratch.clone(), params_ptr);
         assert!(loader.is_loaded(), "keep-a should load");
-
-        let (state, fp_a, drop_a) = loader.init_state().expect("init state from keep-a");
-        assert_ne!(
-            fp_a,
-            truce_core::dsp_state::NO_PRESERVE,
-            "CounterState derives DspState, so it must report a real fingerprint"
+        assert!(
+            loader.preserve_dsp_state(),
+            "CounterLogic keeps the default PRESERVE_DSP_STATE = true"
         );
+
+        let (state, origin_a) = loader.init_state().expect("init state from keep-a");
 
         loader.reset(state, &AudioConfig::new(44100.0, 64));
         for _ in 0..3 {
@@ -127,48 +127,46 @@ mod test {
         let before = loader.latency(state);
         assert_eq!(before, 3, "counter advances once per process block");
 
-        // --- Branch 1: same-fingerprint reload (code-only edit). ---
-        // keep-b is a distinct dylib file with an identical CounterState
-        // layout. Reload swaps the code; the fingerprint still matches,
-        // so the shell keeps the live state - mirror that here by
-        // running keep-b's `process` on keep-a's `state` pointer.
+        // --- Branch 1: reload carries state via save / load. ---
+        // keep-b is a distinct dylib sharing CounterLogic's blob format.
+        // Mirror the shell exactly: serialize the live state through the
+        // ORIGIN dylib (keep-a, still mapped), reload, then init fresh
+        // under the new code and restore the carried bytes into it.
         swap_in(&keep_b, &scratch);
         assert!(loader.reload(), "reload to keep-b should succeed");
-        assert_eq!(
-            loader.state_fingerprint(),
-            Some(fp_a),
-            "keep-b shares CounterState, so the fingerprint is unchanged"
-        );
-        let after_keep = tick(&loader, state);
+        let carried = (origin_a.save)(state.cast_const());
+        assert!(!carried.is_empty(), "CounterLogic serializes its counter");
+        (origin_a.drop)(state);
+        let (state_b, origin_b) = loader.init_state().expect("init fresh state from keep-b");
+        loader
+            .load_state(state_b, &carried)
+            .expect("keep-b restores CounterState from the carried blob");
+        let after_keep = tick(&loader, state_b);
         assert_eq!(
             after_keep,
             before + 1,
-            "state preserved across the code-only reload (counter continued, not reset)"
+            "count carried across the reload (continued from 3, not reset)"
         );
 
-        // --- Branch 2: fingerprint-change reload (layout changed). ---
-        // reset uses ResetState (an extra field), so its fingerprint
-        // differs. The shell must drop the old state through its origin
-        // dylib (keep-a, now doubly leaked) and re-init from `reset`.
+        // --- Branch 2: reload whose logic can't restore the blob. ---
+        // `reset` defines no `load_state`, so restoring the carried bytes
+        // is a silent no-op and the fresh state starts at 0 - the sound
+        // fallback. Serialize + drop through keep-b's origin dylib.
+        let carried_b = (origin_b.save)(state_b.cast_const());
         swap_in(&reset, &scratch);
         assert!(loader.reload(), "reload to reset should succeed");
-        let fp_reset = loader.state_fingerprint().expect("reset fingerprint");
-        assert_ne!(
-            fp_reset, fp_a,
-            "ResetState adds a field, so its fingerprint must differ"
-        );
-
-        // Free the old allocation through keep-a's `drop` (captured at
-        // init) - this is the drop-through-leaked-origin-dylib path.
-        drop_a(state);
-        let (state2, _fp2, drop_b) = loader.init_state().expect("init fresh state from reset");
-        let after_reset = tick(&loader, state2);
+        (origin_b.drop)(state_b);
+        let (state_c, origin_c) = loader.init_state().expect("init fresh state from reset");
+        loader
+            .load_state(state_c, &carried_b)
+            .expect("reset's default load_state accepts any blob as a no-op");
+        let after_reset = tick(&loader, state_c);
         assert_eq!(
             after_reset, 1,
-            "fresh state started at 0 and advanced once (old counter was discarded)"
+            "fresh state started at 0 and advanced once (carried count discarded)"
         );
 
-        drop_b(state2);
+        (origin_c.drop)(state_c);
         let _ = std::fs::remove_file(&scratch);
         drop(params);
     }

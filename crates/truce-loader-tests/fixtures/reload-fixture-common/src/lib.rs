@@ -4,12 +4,12 @@
 //! these via `truce_loader::export_plugin!`. Each carries a DSP state
 //! whose `counter` advances one step per `process` call and is surfaced
 //! through `latency`, so a loader-level test can read it back and prove
-//! whether a reload kept the live state or re-initialized it.
+//! whether a reload carried the live state over or re-initialized it.
 //!
-//! `CounterState` (used by keep-a and keep-b) has one layout, so the two
-//! dylibs share a fingerprint - a reload between them is the code-only
-//! case that must preserve state. `ResetState` adds a field, so its
-//! fingerprint differs and a reload to it must drop + re-init.
+//! `CounterLogic` (keep-a and keep-b) serializes its `counter` through
+//! `save_state` / `load_state`, so a reload between them carries the
+//! count over. `ResetLogic` defines neither, so a reload to it can't
+//! restore the carried blob and starts fresh - the sound fallback.
 
 use truce::prelude::*;
 
@@ -21,13 +21,14 @@ pub struct FxParams {
     pub gain: FloatParam,
 }
 
-/// One-field state shared by keep-a and keep-b (same fingerprint).
+/// State shared by keep-a and keep-b; serialized on reload carry-over.
 #[derive(Default)]
 pub struct CounterState {
     pub counter: u64,
 }
 
-/// Two-field state (distinct fingerprint from [`CounterState`]).
+/// State for the reset fixture. Its logic defines no `save_state` /
+/// `load_state`, so a reload to it can't restore the carried blob.
 #[derive(Default)]
 pub struct ResetState {
     pub counter: u64,
@@ -61,9 +62,8 @@ impl PluginLogic for CounterLogic {
         as_u32(state.counter)
     }
 
-    fn snapshot_into(state: &CounterState, buf: &mut Vec<u8>) -> bool {
-        buf.extend_from_slice(&state.counter.to_le_bytes());
-        true
+    fn save_state(state: &CounterState) -> Vec<u8> {
+        state.counter.to_le_bytes().to_vec()
     }
 
     fn load_state(state: &mut CounterState, data: &[u8]) -> Result<(), StateLoadError> {

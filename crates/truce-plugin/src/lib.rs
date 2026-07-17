@@ -73,13 +73,15 @@ pub trait PluginLogicCore<S: Sample = f32>: 'static {
     /// The mutable per-block audio state. Owned by the shell, not by
     /// `Self` (the descriptor). `Send` because the shell moves it across
     /// threads; `'static` because the shell may outlive any borrow. No
-    /// layout trait is required: the hot-reload shell fingerprints the
-    /// type at load time from its `type_name` / `size_of` / `align_of`.
+    /// layout trait is required: on reload the hot-reload shell carries
+    /// the state into the new code by a save / load round-trip, never by
+    /// reinterpreting the old bytes.
     type DspState: Send + 'static;
 
-    /// Whether the hot-reload shell may preserve live DSP state across a
-    /// code-only reload. Default `true` (best-effort layout probe).
-    /// Override to `false` on a state that must always re-init on reload.
+    /// Whether the hot-reload shell carries live DSP state across a
+    /// reload, via a `save_state` / `load_state` round-trip. Default
+    /// `true`. Override to `false` on a state that must always re-init
+    /// on reload.
     const PRESERVE_DSP_STATE: bool = true;
 
     #[must_use]
@@ -218,17 +220,18 @@ macro_rules! plugin_logic_leaf_trait {
             /// plugins never write `init` - they `#[derive(Default)]` (or
             /// hand-write `Default` when a fresh state has non-zero fields)
             /// and override `init` only when construction needs params.
-            /// No layout trait is required - the hot-reload shell
-            /// fingerprints the type at load time from its `type_name` /
-            /// `size_of` / `align_of`.
+            /// No layout trait is required - on reload the hot-reload shell
+            /// carries the state into the new code by a save / load
+            /// round-trip, never by reinterpreting the old bytes.
             type DspState: ::core::default::Default + Send + 'static;
 
-            /// Whether the hot-reload shell may preserve live DSP state
-            /// across a code-only reload. Default `true`: the shell keeps
-            /// the state when a best-effort layout probe (`type_name` +
-            /// `size_of` + `align_of`) matches, so a reverb tail survives
-            /// an edit-and-reload, and re-inits when it differs. Set to
-            /// `false` on a state that must always re-init on reload.
+            /// Whether the hot-reload shell carries live DSP state across a
+            /// reload. Default `true`: the shell serializes the state
+            /// through the old dylib and restores it into the new one via
+            /// [`save_state`](Self::save_state) / [`load_state`](Self::load_state),
+            /// so a reverb tail survives an edit-and-reload whenever the
+            /// plugin serializes it. Set to `false` to always re-init on
+            /// reload.
             const PRESERVE_DSP_STATE: bool = true;
 
             /// Opt into zero-copy in-place I/O. When this returns `true`,
@@ -426,12 +429,14 @@ macro_rules! plugin_logic_leaf_trait {
 
             /// Translate foreign state - a previous framework's blob,
             /// or a truce envelope saved under a different plugin id -
-            /// into truce params + extra, so a plugin ported to truce
-            /// keeps its users' old sessions and presets. Runs on the
-            /// host thread; receiverless so it can't touch (or alias)
-            /// the live instance. Return `None` for bytes you don't
-            /// recognize - the wrapper then reports load failure to
-            /// the host, exactly as if this hook didn't exist.
+            /// into truce params + extra + persist, so a plugin ported
+            /// to truce keeps its users' old sessions and presets. For a
+            /// renamed-plugin envelope, forward the decoded `persist`
+            /// bytes to keep `#[persist]` fields across the rename. Runs
+            /// on the host thread; receiverless so it can't touch (or
+            /// alias) the live instance. Return `None` for bytes you
+            /// don't recognize - the wrapper then reports load failure
+            /// to the host, exactly as if this hook didn't exist.
             ///
             /// One-shot by construction: the next save writes a normal
             /// truce envelope, so this never becomes a permanent
@@ -496,7 +501,6 @@ pub mod __plugin_logic_deps {
     pub use truce_core::buffer::AudioBuffer;
     pub use truce_core::bus::BusLayout;
     pub use truce_core::config::AudioConfig;
-    pub use truce_core::dsp_state::{NO_PRESERVE, layout_fingerprint};
     pub use truce_core::editor::Editor;
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};

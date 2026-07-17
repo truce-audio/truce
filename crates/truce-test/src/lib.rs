@@ -940,10 +940,14 @@ impl<P: PluginExport> ScreenshotTest<P> {
 
         let mut plugin = P::create();
         plugin.init();
+        // `state_bytes` is a full `.pluginstate` envelope, not the bare
+        // `save_state` extra blob. Restore through the envelope so
+        // params + persist land; handing the raw bytes to `load_state`
+        // would render defaults and reject the envelope as malformed.
         if let Some(bytes) = state_bytes.as_deref()
-            && let Err(e) = plugin.load_state(bytes)
+            && let Err(e) = state::restore_plugin(&mut plugin, bytes)
         {
-            eprintln!("truce-test: load_state failed: {e}");
+            eprintln!("truce-test: state restore failed: {e}");
         }
         for (id, value) in &param_overrides {
             plugin.params().set_normalized(*id, *value);

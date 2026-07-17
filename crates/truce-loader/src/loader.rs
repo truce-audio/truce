@@ -49,6 +49,22 @@ type ProcessFn<S> =
 /// that made it, even after a reload.
 pub type StateDropFn = fn(*mut ());
 
+/// The subset of a dylib's exports the shell binds to the exact state
+/// allocation that dylib produced, so it can operate on that state even
+/// after a reload swaps the active symbol table. Both are bare `fn`
+/// pointers into the origin dylib's code, which stays mapped (handles
+/// leak, never `dlclose`d).
+#[derive(Clone, Copy)]
+pub struct StateOrigin {
+    /// Frees the allocation with the layout that made it.
+    pub drop: StateDropFn,
+    /// Serializes the live state into the plugin's persistence blob, so a
+    /// reload can restore it into freshly-init'd state under the new code
+    /// rather than reinterpret the old bytes - which is UB when the layout
+    /// changed in a way size / align can't see.
+    pub save: fn(*const ()) -> Vec<u8>,
+}
+
 /// The flat function-pointer table resolved from a loaded dylib. Every
 /// entry operates on an opaque `*mut ()` / `*const ()` state pointer
 /// (an erased `Box<State>`) plus a `*const ()` params pointer (the
@@ -67,10 +83,10 @@ struct LogicSymbols<S: Sample> {
     snapshot_version: fn(*const ()) -> Option<u64>,
     load_state: fn(*mut (), &[u8]) -> Result<(), StateLoadError>,
     state_changed: fn(*mut (), *const ()),
-    /// Structural fingerprint of the plugin's `State`. The shell keeps
-    /// live state across a reload only when this matches the fingerprint
-    /// the held state was created with.
-    fingerprint: u64,
+    /// Whether the plugin opts into DSP-state carry-over across a reload
+    /// (`PRESERVE_DSP_STATE`). When false the shell re-inits on every
+    /// reload instead of round-tripping the state through save / load.
+    preserve: bool,
 }
 
 impl<S: Sample> LogicSymbols<S> {
@@ -101,7 +117,7 @@ impl<S: Sample> LogicSymbols<S> {
                 *s
             }};
         }
-        let fingerprint_fn: fn() -> u64 = sym!(b"truce_state_fingerprint", fn() -> u64);
+        let preserve_fn: fn() -> bool = sym!(b"truce_preserve_dsp_state", fn() -> bool);
         Some(Self {
             init_state: sym!(b"truce_init_state", fn(*const ()) -> *mut ()),
             drop_state: sym!(b"truce_drop_state", fn(*mut ())),
@@ -117,7 +133,7 @@ impl<S: Sample> LogicSymbols<S> {
                 fn(*mut (), &[u8]) -> Result<(), StateLoadError>
             ),
             state_changed: sym!(b"truce_state_changed", fn(*mut (), *const ())),
-            fingerprint: fingerprint_fn(),
+            preserve: preserve_fn(),
         })
     }
 }
@@ -168,6 +184,12 @@ pub struct NativeLoader<S: Sample = f32> {
     /// `leaked_handles` (or alongside it on shutdown).
     current_temp: Option<PathBuf>,
     load_counter: u64,
+    /// Count of successful library swaps (a `reload` that actually
+    /// installed new code). Unlike `load_counter`, a failed reload
+    /// attempt does not advance it, so the shell carries state over only
+    /// when the code truly changed - a canary-rejected reload stays a
+    /// no-op for the live DSP state.
+    swap_generation: u64,
     /// Unique ID for this loader instance (used in temp file names).
     instance_id: u64,
 }
@@ -197,6 +219,7 @@ impl<S: Sample> NativeLoader<S> {
             temp_paths: Vec::new(),
             current_temp: None,
             load_counter: 0,
+            swap_generation: 0,
             instance_id: LOADER_ID.fetch_add(1, Ordering::Relaxed),
         };
         loader.load();
@@ -209,8 +232,8 @@ impl<S: Sample> NativeLoader<S> {
     /// settles, it acquires `loader` and runs [`NativeLoader::reload`]
     /// directly. This keeps the codesign / dlopen / canary-probe work
     /// off the audio thread - the audio thread only observes
-    /// reloads via [`NativeLoader::load_counter`] advances and runs
-    /// `plugin.reset()` to match the new sample rate / block size.
+    /// reloads via [`NativeLoader::swap_generation`] advances and carries
+    /// its live state into the new code, resetting to match the config.
     ///
     /// Held as a `Weak` so dropping the last `Arc<Mutex<NativeLoader>>`
     /// breaks the watcher's reference and lets the thread exit on its
@@ -360,9 +383,9 @@ impl<S: Sample> NativeLoader<S> {
     /// instead of silence.
     ///
     /// State is not touched here: the shell owns it and, on seeing the
-    /// [`load_counter`](Self::load_counter) advance, decides via the
-    /// [`state_fingerprint`](Self::state_fingerprint) whether to keep the
-    /// live state (code-only edit) or re-init it (layout changed).
+    /// [`swap_generation`](Self::swap_generation) advance, carries it over
+    /// into the new code via a save / load round-trip (when
+    /// [`preserve_dsp_state`](Self::preserve_dsp_state) is set) or re-inits.
     pub fn reload(&mut self) -> bool {
         let Some(new_hash) = crc32_file(&self.dylib_path) else {
             log::warn!(
@@ -398,6 +421,7 @@ impl<S: Sample> NativeLoader<S> {
         self.last_hash = candidate.hash;
         self.last_modified = candidate.mtime;
         self.current_temp = Some(candidate.temp_path);
+        self.swap_generation += 1;
 
         log::info!(
             "hot-reload complete (load #{}, {} leaked handles)",
@@ -407,22 +431,27 @@ impl<S: Sample> NativeLoader<S> {
         true
     }
 
-    /// Fingerprint of the currently loaded dylib's `State` layout, or
-    /// `None` if nothing is loaded. The shell compares this to the
-    /// fingerprint its live state was born with to decide preservation.
+    /// Whether the currently loaded dylib opts into DSP-state carry-over
+    /// across a reload. `false` when nothing is loaded.
     #[must_use]
-    pub fn state_fingerprint(&self) -> Option<u64> {
-        self.symbols.as_ref().map(|s| s.fingerprint)
+    pub fn preserve_dsp_state(&self) -> bool {
+        self.symbols.as_ref().is_some_and(|s| s.preserve)
     }
 
     /// Allocate fresh DSP state from the current dylib. Returns the
-    /// opaque state pointer, its layout fingerprint, and the matching
-    /// `drop` function (which the shell must keep and call to free that
-    /// exact allocation, since it lives in this dylib's code).
+    /// opaque state pointer and the origin dylib's [`StateOrigin`] - the
+    /// `drop` / `save` fns the shell keeps to free or serialize that exact
+    /// allocation, since they live in this dylib's code.
     #[must_use]
-    pub fn init_state(&self) -> Option<(*mut (), u64, StateDropFn)> {
+    pub fn init_state(&self) -> Option<(*mut (), StateOrigin)> {
         let s = self.symbols.as_ref()?;
-        Some(((s.init_state)(self.params_ptr), s.fingerprint, s.drop_state))
+        Some((
+            (s.init_state)(self.params_ptr),
+            StateOrigin {
+                drop: s.drop_state,
+                save: s.save_state,
+            },
+        ))
     }
 
     /// Run the current dylib's `process` on `state` (opaque, layout must
@@ -525,14 +554,22 @@ impl<S: Sample> NativeLoader<S> {
         self.symbols.is_some()
     }
 
-    /// Monotonic counter of successful (or attempted) reloads: bumps
-    /// once per `copy_versioned()` invocation, which precedes every
-    /// candidate build. Consumers that share the same `NativeLoader`
-    /// use this to detect when "the other side already reloaded"
-    /// without having to drive reload themselves.
+    /// Monotonic counter of reload *attempts*: bumps once per
+    /// `copy_versioned()` invocation, which precedes every candidate
+    /// build (successful or not). Used for unique temp-file names.
     #[must_use]
     pub fn load_counter(&self) -> u64 {
         self.load_counter
+    }
+
+    /// Monotonic count of successful library swaps. A failed reload
+    /// (canary mismatch, missing symbol) does not advance it, so a
+    /// consumer sharing this `NativeLoader` detects a genuine code swap -
+    /// and only then carries live state into the new code - without
+    /// reacting to attempts that left the old code in place.
+    #[must_use]
+    pub fn swap_generation(&self) -> u64 {
+        self.swap_generation
     }
 
     fn copy_versioned(&mut self) -> Result<PathBuf, std::io::Error> {

@@ -240,7 +240,7 @@ impl PluginLogic for Eq {
         ];
         Some(MigratedState {
             params,
-            extra: None,
+            ..MigratedState::default()
         })
     }
 

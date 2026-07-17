@@ -15,10 +15,11 @@
 //! dylib. The dylib exports a flat set of Rust-ABI functions
 //! (`export_plugin!`) over an opaque `*mut ()` state pointer (an erased
 //! `Box<State>`) plus the shell's `Arc<Params>` pointer. `HotShell` owns
-//! the state and, on a reload, keeps it when the new dylib's
-//! `truce_state_fingerprint` matches (code-only edit) - so a reverb tail
-//! survives the swap - and re-inits it otherwise. `StaticShell` holds a
-//! typed `L::DspState` directly.
+//! the state and, on a reload, carries it into the new code by a save /
+//! load round-trip through the plugin's persistence blob (when
+//! `PRESERVE_DSP_STATE` is set) - so a reverb tail survives the swap
+//! whenever the plugin serializes it - and re-inits otherwise.
+//! `StaticShell` holds a typed `L::DspState` directly.
 //!
 //! ```ignore
 //! use truce_loader::{AbiCanary, PluginLogic, PluginLogicCore};
@@ -74,9 +75,10 @@ pub use loader::NativeLoader;
 /// The dylib no longer hands the shell a `Box<dyn PluginLogicCore>`
 /// trait object. Instead it exports a flat set of Rust-ABI functions
 /// that operate on an **opaque state pointer** (`*mut ()`, an erased
-/// `Box<State>`): the shell owns the state, so it can hold it across a
-/// hot-reload code swap and run the freshly loaded code on the same
-/// bytes (guarded by the `truce_state_fingerprint` export).
+/// `Box<State>`): the shell owns the state, so on a hot-reload it can
+/// serialize the state through the origin dylib and restore it into
+/// freshly-init'd state under the new code (gated by the
+/// `truce_preserve_dsp_state` export).
 ///
 /// `params_ptr` is a raw `Arc<Params>` pointer from the shell; each call
 /// borrows `&Params` from it (no refcount change - the shell keeps the
@@ -111,20 +113,14 @@ macro_rules! export_plugin {
             });
         }
 
-        /// Best-effort layout fingerprint of `State` - the shell keeps
-        /// the old state across a reload only when this matches.
-        /// Computed at load time from the state type's `type_name` /
-        /// `size_of` / `align_of`; `NO_PRESERVE` when the plugin opts out
-        /// via `PRESERVE_DSP_STATE = false` (or the state is zero-sized).
+        /// Whether the shell should carry live DSP state across a reload
+        /// (the plugin's `PRESERVE_DSP_STATE`). Carry-over is a save / load
+        /// round-trip through this dylib's persistence blob, never a raw
+        /// reinterpretation of the old bytes, so it stays sound even when
+        /// the `State` layout changed between builds.
         #[unsafe(no_mangle)]
-        pub fn truce_state_fingerprint() -> u64 {
-            if <$logic as $crate::PluginLogicCore<Sample>>::PRESERVE_DSP_STATE {
-                $crate::__macro_deps::truce_core::dsp_state::layout_fingerprint::<
-                    <$logic as $crate::PluginLogicCore<Sample>>::DspState,
-                >()
-            } else {
-                $crate::__macro_deps::truce_core::dsp_state::NO_PRESERVE
-            }
+        pub fn truce_preserve_dsp_state() -> bool {
+            <$logic as $crate::PluginLogicCore<Sample>>::PRESERVE_DSP_STATE
         }
 
         #[unsafe(no_mangle)]
