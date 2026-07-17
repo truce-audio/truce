@@ -6,6 +6,13 @@ export component XYPad inherits VerticalLayout {
     in-out property <float> value-y: 0.5;
     in property <string> label: "";
 
+    // True while the pad is being dragged. A host that mirrors the
+    // param back into `value-x` / `value-y` every frame should skip
+    // that write-back while this is set, so the round-trip
+    // (`normalize(denormalize(v))` - lossy on log/stepped ranges,
+    // worst at the clamped edges) can't fight the live drag.
+    out property <bool> dragging: touch.pressed;
+
     callback changed-x(float);
     callback changed-y(float);
 
@@ -30,6 +37,10 @@ export component XYPad inherits VerticalLayout {
         background: #2e2e38;
         border-color: #737373;
         border-width: 1px;
+        // Keep the dot and crosshairs inside the border: they're
+        // centered on the value, so at the extremes (and both axes at a
+        // corner) they'd otherwise overflow the pad.
+        clip: true;
 
         property <length> dot-x: pad.width * root.value-x;
         property <length> dot-y: pad.height * (1.0 - root.value-y);

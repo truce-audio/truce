@@ -73,16 +73,21 @@ export component ZooUi inherits Window {
     // --- XY Pads (three sizes) ---
     in-out property <float> xy-small-x;
     in-out property <float> xy-small-y;
+    // Mirror each pad's drag state up so the Rust poll can pause its
+    // param write-back while the pad is being dragged.
+    out property <bool> xy-small-dragging: xy-small-pad.dragging;
     callback xy-small-changed-x(float);
     callback xy-small-changed-y(float);
 
     in-out property <float> xy-med-x;
     in-out property <float> xy-med-y;
+    out property <bool> xy-med-dragging: xy-med-pad.dragging;
     callback xy-med-changed-x(float);
     callback xy-med-changed-y(float);
 
     in-out property <float> xy-big-x;
     in-out property <float> xy-big-y;
+    out property <bool> xy-big-dragging: xy-big-pad.dragging;
     callback xy-big-changed-x(float);
     callback xy-big-changed-y(float);
 
@@ -195,13 +200,13 @@ export component ZooUi inherits Window {
                     Text { text: "XY Pads"; font-size: 11px; color: #bfbfc8; }
                     HorizontalLayout {
                         spacing: 20px;
-                        XYPad { width: 80px; height: 92px; label: "small";
+                        xy-small-pad := XYPad { width: 80px; height: 92px; label: "small";
                             value-x <=> root.xy-small-x; value-y <=> root.xy-small-y;
                             changed-x(v) => { root.xy-small-changed-x(v); } changed-y(v) => { root.xy-small-changed-y(v); } }
-                        XYPad { width: 130px; height: 142px; label: "med";
+                        xy-med-pad := XYPad { width: 130px; height: 142px; label: "med";
                             value-x <=> root.xy-med-x; value-y <=> root.xy-med-y;
                             changed-x(v) => { root.xy-med-changed-x(v); } changed-y(v) => { root.xy-med-changed-y(v); } }
-                        XYPad { width: 200px; height: 212px; label: "big";
+                        xy-big-pad := XYPad { width: 200px; height: 212px; label: "big";
                             value-x <=> root.xy-big-x; value-y <=> root.xy-big-y;
                             changed-x(v) => { root.xy-big-changed-x(v); } changed-y(v) => { root.xy-big-changed-y(v); } }
                     }

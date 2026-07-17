@@ -9,6 +9,9 @@ export component GainUi inherits Window {
     in-out property <string> pan-text: "";
     in-out property <float> meter-left: 0.0;
     in-out property <float> meter-right: 0.0;
+    // Drag state of the XY pad, so the Rust poll can pause writing the
+    // params back into `gain` / `pan` while the pad is being dragged.
+    out property <bool> xy-dragging: pan-gain-pad.dragging;
 
     callback gain-changed(float);
     callback pan-changed(float);
@@ -81,7 +84,7 @@ export component GainUi inherits Window {
                     }
                 }
 
-                XYPad {
+                pan-gain-pad := XYPad {
                     label: "Pan / Gain";
                     value-x <=> root.pan;
                     value-y <=> root.gain;

@@ -261,13 +261,22 @@ impl PurePluginLogic for ZooSlint {
                     meter_r.set(disp_r);
                     ui.set_m_r(disp_r);
 
-                    // XY pads - read the same params back.
-                    ui.set_xy_small_x(state.get_param(P::KMix));
-                    ui.set_xy_small_y(state.get_param(P::KGain));
-                    ui.set_xy_med_x(state.get_param(P::KFreq));
-                    ui.set_xy_med_y(state.get_param(P::KQ));
-                    ui.set_xy_big_x(state.get_param(P::KPan));
-                    ui.set_xy_big_y(state.get_param(P::KPhase));
+                    // XY pads - read the same params back, but not while a
+                    // pad is being dragged: the write-back round-trips the
+                    // value through the param (lossy on the log freq/Q pad,
+                    // worst at the edges), which would fight the live drag.
+                    if !ui.get_xy_small_dragging() {
+                        ui.set_xy_small_x(state.get_param(P::KMix));
+                        ui.set_xy_small_y(state.get_param(P::KGain));
+                    }
+                    if !ui.get_xy_med_dragging() {
+                        ui.set_xy_med_x(state.get_param(P::KFreq));
+                        ui.set_xy_med_y(state.get_param(P::KQ));
+                    }
+                    if !ui.get_xy_big_dragging() {
+                        ui.set_xy_big_x(state.get_param(P::KPan));
+                        ui.set_xy_big_y(state.get_param(P::KPhase));
+                    }
                 })
             },
         )
