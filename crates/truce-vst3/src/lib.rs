@@ -102,12 +102,13 @@ struct Vst3Instance<P: PluginExport> {
     min_subblock_samples: u32,
     plugin_id_hash: u64,
     /// `true` between `setActive(true)` and `setActive(false)`.
-    /// `cb_state_load` reads it to decide whether the audio thread will
-    /// drain `pending_state`: if inactive, no `cb_process` runs, so it
-    /// applies the custom-state blob synchronously rather than leaving
-    /// it stranded (which would let a following `getState` re-serialize
-    /// stale extra state). Written only from `cb_set_active` (main
-    /// thread); unlike `prepared`, it tracks deactivation too.
+    /// `cb_state_load` and `cb_state_save` read it to decide whether the
+    /// audio thread will drain `pending_state`: if inactive, no
+    /// `cb_process` runs, so the host thread applies the custom-state
+    /// blob synchronously rather than leaving it stranded (which would
+    /// let a following `getState` re-serialize stale extra state).
+    /// Written only from `cb_set_active` (main thread); unlike
+    /// `prepared`, it tracks deactivation too.
     active: AtomicBool,
     /// Cached `(id, range)` pairs sorted by id. Built once in
     /// `cb_create` from `params().param_infos()`. Hosts call
@@ -129,7 +130,10 @@ struct Vst3Instance<P: PluginExport> {
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
     /// `cb_process` and calls [`state::apply_state`]
-    /// under its exclusive `&mut plugin`.
+    /// under its exclusive `&mut plugin`. While inactive no `cb_process`
+    /// runs, so the host thread drains it in `cb_state_save` /
+    /// `cb_set_active` - the editor pushes unconditionally rather than
+    /// entering the cell from its own (possibly third) thread.
     pending_state: Arc<StateLoadQueue>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()` reports. Updated by the audio thread (or `cb_reset`)
@@ -1205,6 +1209,21 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     }
     run_extern_callback_with::<P, ()>("vst3", "save_state", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        // While inactive the audio thread never runs, so a state edit the
+        // editor queued through `set_state` (or a load) sits undrained in
+        // `pending_state` and would not reach the snapshot below - the save
+        // would serialize the pre-edit state. Drain and apply it here on the
+        // host thread, which owns the plugin while inactive, then republish
+        // so the snapshot read reflects the edit. While active the audio
+        // thread owns the plugin and drains the queue itself, so we must not
+        // touch it here (read the snapshot only).
+        if !inst.active.load(Ordering::Relaxed)
+            && let Some(deserialized) = inst.pending_state.pop()
+        {
+            let mut plugin = enter_plugin(&inst.plugin);
+            state::apply_state(&mut *plugin, &deserialized);
+            plugin.republish_snapshot();
+        }
         let (ids, values) = inst.params_arc.collect_values();
         // Read the custom state from the lock-free snapshot the audio
         // thread publishes each block. Never touches the plugin, so it
@@ -2311,31 +2330,21 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // `serialize_state` envelope. No params ride
                         // along: the editor mutates params through
                         // `set_param`.
-                        let deserialized = state::DeserializedState {
+                        //
+                        // Always enqueue, never apply here: this closure can
+                        // run on the editor's own thread (baseview drives a
+                        // separate thread on Linux), and the plugin cell must
+                        // only ever be entered from the audio thread (active)
+                        // or the host main thread (inactive) - never a third.
+                        // The audio thread drains the queue while active; while
+                        // inactive the main thread drains it in `cb_state_save`
+                        // / `cb_set_active`, so an edit made in that window is
+                        // neither lost nor stranded.
+                        let _ = pending_state_for_set.force_push(state::DeserializedState {
                             params: Vec::new(),
                             extra: Some(bytes),
                             persist: Vec::new(),
-                        };
-                        // SAFETY: `ctx_raw` is the live `Vst3Instance` pointer
-                        // the shim holds; this closure runs on the GUI thread.
-                        let inst = &*ctx_raw.as_ptr().cast::<Vst3Instance<P>>();
-                        if inst.active.load(Ordering::Relaxed) {
-                            // Active: hand off to the audio thread, which drains
-                            // the queue at the top of the next block under its
-                            // exclusive `&mut plugin` (the queue is what avoids
-                            // aliasing `process()`'s `&mut plugin`).
-                            let _ = pending_state_for_set.force_push(deserialized);
-                        } else {
-                            // Inactive: no `cb_process` will run, so the queued
-                            // blob would strand and a following `getState` would
-                            // re-serialize stale extra state - losing the
-                            // GUI-loaded preset. Apply synchronously under the
-                            // (uncontended) plugin lock and refresh the snapshot,
-                            // mirroring `cb_state_load`'s inactive path.
-                            let mut plugin = enter_plugin(&inst.plugin);
-                            state::apply_state(&mut *plugin, &deserialized);
-                            plugin.republish_snapshot();
-                        }
+                        });
                     }),
                     transport: Box::new(move || transport_slot.read()),
                 },
