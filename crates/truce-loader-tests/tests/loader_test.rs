@@ -62,10 +62,10 @@ mod test {
 
         // Allocate state from the dylib; a fresh CounterState reports a
         // zero counter through `latency`, and no tail.
-        let (state, _fp, drop_state) = loader.init_state().expect("init state");
+        let (state, origin) = loader.init_state().expect("init state");
         assert_eq!(loader.latency(state), 0);
         assert_eq!(loader.tail(state), 0);
-        drop_state(state);
+        (origin.drop)(state);
     }
 
     #[test]
@@ -78,7 +78,7 @@ mod test {
 
         let (_params, params_ptr) = params();
         let loader: NativeLoader = NativeLoader::new(path, params_ptr);
-        let (state, _fp, drop_state) = loader.init_state().expect("init state");
+        let (state, origin) = loader.init_state().expect("init state");
         loader.reset(state, &AudioConfig::new(44100.0, 512));
 
         let input_l = vec![0.5f32; 512];
@@ -109,7 +109,7 @@ mod test {
             "passthrough should copy input"
         );
         assert_eq!(loader.latency(state), 1, "one block advanced the counter");
-        drop_state(state);
+        (origin.drop)(state);
     }
 
     #[test]
@@ -122,7 +122,7 @@ mod test {
 
         let (_params, params_ptr) = params();
         let loader: NativeLoader = NativeLoader::new(path, params_ptr);
-        let (state, _fp, drop_state) = loader.init_state().expect("init state");
+        let (state, origin) = loader.init_state().expect("init state");
         loader.reset(state, &AudioConfig::new(44100.0, 512));
 
         // Advance the counter so the saved blob carries non-default
@@ -153,6 +153,6 @@ mod test {
         let blob2 = loader.save_state(state);
         assert_eq!(blob, blob2);
         assert_eq!(loader.latency(state), 7, "restored counter matches saved");
-        drop_state(state);
+        (origin.drop)(state);
     }
 }

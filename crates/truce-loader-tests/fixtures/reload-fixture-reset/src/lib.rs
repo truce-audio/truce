@@ -1,9 +1,9 @@
 //! Reload-transition fixture: `ResetLogic` over `ResetState`.
 //!
-//! `ResetState` adds a field to `CounterState`, so its fingerprint
-//! differs from keep-a / keep-b. A reload from one of those to this
-//! dylib is the layout-changed case: the shell must drop the old state
-//! through its origin dylib and re-initialize from this one.
+//! `ResetLogic` defines no `save_state` / `load_state`, so a reload from
+//! keep-a / keep-b to this dylib can't restore the carried blob: the
+//! shell drops the old state through its origin dylib and re-initializes
+//! from this one - the sound fallback when carry-over isn't serialized.
 
 use reload_fixture_common::{FxParams, ResetLogic};
 use truce::prelude::*;

@@ -3,8 +3,8 @@
 //! exports a flat set of Rust-ABI symbols over an opaque state pointer
 //! (no trait object), so this checks the sizes / layouts those symbols
 //! pass by value or reference, plus the rustc build hash and sample
-//! precision. Per-plugin `State` identity rides a separate
-//! `truce_state_fingerprint` symbol, not this struct.
+//! precision. Whether the plugin opts into DSP-state carry-over rides a
+//! separate `truce_preserve_dsp_state` symbol, not this struct.
 
 use std::mem::{align_of, size_of};
 use std::ptr;

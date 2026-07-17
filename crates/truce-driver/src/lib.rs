@@ -16,7 +16,7 @@
 //!
 //! 1. `P::create()` → `init()` → `reset()` → param `set_sample_rate`
 //!    + `snap_smoothers`.
-//! 2. Apply `state_file` bytes via `plugin.load_state(...)`.
+//! 2. Restore the `state_file` envelope via `state::restore_plugin`.
 //! 3. Run the `setup` closure (`&mut Plugin`).
 //! 4. Loop blocks: pull script events into the block window, run
 //!    `plugin.process(...)`, append the output.
@@ -56,6 +56,7 @@ use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, Trans
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::plugin::PluginRuntime;
+use truce_core::state::restore_plugin;
 use truce_params::Params;
 
 /// Sidechain (non-main) input width for the declared layout whose main
@@ -664,8 +665,8 @@ impl<P: PluginExport> PluginDriver<P> {
         self
     }
 
-    /// Apply an in-memory `.pluginstate` blob via
-    /// `plugin.load_state(&bytes)` at the same lifecycle point as
+    /// Restore an in-memory `.pluginstate` envelope via
+    /// `state::restore_plugin` at the same lifecycle point as
     /// [`Self::state_file`] (after init/reset, before `set_param`
     /// shortcuts and `setup`). Use when the test already has the
     /// bytes in hand and doesn't want a temp file round-trip.
@@ -676,7 +677,7 @@ impl<P: PluginExport> PluginDriver<P> {
     }
 
     /// Read a `.pluginstate` file (the standalone host's `Cmd+S`
-    /// save format) and apply it via `plugin.load_state(&bytes)`
+    /// save format) and restore it via `state::restore_plugin`
     /// after init/reset and before any `set_param` overrides /
     /// `setup` closure. Path is resolved relative to
     /// `manifest_dir`, or used as-is if absolute.
@@ -759,10 +760,14 @@ impl<P: PluginExport> PluginDriver<P> {
                 })),
                 None => None,
             };
+        // `state_bytes` is a full `.pluginstate` envelope, not the bare
+        // `save_state` extra blob. Restore through the envelope so
+        // params + persist land; handing the raw bytes to `load_state`
+        // would render defaults and reject the envelope as malformed.
         if let Some(bytes) = state_bytes.as_deref()
-            && let Err(e) = plugin.load_state(bytes)
+            && let Err(e) = restore_plugin(&mut plugin, bytes)
         {
-            eprintln!("truce-driver: load_state failed: {e}");
+            eprintln!("truce-driver: state restore failed: {e}");
         }
 
         // 2. Param overrides (the `.set_param(...)` shortcuts).

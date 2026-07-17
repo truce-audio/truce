@@ -465,11 +465,25 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
 /// `IComponent::setActive`. Tracks activation so `cb_state_load` knows
 /// whether the audio thread will drain the pending-state queue.
 unsafe extern "C" fn cb_set_active<P: PluginExport>(ctx: *mut std::ffi::c_void, active: i32) {
-    unsafe {
-        (*ctx.cast::<Vst3Instance<P>>())
-            .active
-            .store(active != 0, Ordering::Relaxed);
-    }
+    // The deactivation drain runs author `load_state` via `apply_state`;
+    // firewall it so a panic can't unwind across the C ABI.
+    run_extern_callback_with::<P, ()>("vst3", "set_active", (), || unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        inst.active.store(active != 0, Ordering::Relaxed);
+        if active == 0 {
+            // Deactivating: the audio thread stops draining `pending_state`,
+            // so a load queued (by the host or the editor) while active would
+            // strand and a following `getState` would re-serialize stale extra
+            // state - silently losing the load. Apply it now under the plugin
+            // lock (uncontended: the host serializes lifecycle calls with
+            // `process`) and refresh the snapshot.
+            if let Some(state) = inst.pending_state.pop() {
+                let mut plugin = enter_plugin(&inst.plugin);
+                state::apply_state(&mut *plugin, &state);
+                plugin.republish_snapshot();
+            }
+        }
+    });
 }
 
 /// The `bus_layouts()` index matching `(in_ch, out_ch)`, or `-1`. The
@@ -1267,7 +1281,16 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // now - a `getState` while still inactive reads live state.
             plugin.republish_snapshot();
         }
-        if let Some(ref mut editor) = inst.gui.enter().editor {
+        // `try_enter`, not `enter`: a host can deliver `setState`
+        // synchronously from a component-handler callback while an outer
+        // GUI callback (e.g. `cb_gui_open`, which holds the cell across the
+        // author's `editor.open`) still holds the cell. Re-entering with
+        // `enter` would hand out a second aliasing `&mut` in release. When
+        // busy, skip the notify: the editor reads live param/state values as
+        // it finishes opening, so it renders the freshly-loaded state anyway.
+        if let Some(mut gui) = inst.gui.try_enter()
+            && let Some(ref mut editor) = gui.editor
+        {
             editor.state_changed();
         }
         1
@@ -1979,7 +2002,16 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
         let scale = scale.clamp(0.25, 8.0);
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         inst.set_host_scale(scale);
-        if let Some(ref mut editor) = inst.gui.enter().editor {
+        // `try_enter`, not `enter`: a host can deliver `setContentScaleFactor`
+        // synchronously while an outer GUI callback holds the cell - on
+        // Windows, `editor.open` (held across `cb_gui_open`) pumps messages and
+        // the host may re-enter here. Re-entering with `enter` would hand out a
+        // second aliasing `&mut` in release. When busy, skip the editor call:
+        // `host_scale` is already persisted above, and `cb_gui_open` re-syncs
+        // the editor's scale from it once `open` returns.
+        if let Some(mut gui) = inst.gui.try_enter()
+            && let Some(ref mut editor) = gui.editor
+        {
             editor.set_scale_factor(scale);
         }
     });
@@ -2276,18 +2308,34 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // The editor sends RAW custom-state bytes -
                         // exactly what `save_state()` emits and
                         // `get_state` above returns - NOT a full
-                        // `serialize_state` envelope. Route them to the
-                        // plugin's `load_state` on the audio thread via
-                        // the same handoff queue the host load path uses
-                        // (the queue is what avoids aliasing
-                        // `process()`'s `&mut plugin`). No params ride
+                        // `serialize_state` envelope. No params ride
                         // along: the editor mutates params through
                         // `set_param`.
-                        let _ = pending_state_for_set.force_push(state::DeserializedState {
+                        let deserialized = state::DeserializedState {
                             params: Vec::new(),
                             extra: Some(bytes),
                             persist: Vec::new(),
-                        });
+                        };
+                        // SAFETY: `ctx_raw` is the live `Vst3Instance` pointer
+                        // the shim holds; this closure runs on the GUI thread.
+                        let inst = &*ctx_raw.as_ptr().cast::<Vst3Instance<P>>();
+                        if inst.active.load(Ordering::Relaxed) {
+                            // Active: hand off to the audio thread, which drains
+                            // the queue at the top of the next block under its
+                            // exclusive `&mut plugin` (the queue is what avoids
+                            // aliasing `process()`'s `&mut plugin`).
+                            let _ = pending_state_for_set.force_push(deserialized);
+                        } else {
+                            // Inactive: no `cb_process` will run, so the queued
+                            // blob would strand and a following `getState` would
+                            // re-serialize stale extra state - losing the
+                            // GUI-loaded preset. Apply synchronously under the
+                            // (uncontended) plugin lock and refresh the snapshot,
+                            // mirroring `cb_state_load`'s inactive path.
+                            let mut plugin = enter_plugin(&inst.plugin);
+                            state::apply_state(&mut *plugin, &deserialized);
+                            plugin.republish_snapshot();
+                        }
                     }),
                     transport: Box::new(move || transport_slot.read()),
                 },
@@ -2302,6 +2350,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let handle = RawWindowHandle::X11(parent as u64);
 
             editor.open(handle, context);
+            // Re-sync the scale after `open`: on Windows `open` pumps
+            // messages, so a re-entrant `setContentScaleFactor` may have
+            // updated `host_scale` while `cb_gui_set_content_scale` had to skip
+            // the editor (the cell was held here). Apply the authoritative
+            // value now that the editor exists. macOS drives Retina through
+            // AppKit, so `host_scale` stays 1.0 and pinning would force 1x.
+            #[cfg(not(target_os = "macos"))]
+            editor.set_scale_factor(inst.host_scale());
         }
     });
 }
