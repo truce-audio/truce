@@ -620,6 +620,37 @@ static constexpr uint64_t kRestartTimerIntervalMs = 30;
 static void CALLBACK truce_vst3_restart_timer_proc(HWND, UINT, UINT_PTR, DWORD);
 #endif
 
+// Map a channel count to a canonical VST3 SpeakerArrangement. Hosts and
+// validators compare the exact bitmask (pluginval's arrangement
+// consistency check, JUCE's channel-set mapping), so the low-bits
+// popcount trick `(1<<ch)-1` mislabels channels: bit 0 is Left, not Mono,
+// and 4 channels reads as 3.1 (L R C Lfe) rather than quad. Named
+// arrangements for the common counts; the popcount fallback keeps the
+// right channelCount for exotic widths, where that's all a host keys on.
+static constexpr uint64_t speaker_arr_for_channels(uint32_t ch) {
+    // VST3 SpeakerArr speaker bits (vstspeaker.h).
+    const uint64_t L = 1ull << 0, R = 1ull << 1, C = 1ull << 2, Lfe = 1ull << 3,
+                   Ls = 1ull << 4, Rs = 1ull << 5, Sl = 1ull << 9, Sr = 1ull << 10,
+                   M = 1ull << 19;
+    switch (ch) {
+        case 1: return M;                          // kMono (Mono center, not Left)
+        case 2: return L | R;                      // kStereo
+        case 4: return L | R | Ls | Rs;            // k40Music (quadraphonic)
+        case 6: return L | R | C | Lfe | Ls | Rs;  // k51
+        case 8: return L | R | C | Lfe | Ls | Rs | Sl | Sr;  // k71Music
+        default: return ((uint64_t)1 << ch) - 1;   // popcount fallback
+    }
+}
+
+// Lock the canonical arrangements against the popcount trick that
+// mislabels them. Each named width's popcount also equals the channel
+// count getBusInfo reports, so the two stay consistent.
+static_assert(speaker_arr_for_channels(1) == (1ull << 19), "mono must be kMono, not kSpeakerL");
+static_assert(speaker_arr_for_channels(2) == 0x3ull, "stereo = L|R");
+static_assert(speaker_arr_for_channels(4) == 0x33ull, "quad = L|R|Ls|Rs, not 3.1");
+static_assert(speaker_arr_for_channels(6) == 0x3Full, "5.1 = L R C Lfe Ls Rs");
+static_assert(speaker_arr_for_channels(8) == 0x63Full, "7.1 = 5.1 + Sl + Sr");
+
 class TruceComponent {
     std::atomic<int32> refCount{1};
     void* ctx;
@@ -1057,11 +1088,10 @@ public:
             ? g_cb->layout_bus_channels(cur_layout, dir == kOutput, (uint32_t)index)
             : 0;
         if (ch == 0 || ch > 63) return kInvalidArgument;
-        // Low-bits speaker mask with one bit per channel: 0x1 = mono,
-        // 0x3 = stereo, 0x3F = 5.1 (L R C Lfe Ls Rs). What hosts key
-        // on is the popcount matching getBusInfo's channelCount - the
-        // old hardcoded stereo mask under-reported any wider bus.
-        *arr = ((uint64_t)1 << ch) - 1;
+        // Canonical SpeakerArrangement for the width (mono -> kMono, not
+        // kSpeakerL; 4ch -> quad, not 3.1). getBusInfo's channelCount is
+        // the popcount of this, so the two stay consistent.
+        *arr = speaker_arr_for_channels(ch);
         return kResultOk;
     }
 

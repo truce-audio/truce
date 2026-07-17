@@ -12,6 +12,7 @@ Notable changes per release.
 - The editor-facing transport slot no longer hands back a torn tempo/position for a frame under weak memory ordering (Apple Silicon); the seqlock's two memory fences were missing.
 - `AudioTap::drain_with` now always hands consumers whole frames; a drain landing mid-frame no longer channel-swaps the analyzer's chunk (the trailing partial frame carries to the next drain).
 - VST3 sample-accurate automation of `CHUNKED` params is no longer heard up to a buffer early: the shim stopped pre-committing each queue's end-of-block value before the sub-block chunker runs.
+- VST3 `getBusArrangement` reports canonical speaker arrangements (mono is `kMono`, 4ch is quad), so hosts and validators that compare arrangements no longer treat mono buses/sidechains as unsupported or mislabel channels.
 
 ## 6.1.9
 
