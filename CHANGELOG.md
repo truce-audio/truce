@@ -13,6 +13,7 @@ Notable changes per release.
 - `AudioTap::drain_with` now always hands consumers whole frames; a drain landing mid-frame no longer channel-swaps the analyzer's chunk (the trailing partial frame carries to the next drain).
 - VST3 sample-accurate automation of `CHUNKED` params is no longer heard up to a buffer early: the shim stopped pre-committing each queue's end-of-block value before the sub-block chunker runs.
 - VST3 `getBusArrangement` reports canonical speaker arrangements (mono is `kMono`, 4ch is quad), so hosts and validators that compare arrangements no longer treat mono buses/sidechains as unsupported or mislabel channels.
+- `#[persist]` fields now load on the host thread instead of the audio thread, so a state recall can no longer block `process()` on a lock the editor holds (priority-inversion dropout).
 
 ## 6.1.9
 
