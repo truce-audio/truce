@@ -24,7 +24,7 @@ use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo, resolve_name_override};
@@ -302,6 +302,12 @@ struct AaxInstance<P: PluginExport> {
     /// editor-notify - all run on the host main thread; `_render` never
     /// touches it.
     gui: PluginCell<AaxGui>,
+    /// Invalidatable handle to the host GUI object the editor's callback
+    /// closures target. `_editor_open` points it at the live object,
+    /// `_editor_close` nulls it before the host frees the object, so a
+    /// closure (or a background task holding the context) fired after the
+    /// window closed can't dereference freed memory. See [`HostGuiHandle`].
+    editor_host: Arc<HostGuiHandle>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
     /// Cached serialized state plus the `state_revision` value it was
@@ -365,6 +371,51 @@ struct AaxAudio<P: PluginExport> {
 struct AaxGui {
     editor: Option<Box<dyn Editor>>,
 }
+
+/// Shared, invalidatable handle to the AAX host GUI object
+/// (`TruceAAX_GUI`, `TruceAaxGuiCallbacks::aax_ctx`). Pro Tools creates it
+/// when the plugin window opens and destroys it right after
+/// `_editor_close` returns, but the editor's host-callback closures - and
+/// any background task holding the [`PluginContext`] - outlive the window.
+/// Dereferencing the freed object is a use-after-free, so every callback
+/// runs through [`Self::with`], which holds the lock across the call and
+/// skips it once [`Self::invalidate`] (from `_editor_close`) has nulled
+/// the pointer. Holding the lock across the call makes `_editor_close`
+/// wait for any in-flight callback, so no closure touches the pointer
+/// after the host frees the object.
+struct HostGuiHandle(Mutex<*mut c_void>);
+
+impl HostGuiHandle {
+    fn new() -> Self {
+        Self(Mutex::new(std::ptr::null_mut()))
+    }
+
+    /// Point at the live GUI object as the window opens.
+    fn set(&self, ptr: *mut c_void) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = ptr;
+    }
+
+    /// Null the handle as the window closes, before the host frees the
+    /// object. Blocks until any in-flight [`Self::with`] call finishes.
+    fn invalidate(&self) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = std::ptr::null_mut();
+    }
+
+    /// Run `f` with the live pointer, or return `default` once the window
+    /// has closed. The lock is held across `f`, so the object can't be
+    /// freed mid-call.
+    fn with<R>(&self, default: R, f: impl FnOnce(*mut c_void) -> R) -> R {
+        let guard = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if guard.is_null() { default } else { f(*guard) }
+    }
+}
+
+// SAFETY: the wrapped pointer is the host GUI object; access is
+// serialized by the mutex and every deref is gated on a non-null check,
+// so sharing the handle across the editor's callback threads is sound.
+unsafe impl Send for HostGuiHandle {}
+// SAFETY: see the `Send` impl - all access goes through the mutex.
+unsafe impl Sync for HostGuiHandle {}
 
 // ---------------------------------------------------------------------------
 // Static descriptor + param info (populated once at register time)
@@ -990,6 +1041,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
                     scratch: RawBufferScratch::default(),
                 }),
                 gui: PluginCell::new(AaxGui { editor: None }),
+                editor_host: Arc::new(HostGuiHandle::new()),
                 transport_slot: TransportSlot::new(),
                 state_cache: Mutex::new(None),
                 // Start at 1 so the first cached entry (revision 0) never
@@ -1713,6 +1765,32 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
     len
 }
 
+/// Refresh the custom-state snapshot slot from just-loaded `extra` bytes.
+///
+/// A host state load hands the custom-state blob to the audio thread via
+/// `pending_state`, which applies it and republishes the snapshot each
+/// block. But Pro Tools can load while no block is rendering - an inactive
+/// preset recall, or a `GetChunkSize` that fires between the load and the
+/// next render - and the wrapper can't take the plugin lock off the audio
+/// thread to republish, since a `SetChunk` may race `RenderAudio`. The
+/// loaded bytes are the same wire format `snapshot_into` emits, so publish
+/// them into the inline lane directly: a save before the next render then
+/// returns the loaded state instead of the pre-load snapshot. The next
+/// render's queue drain re-applies and republishes canonically.
+///
+/// Off-thread-lane plugins (large sampler state) republish from their own
+/// `state_changed` hook - the same division of labor as the CLAP / VST3
+/// `republish_snapshot`, which also drives only the inline lane.
+fn republish_loaded_snapshot(slot: &SnapshotSlot, extra: Option<&[u8]>) {
+    let Some(bytes) = extra.filter(|b| !b.is_empty()) else {
+        return;
+    };
+    slot.publish(|buf| {
+        buf.extend_from_slice(bytes);
+        true
+    });
+}
+
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
     run_extern_callback_with::<P, ()>("aax", "load_state", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
@@ -1733,6 +1811,10 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             // state load see the restored values without first running a
             // process block.
             state::apply_params(&*inst.params_arc, &deserialized);
+            // Refresh the snapshot slot now so a save before the next
+            // render block sees the loaded custom state rather than the
+            // pre-load snapshot (an inactive recall may never render).
+            republish_loaded_snapshot(&inst.snapshot, deserialized.extra.as_deref());
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending blob
             // - see the `pending_state` field comment for why
@@ -1787,6 +1869,9 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
         };
         let deserialized: state::DeserializedState = migrated.into();
         state::apply_params(&*inst.params_arc, &deserialized);
+        // Same inactive-load republish as `_load_state`: keep a save
+        // before the next render consistent with the migrated custom state.
+        republish_loaded_snapshot(&inst.snapshot, deserialized.extra.as_deref());
         let _ = inst.pending_state.force_push(deserialized);
         if let Ok(mut guard) = inst.state_cache.lock() {
             *guard = None;
@@ -1861,8 +1946,15 @@ pub unsafe fn _editor_open<P: PluginExport>(
         };
 
         let cb = &*callbacks;
-        // Wrap raw pointers in SendPtr for Send+Sync
-        let aax_ctx = SendPtr::new(cb.aax_ctx);
+        // Point the shared handle at the live GUI object; the callback
+        // closures reach the host only through clones of it, so nulling it
+        // on `_editor_close` invalidates a stale post-close invocation
+        // instead of dereferencing the freed object.
+        inst.editor_host.set(cb.aax_ctx);
+        let host_begin = Arc::clone(&inst.editor_host);
+        let host_set = Arc::clone(&inst.editor_host);
+        let host_end = Arc::clone(&inst.editor_host);
+        let host_resize = Arc::clone(&inst.editor_host);
         let touch_fn = cb.touch_param;
         let set_fn = cb.set_param;
         let release_fn = cb.release_param;
@@ -1882,17 +1974,20 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let context = PluginContext::from_closures(
             ClosureBridge {
                 begin_edit: Box::new(move |id| {
-                    touch_fn(aax_ctx.as_ptr().cast_mut(), id);
+                    host_begin.with((), |ctx| touch_fn(ctx, id));
                 }),
                 set_param: Box::new(move |id, value| {
+                    // The param store outlives the window, so update it
+                    // regardless; only the host notification is gated on the
+                    // GUI object still being alive.
                     let normalized = params_for_set.set_normalized_returning_normalized(id, value);
-                    set_fn(aax_ctx.as_ptr().cast_mut(), id, normalized);
+                    host_set.with((), |ctx| set_fn(ctx, id, normalized));
                 }),
                 end_edit: Box::new(move |id| {
-                    release_fn(aax_ctx.as_ptr().cast_mut(), id);
+                    host_end.with((), |ctx| release_fn(ctx, id));
                 }),
                 request_resize: Box::new(move |w, h| {
-                    resize_fn(aax_ctx.as_ptr().cast_mut(), w, h) != 0
+                    host_resize.with(false, |ctx| resize_fn(ctx, w, h) != 0)
                 }),
                 get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                 get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
@@ -1944,6 +2039,11 @@ pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
     // `editor.close` runs author teardown code that can panic; firewall it.
     run_extern_callback_with::<P, ()>("aax", "editor_close", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
+        // Null the host handle before the host frees the GUI object, so a
+        // callback closure or background task that fires after this returns
+        // sees a dead handle and skips the call instead of dereferencing
+        // freed memory. Blocks until any in-flight callback finishes.
+        inst.editor_host.invalidate();
         if let Some(ref mut editor) = inst.gui.enter().editor {
             editor.close();
         }
