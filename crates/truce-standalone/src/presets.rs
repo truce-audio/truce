@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use truce_core::export::{PluginExport, read_custom_state_offthread};
 use truce_core::presets::{PresetScope, PresetStore, mint_uuid, user_preset_root};
-use truce_core::state::{apply_state, hash_plugin_id, serialize_state};
+use truce_core::state::{apply_params, apply_state, hash_plugin_id, serialize_state};
 use truce_params::Params;
 use truce_utils::preset::write_preset_file;
 use truce_utils::safe_filename;
@@ -80,6 +80,10 @@ pub fn apply_selected<P: PluginExport>(store: &PresetStore, plugin: &mut P, sel:
     };
     match store.load(&preset.uri) {
         Ok(state) => {
+            // `apply_state` no longer touches `#[persist]` fields (they
+            // lock, so they're kept off the audio thread); apply them here
+            // on the calling thread. Harmless double-write of params.
+            apply_params(plugin.params(), &state);
             apply_state(plugin, &state);
             vlog!(
                 "loaded preset \"{}\" ({})",

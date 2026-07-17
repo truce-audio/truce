@@ -303,6 +303,43 @@ mod tests {
         truce_test::assert_state_round_trip::<Plugin>();
     }
 
+    /// `#[persist]` fields are applied by `apply_params` (host thread),
+    /// never by `apply_state` (audio thread) - `load_persist` takes a
+    /// per-field lock a GUI reader can hold, so running it inside
+    /// `process()` risks blocking the audio thread. The deferred wrappers
+    /// call `apply_params` on the host thread before queueing; the
+    /// audio-thread `apply_state` must leave persist untouched.
+    #[test]
+    fn persist_is_applied_by_apply_params_not_apply_state() {
+        use truce_core::export::PluginExport;
+        use truce_core::state::{self, DeserializedState};
+
+        let source = params_with_label("guitar bus");
+        source.edit_count.store(7);
+        let ds = DeserializedState {
+            params: Vec::new(),
+            extra: None,
+            persist: source.serialize_persist(),
+        };
+
+        // Host-thread path: restores the persisted fields.
+        let via_params = StateExampleParams::new();
+        state::apply_params(&via_params, &ds);
+        assert_eq!(label_of(&via_params), "guitar bus");
+        assert_eq!(via_params.edit_count.load(), 7);
+
+        // Audio-thread path: must not touch persist (that lock can't run
+        // inside process()).
+        let mut plugin = Plugin::create();
+        state::apply_state(&mut plugin, &ds);
+        assert_eq!(
+            label_of(plugin.params()),
+            "",
+            "apply_state must leave the persist field at its default",
+        );
+        assert_eq!(plugin.params().edit_count.load(), 0);
+    }
+
     /// `#[derive(State)]` is keyed: a struct whose fields were reordered,
     /// with one removed and one added, still recovers each field's value
     /// by name. Positional decoding would mis-assign here.

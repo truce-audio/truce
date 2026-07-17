@@ -116,13 +116,19 @@ impl std::error::Error for StateLoadError {}
 ///
 /// `restore_values` and `snap_smoothers` go through the param
 /// struct's interior atomics, so they don't strictly need to run on
-/// the audio thread - but applying the whole state in one place keeps
-/// the param values and the user's extra-state blob coherent for any
-/// observer reading after this returns.
+/// the audio thread - but applying them here keeps the param values and
+/// the user's extra-state blob coherent for any observer reading after
+/// this returns.
+///
+/// `#[persist]` fields are **not** applied here - `load_persist` takes a
+/// lock per field that a GUI reader can hold, so it would risk blocking
+/// the audio thread. [`apply_params`] applies persist on the host thread;
+/// the deferred wrappers call it before queueing, and a host-thread full
+/// load (the standalone host, an inactive-plugin load) calls it alongside
+/// this.
 pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &DeserializedState) {
     use truce_params::Params;
     plugin.params().restore_values(&state.params);
-    plugin.params().load_persist(&state.persist);
     plugin.params().snap_smoothers();
     if let Some(extra) = &state.extra
         && let Err(e) = plugin.load_state(extra)
@@ -210,8 +216,17 @@ pub fn parse_or_migrate<P: PluginExport>(
 /// would alias `process()`'s `&mut P` if called from the host thread.
 /// `restore_values` and `snap_smoothers` go through atomic interior
 /// mutability and are safe to call concurrently with `process()`.
+///
+/// `#[persist]` fields are applied here too, and deliberately *not* on the
+/// audio thread: `load_persist` takes a `RwLock::write` / `Mutex::lock`
+/// per persisted field - fields a GUI thread reads at frame rate - so
+/// applying it inside `process()` would let the editor block the audio
+/// thread (priority inversion). It also allocates (deserializing
+/// `String` / `Vec`). Running it on the host thread keeps both off the
+/// real-time path.
 pub fn apply_params<P: truce_params::Params>(params: &P, state: &DeserializedState) {
     params.restore_values(&state.params);
+    params.load_persist(&state.persist);
     params.snap_smoothers();
 }
 
