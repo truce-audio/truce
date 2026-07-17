@@ -21,7 +21,11 @@ struct ShapesParams {
     pan: truce_params::FloatParam,
     #[param(name = "Reversed", range = "reversed(linear(0, 100))")]
     reversed: truce_params::FloatParam,
-    #[param(name = "Reversed log", range = "reversed(log(20, 20000))")]
+    #[param(
+        name = "Reversed log",
+        range = "reversed(log(20, 20000))",
+        default = 440.0
+    )]
     reversed_log: truce_params::FloatParam,
     #[param(
         name = "Freq",

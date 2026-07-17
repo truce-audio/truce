@@ -63,6 +63,12 @@ impl ParamRange {
     #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     #[must_use]
     pub fn normalize(&self, plain: f64) -> f64 {
+        // A NaN plain value (corrupt state, a buggy host) collapses to the
+        // low end rather than propagating NaN through the arithmetic -
+        // mirrors the degenerate-bounds convention below.
+        if plain.is_nan() {
+            return 0.0;
+        }
         match self {
             Self::Linear { min, max } => {
                 if max == min {
@@ -149,7 +155,17 @@ impl ParamRange {
     #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     #[must_use]
     pub fn denormalize(&self, normalized: f64) -> f64 {
-        let n = normalized.clamp(0.0, 1.0);
+        // `f64::clamp` passes NaN through, so a NaN normalized value (a
+        // buggy host - VST3 `setParamNormalized` forwards doubles verbatim,
+        // a corrupt project) would otherwise reach every variant and cast
+        // to garbage: `NaN.round() as i64` -> 0, `as u32` -> first enum
+        // variant, `NaN > 0.5` -> false, silently resetting the param.
+        // Collapse to the low end (`n = 0`), the degenerate-bounds value.
+        let n = if normalized.is_nan() {
+            0.0
+        } else {
+            normalized.clamp(0.0, 1.0)
+        };
         match self {
             Self::Linear { min, max } => min + n * (max - min),
             Self::Logarithmic { min, max } => {
@@ -566,6 +582,54 @@ mod tests {
             let n = range.normalize(plain);
             assert!(!n.is_nan(), "NaN from normalize({plain})");
             assert_eq!(n, 1.0, "normalize({plain}) should clamp to 1.0");
+        }
+    }
+
+    /// A NaN *input* to `normalize` / `denormalize` (a buggy host
+    /// forwarding a corrupt double - VST3 `setParamNormalized(NaN)`) must
+    /// collapse to the range's low end, never propagate NaN into the
+    /// derive commit arms where `NaN.round() as i64` -> 0, `as u32` ->
+    /// first enum variant, `NaN > 0.5` -> false silently reset the param.
+    #[test]
+    fn nan_input_collapses_to_low_end() {
+        let ranges = [
+            ParamRange::Linear {
+                min: -60.0,
+                max: 6.0,
+            },
+            ParamRange::Logarithmic {
+                min: 20.0,
+                max: 20000.0,
+            },
+            ParamRange::Discrete { min: 3, max: 9 },
+            ParamRange::Enum { count: 4 },
+            ParamRange::Skewed {
+                min: 0.0,
+                max: 100.0,
+                factor: 0.5,
+            },
+            ParamRange::Reversed(&ParamRange::Linear {
+                min: 0.0,
+                max: 10.0,
+            }),
+        ];
+        for range in ranges {
+            assert_eq!(
+                range.normalize(f64::NAN),
+                0.0,
+                "normalize(NaN) for {range:?}"
+            );
+            let d = range.denormalize(f64::NAN);
+            assert!(d.is_finite(), "denormalize(NaN) is finite for {range:?}");
+            // Tolerance, not exact: `denormalize(0.0)` on the log path
+            // recomputes `min_log.exp()`, which isn't IEEE-reproducible
+            // (Miri models the non-determinism of transcendental ops), so
+            // two calls can differ in the last bit.
+            let low = range.denormalize(0.0);
+            assert!(
+                (d - low).abs() <= 1e-9 * low.abs().max(1.0),
+                "denormalize(NaN) must equal the low end for {range:?}: {d} vs {low}",
+            );
         }
     }
 }
