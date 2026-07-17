@@ -154,7 +154,15 @@ mod tests {
     /// test, not a proof: on a weak-memory host (`AArch64`) the missing
     /// seqlock fences let torn reads validate, and enough iterations
     /// surface one; on `x86` it mainly guards the retry/volatile logic.
+    ///
+    /// Skipped under Miri: its ~2M iterations across four threads are
+    /// hour-scale in the interpreter, and Miri's deterministic scheduler
+    /// won't reproduce the hardware weak-memory torn read this soaks for.
     #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
+    #[cfg_attr(
+        miri,
+        ignore = "concurrency soak - too slow under Miri, no weak-memory repro"
+    )]
     #[test]
     fn concurrent_reads_never_observe_a_torn_write() {
         let slot = TransportSlot::new();
