@@ -13,7 +13,7 @@ Notable changes per release.
 - `cargo truce screenshot` returns a clean error instead of aborting when a plugin's editor lacks screenshot support or the PNG write fails (the generated screenshot entry point gained the panic firewall every other FFI boundary has).
 - MIDI 1.0 output masks every data byte to 7 bits, so a plugin emitting an out-of-range note/velocity/CC no longer sets a data byte's high bit and desyncs the host's MIDI parser.
 - VST3 param titles/units, value strings, and bus/vendor names with non-ASCII characters (`µs`, `±3 dB`) render correctly instead of mojibake; the shim now decodes UTF-8 to UTF-16 instead of sign-extending each byte.
-- `save_state` is deprecated in favor of `snapshot_into`.
+- The Slint `XYPad` widget exposes a `dragging` flag so a host can pause its param write-back mid-drag (removing edge jitter on log-scaled axes).
 
 ## 6.1.9
 

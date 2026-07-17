@@ -81,8 +81,14 @@ impl PurePluginLogic for GainSlint {
 
                 // host → UI (params + meters)
                 Box::new(move |state: &PluginContext<GainParams>| {
-                    ui.set_gain(state.get_param(P::Gain));
-                    ui.set_pan(state.get_param(P::Pan));
+                    // Skip the param write-back while the XY pad is being
+                    // dragged, so the round-trip doesn't fight the live
+                    // drag; the knob follows the pad through the shared
+                    // `gain` / `pan` properties.
+                    if !ui.get_xy_dragging() {
+                        ui.set_gain(state.get_param(P::Gain));
+                        ui.set_pan(state.get_param(P::Pan));
+                    }
                     ui.set_gain_text(slint::SharedString::from(state.format_param(P::Gain)));
                     ui.set_pan_text(slint::SharedString::from(state.format_param(P::Pan)));
                     ui.set_meter_left(meter_display(state.get_meter(P::MeterLeft)));
