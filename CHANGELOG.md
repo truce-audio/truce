@@ -4,16 +4,11 @@ Notable changes per release.
 
 ## 6.1.10
 
-- Audio-thread real-time fixes: `#[persist]` state loads on the host thread (no priority-inversion dropout), buses wider than stereo no longer allocate on the first block, and the editor transport slot no longer returns a torn tempo/position under weak memory ordering (Apple Silicon).
-- VST3 host-interface fixes: correct time-signature / bar-position / loop-state transport flags, sample-accurate `CHUNKED` automation is no longer heard up to a buffer early, and `getBusArrangement` reports canonical speaker arrangements (mono, quad, ...).
-- `AudioBuffer::chunks_mut` no longer panics on asymmetric buses (instruments, mono-in/stereo-out), and `AudioTap::drain_with` always hands consumers whole frames (no channel-swapped analyzer chunks).
-- Stronger compile-time parameter validation: out-of-range defaults, non-4-char fourccs, and unknown `flags` values are now compile errors; rangeless and `skewed` / `sym_skewed` / `reversed` ranges build again; a NaN normalized value collapses to the range's low end instead of silently resetting a param.
-- LV2 metadata for nested groups with an explicit `base` now matches the live plugin's ids.
-- Sub-blocks created by a `CHUNKED` param split now see a transport position advanced to their start sample, so tempo-synced plugins no longer jitter phase when automation lands mid-block.
-- `cargo truce screenshot` returns a clean error instead of aborting when a plugin's editor lacks screenshot support or the PNG write fails (the generated screenshot entry point gained the panic firewall every other FFI boundary has).
-- MIDI 1.0 output masks every data byte to 7 bits, so a plugin emitting an out-of-range note/velocity/CC no longer sets a data byte's high bit and desyncs the host's MIDI parser.
-- VST3 param titles/units, value strings, and bus/vendor names with non-ASCII characters (`µs`, `±3 dB`) render correctly instead of mojibake; the shim now decodes UTF-8 to UTF-16 instead of sign-extending each byte.
-- The Slint `XYPad` widget exposes a `dragging` flag so a host can pause its param write-back mid-drag (removing edge jitter on log-scaled axes).
+- Audio-thread real-time safety: `#[persist]` state loads off the audio thread (no priority-inversion dropout), wider-than-stereo buses don't allocate on the first block, the transport slot's seqlock got its missing memory fences (Apple Silicon torn reads), and asymmetric buses and analyzer taps are handled correctly (`AudioBuffer::chunks_mut`, `AudioTap::drain_with`).
+- VST3 host correctness: right transport flags (time signature / bar position / loop state), sample-accurate `CHUNKED` automation timing, canonical `getBusArrangement` speaker layouts, and UTF-8 metadata that no longer renders as mojibake.
+- Sample-accurate automation: sub-blocks split by a `CHUNKED` param now advance the transport position, so tempo-synced plugins don't jitter phase when automation lands mid-block.
+- Stronger compile-time parameter checks: out-of-range defaults, non-4-char fourccs, and unknown `flags` are compile errors; `skewed` / `sym_skewed` / `reversed` / rangeless params build again; a NaN normalized value collapses to the range's low end instead of silently resetting a param.
+- MIDI, LV2, tooling, and GUI: MIDI 1.0 output masks data bytes to 7 bits; LV2 nested-group ids match the live plugin; `cargo truce screenshot` returns a clean error instead of aborting; the Slint `XYPad` clips its dot and brackets a drag as one automation gesture (`pressed` / `released` callbacks) so a drag latches over host automation.
 
 ## 6.1.9
 

@@ -15,6 +15,11 @@ export component GainUi inherits Window {
 
     callback gain-changed(float);
     callback pan-changed(float);
+    // XY pad gesture (bracketed as one automation touch).
+    callback xy-pan-changed(float);
+    callback xy-gain-changed(float);
+    callback xy-pressed();
+    callback xy-released();
 
     title: "GAIN (slint)";
     preferred-width: 176px;
@@ -93,8 +98,13 @@ export component GainUi inherits Window {
                     // editor window.
                     vertical-stretch: 1;
                     horizontal-stretch: 1;
-                    changed-x(v) => { root.pan-changed(v); }
-                    changed-y(v) => { root.gain-changed(v); }
+                    // Distinct from the knobs' `pan-changed` / `gain-changed`
+                    // so the pad brackets its own drag as one automation
+                    // gesture (the knobs keep their per-edit `automate`).
+                    changed-x(v) => { root.xy-pan-changed(v); }
+                    changed-y(v) => { root.xy-gain-changed(v); }
+                    pressed => { root.xy-pressed(); }
+                    released => { root.xy-released(); }
                 }
             }
 
