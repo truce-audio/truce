@@ -817,6 +817,17 @@ where
     P::Params: 'static,
 {
     fn handle_keyboard(&mut self, kb: &keyboard_types::KeyboardEvent) -> EventStatus {
+        // Swallow OS key auto-repeat: none of the actions below want to
+        // fire per repeat tick. A held SPACE would machine-gun the
+        // transport, a held note key would retrigger NoteOn without an
+        // intervening NoteOff, and Z/X would race to the octave clamp.
+        // (X11 always reports `repeat: false`, so this only fires on
+        // macOS / Windows, where a held key repeats KeyDown without a
+        // KeyUp - the worst case.)
+        if kb.state == KeyState::Down && kb.repeat {
+            return EventStatus::Captured;
+        }
+
         // Ctrl/Cmd-S → quicksave; add Shift for Save As (name +
         // location, with overwrite confirmation where the OS panel
         // provides one).

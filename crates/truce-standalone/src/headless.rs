@@ -43,6 +43,27 @@ pub fn run<P: PluginExport>(opts: &Options) {
         );
     }
 
+    // Live capture (`--output-file` without a finite `--input-file`)
+    // parks the main thread until Ctrl-C. Install a SIGINT handler so
+    // that exit runs the capture finalize below - the default
+    // disposition would kill the process mid-write and leave the WAV
+    // header with placeholder chunk sizes (an unreadable file). The
+    // handler runs on ctrlc's own thread, so flipping an atomic and
+    // unparking main is safe here.
+    #[cfg(feature = "playback")]
+    let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(feature = "playback")]
+    {
+        let shutdown = Arc::clone(&shutdown);
+        let main_thread = std::thread::current();
+        if let Err(e) = ctrlc::set_handler(move || {
+            shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+            main_thread.unpark();
+        }) {
+            eprintln!("warning: could not install Ctrl-C handler: {e}");
+        }
+    }
+
     // CI / test shape: real-time render of a finite input WAV to
     // an output WAV. Exit naturally on input EOF so the harness
     // doesn't have to send SIGINT (which would skip the WAV
@@ -70,15 +91,21 @@ pub fn run<P: PluginExport>(opts: &Options) {
         // channel.
         #[cfg(feature = "playback")]
         if let Some(src) = handles.playback.clone() {
-            while !src.is_eof() {
+            while !src.is_eof() && !shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
     } else {
-        // Block the main thread. cpal drives audio from its own
-        // thread, so parking main is enough - SIGINT takes down
-        // the process.
+        // Block the main thread until SIGINT. cpal drives audio from
+        // its own thread, so parking main is enough. The Ctrl-C
+        // handler flips `shutdown` and unparks us so the capture
+        // finalize below runs.
+        #[cfg(feature = "playback")]
+        while !shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::park();
+        }
+        #[cfg(not(feature = "playback"))]
         loop {
             std::thread::park();
         }

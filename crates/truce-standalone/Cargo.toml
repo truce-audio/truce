@@ -19,6 +19,11 @@ dirs = "5"
 midir = "0.10"
 crossbeam-queue = "0.3"
 hound = { version = "3", optional = true }
+# SIGINT handler for the headless runner: a clean Ctrl-C so live
+# `--output-file` capture finalizes the WAV header instead of the
+# default disposition killing the process mid-write. Only pulled in
+# with `playback`, the only build that has a capture sink to finalize.
+ctrlc = { version = "3", optional = true }
 
 truce-gui = { workspace = true, optional = true }
 truce-gpu = { workspace = true, optional = true }
@@ -73,7 +78,7 @@ gui = [
     "windows-sys/Win32_UI_Shell",
     "dep:rfd",
 ]
-playback = ["dep:hound", "dep:truce-driver", "truce-driver/wav"]
+playback = ["dep:hound", "dep:truce-driver", "truce-driver/wav", "dep:ctrlc"]
 
 [lints]
 workspace = true
