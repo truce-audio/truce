@@ -19,7 +19,7 @@ include = [
 ]
 
 [dependencies]
-slint-build = "=1.15.1"
+slint-build = "=1.17.0"
 truce-font = { version = "6.1.9", path = "../../truce-font" }
 
 [lints]
