@@ -162,6 +162,28 @@ where
     #[cfg(feature = "playback")]
     let capture = audio_handles.capture.take();
 
+    // A terminal Ctrl-C would otherwise kill the process under the
+    // default SIGINT disposition, skipping the capture finalize the
+    // window-close path runs and leaving a truncated WAV header. Grab a
+    // cross-thread handle (before `capture` moves into the window
+    // closure) and finalize on the ctrlc thread, then exit hard - the
+    // same teardown bypass the window-close path uses.
+    #[cfg(feature = "playback")]
+    if let Some(sink) = &capture {
+        let shutdown = sink.shutdown_handle();
+        if let Err(e) = ctrlc::set_handler(move || {
+            unsafe extern "C" {
+                fn _exit(status: i32) -> !;
+            }
+            shutdown.finalize_blocking();
+            // SAFETY: immediate process termination from the ctrlc
+            // thread once the WAV is byte-complete; nothing to unwind.
+            unsafe { _exit(0) };
+        }) {
+            eprintln!("warning: could not install Ctrl-C handler: {e}");
+        }
+    }
+
     // Owned copy for the `move` editor closure - `opts` is a borrow
     // that can't escape into it.
     let presets_dir = opts.presets_dir.clone();

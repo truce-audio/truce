@@ -220,10 +220,40 @@ pub struct CaptureSink {
     chunk_tx: mpsc::SyncSender<Vec<f32>>,
     blocked_at_least_once: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
+    /// Set by the writer thread once the WAV header is rewritten with
+    /// the real chunk sizes. Lets a signal handler (which can't own or
+    /// join the sink) wait for a byte-complete file before exiting.
+    finalized: Arc<AtomicBool>,
     writer: Option<thread::JoinHandle<()>>,
     /// Copy of the spec for the diagnostic line on finalize.
     spec: hound::WavSpec,
     path: std::path::PathBuf,
+}
+
+/// Cross-thread trigger to finalize the capture without owning the
+/// [`CaptureSink`]. The windowed runner installs a Ctrl-C handler with
+/// one so a terminal `SIGINT` still rewrites the WAV header instead of
+/// the default disposition killing the process mid-write.
+#[derive(Clone)]
+pub struct CaptureShutdown {
+    shutdown: Arc<AtomicBool>,
+    finalized: Arc<AtomicBool>,
+}
+
+impl CaptureShutdown {
+    /// Signal the writer to flush + finalize, then block (capped at
+    /// ~2 s) until the WAV header is rewritten. Safe to call from a
+    /// signal-handler thread; returns once the file is byte-complete or
+    /// the wait caps (a wedged writer can't hang exit forever).
+    pub fn finalize_blocking(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        for _ in 0..200 {
+            if self.finalized.load(Ordering::Relaxed) {
+                return;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 }
 
 /// Cheap-clone handle the audio callback uses to push blocks.
@@ -271,6 +301,8 @@ impl CaptureSink {
         let (chunk_tx, chunk_rx) = mpsc::sync_channel::<Vec<f32>>(CAPTURE_CHANNEL_DEPTH);
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_w = Arc::clone(&shutdown);
+        let finalized = Arc::new(AtomicBool::new(false));
+        let finalized_w = Arc::clone(&finalized);
         let writer_thread = thread::Builder::new()
             .name("truce-standalone-capture".into())
             .spawn(move || {
@@ -312,6 +344,8 @@ impl CaptureSink {
                 if let Err(e) = writer.finalize() {
                     eprintln!("capture finalize failed: {e}");
                 }
+                // Header is rewritten; the file is byte-complete now.
+                finalized_w.store(true, Ordering::Relaxed);
             })
             .map_err(|e| format!("could not spawn capture writer: {e}"))?;
 
@@ -319,10 +353,21 @@ impl CaptureSink {
             chunk_tx,
             blocked_at_least_once: Arc::new(AtomicBool::new(false)),
             shutdown,
+            finalized,
             writer: Some(writer_thread),
             spec,
             path: path.to_path_buf(),
         })
+    }
+
+    /// A cross-thread handle to finalize the sink without owning it.
+    /// The windowed runner hands one to its Ctrl-C handler.
+    #[must_use]
+    pub fn shutdown_handle(&self) -> CaptureShutdown {
+        CaptureShutdown {
+            shutdown: Arc::clone(&self.shutdown),
+            finalized: Arc::clone(&self.finalized),
+        }
     }
 
     /// Get a cheap-clone handle suitable for the audio
