@@ -103,7 +103,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5dc830ece0415c778e700c97d38bb28f4d8af0280f9d140f50ea094d0fed3e27"
 dependencies = [
  "keyboard-types",
- "nix",
+ "nix 0.22.3",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -350,6 +350,17 @@ name = "crunchy"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
+
+[[package]]
+name = "ctrlc"
+version = "3.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
+dependencies = [
+ "dispatch2",
+ "nix 0.31.3",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "dasp_sample"
@@ -965,6 +976,18 @@ dependencies = [
  "cfg-if",
  "libc",
  "memoffset",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.0",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -1768,7 +1791,7 @@ checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
 name = "truce"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "truce-core",
  "truce-derive",
@@ -1780,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "crossbeam-queue",
  "truce-aax-bridge",
@@ -1790,11 +1813,11 @@ dependencies = [
 
 [[package]]
 name = "truce-aax-bridge"
-version = "6.1.10"
+version = "6.1.11"
 
 [[package]]
 name = "truce-au"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -1805,7 +1828,7 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "base64",
  "serde",
@@ -1815,7 +1838,7 @@ dependencies = [
 
 [[package]]
 name = "truce-clap"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -1827,7 +1850,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
@@ -1838,7 +1861,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "tiny-skia",
  "truce-core",
@@ -1848,7 +1871,7 @@ dependencies = [
 
 [[package]]
 name = "truce-derive"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1861,7 +1884,7 @@ dependencies = [
 
 [[package]]
 name = "truce-driver"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "hound",
  "truce-core",
@@ -1870,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-gpu"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "clap-sys",
  "truce",
@@ -1891,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "truce-font"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "skrifa",
  "tiny-skia",
@@ -1899,7 +1922,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gpu"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "baseview-truce",
  "bytemuck",
@@ -1916,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "baseview-truce",
  "log",
@@ -1939,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-types"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "objc2",
  "truce-core",
@@ -1947,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-utils"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
@@ -1956,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "crc32fast",
  "libloading 0.9.0",
@@ -1970,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "truce-lv2"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "base64",
  "objc",
@@ -1982,14 +2005,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "bitflags 2.13.0",
 ]
 
 [[package]]
 name = "truce-plugin"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -1998,15 +2021,16 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "6.1.10"
+version = "6.1.11"
 
 [[package]]
 name = "truce-standalone"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "baseview-truce",
  "cpal",
  "crossbeam-queue",
+ "ctrlc",
  "dirs",
  "hound",
  "keyboard-types",
@@ -2026,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "png",
  "toml",
@@ -2039,11 +2063,11 @@ dependencies = [
 
 [[package]]
 name = "truce-utils"
-version = "6.1.10"
+version = "6.1.11"
 
 [[package]]
 name = "truce-vst2"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -2053,7 +2077,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "6.1.10"
+version = "6.1.11"
 dependencies = [
  "cc",
  "crossbeam-queue",

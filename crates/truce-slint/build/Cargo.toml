@@ -1,6 +1,6 @@
 [package]
 name = "truce-slint-build"
-version = "6.1.10"
+version = "6.1.11"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
@@ -20,7 +20,7 @@ include = [
 
 [dependencies]
 slint-build = "=1.15.1"
-truce-font = { version = "6.1.10", path = "../../truce-font" }
+truce-font = { version = "6.1.11", path = "../../truce-font" }
 
 [lints]
 workspace = true
