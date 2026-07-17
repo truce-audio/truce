@@ -152,7 +152,11 @@ fn rewrite_group(event: &mut EventBody, new_group: u8) {
 /// `downconvert_*` helpers first.
 ///
 /// All status bytes mask `channel & 0x0F` so an out-of-range
-/// channel value can't corrupt the status byte itself.
+/// channel value can't corrupt the status byte itself, and every data
+/// byte masks `& 0x7F`: a MIDI 1.0 data byte's high bit must be clear
+/// (a set high bit marks a status byte), so an out-of-range field (a
+/// plugin emitting `note: 130`) would otherwise desync a downstream
+/// parser.
 #[must_use]
 pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
     match event {
@@ -161,32 +165,32 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
             note,
             velocity,
             ..
-        } => Some((3, [0x90 | (channel & 0x0F), *note, *velocity])),
+        } => Some((3, [0x90 | (channel & 0x0F), note & 0x7F, velocity & 0x7F])),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
             ..
-        } => Some((3, [0x80 | (channel & 0x0F), *note, *velocity])),
+        } => Some((3, [0x80 | (channel & 0x0F), note & 0x7F, velocity & 0x7F])),
         EventBody::Aftertouch {
             channel,
             note,
             pressure,
             ..
-        } => Some((3, [0xA0 | (channel & 0x0F), *note, *pressure])),
+        } => Some((3, [0xA0 | (channel & 0x0F), note & 0x7F, pressure & 0x7F])),
         EventBody::ControlChange {
             channel, cc, value, ..
-        } => Some((3, [0xB0 | (channel & 0x0F), *cc, *value])),
+        } => Some((3, [0xB0 | (channel & 0x0F), cc & 0x7F, value & 0x7F])),
         EventBody::PitchBend { channel, value, .. } => {
             let (lsb, msb) = pitch_bend_to_bytes(*value);
             Some((3, [0xE0 | (channel & 0x0F), lsb, msb]))
         }
         EventBody::ChannelPressure {
             channel, pressure, ..
-        } => Some((2, [0xD0 | (channel & 0x0F), *pressure, 0])),
+        } => Some((2, [0xD0 | (channel & 0x0F), pressure & 0x7F, 0])),
         EventBody::ProgramChange {
             channel, program, ..
-        } => Some((2, [0xC0 | (channel & 0x0F), *program, 0])),
+        } => Some((2, [0xC0 | (channel & 0x0F), program & 0x7F, 0])),
         _ => None,
     }
 }
@@ -683,6 +687,39 @@ mod tests {
         let (_len, bytes) = event_to_midi1(&event).unwrap();
         // Channel masked to 0, status byte is clean 0x90.
         assert_eq!(bytes[0], 0x90);
+    }
+
+    #[test]
+    fn data_bytes_masked_to_7_bits_on_encode() {
+        // Out-of-range data (the `EventBody` fields are `u8`) must not
+        // set a data byte's high bit, which a downstream parser reads as a
+        // status byte and desyncs on.
+        let (_len, note_bytes) = event_to_midi1(&EventBody::NoteOn {
+            group: 0,
+            channel: 0,
+            note: 130,     // 0x82 - high bit set, masks to 0x02
+            velocity: 200, // 0xC8 - high bit set, masks to 0x48
+        })
+        .unwrap();
+        assert_eq!(note_bytes, [0x90, 0x02, 0x48]);
+        assert!(note_bytes[1] < 0x80 && note_bytes[2] < 0x80);
+
+        let (_len, cc_bytes) = event_to_midi1(&EventBody::ControlChange {
+            group: 0,
+            channel: 0,
+            cc: 200,
+            value: 255,
+        })
+        .unwrap();
+        assert!(cc_bytes[1] < 0x80 && cc_bytes[2] < 0x80);
+
+        let (_len, pc_bytes) = event_to_midi1(&EventBody::ProgramChange {
+            group: 0,
+            channel: 0,
+            program: 200,
+        })
+        .unwrap();
+        assert!(pc_bytes[1] < 0x80);
     }
 
     #[test]

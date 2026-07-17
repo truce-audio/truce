@@ -119,6 +119,11 @@ where
     let mut block_start = 0usize;
     let mut event_idx = 0usize;
     let mut last_status = ProcessStatus::Normal;
+    // Sample offset the current `transport` snapshot's position is anchored
+    // to. Starts at the block top; a `Transport` event re-anchors it to
+    // that split (the host-provided snapshot already carries the position
+    // at that offset), so a sub-block advances only from the last anchor.
+    let mut transport_anchor = 0usize;
     // Floor at 1: a sub-block can't be shorter than one sample, so 0
     // and 1 both mean "split at every event". Without the floor, an
     // event sitting exactly on `block_start` (e.g. a Transport at
@@ -149,7 +154,11 @@ where
         // wrappers used to make eagerly at block start, plus
         // transport-snapshot updates for `EventBody::Transport`.
         // Advances `event_idx` past everything consumed.
-        apply_pending_events(events, params, transport, &mut event_idx, block_end);
+        if apply_pending_events(events, params, transport, &mut event_idx, block_end) {
+            // A transport event refreshed the snapshot at this boundary,
+            // so its position already reflects `block_start`.
+            transport_anchor = block_start;
+        }
 
         // Rebase the in-window events into the scratch list with
         // sub-block-relative `sample_offset`s. ParamChange entries
@@ -162,8 +171,12 @@ where
         let mut sub_buffer = buffer.slice(block_start, block_end - block_start);
         let sub_output_start = output_events.len();
 
+        // Advance the playhead to this sub-block's start so a plugin that
+        // re-derives phase from the transport sees the right position.
+        let sub_transport =
+            advance_transport(transport, block_start - transport_anchor, sample_rate);
         let mut ctx = ProcessContext::new(
-            transport,
+            &sub_transport,
             sample_rate,
             block_end - block_start,
             output_events,
@@ -234,6 +247,35 @@ fn is_chunked(id: u32, param_infos: &[ParamInfo]) -> bool {
         .is_some_and(|info| info.flags.contains(ParamFlags::CHUNKED))
 }
 
+/// Advance a transport snapshot forward by `delta_samples` for a
+/// sub-block that starts that far into the host block. Only the playhead
+/// fields move (`position_samples` / `position_seconds` /
+/// `position_beats`); tempo, time signature, and loop bounds are
+/// block-rate. `bar_start_beats` is left as-is - it's the *last* bar
+/// start, which a sub-block advance rarely crosses, and computing a bar
+/// crossing would need the full meter grid the host owns.
+///
+/// A stopped playhead doesn't move, so nothing advances unless
+/// `playing`. Without this, sub-blocks split by a `CHUNKED` param all see
+/// the block-start position, giving tempo-synced plugins that re-derive
+/// phase from the transport up to a block of timing jitter right where
+/// automation lands.
+///
+/// `delta_samples` is a sub-block offset - a few thousand samples at most,
+/// exact in both `i64` and `f64`.
+#[allow(clippy::cast_possible_wrap, clippy::cast_precision_loss)]
+fn advance_transport(t: &TransportInfo, delta_samples: usize, sample_rate: f64) -> TransportInfo {
+    let mut t = *t;
+    if delta_samples == 0 || !t.playing || sample_rate <= 0.0 {
+        return t;
+    }
+    let delta_secs = delta_samples as f64 / sample_rate;
+    t.position_samples += delta_samples as i64;
+    t.position_seconds += delta_secs;
+    t.position_beats += delta_secs * t.tempo / 60.0;
+    t
+}
+
 /// Walk `events` from `*event_idx` forward, applying every event with
 /// `sample_offset < block_end` to the param store / transport
 /// snapshot and advancing `*event_idx` past the consumed range.
@@ -243,14 +285,19 @@ fn is_chunked(id: u32, param_infos: &[ParamInfo]) -> bool {
 /// are not "applied" - they ride in the rebased sub-event list for
 /// the plugin to process itself; this function just advances past
 /// them so the next split scan starts in the right place.
+///
+/// Returns `true` when a `Transport` event was applied, so the caller can
+/// re-anchor its sub-block position advance to this boundary (the fresh
+/// snapshot's position already reflects the split offset).
 fn apply_pending_events(
     events: &EventList,
     params: &dyn Params,
     transport: &mut TransportInfo,
     event_idx: &mut usize,
     block_end: usize,
-) {
+) -> bool {
     let mut i = *event_idx;
+    let mut transport_applied = false;
     for ev in events.iter().skip(i) {
         if (ev.sample_offset as usize) >= block_end {
             break;
@@ -261,6 +308,7 @@ fn apply_pending_events(
             }
             EventBody::Transport(t) => {
                 *transport = t;
+                transport_applied = true;
             }
             // Note events, ParamMod, SysEx: the plugin handles these
             // via the rebased sub-event list. The apply pass only
@@ -270,6 +318,7 @@ fn apply_pending_events(
         i += 1;
     }
     *event_idx = i;
+    transport_applied
 }
 
 /// Copy events in `[block_start, block_end)` into `scratch` with
@@ -480,6 +529,52 @@ mod tests {
         assert_eq!(find_next_split(&events, &infos, 0, 0), Some((0, 0)));
         // Clamped (>= 1): coalesced, no split at the block start.
         assert_eq!(find_next_split(&events, &infos, 0, 1), None);
+    }
+
+    /// A sub-block that starts `delta` samples into the host block sees a
+    /// playhead advanced by `delta` - samples, seconds, and beats (from
+    /// tempo). Without this a `CHUNKED` param split leaves every sub-block
+    /// at the block-start position, jittering tempo-synced phase.
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn advance_transport_moves_playhead_when_playing() {
+        let base = TransportInfo {
+            playing: true,
+            tempo: 120.0,
+            position_samples: 1_000,
+            position_seconds: 1.0,
+            position_beats: 2.0,
+            ..TransportInfo::default()
+        };
+        // 480 samples at 48 kHz = 0.01 s = 0.02 beats at 120 BPM.
+        let adv = advance_transport(&base, 480, 48_000.0);
+        assert_eq!(adv.position_samples, 1_480);
+        assert!((adv.position_seconds - 1.01).abs() < 1e-12);
+        assert!((adv.position_beats - 2.02).abs() < 1e-12);
+        // Block-rate fields are untouched.
+        assert_eq!(adv.tempo, base.tempo);
+        assert_eq!(adv.bar_start_beats, base.bar_start_beats);
+    }
+
+    /// A stopped playhead doesn't move, and a zero-offset sub-block (the
+    /// first, or an un-split block) is left exactly as-is.
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn advance_transport_noop_when_stopped_or_zero_delta() {
+        let stopped = TransportInfo {
+            playing: false,
+            tempo: 120.0,
+            position_samples: 1_000,
+            ..TransportInfo::default()
+        };
+        assert_eq!(advance_transport(&stopped, 480, 48_000.0), stopped);
+
+        let playing = TransportInfo {
+            playing: true,
+            position_samples: 1_000,
+            ..TransportInfo::default()
+        };
+        assert_eq!(advance_transport(&playing, 0, 48_000.0), playing);
     }
 
     #[test]

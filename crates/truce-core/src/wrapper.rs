@@ -622,6 +622,20 @@ mod plugin_cell_tests {
         .join();
         assert_eq!(*enter_plugin(&plugin), 7);
     }
+
+    /// The `extern "C"` firewall: a body that panics returns the fallback
+    /// (so a panic can't unwind across the ABI and abort the caller), and
+    /// a clean body returns its value. The generated `__truce_screenshot`
+    /// symbol relies on this.
+    #[test]
+    fn run_extern_callback_with_catches_panic_and_returns_fallback() {
+        let ok = super::run_extern_callback_with::<(), u32>("test", "clean", 9, || 3);
+        assert_eq!(ok, 3, "a clean body returns its own value");
+
+        let caught =
+            super::run_extern_callback_with::<(), u32>("test", "boom", 9, || panic!("boom"));
+        assert_eq!(caught, 9, "a panicking body returns the fallback");
+    }
 }
 
 #[cfg(test)]

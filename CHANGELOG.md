@@ -9,6 +9,9 @@ Notable changes per release.
 - `AudioBuffer::chunks_mut` no longer panics on asymmetric buses (instruments, mono-in/stereo-out), and `AudioTap::drain_with` always hands consumers whole frames (no channel-swapped analyzer chunks).
 - Stronger compile-time parameter validation: out-of-range defaults, non-4-char fourccs, and unknown `flags` values are now compile errors; rangeless and `skewed` / `sym_skewed` / `reversed` ranges build again; a NaN normalized value collapses to the range's low end instead of silently resetting a param.
 - LV2 metadata for nested groups with an explicit `base` now matches the live plugin's ids.
+- Sub-blocks created by a `CHUNKED` param split now see a transport position advanced to their start sample, so tempo-synced plugins no longer jitter phase when automation lands mid-block.
+- `cargo truce screenshot` returns a clean error instead of aborting when a plugin's editor lacks screenshot support or the PNG write fails (the generated screenshot entry point gained the panic firewall every other FFI boundary has).
+- MIDI 1.0 output masks every data byte to 7 bits, so a plugin emitting an out-of-range note/velocity/CC no longer sets a data byte's high bit and desyncs the host's MIDI parser.
 - `save_state` is deprecated in favor of `snapshot_into`.
 
 ## 6.1.9
