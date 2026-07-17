@@ -72,7 +72,6 @@ struct Inner<P: Params + ?Sized> {
     rgba_buf: Vec<u8>,
     sync: SyncFn<P>,
     context: PluginContext<P>,
-    params: Arc<P>,
     last_pointer: LogicalPosition,
     /// Pending touch handler → tick communication. Touch handlers
     /// run on the main thread (same as tick) but the slint window
@@ -229,7 +228,6 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
             rgba_buf: Vec::with_capacity((phys_w * phys_h * 4) as usize),
             sync,
             context: typed_ctx,
-            params: Arc::clone(&self.params),
             last_pointer: LogicalPosition::new(-1.0, -1.0),
             pending_events: RefCell::new(Vec::with_capacity(16)),
         };
@@ -254,15 +252,26 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 let _: () = msg_send![inner.display_link, release];
             }
             if !inner.child_view.is_null() {
+                // Reclaim the Arc the view's ivar holds, then null the ivar
+                // *before* dropping it: the view outlives this call until
+                // its own retain is released below, and a late selector
+                // delivery racing teardown would otherwise reconstruct a
+                // dangling Arc from freed memory.
                 let cls: &AnyClass = msg_send![inner.child_view, class];
-                let base: *const u8 = inner.child_view.cast();
-                let ivar_ptr: *const *mut std::ffi::c_void =
+                let base: *mut u8 = inner.child_view.cast();
+                let ivar_ptr: *mut *mut std::ffi::c_void =
                     base.add(ivar_offset(cls, INNER_PTR_IVAR)).cast();
                 let leaked = (*ivar_ptr).cast_const().cast::<Mutex<Option<Inner<P>>>>();
+                *ivar_ptr = std::ptr::null_mut();
                 if !leaked.is_null() {
                     let _ = Arc::from_raw(leaked);
                 }
                 let _: () = msg_send![inner.child_view, removeFromSuperview];
+                // Balance the alloc/initWithFrame reference from
+                // `install_editor_view`. `removeFromSuperview` dropped the
+                // superview's retain and `invalidate` the display link's,
+                // so this drops the last reference and frees the view.
+                let _: () = msg_send![inner.child_view, release];
             }
         }
         drop(inner);
@@ -526,14 +535,14 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
     for ev in events {
         inner.slint_window.window().dispatch_event(ev);
     }
+    // Advance Slint timers and property animations - the desktop
+    // `on_frame` does this as its first step. Without it, `.slint`
+    // `animate` transitions and Rust-side `slint::Timer`s never fire
+    // under our custom platform (this loop previously omitted the call).
+    slint::platform::update_timers_and_animations();
+
     // Drive host → UI param sync each frame.
     (inner.sync)(&inner.context);
-
-    // Slint's event loop needs a tick to flush layout / property
-    // changes. `slint::platform::update_timers_and_animations`
-    // would do it for animations; for property + layout
-    // propagation, the call below is enough on the desktop path.
-    let _ = inner.params; // kept alive for the duration
 
     // Same physical-pixel cast rationale as `SlintEditor::open`.
     #[allow(
@@ -683,12 +692,43 @@ const K_CG_BITMAP_BYTE_ORDER_32_BIG: u32 = 4 << 12;
 const K_CG_IMAGE_ALPHA_PREMULTIPLIED_LAST: u32 = 1;
 const K_CG_RENDERING_INTENT_DEFAULT: i32 = 0;
 
+/// `CGDataProviderCreateWithData` release callback. Core Animation calls
+/// this when it is done with the pixel copy (the layer's `contents` is
+/// replaced or the layer torn down), so it fires exactly once and frees
+/// the `Box<[u8]>` handed to it in `blit_pixmap_to_layer`.
+unsafe extern "C" fn release_pixel_copy(
+    _info: *mut std::ffi::c_void,
+    data: *const u8,
+    size: usize,
+) {
+    if data.is_null() {
+        return;
+    }
+    // SAFETY: `data` / `size` are the pointer and length of a `Box<[u8]>`
+    // leaked in `blit_pixmap_to_layer`; freed here exactly once.
+    drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(data.cast_mut(), size)) });
+}
+
 unsafe fn blit_pixmap_to_layer(view: *mut AnyObject, width: u32, height: u32, rgba: &[u8]) {
     unsafe {
         let bytes_per_row = (width as usize) * 4;
+        // `CGDataProviderCreateWithData` does NOT copy: it holds the pointer
+        // for the life of the provider / `CGImage`, which the layer retains
+        // past this call. `rgba` borrows `inner.rgba_buf`, which the next
+        // frame overwrites, a resize reallocates, and `close` frees - so a
+        // resize or teardown in the same run-loop turn (e.g. an AUv3 host
+        // relaying out the view right after a tick) would leave Core
+        // Animation reading freed memory when it encodes the layer at commit.
+        // Hand CA its own copy plus a release callback that frees it when CA
+        // is done, decoupling the displayed bytes from the live buffer.
+        let owned: Box<[u8]> = Box::from(rgba);
+        let len = owned.len();
+        let ptr: *mut u8 = Box::into_raw(owned).cast();
         let provider =
-            CGDataProviderCreateWithData(std::ptr::null_mut(), rgba.as_ptr(), rgba.len(), None);
+            CGDataProviderCreateWithData(std::ptr::null_mut(), ptr, len, Some(release_pixel_copy));
         if provider.is_null() {
+            // Provider didn't take ownership; free the copy ourselves.
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)));
             return;
         }
         let cs = CGColorSpaceCreateDeviceRGB();

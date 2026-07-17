@@ -361,6 +361,22 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     /// of re-calling `to_physical_px` twice per frame.
     last_phys_w: u32,
     last_phys_h: u32,
+    /// The window's *actual* physical extent from the last host-driven
+    /// `Resized` (`(0, 0)` = none). When a host / WM grows the embed window
+    /// past the editor's fitted (bounds/aspect-clamped) size - a fixed-size
+    /// editor maximized in REAPER, Bitwig forcing an oversized box - the
+    /// wgpu surface is configured to cover this exact extent and the fitted
+    /// content is blitted top-left with a black margin (letterbox) instead
+    /// of a smaller surface the compositor would stretch. Paired with
+    /// [`Self::last_resize_fitted`] to tell a host-driven resize from a
+    /// programmatic `set_size` (which sizes the surface from the fitted
+    /// value we're resizing to).
+    last_resize_phys: (u32, u32),
+    /// The fitted logical size the last `Resized` produced (what it wrote to
+    /// `pending_size`). When `on_frame`'s pending equals this the resize is
+    /// host-driven and [`Self::last_resize_phys`] is the authoritative window
+    /// extent to letterbox within.
+    last_resize_fitted: (u32, u32),
     /// Paces paints to the compositor's measured consumption rate so
     /// the per-tick render/blit can't park the host's GUI thread in
     /// the swapchain acquire - see [`truce_gui::PaintPacer`].
@@ -525,34 +541,61 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // then reconfigures the slint window + wgpu surface + blit
         // inline so the next render lands at the new size.
         let pending = unpack_size(self.pending_size.swap(0, Ordering::Acquire));
-        if pending.0 > 0 && pending.1 > 0 && pending != (self.width, self.height) {
+        if pending.0 > 0 && pending.1 > 0 {
             let scale = f64::from(self.last_applied_scale);
-            // Reflow to fill: render the scene, blit texture, and surface all
-            // at the same physical extent so the UI fills the window. A
-            // host-driven `Resized` handles the window case directly; this
-            // path covers programmatic `set_size` (window then follows).
-            let phys_w = truce_gui::to_physical_px(pending.0, scale);
-            let phys_h = truce_gui::to_physical_px(pending.1, scale);
-            window.resize(baseview::Size::new(
-                f64::from(pending.0),
-                f64::from(pending.1),
-            ));
-            self.slint_window
-                .set_size(slint::WindowSize::Physical(PhysicalSize::new(
-                    phys_w, phys_h,
-                )));
-            if let Some(gpu) = self.gpu.as_mut() {
-                gpu.surface_config.width = phys_w.max(1);
-                gpu.surface_config.height = phys_h.max(1);
-                self.client.resize(phys_w.max(1), phys_h.max(1));
-                if let Some(ref mut blit) = self.blit {
-                    blit.resize(&gpu.device, phys_w, phys_h);
+            // Content (slint scene + blit texture) always renders at the
+            // fitted physical size. The surface may be larger: when a host
+            // forces a window past a fixed-size editor's max, `fit` clamps
+            // the fitted size but the window keeps the host's extent, so the
+            // surface covers the window and the blit letterboxes the content
+            // over black rather than stretching it.
+            let content_w = truce_gui::to_physical_px(pending.0, scale);
+            let content_h = truce_gui::to_physical_px(pending.1, scale);
+            // A host-driven `Resized` recorded the window's true extent and
+            // the fitted size it produced. If this pending size is that same
+            // fitted size, the window is larger than the content: letterbox
+            // to the recorded extent. Push-back (resize the window down to
+            // the content) only works on macOS; Bitwig (Linux) and
+            // REAPER-maximize (Windows) fight it, so there we letterbox.
+            let host_driven = self.last_resize_phys != (0, 0) && pending == self.last_resize_fitted;
+            let letterbox = host_driven && cfg!(not(target_os = "macos"));
+            let (surf_w, surf_h) = if letterbox {
+                self.last_resize_phys
+            } else {
+                (content_w, content_h)
+            };
+            let logical_changed = pending != (self.width, self.height);
+            let content_changed = (content_w, content_h) != (self.last_phys_w, self.last_phys_h);
+            let surface_changed = self.gpu.as_ref().is_some_and(|gpu| {
+                (surf_w.max(1), surf_h.max(1))
+                    != (gpu.surface_config.width, gpu.surface_config.height)
+            });
+            if logical_changed || content_changed || surface_changed {
+                // Only drive the window when we're not letterboxing; pushing
+                // back against a host that forced the size just fights it.
+                if !letterbox {
+                    window.resize(baseview::Size::new(
+                        f64::from(pending.0),
+                        f64::from(pending.1),
+                    ));
                 }
+                self.slint_window
+                    .set_size(slint::WindowSize::Physical(PhysicalSize::new(
+                        content_w, content_h,
+                    )));
+                if let Some(gpu) = self.gpu.as_mut() {
+                    gpu.surface_config.width = surf_w.max(1);
+                    gpu.surface_config.height = surf_h.max(1);
+                    self.client.resize(surf_w.max(1), surf_h.max(1));
+                    if let Some(ref mut blit) = self.blit {
+                        blit.resize(&gpu.device, content_w, content_h);
+                    }
+                }
+                self.width = pending.0;
+                self.height = pending.1;
+                self.last_phys_w = content_w;
+                self.last_phys_h = content_h;
             }
-            self.width = pending.0;
-            self.height = pending.1;
-            self.last_phys_w = phys_w;
-            self.last_phys_h = phys_h;
         }
         // Pick up host-driven scale changes (CLAP `set_scale`, VST3
         // `IPlugViewContentScaleSupport`) that landed in the shared
@@ -817,6 +860,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                         self.max_size,
                         self.aspect_ratio,
                     );
+                    // Remember the window's true physical extent and the
+                    // fitted size it produced so `on_frame` can cover the
+                    // window with the surface and letterbox the fitted content
+                    // (rather than stretch), even when `fit` clamped the size
+                    // to the current one (fixed-size editor grown past its max).
+                    self.last_resize_phys = (phys_w, phys_h);
+                    self.last_resize_fitted = (fw, fh);
                     // Defer BOTH the corrective host request and the
                     // surface reconfigure to `on_frame`. Inline, the
                     // request re-enters the host's own resize dispatch
@@ -1081,6 +1131,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     host_driven_scale,
                     last_phys_w: phys_w,
                     last_phys_h: phys_h,
+                    last_resize_phys: (0, 0),
+                    last_resize_fitted: (0, 0),
                     pacer: truce_gui::PaintPacer::default(),
                     #[cfg(not(target_os = "linux"))]
                     pending_correct: None,

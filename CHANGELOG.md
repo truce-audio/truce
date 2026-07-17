@@ -7,6 +7,12 @@ Notable changes per release.
 - AU v2 SysEx input from the host (`MusicDeviceSysEx`, which a host may call off the render thread) no longer races the render thread and corrupts the event list; it is handed to the audio thread through a lock-free queue instead of mutating the render scratch directly.
 - AU render no longer allocates on the audio thread when a host renders more frames than it declared via `kAudioUnitProperty_MaximumFramesPerSlice`; the oversized block fails safe (zeroed output) instead of growing the scratch.
 - AU components now report the plugin's declared version instead of a hardcoded 1.0.0, so hosts (Logic, GarageBand) see a shipped update as new rather than reusing stale cached validation and metadata.
+- iOS Slint / built-in GPU editors no longer hand Core Animation a `CGImage` backed by a freed pixel buffer (use-after-free on resize/close); the frame is copied and freed via the provider's release callback.
+- iOS Slint editors no longer freeze Slint timers and property animations; the frame loop now advances them each tick.
+- Slint editors now letterbox over black when a host forces a window past a fixed-size editor's bounds instead of leaving the surface reconfigure as dead code.
+- Built-in GPU editor's `on_event` is now wrapped in the same panic firewall as its siblings, so a plugin-side panic during a mouse/resize event can't unwind across the baseview FFI boundary and terminate the host.
+- iOS editors (egui, iced, Slint) no longer leak a `UIView` + `CALayer` per open/close cycle or leave a dangling ivar pointer in the detached view.
+- iced iOS editor no longer leaves a `CADisplayLink` firing forever (and leaks its view) when surface creation fails during open.
 
 ## 6.1.10
 
