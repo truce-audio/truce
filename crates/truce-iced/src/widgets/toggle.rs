@@ -42,7 +42,15 @@ impl<'a, M: Clone + Debug + 'static> ToggleWidget<'a, M> {
 
         let t = toggler(self.value)
             .on_toggle(move |on| {
-                Message::Param(ParamMessage::SetNormalized(id, if on { 1.0 } else { 0.0 }))
+                // Bracket the write in a begin/end gesture so VST3/AU
+                // hosts record it to an automation lane and log one
+                // undo entry - a bare set_param is ignored in
+                // touch/latch write modes.
+                Message::Param(ParamMessage::Batch(vec![
+                    ParamMessage::BeginEdit(id),
+                    ParamMessage::SetNormalized(id, if on { 1.0 } else { 0.0 }),
+                    ParamMessage::EndEdit(id),
+                ]))
             })
             .size(18.0);
 

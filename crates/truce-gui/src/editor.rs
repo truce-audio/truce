@@ -418,6 +418,18 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             .map(super::backend_cpu::CpuBackend::data)
     }
 
+    /// Physical row width of the CPU pixmap in pixels - the source
+    /// stride the blit pipeline needs to upload [`Self::pixel_data`]
+    /// correctly when the pixmap is wider than the (capped) blit
+    /// texture.
+    #[cfg(feature = "cpu")]
+    #[must_use]
+    pub fn pixel_width(&self) -> u32 {
+        self.backend
+            .as_ref()
+            .map_or(0, super::backend_cpu::CpuBackend::width)
+    }
+
     // --- Public API for external backends (truce-gpu) ---
 
     /// Whether the editor has an active context.
@@ -1150,6 +1162,7 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
         editor.render();
         editor.stash_painted_values();
 
+        let src_width = editor.pixel_width();
         if let Some(pixels) = editor.pixel_data() {
             let backend = guard
                 .as_mut()
@@ -1175,7 +1188,7 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 editor.request_repaint();
                 return;
             }
-            blit.update(queue, pixels);
+            blit.update(queue, pixels, src_width);
             let view = frame
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1490,6 +1503,15 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
+        // A host that re-attaches by calling open() again without an
+        // intervening close() would otherwise overwrite `window` /
+        // `blit_backend` and strand the previous window's handler: its
+        // frame timer keeps firing against a raw editor pointer that
+        // dangles once this editor drops. Tear the old window down
+        // first (idempotent via the `Option::take`s).
+        if self.window.is_some() {
+            Editor::close(self);
+        }
         let (w, h) = self.size();
         // Drop any stale `set_size` that fired before this `open()`
         // so the next frame doesn't immediately re-resize the
@@ -1551,6 +1573,16 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         let parent_wrapper = crate::platform::ParentWindow(parent);
         let editor_addr = ptr::from_mut::<BuiltinEditor<P>>(self) as usize;
 
+        // Snapshot the frame rendered just above so the build closure -
+        // which baseview runs synchronously, while `self` is still
+        // mutably borrowed by this `open()` - can paint the first frame
+        // without reconstructing a second `&mut` to this editor through
+        // `editor_addr` (two live `&mut` to one object is UB). The raw
+        // pointer still travels into the handler for `on_frame`, which
+        // only deref's it after `open()` returns.
+        let initial_pixels: Option<Vec<u8>> = self.pixel_data().map(<[u8]>::to_vec);
+        let initial_src_width = self.pixel_width();
+
         // Shared backend cell: the editor keeps one Arc and baseview's
         // window handler gets the other. At close time the editor
         // takes the inner Option and drops it *before* asking baseview
@@ -1565,18 +1597,16 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             move |window: &mut baseview::Window| {
                 let backend = create_wgpu_backend(window, phys_w, phys_h);
 
-                // Render + present an initial frame synchronously, before
-                // baseview shows the window. Without this, the window briefly
+                // Present the initial frame synchronously, before baseview
+                // shows the window. Without this, the window briefly
                 // displays whatever garbage is in the surface buffer until the
                 // first `on_frame` tick - especially noticeable on VST2
                 // (Windows), where `effEditOpen` creates and shows the window
                 // in one call. On Windows the pump is still initializing here
                 // (`parts_mut` is `None`), so this paint is skipped and the
                 // dirty bit set at `open()` covers the first ready frame.
-                let editor = unsafe { &mut *(editor_addr as *mut BuiltinEditor<P>) };
-                editor.render();
                 let mut backend = backend;
-                if let Some(pixels) = editor.pixel_data()
+                if let Some(pixels) = initial_pixels.as_deref()
                     && let Some(backend) = backend.as_mut()
                 {
                     let client = backend.client.clone();
@@ -1588,7 +1618,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                             blit,
                             ..
                         } = parts;
-                        blit.update(queue, pixels);
+                        blit.update(queue, pixels, initial_src_width);
                         if let Some(frame) = client.try_take_frame() {
                             let view = frame
                                 .texture

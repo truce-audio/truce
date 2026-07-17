@@ -194,8 +194,16 @@ impl BlitPipeline {
         }
     }
 
-    /// Upload new pixel data (RGBA, 4 bytes per pixel).
-    pub fn update(&self, queue: &wgpu::Queue, rgba_pixels: &[u8]) {
+    /// Upload new pixel data (RGBA, 4 bytes per pixel). `src_width` is
+    /// the source pixmap's physical row width in pixels, which is *not*
+    /// always the texture width: an adapter caps the blit texture at
+    /// `max_texture_dimension_2d` while the CPU pixmap tracks the raw
+    /// physical size, so on a large / high-DPI editor the source rows
+    /// are wider than the texture. Using the true source stride copies
+    /// the texture-sized top-left region cleanly instead of reading
+    /// every row at the wrong offset (skewed garbage).
+    pub fn update(&self, queue: &wgpu::Queue, rgba_pixels: &[u8], src_width: u32) {
+        let src_width = src_width.max(self.width);
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -206,7 +214,7 @@ impl BlitPipeline {
             rgba_pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(self.width * 4),
+                bytes_per_row: Some(src_width * 4),
                 rows_per_image: None,
             },
             wgpu::Extent3d {
