@@ -2,6 +2,12 @@
 
 Notable changes per release.
 
+## 6.1.11
+
+- AU v2 SysEx input from the host (`MusicDeviceSysEx`, which a host may call off the render thread) no longer races the render thread and corrupts the event list; it is handed to the audio thread through a lock-free queue instead of mutating the render scratch directly.
+- AU render no longer allocates on the audio thread when a host renders more frames than it declared via `kAudioUnitProperty_MaximumFramesPerSlice`; the oversized block fails safe (zeroed output) instead of growing the scratch.
+- AU components now report the plugin's declared version instead of a hardcoded 1.0.0, so hosts (Logic, GarageBand) see a shipped update as new rather than reusing stale cached validation and metadata.
+
 ## 6.1.10
 
 - Audio-thread real-time safety: `#[persist]` state loads off the audio thread (no priority-inversion dropout), wider-than-stereo buses don't allocate on the first block, the transport slot's seqlock got its missing memory fences (Apple Silicon torn reads), and asymmetric buses and analyzer taps are handled correctly (`AudioBuffer::chunks_mut`, `AudioTap::drain_with`).
