@@ -50,6 +50,21 @@ impl FloatParam {
             "FloatParam range bounds must be finite and ordered (min <= max); \
              got [{lo}, {hi}] - check the `range = \"...\"` attribute"
         );
+        // Contain the default as `set_value` contains writes. A NaN or
+        // out-of-range default (a hand-rolled `FloatParam::new` caller -
+        // the derive rejects both at compile time) would otherwise ship
+        // DSP at a value the host can't display and mutate it on the first
+        // save/restore round-trip. debug_assert catches it in dev; release
+        // clamps for containment.
+        debug_assert!(
+            default.is_finite() && default >= lo.min(hi) && default <= lo.max(hi),
+            "FloatParam default {default} is outside range [{lo}, {hi}] or non-finite"
+        );
+        let default = if default.is_finite() {
+            default.clamp(lo.min(hi), lo.max(hi))
+        } else {
+            lo.min(hi)
+        };
         let smoother = Smoother::new(smoothing);
         smoother.snap(default);
         Self {

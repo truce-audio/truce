@@ -105,10 +105,30 @@ fn resolve_midi(
     Ok((wiring, midi2_in, midi2_out))
 }
 
+/// Validate 4-ASCII-byte fourccs for `plugin_info!`. `Some(message)` on
+/// the first bad code. `info::fourcc` asserts this at runtime (during the
+/// host scan), so an invalid code otherwise compiles clean and the plugin
+/// never loads in any DAW.
+fn fourcc_error(codes: &[(&str, &str)]) -> Option<String> {
+    for (label, code) in codes {
+        if code.len() != 4 || !code.is_ascii() {
+            return Some(format!(
+                "`{label}` must be exactly 4 ASCII characters (a VST3/AU fourcc); \
+                 got {code:?} ({} bytes)",
+                code.len(),
+            ));
+        }
+    }
+    None
+}
+
 // `au_name` / `au3_name` (and similar `vst2_name` / `vst3_name`)
 // mirror the user-facing truce.toml keys; renaming would break the
 // 1:1 with the TOML schema.
-#[allow(clippy::similar_names)]
+// Linear metadata assembly: one `let` per truce.toml field feeding a
+// single `PluginInfo` literal - splitting it would just thread the same
+// locals through helpers without aiding clarity.
+#[allow(clippy::similar_names, clippy::too_many_lines)]
 #[proc_macro]
 pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let (config, pkg_name, truce_toml_path) = match try_resolve_plugin() {
@@ -255,6 +275,18 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // have no other way to declare external file dependencies.
     // Path is canonicalized in `try_resolve_plugin` so the literal is
     // stable across invocations.
+    // `info::fourcc` asserts a 4-byte code at runtime - which fires when
+    // the host first scans the plugin, so a 3-char or non-ASCII code
+    // compiles clean and just never loads in any DAW. These are string
+    // literals here, so validate at expansion time.
+    if let Some(msg) = fourcc_error(&[
+        ("fourcc / au_subtype", resolved_fourcc.as_str()),
+        ("au_type", au_type),
+        ("vendor au_manufacturer", au_manufacturer.as_str()),
+    ]) {
+        return quote! { compile_error!(#msg); }.into();
+    }
+
     let truce_toml_lit = truce_toml_path.to_string_lossy().into_owned();
     let expanded = quote! {
         {
@@ -1283,6 +1315,83 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
     ))
 }
 
+/// The concrete `(min, max)` a range string spans, for expansion-time
+/// default validation. `None` when the bounds aren't statically known -
+/// a rangeless param, or an `enum(N)` whose count comes from a
+/// cross-crate sidecar rather than a literal.
+fn range_bounds(range: &str) -> Option<(f64, f64)> {
+    let range = range.trim();
+    if let Some(inner) = range
+        .strip_prefix("reversed(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        // Reversal flips only the mapping; the numeric bounds are the same.
+        return range_bounds(inner);
+    }
+    let leading_pair = |inner: &str| -> Option<(f64, f64)> {
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+        let lo = parts.first()?.parse::<f64>().ok()?;
+        let hi = parts.get(1)?.parse::<f64>().ok()?;
+        Some((lo.min(hi), lo.max(hi)))
+    };
+    for prefix in ["linear(", "log(", "skewed(", "sym_skewed("] {
+        if let Some(inner) = range.strip_prefix(prefix).and_then(|s| s.strip_suffix(')')) {
+            return leading_pair(inner);
+        }
+    }
+    if let Some(inner) = range
+        .strip_prefix("discrete(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+        let lo = parts.first()?.parse::<i64>().ok()?;
+        let hi = parts.get(1)?.parse::<i64>().ok()?;
+        #[allow(clippy::cast_precision_loss)]
+        return Some((lo.min(hi) as f64, lo.max(hi) as f64));
+    }
+    if let Some(inner) = range
+        .strip_prefix("enum(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let count = inner.trim().parse::<u32>().ok()?;
+        return (count >= 1).then(|| (0.0, f64::from(count - 1)));
+    }
+    None
+}
+
+/// Compile-time range-containment check for a field's default. `Some`
+/// message when the default (explicit, or the omitted `0.0` fallback)
+/// sits outside the declared range - which panics at instantiation for
+/// Int / Enum / Bool and ships mis-displayed DSP for Float. `None` for
+/// enum *path* defaults (in range by construction) and shapes whose
+/// bounds aren't statically known.
+fn default_range_error(f: &ParamField) -> Option<String> {
+    let a = &f.attrs;
+    if matches!(
+        a.default.as_ref(),
+        Some(DefaultExpr {
+            path_tokens: Some(_),
+            ..
+        })
+    ) {
+        return None;
+    }
+    let (lo, hi) = range_bounds(a.range.as_deref()?)?;
+    let effective = a.default.as_ref().map_or(0.0, |d| d.value);
+    if !effective.is_finite() || (effective >= lo && effective <= hi) {
+        return None;
+    }
+    let name = a.name.as_deref().unwrap_or("Unnamed");
+    Some(if a.default.is_some() {
+        format!("`{name}` default {effective} is outside its range [{lo}, {hi}]")
+    } else {
+        format!(
+            "`{name}` has no `default` and its range [{lo}, {hi}] doesn't contain 0.0 - \
+             add `default = <value in range>`"
+        )
+    })
+}
+
 /// Parse a unit string into `ParamUnit` tokens.
 fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
     match unit {
@@ -1322,7 +1431,17 @@ fn parse_flags_tokens(flags: &str) -> proc_macro2::TokenStream {
                 ::truce::params::ParamFlags::MODULATABLE
                     | ::truce::params::ParamFlags::MODULATABLE_PER_NOTE
             }),
-            _ => {}
+            // Tolerate empty segments (a trailing `|`); reject typos loudly
+            // like every sibling parser, so a `read_only` -> `readonly`
+            // slip can't silently ship an automatable "read-only" param.
+            "" => {}
+            other => {
+                let msg = format!(
+                    "unknown param flag `{other}` - supported: automatable, hidden, \
+                     readonly, bypass, modulatable, modulatable_per_note",
+                );
+                return quote! { compile_error!(#msg) };
+            }
         }
     }
     if parts.is_empty() {
@@ -1556,8 +1675,13 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
             _ => None,
         };
         if let Some(msg) = err {
-            return quote! { compile_error!(#msg); };
+            return quote! { compile_error!(#msg) };
         }
+    }
+
+    // Range containment - lands in `field: <expr>` position, so no `;`.
+    if let Some(msg) = default_range_error(f) {
+        return quote! { compile_error!(#msg) };
     }
 
     let Some(info) = gen_param_info_literal(f) else {
@@ -1567,7 +1691,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
         // between the two checks fails loudly instead of silently
         // emitting bad code.
         let msg = format!("invalid `#[param]` attributes on field `{name}`");
-        return quote! { compile_error!(#msg); };
+        return quote! { compile_error!(#msg) };
     };
 
     match f.kind {

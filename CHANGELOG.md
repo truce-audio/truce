@@ -14,6 +14,10 @@ Notable changes per release.
 - VST3 sample-accurate automation of `CHUNKED` params is no longer heard up to a buffer early: the shim stopped pre-committing each queue's end-of-block value before the sub-block chunker runs.
 - VST3 `getBusArrangement` reports canonical speaker arrangements (mono is `kMono`, 4ch is quad), so hosts and validators that compare arrangements no longer treat mono buses/sidechains as unsupported or mislabel channels.
 - `#[persist]` fields now load on the host thread instead of the audio thread, so a state recall can no longer block `process()` on a lock the editor holds (priority-inversion dropout).
+- `#[derive(Params)]` now rejects a default outside its declared range at compile time (explicit or the omitted 0.0 fallback), instead of panicking inside the DAW or shipping a mis-displayed value; hand-rolled `FloatParam::new` clamps in release.
+- A NaN normalized value from a buggy host no longer silently resets a discrete/bool param: `ParamRange::normalize`/`denormalize` collapse NaN to the range's low end.
+- `plugin_info!` rejects a non-4-ASCII `fourcc` / `au_type` / `au_manufacturer` at compile time (was a host-scan panic), and an unknown `flags = "..."` value is now a compile error rather than a silent fallback to automatable.
+- LV2 metadata for a `#[nested(base = N)]` group followed by an auto-based group now targets the same ids the live plugin uses (the emitter packed later groups from the explicit base instead of the running count); the missing-sidecar error also flags a `plugin!` placed above its params struct.
 
 ## 6.1.9
 

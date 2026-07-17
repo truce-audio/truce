@@ -330,9 +330,12 @@ fn aggregate(
     let content = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "no LV2 sidecar at {}: {e}. derive(Params) writes one for \
-             each Params struct during compile; missing it usually \
-             means the type lives in another crate (cross-crate \
-             #[nested] is unsupported).",
+             each Params struct during compile. Two common causes: the \
+             type lives in another crate (cross-crate #[nested] is \
+             unsupported), or the `truce::plugin!` invocation sits \
+             lexically *above* the `{struct_name}` struct - the derive \
+             hasn't written the sidecar yet when `plugin!` reads it (a \
+             clean-build-only failure). Move `plugin!` below the struct.",
             path.display()
         )
     })?;
@@ -402,7 +405,13 @@ fn aggregate(
                 ancestors,
             )?;
             let added = u32::try_from(params.len() - before).unwrap_or(0);
-            next_base = base + added;
+            // Runtime `offset_ids` packs each auto group at `own_count + Σ
+            // count(previous nested)` - it sums the previous groups' sizes
+            // and ignores their explicit bases. Accumulate `added` from the
+            // running total (not `base + added`), or an explicit `base` on
+            // an earlier group would shift every later auto group's ids away
+            // from where the live plugin puts them.
+            next_base += added;
         }
     }
     ancestors.remove(struct_name);
