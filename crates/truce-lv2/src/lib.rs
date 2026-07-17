@@ -475,6 +475,23 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
     });
 }
 
+/// Reset every output atom port to an empty, well-formed sequence.
+/// Hosts pre-set each output atom port's `atom.size` to the buffer
+/// capacity before `run()`; any path that skips the real encoders (a
+/// zero-length block, a caught panic) must call this so the host
+/// doesn't parse capacity bytes of stale buffer as events.
+///
+/// # Safety
+/// `inst` must be a valid `Lv2Instance<P>`.
+unsafe fn reset_atom_out_ports<P: PluginExport>(inst: &Lv2Instance<P>) {
+    unsafe {
+        for &out_ptr in &inst.midi_out_ports {
+            atom::write_empty_sequence(out_ptr, &inst.urid_map);
+        }
+        atom::write_empty_sequence(inst.notify_out_port, &inst.urid_map);
+    }
+}
+
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer with port connections
 /// established by prior calls to `connect_port()`. Audio and control port
@@ -485,6 +502,10 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
     let ok = run_audio_block::<P>("LV2", || unsafe {
         let inst = &mut *handle;
         if n == 0 {
+            // Hosts may legally call run(0). Output atom ports still
+            // advertise capacity, so refresh them to empty sequences
+            // before bailing.
+            reset_atom_out_ports::<P>(inst);
             return;
         }
         if n > inst.max_block_size {
@@ -774,6 +795,9 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                     std::ptr::write_bytes(ptr, 0, n);
                 }
             }
+            // The encoders never ran, so output atom ports still hold
+            // stale bytes under a capacity-sized `atom.size` - reset them.
+            reset_atom_out_ports::<P>(inst);
         }
     }
 }

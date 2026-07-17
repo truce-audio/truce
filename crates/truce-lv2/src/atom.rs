@@ -446,6 +446,28 @@ unsafe fn sequence_event_capacity(out: *const AtomSequence) -> usize {
     total.saturating_sub(core::mem::size_of::<Atom>() + core::mem::size_of::<AtomSequenceBody>())
 }
 
+/// Reset an output atom port to a well-formed, zero-event sequence.
+/// Hosts set an output port's `atom.size` to the buffer capacity before
+/// `run()`; a plugin that returns without writing would leave the host
+/// parsing capacity bytes of stale buffer as events. Every path that
+/// skips the real encoders must call this so the port advertises an
+/// empty sequence instead.
+///
+/// # Safety
+/// `out` must be null or a writable atom sequence of at least
+/// `size_of::<AtomSequence>()` bytes.
+pub unsafe fn write_empty_sequence(out: *mut AtomSequence, urid: &UridMap) {
+    if out.is_null() {
+        return;
+    }
+    unsafe {
+        (*out).atom.type_ = urid.atom_sequence;
+        (*out).atom.size = len_u32(core::mem::size_of::<AtomSequenceBody>());
+        (*out).body.unit = 0;
+        (*out).body.pad = 0;
+    }
+}
+
 /// Overwrite the port's sequence body with the events destined for
 /// MIDI output port `port`, setting the header/atom sizes so the host
 /// knows how many bytes to read. `port_count` is the plugin's declared
@@ -464,7 +486,11 @@ pub unsafe fn write_midi_out_sequence(
     port_count: u8,
 ) {
     unsafe {
-        if out.is_null() || urid.midi_event == 0 {
+        if urid.midi_event == 0 {
+            // Host without urid:map can't get encoded MIDI atoms, but
+            // the port still advertises capacity - reset it to empty so
+            // the host doesn't read stale bytes as events.
+            write_empty_sequence(out, urid);
             return;
         }
         // On entry `atom.size` is the whole output buffer's capacity
@@ -620,7 +646,11 @@ pub unsafe fn write_time_position_sequence(
     urid: &UridMap,
 ) {
     unsafe {
-        if out.is_null() || urid.time_position == 0 || urid.atom_object == 0 {
+        if urid.time_position == 0 || urid.atom_object == 0 {
+            // No urid:map for the object/property types - reset the
+            // notify port to empty so the host doesn't read the stale
+            // capacity-sized buffer as events.
+            write_empty_sequence(out, urid);
             return;
         }
         // Bytes for the object after the two fixed headers `body_start`
@@ -769,7 +799,11 @@ pub unsafe fn write_time_position_sequence(
             // for the worst case (~150B for this object) so we
             // shouldn't hit this in practice - but the bail makes the
             // wire format strictly correct rather than relying on the
-            // size declaration.
+            // size declaration. Publish an empty sequence: the host set
+            // `atom.size` to the buffer capacity before `run()`, and a
+            // partial event header sits in the body, so leaving it as-is
+            // would make the host parse capacity bytes of garbage.
+            (*out).atom.size = len_u32(body_header);
             return;
         }
 
@@ -1303,5 +1337,67 @@ mod tests {
             core::mem::size_of::<AtomSequenceBody>() + fit * midi_padded,
             "atom.size reports the body it actually wrote"
         );
+    }
+
+    #[test]
+    fn time_position_bail_resets_size_to_empty_sequence() {
+        // A notify buffer too small for the whole object must not leave
+        // `atom.size` at the host-set capacity - the host would then walk
+        // capacity bytes of stale buffer as a sequence. The bail resets it
+        // to an empty (zero-event) sequence.
+        let urid = test_urid_map();
+        let cap = 40usize; // room for the event header but not every property
+        let mut buf = vec![0xAAu8; 256];
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+        unsafe {
+            (*seq).atom.size = len_u32(cap);
+        }
+
+        let info = TransportInfo {
+            playing: true,
+            tempo: 120.0,
+            ..TransportInfo::default()
+        };
+        unsafe {
+            write_time_position_sequence(seq, &info, &urid);
+        }
+
+        let reported = unsafe { (*seq).atom.size } as usize;
+        assert_eq!(
+            reported,
+            core::mem::size_of::<AtomSequenceBody>(),
+            "bail must advertise an empty sequence, not the host capacity"
+        );
+    }
+
+    #[test]
+    fn writers_reset_size_when_urid_map_absent() {
+        // A host without urid:map instantiates against a TTL that declares
+        // no required urid:map feature. All URIDs are 0; the writers can't
+        // encode, but they must still reset the port from capacity to empty.
+        let urid = UridMap::default();
+        for cap in [16usize, 4096] {
+            let mut buf = vec![0xAAu8; 8192];
+            let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+            unsafe {
+                (*seq).atom.size = len_u32(cap);
+                write_midi_out_sequence(seq, &EventList::with_capacity(1), &urid, 0, 1);
+            }
+            assert_eq!(
+                unsafe { (*seq).atom.size } as usize,
+                core::mem::size_of::<AtomSequenceBody>(),
+                "midi writer must reset the port to empty without a urid:map"
+            );
+
+            unsafe {
+                (*seq).atom.size = len_u32(cap);
+                write_time_position_sequence(seq, &TransportInfo::default(), &urid);
+            }
+            assert_eq!(
+                unsafe { (*seq).atom.size } as usize,
+                core::mem::size_of::<AtomSequenceBody>(),
+                "time:Position writer must reset the port to empty without a urid:map"
+            );
+        }
     }
 }
