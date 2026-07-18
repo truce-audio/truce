@@ -208,6 +208,29 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     check_cmd("auval", &[OsStr::new("-h")], "auval");
     check_which_with_env("pluginval", Some("PLUGINVAL"));
     check_which_with_env("clap-validator", Some("CLAP_VALIDATOR"));
+    // AAX validators (macOS / Windows). The Avid AAX Plug-In Validator
+    // (DigiShell `dsh`, via AAX_VALIDATOR) is the full spec suite that
+    // `--aax` prefers; `pluginrunner` is the load-check fallback. Both are
+    // optional developer tools.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        match crate::commands::validate::find_aax_validator() {
+            Some(p) => eprintln!("    {} AAX Plug-In Validator at {p}", tag_ok()),
+            None => eprintln!(
+                "    {} AAX Plug-In Validator: not configured (set AAX_VALIDATOR to its `dsh` \
+                 path, e.g. in .cargo/config.toml [env], for full `--aax` validation)",
+                tag_warn()
+            ),
+        }
+        match crate::commands::validate::find_pluginrunner() {
+            Some(p) => eprintln!("    {} pluginrunner: {p}", tag_ok()),
+            None => eprintln!(
+                "    {} pluginrunner: not found (Pro Tools Developer / $PLUGINRUNNER) - \
+                 AAX load-check fallback unavailable",
+                tag_warn()
+            ),
+        }
+    }
 
     // Configuration
     eprintln!();

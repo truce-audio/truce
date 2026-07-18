@@ -7,6 +7,7 @@ Notable changes per release.
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
 - VST2: the effect-name / param-name / param-label opcodes copy no more than the VST2 spec buffer sizes, fixing a write past a host scanner's stack buffer on plugin scan.
 - VST2: plugins now load on Linux (and windows-gnu) - the `VSTPluginMain` entry is a Rust trampoline, so it's no longer demoted to a local symbol that `dlsym` can't find.
+- `cargo truce validate --aax` runs Avid's full AAX Plug-In Validator when `AAX_VALIDATOR` points at its `dsh`, selectable via `--aax-tests load|fast|full|required|info` (`load` forces the lightweight pluginrunner check); without `AAX_VALIDATOR` it falls back to pluginrunner. `cargo truce doctor` reports both tools' availability.
 
 ## 6.2.1
 
