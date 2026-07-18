@@ -1,14 +1,15 @@
 /**
  * VST2 binary smoke validator.
  *
- * Loads the compiled VST2 dylib via dlopen, calls VSTPluginMain,
- * and verifies the AEffect struct fields. Driven by
- * `cargo truce validate --vst2` (see truce-xtask/src/commands/validate.rs).
+ * Loads the compiled VST2 shared library via dlopen, resolves and calls
+ * VSTPluginMain, and verifies the AEffect struct fields. Driven by the
+ * `binary_smoke` integration test (crates/truce-vst2/tests/binary_smoke.rs),
+ * which runs it on macOS and Linux.
  *
  * Build: cc -o binary_smoke crates/truce-vst2/validate/binary_smoke.c -ldl
- * Run:   ./binary_smoke target/release/libtruce_example_gain.dylib
- *        ./binary_smoke target/release/libtruce_example_synth.dylib    --synth
- *        ./binary_smoke target/release/libtruce_example_arpeggio.dylib --midi-effect
+ * Run:   ./binary_smoke target/release/libtruce_example_gain.dylib   (.so on Linux)
+ *        ./binary_smoke target/release/libtruce_example_synth.so    --synth
+ *        ./binary_smoke target/release/libtruce_example_arpeggio.so --midi-effect
  *
  * Plugin kinds:
  *   default          stereo audio in/out, not a synth
@@ -147,6 +148,28 @@ int main(int argc, char** argv) {
     effect->dispatcher(effect, effGetVendorString, 0, 0, vendor, 0);
     CHECK(strlen(vendor) > 0, "effGetVendorString returns non-empty");
     printf("    vendor: %s\n", vendor);
+
+    /* String-opcode buffer bounds. The host sizes these buffers at the
+     * VST2 spec maxima; strncpy zero-pads to its count, so an oversized
+     * count writes past the buffer even for a short string (a real host
+     * scanner's char[32] gets its stack canary clobbered). Fill an
+     * oversized buffer with a sentinel, ask the shim to fill only the
+     * spec-sized head, and assert the tail past the spec size is
+     * untouched. */
+    struct { int32_t opcode; int32_t spec; const char* label; } str_ops[] = {
+        { effGetEffectName, 32, "effGetEffectName within kVstMaxEffectNameLen (32)" },
+        { effGetParamName,   8, "effGetParamName within kVstMaxParamStrLen (8)" },
+        { effGetParamLabel,  8, "effGetParamLabel within kVstMaxParamStrLen (8)" },
+    };
+    for (size_t s = 0; s < sizeof(str_ops) / sizeof(str_ops[0]); s++) {
+        char buf[96];
+        memset(buf, 0x7E, sizeof(buf));
+        effect->dispatcher(effect, str_ops[s].opcode, 0, 0, buf, 0);
+        int within = 1;
+        for (size_t i = (size_t)str_ops[s].spec; i < sizeof(buf); i++)
+            if ((unsigned char)buf[i] != 0x7E) { within = 0; break; }
+        CHECK(within, str_ops[s].label);
+    }
 
     /* Process audio */
     float inL[512] = {}, inR[512] = {};

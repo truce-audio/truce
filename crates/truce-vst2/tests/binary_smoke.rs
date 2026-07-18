@@ -3,10 +3,13 @@
 //! Builds `truce-example-block-gain` with the VST2 feature enabled,
 //! compiles the C smoke harness at
 //! `crates/truce-vst2/validate/binary_smoke.c`, and runs the harness
-//! against the resulting `.dylib`. The harness exits 0 on success and
-//! non-zero on any `AEffect`-surface assertion failure (magic, I/O
+//! against the resulting shared library. The harness exits 0 on success
+//! and non-zero on any `AEffect`-surface assertion failure (magic, I/O
 //! channel counts, flags, processReplacing output, state
-//! save/load, ...).
+//! save/load, ...) - and, load-bearing for the entry point, it
+//! `dlsym`s `VSTPluginMain`, so a plugin that fails to export it
+//! (the Linux-only failure mode when the entry isn't a Rust symbol)
+//! fails the test.
 //!
 //! Previously this lived under `cargo truce validate --vst2`, but the
 //! C source and the per-plugin loop are framework-internal: a
@@ -16,13 +19,25 @@
 //! runs in this repo's CI alongside every other workspace test and
 //! disappears from the plugin-author-facing CLI surface.
 //!
-//! `dlfcn.h` + the `.dylib` extension keep this macOS-only; that
-//! matches the C harness's own assumptions.
+//! Unix-only: the harness uses `dlfcn.h` (dlopen/dlsym), which covers
+//! macOS and Linux. Windows would need a separate `LoadLibrary` /
+//! `GetProcAddress` harness.
 
-#![cfg(target_os = "macos")]
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// The cdylib file name for `crate_name` on this platform: `lib<c>.dylib`
+/// on macOS, `lib<c>.so` on Linux / other unix.
+fn cdylib_name(crate_name: &str) -> String {
+    let ext = if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+    format!("lib{crate_name}.{ext}")
+}
 
 /// Resolve the workspace root from `CARGO_MANIFEST_DIR` (this crate is
 /// at `<root>/crates/truce-vst2`).
@@ -65,10 +80,10 @@ fn block_gain_vst2_binary_smoke() {
     assert!(cargo_status.success(), "cargo build for block-gain failed");
 
     let target_dir = root.join("target/release");
-    let dylib = target_dir.join("libtruce_example_block_gain.dylib");
+    let dylib = target_dir.join(cdylib_name("truce_example_block_gain"));
     assert!(
         dylib.exists(),
-        "VST2 dylib not produced at {}",
+        "VST2 shared library not produced at {}",
         dylib.display()
     );
 

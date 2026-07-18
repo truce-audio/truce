@@ -5,6 +5,8 @@ Notable changes per release.
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
+- VST2: the effect-name / param-name / param-label opcodes copy no more than the VST2 spec buffer sizes, fixing a write past a host scanner's stack buffer on plugin scan.
+- VST2: plugins now load on Linux (and windows-gnu) - the `VSTPluginMain` entry is a Rust trampoline, so it's no longer demoted to a local symbol that `dlsym` can't find.
 
 ## 6.2.1
 

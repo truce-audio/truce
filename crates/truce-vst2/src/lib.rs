@@ -181,6 +181,26 @@ unsafe extern "C" {
     fn truce_vst2_host_automate(effect: *mut std::ffi::c_void, param_id: u32, normalized: f32);
     fn truce_vst2_host_end_edit(effect: *mut std::ffi::c_void, param_id: u32);
     fn truce_vst2_host_get_time(effect: *mut std::ffi::c_void, out: *mut Vst2TransportSnapshot);
+    // The C shim's core entry (vst2_shim.c). `host` is the host's
+    // `audioMasterCallback`; the return is the `AEffect*`. Both are plain
+    // pointers at the ABI, so `*mut c_void` matches without redeclaring the
+    // VST2 structs here.
+    fn truce_vst2_entry(host: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+}
+
+/// The VST2 entry, called by the `#[no_mangle]` `VSTPluginMain` trampoline
+/// that [`export_vst2!`] emits in the plugin's cdylib. Routing the public
+/// entry through a Rust symbol is what makes it visible to the host on
+/// Linux (rustc's cdylib link demotes the C `VSTPluginMain` to local).
+///
+/// # Safety
+/// `host` must be the host's `audioMasterCallback` (or null); the returned
+/// pointer is the plugin's `AEffect*`, owned by the shim.
+#[doc(hidden)]
+#[must_use]
+pub unsafe fn vst2_entry(host: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
+    // SAFETY: forwards the host callback pointer straight to the C shim.
+    unsafe { truce_vst2_entry(host) }
 }
 
 /// FFI-compatible snapshot filled by `truce_vst2_host_get_time`. Layout
@@ -1428,9 +1448,9 @@ macro_rules! export_vst2 {
         mod _vst2_entry {
             use super::*;
 
-            // Register the plugin when the library is loaded.
-            // VSTPluginMain (in vst2_shim.c) checks g_vst2_callbacks
-            // so registration must happen before the host calls it.
+            // Register the plugin when the library is loaded. The entry
+            // below checks g_vst2_callbacks, so registration must happen
+            // before the host calls it.
             #[used]
             #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
             #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
@@ -1441,6 +1461,19 @@ macro_rules! export_vst2 {
                 }
                 init
             };
+
+            // The host's entry point. A `#[no_mangle]` Rust symbol so it
+            // survives rustc's cdylib link on every platform - a C
+            // `VSTPluginMain` is demoted to local visibility on Linux and
+            // never resolves via `dlsym`. Forwards to the C shim's core
+            // entry (see `truce_vst2::vst2_entry`).
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn VSTPluginMain(
+                host: *mut ::core::ffi::c_void,
+            ) -> *mut ::core::ffi::c_void {
+                // SAFETY: the host passes its `audioMasterCallback` (or null).
+                unsafe { ::truce_vst2::vst2_entry(host) }
+            }
         }
     };
 }

@@ -11,11 +11,16 @@
 #include <stdio.h>
 #include <stddef.h>
 
-#ifdef _MSC_VER
-#define VST2_EXPORT __declspec(dllexport)
-#else
-#define VST2_EXPORT __attribute__((visibility("default")))
-#endif
+/* VST 2.4 host string-buffer sizes (aeffectx.h kVstMax*). The host sizes
+ * each of these buffers exactly; `strncpy(dst, src, n)` zero-pads to the
+ * full `n`, so copying with an `n` larger than the buffer writes past its
+ * end even for a short string (a host scanner's stack canary / adjacent
+ * locals get clobbered). Never copy more than the documented size. */
+#define VST2_MAX_PARAM_STR_LEN   8  /* effGetParamName / ParamLabel / ParamDisplay */
+#define VST2_MAX_PROG_NAME_LEN   24 /* effGetProgramName */
+#define VST2_MAX_VENDOR_STR_LEN  64 /* effGetVendorString */
+#define VST2_MAX_PRODUCT_STR_LEN 64 /* effGetProductString */
+#define VST2_MAX_EFFECT_NAME_LEN 32 /* effGetEffectName */
 
 /* Globals populated by truce_vst2_register() from Rust. */
 const Vst2PluginDescriptor* g_vst2_descriptor = NULL;
@@ -199,15 +204,15 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
 
         case effGetParamName: {
             if (!ptr || (uint32_t)index >= g_vst2_num_params) return 0;
-            strncpy((char*)ptr, g_vst2_params[index].name, 32);
-            ((char*)ptr)[31] = 0;
+            strncpy((char*)ptr, g_vst2_params[index].name, VST2_MAX_PARAM_STR_LEN);
+            ((char*)ptr)[VST2_MAX_PARAM_STR_LEN - 1] = 0;
             return 0;
         }
 
         case effGetParamLabel: {
             if (!ptr || (uint32_t)index >= g_vst2_num_params) return 0;
-            strncpy((char*)ptr, g_vst2_params[index].unit, 16);
-            ((char*)ptr)[15] = 0;
+            strncpy((char*)ptr, g_vst2_params[index].unit, VST2_MAX_PARAM_STR_LEN);
+            ((char*)ptr)[VST2_MAX_PARAM_STR_LEN - 1] = 0;
             return 0;
         }
 
@@ -222,14 +227,14 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
 
         case effGetProductString:
             if (!ptr || !g_vst2_descriptor) return 0;
-            strncpy((char*)ptr, g_vst2_descriptor->name, 64);
-            ((char*)ptr)[63] = 0;
+            strncpy((char*)ptr, g_vst2_descriptor->name, VST2_MAX_PRODUCT_STR_LEN);
+            ((char*)ptr)[VST2_MAX_PRODUCT_STR_LEN - 1] = 0;
             return 1;
 
         case effGetVendorString:
             if (!ptr || !g_vst2_descriptor) return 0;
-            strncpy((char*)ptr, g_vst2_descriptor->vendor, 64);
-            ((char*)ptr)[63] = 0;
+            strncpy((char*)ptr, g_vst2_descriptor->vendor, VST2_MAX_VENDOR_STR_LEN);
+            ((char*)ptr)[VST2_MAX_VENDOR_STR_LEN - 1] = 0;
             return 1;
 
         case effGetVendorVersion:
@@ -237,16 +242,16 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
 
         case effGetEffectName:
             if (!ptr || !g_vst2_descriptor) return 0;
-            strncpy((char*)ptr, g_vst2_descriptor->name, 64);
-            ((char*)ptr)[63] = 0;
+            strncpy((char*)ptr, g_vst2_descriptor->name, VST2_MAX_EFFECT_NAME_LEN);
+            ((char*)ptr)[VST2_MAX_EFFECT_NAME_LEN - 1] = 0;
             return 1;
 
         case effGetProgramName:
             /* One default program; name it after the plugin so a host's
              * program slot isn't blank. */
             if (!ptr || !g_vst2_descriptor) return 0;
-            strncpy((char*)ptr, g_vst2_descriptor->name, 24);
-            ((char*)ptr)[23] = 0;
+            strncpy((char*)ptr, g_vst2_descriptor->name, VST2_MAX_PROG_NAME_LEN);
+            ((char*)ptr)[VST2_MAX_PROG_NAME_LEN - 1] = 0;
             return 1;
 
         case effGetPlugCategory:
@@ -294,8 +299,10 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             memset(props, 0, sizeof(*props));
             snprintf(props->label, sizeof(props->label), "%s %u",
                      isSidechain ? "Sidechain" : "Input", local + 1);
+            /* shortLabel is 8 bytes; bound the index so the formatter
+             * provably fits (channel counts never approach 4 digits). */
             snprintf(props->shortLabel, sizeof(props->shortLabel), "%s%u",
-                     isSidechain ? "SC" : "In", local + 1);
+                     isSidechain ? "SC" : "In", (local + 1) % 10000u);
             props->flags = kVstPinIsActive;
             /* Flag the lead channel of each stereo pair within its group. */
             if ((local % 2) == 0 && local + 1 < groupWidth)
@@ -312,7 +319,8 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             uint32_t local = (uint32_t)index;
             memset(props, 0, sizeof(*props));
             snprintf(props->label, sizeof(props->label), "Output %u", local + 1);
-            snprintf(props->shortLabel, sizeof(props->shortLabel), "Out%u", local + 1);
+            /* shortLabel is 8 bytes; bound the index so the formatter fits. */
+            snprintf(props->shortLabel, sizeof(props->shortLabel), "Out%u", (local + 1) % 10000u);
             props->flags = kVstPinIsActive;
             if ((local % 2) == 0 && local + 1 < total)
                 props->flags |= kVstPinIsStereo;
@@ -729,11 +737,15 @@ static void processDoubleReplacing(AEffect* e, double** inputs, double** outputs
  * Entry point
  * --------------------------------------------------------------------------- */
 
-VST2_EXPORT
-AEffect* VSTPluginMain(audioMasterCallback audioMaster);
+/* Core entry. The public `VSTPluginMain` the host looks up is a
+ * `#[no_mangle]` Rust trampoline (see `export_vst2!`) that calls this:
+ * rustc's cdylib link exports Rust symbols but demotes a C symbol like
+ * `VSTPluginMain` to local visibility on Linux (`nm -D` can't see it, so
+ * every host's `dlsym` returns NULL). Routing through a Rust symbol makes
+ * the entry visible on every platform without per-linker export flags. */
+AEffect* truce_vst2_entry(audioMasterCallback audioMaster);
 
-VST2_EXPORT
-AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
+AEffect* truce_vst2_entry(audioMasterCallback audioMaster) {
     /* Check host VST version */
     if (audioMaster) {
         VstIntPtr hostVer = audioMaster(NULL, audioMasterVersion, 0, 0, NULL, 0.0f);
@@ -791,10 +803,4 @@ AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
     inst->block_size = 1024;
 
     return &inst->effect;
-}
-
-/* Also export as 'main' for some hosts */
-VST2_EXPORT
-AEffect* main_macho(audioMasterCallback audioMaster) {
-    return VSTPluginMain(audioMaster);
 }
