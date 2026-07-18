@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.3.0
+
+- Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
+
 ## 6.2.1
 
 - AU: the oversized-block fail-safe and the not-yet-prepared bail no longer re-deliver the previous block's MIDI/SysEx output (duplicated note-ons, stuck notes); both clear the output events and reset the drain cursor before returning.
