@@ -38,6 +38,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
     let mut targets: Vec<String> = Vec::new();
     let mut user_features: Vec<String> = Vec::new();
+    let mut no_default_features = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -66,6 +67,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                     "--features",
                 )?)?);
             }
+            "--no-default-features" => no_default_features = true,
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
@@ -120,6 +122,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // Extra Cargo features apply to every underlying build in this
     // invocation via the global read by `apply_extra_features`.
     crate::set_extra_features(user_features);
+    // `--no-default-features` opts out of re-adding each plugin's
+    // non-format default features (e.g. `ara`) to the per-format builds.
+    crate::set_no_default_features(no_default_features);
 
     // AU v3 + shell is unreliable due to the appex sandbox. Same
     // warning as `cargo truce install --shell --au3`.
@@ -440,6 +445,11 @@ Options:
                    Additive, applied to every underlying build. Format
                    features (clap/vst3/...) are reserved - use the format
                    flags instead.
+  --no-default-features
+                   Don't re-add the plugin's non-format default features
+                   (e.g. ara) to each per-format build. By default a
+                   format build keeps them (only the other formats are
+                   stripped).
   --debug          Cargo dev profile (faster compile, slower DSP)
   --target-cpu <value>
                    Override the x86_64 default. Accepted values:

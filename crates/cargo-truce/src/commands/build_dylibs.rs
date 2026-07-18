@@ -162,9 +162,18 @@ pub(crate) fn build_format_dylibs(
         crate::vprintln!("Building {} ({extras})...", format.label());
     }
 
-    let mut format_features: Vec<&str> = vec![format.feature()];
-    format_features.extend_from_slice(extra_features);
-    let combined = format_features.join(",");
+    // Base features for every build in this format: the format itself plus
+    // any caller extras (`shell`). Each build also re-adds its plugins'
+    // non-format default features (e.g. `ara`) that `--no-default-features`
+    // would otherwise strip - namespaced per plugin, so it's appended per
+    // cargo invocation below.
+    let mut base_features: Vec<String> = vec![format.feature().to_string()];
+    base_features.extend(extra_features.iter().map(|s| (*s).to_string()));
+    let features_with = |crate_names: &[&str]| -> String {
+        let mut feats = base_features.clone();
+        feats.extend(crate::namespaced_nonformat_defaults(root, crate_names));
+        feats.join(",")
+    };
 
     // AU v2 needs a per-plugin `TRUCE_AU_PLUGIN_ID` env so each
     // dylib's cocoa-view class lands in `__objc_classlist` under a
@@ -185,7 +194,8 @@ pub(crate) fn build_format_dylibs(
         }
         cargo_args.push("--no-default-features".into());
         cargo_args.push("--features".into());
-        cargo_args.push(combined.clone());
+        let names: Vec<&str> = plugins.iter().map(|p| p.crate_name.as_str()).collect();
+        cargo_args.push(features_with(&names));
         if let Some(t) = target {
             cargo_args.push("--target".into());
             cargo_args.push(t.into());
@@ -200,7 +210,7 @@ pub(crate) fn build_format_dylibs(
             cargo_args.push(p.crate_name.clone());
             cargo_args.push("--no-default-features".into());
             cargo_args.push("--features".into());
-            cargo_args.push(combined.clone());
+            cargo_args.push(features_with(&[p.crate_name.as_str()]));
             if let Some(t) = target {
                 cargo_args.push("--target".into());
                 cargo_args.push(t.into());

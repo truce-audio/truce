@@ -1187,6 +1187,12 @@ fn cargo_build_ios(crate_name: &str, target: IosTarget) -> Res {
         "--features",
         "au",
     ]);
+    // The plugin's non-format default features (e.g. `ara`), which
+    // `--no-default-features` would strip. Merges with `--features au`.
+    let defaults = crate::namespaced_nonformat_defaults(&crate::project_root(), &[crate_name]);
+    if !defaults.is_empty() {
+        cmd.arg("--features").arg(defaults.join(","));
+    }
     // Additive; merges with `--features au` above.
     crate::apply_extra_features(&mut cmd);
     let status = cmd.status().map_err(|e| format!("cargo build: {e}"))?;

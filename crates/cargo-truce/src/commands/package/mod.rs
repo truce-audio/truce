@@ -100,20 +100,28 @@ impl SuiteSelection {
 /// return `(features, remaining_args)`. Kept separate from the per-OS
 /// arg parsers so they never see the flag; the features flow to the
 /// builds via the invocation global instead.
-fn extract_features_arg(args: &[String]) -> Result<(Vec<String>, Vec<String>), CargoTruceError> {
+/// Pull the invocation-global feature flags out of the raw args: the
+/// `--features` list and whether `--no-default-features` was passed.
+/// Returns them plus the remaining args for the per-OS parsers.
+fn extract_features_arg(
+    args: &[String],
+) -> Result<(Vec<String>, bool, Vec<String>), CargoTruceError> {
     let mut features = Vec::new();
+    let mut no_default_features = false;
     let mut rest = Vec::with_capacity(args.len());
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--features" {
             let value = crate::util::arg_value(args, &mut i, "--features")?;
             features.extend(crate::parse_extra_features(value)?);
+        } else if args[i] == "--no-default-features" {
+            no_default_features = true;
         } else {
             rest.push(args[i].clone());
         }
         i += 1;
     }
-    Ok((features, rest))
+    Ok((features, no_default_features, rest))
 }
 
 pub(crate) fn extract_suite_selection(
@@ -405,8 +413,11 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     // Pull `--features` out first and set the invocation global, so it
     // reaches every build the fan-out spawns (iOS, per-OS, universal)
     // via `apply_extra_features` without each per-OS parser handling it.
-    let (user_features, args) = extract_features_arg(args)?;
+    let (user_features, no_default_features, args) = extract_features_arg(args)?;
     crate::set_extra_features(user_features);
+    // `--no-default-features` opts out of re-adding each plugin's
+    // non-format default features (e.g. `ara`) to the per-format builds.
+    crate::set_no_default_features(no_default_features);
     // iOS short-circuit: AU v3 inside an `.ipa` is the only viable
     // iOS distribution shape and doesn't share any of the macOS /
     // Windows / Linux packaging pipeline (no productbuild, no Inno
@@ -534,6 +545,9 @@ Format selection:
                        comma/space-separated. Additive, applied to every
                        underlying build. Format features are reserved -
                        use --formats.
+  --no-default-features
+                       Don't re-add the plugin's non-format default
+                       features (e.g. ara) to each per-format build.
 
 Install scope (where the resulting installer puts files at the end user's machine):
   --ask                End user picks at install time. Default.
