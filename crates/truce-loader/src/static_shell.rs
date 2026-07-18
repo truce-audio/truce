@@ -135,6 +135,12 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
     pub fn state_ref_mut(&mut self) -> &mut L::DspState {
         &mut self.state
     }
+
+    /// Disjoint mutable DSP state + read-only params, for the ARA render
+    /// path (which needs both at once).
+    pub fn state_and_params(&mut self) -> (&mut L::DspState, &P) {
+        (&mut self.state, &self.params)
+    }
 }
 
 impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static, S: Sample>
@@ -429,6 +435,34 @@ macro_rules! export_static {
                 context: &mut $crate::__macro_deps::truce_core::process::ProcessContext,
             ) -> $crate::__macro_deps::truce_core::process::ProcessStatus {
                 self.inner.process(buffer, events, context)
+            }
+
+            // ARA playback render: route to the plug-in's `render_regions`
+            // using the shell's live DSP state + params. Emitted only under
+            // the plug-in's `ara` feature, where `$logic: truce_ara::AraPlugin`.
+            #[cfg(feature = "ara")]
+            #[allow(unexpected_cfgs)]
+            fn ara_render(
+                &mut self,
+                renderer: *mut ::core::ffi::c_void,
+                buffer: &mut $crate::__macro_deps::truce_core::buffer::AudioBuffer<Sample>,
+                context: &mut $crate::__macro_deps::truce_core::process::ProcessContext,
+            ) -> $crate::__macro_deps::truce_core::process::ProcessStatus {
+                // SAFETY: `renderer` is the `PlaybackRenderer` this instance
+                // handed the host via the playback-renderer role; it lives
+                // as long as the instance.
+                let renderer =
+                    unsafe { &mut *renderer.cast::<::truce_ara::PlaybackRenderer>() };
+                let ara_ctx = ::truce_ara::AraRenderContext {
+                    transport: context.transport,
+                    sample_rate: context.sample_rate,
+                    block_size: context.block_size,
+                    // Filled in by the renderer, which knows the instance's
+                    // assigned roles; this placeholder is overwritten there.
+                    roles: 0,
+                };
+                let (state, params) = self.inner.state_and_params();
+                renderer.render::<$logic>(state, params, buffer, &ara_ctx)
             }
 
             fn save_state(&self) -> Vec<u8> {

@@ -88,6 +88,17 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 ios_url = "https://truce.audio/"
 
+# Minimal ARA (Audio Random Access) plug-in: opts into ARA discovery and
+# works as a normal passthrough insert when the host has no ARA.
+# See examples/truce-example-ara-passthrough/src/lib.rs.
+[[plugin]]
+name = "Truce ARA Passthrough"
+bundle_id = "ara-passthrough"
+crate = "truce-example-ara-passthrough"
+category = "effect"
+fourcc = "TAra"
+ara = "supported"
+
 # Gain demonstrating the experimental (not recommended) zero-copy
 # in-place buffer path. See examples/truce-example-gain-inplace/src/lib.rs.
 [[plugin]]

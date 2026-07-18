@@ -8,9 +8,17 @@ license.workspace = true
 rust-version.workspace = true
 description = "VST3 format wrapper for truce (C++ shim)"
 
+[features]
+# ARA (Audio Random Access) discovery + binding. Enabling it pulls in
+# truce-ara so the shim can expose the ARA main-factory class and answer
+# IPlugInEntryPoint2; the plugin type passed to `export_vst3!` must
+# implement `truce_ara::AraExport`.
+ara = ["dep:truce-ara"]
+
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }
+truce-ara = { workspace = true, optional = true }
 # Wait-free bounded queue for the host/editor → audio state-load
 # handoff so the audio thread is the only one that ever holds
 # `&mut Plugin`.

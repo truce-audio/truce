@@ -21,6 +21,49 @@
 // under dense per-block automation.
 #define AU_PARAM_EVENT_CAP 512
 
+// ARA (Audio Random Access) discovery, transcribed from ARAAudioUnit.h
+// (Apache-2.0, Celemony). We don't include the ARA headers in the shim;
+// the factory / extension pointers are opaque here and produced by the
+// Rust side. The host embeds an ARA magic number in each property struct
+// so a non-ARA use of the same private property id is detectable: the
+// plug-in must check it before writing.
+enum { kARAAudioUnitMagic = 'Ara!' };
+enum { kAudioUnitProperty_ARAFactory = 'AraF' };
+enum { kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles = 'AraE' };
+
+// Property data for kAudioUnitProperty_ARAFactory.
+typedef struct {
+    OSType inOutMagicNumber; // in/out: identifies the property as ARA's
+    const void *outFactory;  // out: the plug-in's ARAFactory*
+} TruceARAAudioUnitFactory;
+
+// Property data for kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles.
+// `knownRoles` / `assignedRoles` are ARAPlugInInstanceRoleFlags (int32);
+// the pointer fields are ARA refs (pointer-width). Layout must match
+// ARAAudioUnit.h exactly.
+typedef struct {
+    OSType inOutMagicNumber;         // in/out: ARA magic
+    const void *inDocumentControllerRef; // in: host document controller
+    const void *outPlugInExtension;  // out: the bound plug-in extension
+    int32_t knownRoles;              // in: roles the host implements
+    int32_t assignedRoles;           // in: roles for this instance
+} TruceARAAudioUnitPlugInExtensionBinding;
+
+// The ARA callbacks were appended to AuCallbacks in ABI v6.
+#define TRUCE_AU_ABI_ARA 0x54417506u
+
+// True when the linked binary provides the ARA callbacks (v6+) and the
+// plug-in reports an ARA factory. `ctx` may be NULL: the factory is per
+// plug-in type, so a null instance still answers.
+static int au_ara_available(void *ctx) {
+    if (!g_callbacks
+        || (g_callbacks->abi_version & TRUCE_AU_ABI_MAGIC_MASK) != TRUCE_AU_ABI_MAGIC
+        || g_callbacks->abi_version < TRUCE_AU_ABI_ARA
+        || !g_callbacks->ara_factory)
+        return 0;
+    return g_callbacks->ara_factory(ctx) != NULL;
+}
+
 // ---------------------------------------------------------------------------
 // Per-instance state
 // ---------------------------------------------------------------------------
@@ -606,6 +649,18 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = n * sizeof(AUParameterMIDIMapping);
             break;
         }
+        case kAudioUnitProperty_ARAFactory: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!au_ara_available(((TruceAUv2 *)self_)->rustCtx))
+                return kAudioUnitErr_InvalidProperty;
+            size = sizeof(TruceARAAudioUnitFactory); break;
+        }
+        case kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!au_ara_available(((TruceAUv2 *)self_)->rustCtx) || !g_callbacks->ara_bind)
+                return kAudioUnitErr_InvalidProperty;
+            size = sizeof(TruceARAAudioUnitPlugInExtensionBinding); break;
+        }
         case kAudioUnitProperty_Latency:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(Float64); break;
@@ -1125,6 +1180,39 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             }
             *(CFArrayRef *)outData = arr;
             *ioSize = sizeof(CFArrayRef);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_ARAFactory: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!au_ara_available(inst->rustCtx)) return kAudioUnitErr_InvalidProperty;
+            if (*ioSize < sizeof(TruceARAAudioUnitFactory))
+                return kAudioUnitErr_InvalidPropertyValue;
+            TruceARAAudioUnitFactory *data = (TruceARAAudioUnitFactory *)outData;
+            // The host sets the magic on input; refuse if it doesn't match
+            // (some other use of this private property id).
+            if (data->inOutMagicNumber != (OSType)kARAAudioUnitMagic)
+                return kAudioUnitErr_InvalidPropertyValue;
+            data->outFactory = g_callbacks->ara_factory(inst->rustCtx);
+            *ioSize = sizeof(TruceARAAudioUnitFactory);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!au_ara_available(inst->rustCtx) || !g_callbacks->ara_bind)
+                return kAudioUnitErr_InvalidProperty;
+            if (*ioSize < sizeof(TruceARAAudioUnitPlugInExtensionBinding))
+                return kAudioUnitErr_InvalidPropertyValue;
+            TruceARAAudioUnitPlugInExtensionBinding *b =
+                (TruceARAAudioUnitPlugInExtensionBinding *)outData;
+            if (b->inOutMagicNumber != (OSType)kARAAudioUnitMagic)
+                return kAudioUnitErr_InvalidPropertyValue;
+            // The binding is an input/output property: the host fills the
+            // controller + roles on input, we fill the extension on output.
+            b->outPlugInExtension = g_callbacks->ara_bind(
+                inst->rustCtx, b->inDocumentControllerRef, b->knownRoles, b->assignedRoles);
+            *ioSize = sizeof(TruceARAAudioUnitPlugInExtensionBinding);
             return noErr;
         }
 

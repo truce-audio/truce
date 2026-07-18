@@ -1,0 +1,21 @@
+[package]
+name = "truce-ara"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ARA (Audio Random Access) support for truce plugins"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+# Lock-free multi-reader handoff of the analysis result from the pool
+# worker to every bound renderer's audio thread (playback + editor
+# instances share one source's analysis, so a single-consumer queue
+# would starve all but the first reader).
+arc-swap = "1"
+
+[lints]
+workspace = true

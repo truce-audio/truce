@@ -1,0 +1,44 @@
+[package]
+name = "truce-example-ara-passthrough"
+# Internal-only - workspace demonstrations not for crates.io.
+publish = false
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = ["clap", "vst3", "au", "ara"]
+clap = ["dep:truce-clap", "dep:clap-sys"]
+vst3 = ["dep:truce-vst3"]
+au = ["dep:truce-au"]
+# ARA companion support. Pulls in truce-ara for the wrapper's `AraExport`
+# impl and turns on ARA discovery in whichever format wrappers are built
+# (the `?` enables the feature only when that optional dep is present).
+ara = ["dep:truce-ara", "truce-clap?/ara", "truce-vst3?/ara", "truce-au?/ara"]
+shell = ["truce/shell"]
+
+[dependencies]
+truce = { workspace = true }
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+truce-clap = { workspace = true, optional = true }
+truce-vst3 = { workspace = true, optional = true }
+truce-au = { workspace = true, optional = true }
+truce-ara = { workspace = true, optional = true }
+clap-sys = { version = "0.5", optional = true }
+truce-egui = { workspace = true }
+truce-font = { workspace = true }
+egui = "0.34"
+truce-loader = { workspace = true }
+
+[dev-dependencies]
+truce-test = { workspace = true }
+
+[lints]
+workspace = true

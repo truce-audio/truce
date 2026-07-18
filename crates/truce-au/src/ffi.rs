@@ -104,8 +104,9 @@ pub struct AuParamDescriptor {
 /// unreleased tail callback's signature); a test asserts they match.
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
 /// argument. v3: appended `latency_samples` / `tail_samples`. v4:
-/// appended `set_render_mode`. v5: appended `param_parse_value`.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7505;
+/// appended `set_render_mode`. v5: appended `param_parse_value`. v6:
+/// appended `ara_factory` / `ara_bind`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7506;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -300,6 +301,22 @@ pub struct AuCallbacks {
         text: *const c_char,
         out_plain: *mut f64,
     ) -> i32,
+    /// Return the plug-in's `ARAFactory *` (as an opaque pointer), or
+    /// null when the plug-in has no ARA support. Backs
+    /// `kAudioUnitProperty_ARAFactory`. Appended per the append-only rule
+    /// (gate on `abi_version` cross-binary).
+    pub ara_factory: unsafe extern "C" fn(ctx: *mut c_void) -> *const c_void,
+    /// Bind this instance to the host's ARA document controller with the
+    /// given roles, returning the `ARAPlugInExtensionInstance *` (opaque)
+    /// or null on failure. Backs
+    /// `kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles`. Appended
+    /// per the append-only rule (gate on `abi_version` cross-binary).
+    pub ara_bind: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        document_controller: *const c_void,
+        known_roles: i32,
+        assigned_roles: i32,
+    ) -> *const c_void,
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

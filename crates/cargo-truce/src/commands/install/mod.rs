@@ -954,7 +954,7 @@ fn install_au(
             <true/>
             <key>tags</key>
             <array>
-                <string>{au_tag}</string>
+                <string>{au_tag}</string>{ara_tag}
             </array>
         </dict>
     </array>
@@ -968,6 +968,14 @@ fn install_au(
         au_subtype = p.resolved_fourcc(),
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
+        // The "ARA" AudioComponents tag marks the unit ARA-capable in the
+        // system cache so ARA hosts probe kAudioUnitProperty_ARAFactory
+        // without opening the unit. Only emitted when the plugin opts in.
+        ara_tag = if p.ara.is_some() {
+            "\n                <string>ARA</string>"
+        } else {
+            ""
+        },
     );
     let plist_tmp = tmp_manifests()
         .join(format!("{}_au.plist", p.bundle_id))

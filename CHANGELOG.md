@@ -2,6 +2,13 @@
 
 Notable changes per release.
 
+## Unreleased
+
+- ARA passthrough example: maps region time to source samples from the region+source geometry, so hosts that reference ARA time to the project rate (Cubase) play the full clip instead of cutting off early.
+- ARA: source analysis reaches every bound renderer, not just the first instance to render.
+- ARA: the visible editor's params are shared across a document's split-role instances, so edits (e.g. gain) affect playback in hosts that bind roles to separate instances (Cubase).
+- ARA: the renderer outputs silence while the transport is stopped instead of looping the frozen slice.
+
 ## 6.2.1
 
 - AU: the oversized-block fail-safe and the not-yet-prepared bail no longer re-deliver the previous block's MIDI/SysEx output (duplicated note-ons, stuck notes); both clear the output events and reset the drain cursor before returning.

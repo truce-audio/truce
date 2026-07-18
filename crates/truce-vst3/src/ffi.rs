@@ -58,6 +58,13 @@ pub struct Vst3PluginDescriptor {
     /// negotiated layout wider than the first can't alias two output
     /// channels onto one discard block (which would be aliased `&mut`s).
     pub max_outputs: u32,
+    /// VST3 class ID (16 bytes) of the ARA main-factory class - a second
+    /// factory class (category "ARA Main Factory Class", same display name
+    /// as the audio class) the shim exposes so an ARA host retrieves the
+    /// `ARAFactory` at scan time without instantiating the processor.
+    /// All-zero when the plugin has no ARA support; derived from the
+    /// plugin's `vst3_id` so it's stable across builds.
+    pub ara_cid: [u8; 16],
 }
 
 /// Parameter descriptor.
@@ -340,6 +347,21 @@ pub struct Vst3Callbacks {
     /// collection time - which would make a mid-block step audible from
     /// sample 0.
     pub param_is_chunked: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> i32,
+    /// Return the plug-in's `ARAFactory *` (opaque), or null when the
+    /// plug-in has no ARA support. Backs the ARA main-factory class's
+    /// `IMainFactory::getFactory`. `ctx` may be null (the factory is per
+    /// plug-in type, so the scan-time query passes no instance).
+    pub ara_factory: unsafe extern "C" fn(ctx: *mut c_void) -> *const c_void,
+    /// Bind this instance to the host's ARA document controller with the
+    /// given roles, returning the `ARAPlugInExtensionInstance *` (opaque)
+    /// or null on failure. Backs the component's
+    /// `IPlugInEntryPoint2::bindToDocumentControllerWithRoles`.
+    pub ara_bind: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        document_controller: *const c_void,
+        known_roles: i32,
+        assigned_roles: i32,
+    ) -> *const c_void,
 }
 
 unsafe extern "C" {

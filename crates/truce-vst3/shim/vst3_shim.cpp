@@ -15,6 +15,8 @@
 #include <atomic>
 #include <new>
 #include <vector>
+
+
 #if __APPLE__
 // libdispatch: an event-driven bridge that marshals a pending
 // restartComponent onto the host's main run loop, so a latency change
@@ -128,6 +130,17 @@ static const TUID INoteExpressionController_iid =
     MAKE_IID(0xB7F8F859, 0x41234872, 0x91169581, 0x4F3721A3);
 static const TUID IPlugViewContentScaleSupport_iid =
     MAKE_IID(0x65ED9690, 0x8AC44525, 0x8AADEF7A, 0x72EA703F);
+// ARA VST3 interfaces, from ARAVST3.h (Apache-2.0, Celemony). IMainFactory
+// lives on a second factory class (category kARAMainFactoryClass);
+// IPlugInEntryPoint / IPlugInEntryPoint2 live on the IAudioProcessor
+// component. IMainFactory and IPlugInEntryPoint::getFactory are two
+// discovery paths: Cubase uses the former, Reaper the latter, so we
+// answer both.
+static const TUID IARAMainFactory_iid       = MAKE_IID(0xDB2A1669, 0xFAFD42A5, 0xA82F864F, 0x7B6872EA);
+static const TUID IARAPlugInEntryPoint_iid  = MAKE_IID(0x12814E54, 0xA1CE4076, 0x82B96813, 0x16950BD6);
+static const TUID IARAPlugInEntryPoint2_iid = MAKE_IID(0xCD9A5913, 0xC9EB46D7, 0x96CA53AD, 0xD1DB89F5);
+// Class category the host matches (by class name) to the audio class.
+static const char* kARAMainFactoryClass = "ARA Main Factory Class";
 #if defined(__linux__)
 // Steinberg::Linux run-loop interfaces: IRunLoop is the host's UI-thread
 // event loop (queried off the plug frame); ITimerHandler is the periodic
@@ -294,6 +307,11 @@ struct Vst3PluginDescriptor {
      * layout alias one block, which RawBufferScratch turns into two &mut
      * over the same memory (UB). */
     uint32_t max_outputs;
+    /* CID of the ARA main-factory class (a second factory class the shim
+     * exposes so an ARA host retrieves the ARAFactory at scan time). Must
+     * match truce-vst3/src/ffi.rs. ARA is gated on the ara_factory
+     * callback, not on this being non-zero. */
+    uint8_t ara_cid[16];
 };
 
 struct Vst3ParamDescriptor {
@@ -450,6 +468,14 @@ struct Vst3Callbacks {
     // block, so process_chunked applies each point at its sample offset
     // instead of the end value landing from sample 0.
     int32_t (*param_is_chunked)(void*, uint32_t);
+    // ARA (Audio Random Access) discovery + binding. `ara_factory` returns
+    // the plug-in's ARAFactory* (null when unsupported); `ctx` may be null
+    // for the scan-time (main-factory) query. `ara_bind` binds an instance
+    // to the host's document controller with the given roles and returns
+    // the ARAPlugInExtensionInstance*. Must match truce-vst3/src/ffi.rs.
+    const void* (*ara_factory)(void*);
+    const void* (*ara_bind)(void*, const void* /*controller*/,
+                            int32_t /*known_roles*/, int32_t /*assigned_roles*/);
 };
 
 // ---------------------------------------------------------------------------
@@ -460,6 +486,13 @@ static const Vst3PluginDescriptor* g_desc = nullptr;
 static const Vst3Callbacks* g_cb = nullptr;
 static const Vst3ParamDescriptor* g_params = nullptr;
 static uint32_t g_num_params = 0;
+
+// True when the plug-in provides an ARA factory (so the shim exposes the
+// ARA main-factory class + IPlugInEntryPoint2). The factory is per plug-in
+// type, so this holds without a component instance (ctx = null).
+static bool ara_enabled() {
+    return g_cb && g_cb->ara_factory && g_cb->ara_factory(nullptr) != nullptr;
+}
 
 // Unit info (parameter groups) - built at registration time
 static const int kMaxUnits = 64;
@@ -753,6 +786,10 @@ public:
     // guards every callback but does nothing. The factory checks this to
     // fail createInstance rather than hand the host a do-nothing plugin.
     bool constructed() const { return ctx != nullptr; }
+
+    // The Rust plugin context, for the ARA bind entry point to hand back to
+    // g_cb->ara_bind (and any future per-instance ARA callback).
+    void* rustContext() const { return ctx; }
 
     void* componentHandler;  // IComponentHandler*, stored with addRef
     // Pending IComponentHandler::restartComponent flags (RestartFlags
@@ -1566,6 +1603,18 @@ public:
                           midiEvents, numMidi,
                           transportPtr, paramChanges, numParamChanges,
                           data->processMode);
+
+        // Tell the host the output buses carry signal. The VST3 contract
+        // makes the plug-in responsible for the output silenceFlags; the
+        // host may pre-set them (notably to the input's silence for an ARA
+        // playback render, whose input it provides as silent), and if we
+        // leave them set the host discards our audio. We always produce
+        // output, so clear them.
+        if (data->outputs) {
+            for (int32 b = 0; b < data->numOutputs; b++) {
+                data->outputs[b].silenceFlags = 0;
+            }
+        }
 
         // Forward output events (MIDI output from instruments/effects)
         if (data->outputEvents && g_cb->get_output_event_count) {
@@ -2420,6 +2469,29 @@ struct INoteExpressionControllerVtbl {
 // The actual COM object layout: one pointer per implemented interface
 // vtable, followed by the C++ object. `com_from_*` offsets index into
 // this pointer block, so new interfaces append before `impl` only.
+// ARA::IPlugInEntryPoint2 (ARAVST3.h): the host QI's the component for it,
+// then binds the instance to a document controller. FUnknown prefix +
+// bindToDocumentControllerWithRoles.
+struct IARAPlugInEntryPoint2Vtbl {
+    tresult (*queryInterface)(void*, const TUID, void**);
+    uint32  (*addRef)(void*);
+    uint32  (*release)(void*);
+    const void* (*bindToDocumentControllerWithRoles)(void*, const void* /*controller*/,
+                                                     int32_t /*known*/, int32_t /*assigned*/);
+};
+
+// ARA::IPlugInEntryPoint (v1, ARAVST3.h): getFactory + deprecated bind.
+// Hosts that discover the ARAFactory from the audio component (Reaper)
+// rather than the IMainFactory class use getFactory here. IPlugInEntryPoint2
+// deliberately has no getFactory, so v1 is required for that path.
+struct IARAPlugInEntryPointVtbl {
+    tresult (*queryInterface)(void*, const TUID, void**);
+    uint32  (*addRef)(void*);
+    uint32  (*release)(void*);
+    const void* (*getFactory)(void*);
+    const void* (*bindToDocumentController)(void*, const void* /*controller*/);
+};
+
 struct TruceComponentCOM {
     IComponentVtbl* vtbl_component;
     IAudioProcessorVtbl* vtbl_processor;
@@ -2429,6 +2501,10 @@ struct TruceComponentCOM {
     IProcessContextRequirementsVtbl* vtbl_pcr;
     IUnitInfoVtbl* vtbl_unitinfo;
     INoteExpressionControllerVtbl* vtbl_note_expression;
+    // Appended at indices 8, 9 (before impl): existing com_from_* offsets
+    // are measured from index 0, so they don't shift.
+    IARAPlugInEntryPoint2Vtbl* vtbl_ara_entry;
+    IARAPlugInEntryPointVtbl* vtbl_ara_entry_v1;
     TruceComponent impl;
 };
 
@@ -2502,6 +2578,20 @@ tresult TruceComponent::queryInterface(void* comBase, const TUID iid, void** obj
         *obj = &com->vtbl_note_expression;
         return kResultOk;
     }
+    // ARA: the host binds this instance to a document controller through
+    // IPlugInEntryPoint2. Only offered when the plug-in supports ARA.
+    if (iid_equal(iid, IARAPlugInEntryPoint2_iid) && ara_enabled()) {
+        addRef();
+        *obj = &com->vtbl_ara_entry;
+        return kResultOk;
+    }
+    // ARA v1: some hosts (Reaper) fetch the ARAFactory from the component
+    // via IPlugInEntryPoint::getFactory rather than the IMainFactory class.
+    if (iid_equal(iid, IARAPlugInEntryPoint_iid) && ara_enabled()) {
+        addRef();
+        *obj = &com->vtbl_ara_entry_v1;
+        return kResultOk;
+    }
     *obj = nullptr;
     return kNoInterface;
 }
@@ -2537,6 +2627,14 @@ static TruceComponentCOM* com_from_unitinfo(void* self) {
 static TruceComponentCOM* com_from_note_expression(void* self) {
     return reinterpret_cast<TruceComponentCOM*>(
         reinterpret_cast<char*>(self) - 7 * sizeof(void*));
+}
+static TruceComponentCOM* com_from_ara_entry(void* self) {
+    return reinterpret_cast<TruceComponentCOM*>(
+        reinterpret_cast<char*>(self) - 8 * sizeof(void*));
+}
+static TruceComponentCOM* com_from_ara_entry_v1(void* self) {
+    return reinterpret_cast<TruceComponentCOM*>(
+        reinterpret_cast<char*>(self) - 9 * sizeof(void*));
 }
 
 // --- Component vtable functions ---
@@ -2788,6 +2886,55 @@ static INoteExpressionControllerVtbl g_nexp_vtbl = {
     nexp_getCount, nexp_getInfo, nexp_getStringByValue, nexp_getValueByString
 };
 
+// --- ARA IPlugInEntryPoint2 vtable (on the component) ---
+static tresult ara_ep_qi(void* s, const TUID iid, void** obj) {
+    auto* com = com_from_ara_entry(s);
+    return com->impl.queryInterface(com, iid, obj);
+}
+static uint32 ara_ep_addRef(void* s) { return com_from_ara_entry(s)->impl.addRef(); }
+static uint32 ara_ep_release(void* s) {
+    auto* com = com_from_ara_entry(s);
+    auto r = com->impl.release();
+    if (r == 0) { com->impl.~TruceComponent(); free(com); }
+    return r;
+}
+static const void* ara_ep_bind(void* s, const void* controller, int32_t known, int32_t assigned) {
+    if (!g_cb || !g_cb->ara_bind) return nullptr;
+    return g_cb->ara_bind(com_from_ara_entry(s)->impl.rustContext(), controller, known, assigned);
+}
+static IARAPlugInEntryPoint2Vtbl g_ara_entry_vtbl = {
+    ara_ep_qi, ara_ep_addRef, ara_ep_release, ara_ep_bind
+};
+
+// --- ARA IPlugInEntryPoint (v1) vtable (on the component) ---
+static tresult ara_ep1_qi(void* s, const TUID iid, void** obj) {
+    auto* com = com_from_ara_entry_v1(s);
+    return com->impl.queryInterface(com, iid, obj);
+}
+static uint32 ara_ep1_addRef(void* s) { return com_from_ara_entry_v1(s)->impl.addRef(); }
+static uint32 ara_ep1_release(void* s) {
+    auto* com = com_from_ara_entry_v1(s);
+    auto r = com->impl.release();
+    if (r == 0) { com->impl.~TruceComponent(); free(com); }
+    return r;
+}
+static const void* ara_ep1_getFactory(void*) {
+    const void* f = (g_cb && g_cb->ara_factory) ? g_cb->ara_factory(nullptr) : nullptr;
+    return f;
+}
+static const void* ara_ep1_bind(void* s, const void* controller) {
+    // Deprecated ARA-1 bind: all roles assumed (playback + editor renderer
+    // + editor view), per ARAVST3.h.
+    if (!g_cb || !g_cb->ara_bind) return nullptr;
+    const int32_t allRoles = 1 | 2 | 4;
+    const void* ext = g_cb->ara_bind(com_from_ara_entry_v1(s)->impl.rustContext(),
+                                     controller, 0, allRoles);
+    return ext;
+}
+static IARAPlugInEntryPointVtbl g_ara_entry_v1_vtbl = {
+    ara_ep1_qi, ara_ep1_addRef, ara_ep1_release, ara_ep1_getFactory, ara_ep1_bind
+};
+
 static TruceComponentCOM* create_component() {
     auto* com = (TruceComponentCOM*)calloc(1, sizeof(TruceComponentCOM));
     if (!com) return nullptr;
@@ -2799,6 +2946,8 @@ static TruceComponentCOM* create_component() {
     com->vtbl_pcr = &g_pcr_vtbl;
     com->vtbl_unitinfo = &g_unitinfo_vtbl;
     com->vtbl_note_expression = &g_nexp_vtbl;
+    com->vtbl_ara_entry = &g_ara_entry_vtbl;
+    com->vtbl_ara_entry_v1 = &g_ara_entry_v1_vtbl;
     new (&com->impl) TruceComponent();
     return com;
 }
@@ -2815,6 +2964,46 @@ struct FactoryCOM {
 // IPluginFactory2 and IPluginFactory3 IIDs
 static const TUID IPluginFactory2_iid = MAKE_IID(0x0007B650, 0xF24B4C0B, 0xA464EDB9, 0xF00B2ABB);
 static const TUID IPluginFactory3_iid = MAKE_IID(0x4555A2AB, 0xC1234E57, 0x9B122910, 0x36878931);
+
+// --- ARA main-factory class (a second factory class) ---
+// A heap-allocated, ref-counted COM object the host obtains via
+// createInstance(ara_cid). QI'ing it for ARA::IMainFactory yields
+// getFactory() -> ARAFactory*, so the host can build the ARA model without
+// instantiating the audio processor.
+struct IARAMainFactoryVtbl {
+    tresult (*queryInterface)(void*, const TUID, void**);
+    uint32  (*addRef)(void*);
+    uint32  (*release)(void*);
+    const void* (*getFactory)(void*);
+};
+struct AraMainFactoryCOM {
+    IARAMainFactoryVtbl* vtbl;
+    std::atomic<int32> refCount;
+};
+static tresult ara_mf_qi(void* self, const TUID iid, void** obj) {
+    if (iid_equal(iid, FUnknown_iid) || iid_equal(iid, IARAMainFactory_iid)) {
+        auto* f = (AraMainFactoryCOM*)self;
+        f->refCount++;
+        *obj = self;
+        return kResultOk;
+    }
+    *obj = nullptr;
+    return kNoInterface;
+}
+static uint32 ara_mf_addRef(void* self) { return ++(((AraMainFactoryCOM*)self)->refCount); }
+static uint32 ara_mf_release(void* self) {
+    auto* f = (AraMainFactoryCOM*)self;
+    auto r = --f->refCount;
+    if (r == 0) free(f);
+    return r;
+}
+static const void* ara_mf_getFactory(void*) {
+    const void* f = (g_cb && g_cb->ara_factory) ? g_cb->ara_factory(nullptr) : nullptr;
+    return f;
+}
+static IARAMainFactoryVtbl g_ara_mf_vtbl = {
+    ara_mf_qi, ara_mf_addRef, ara_mf_release, ara_mf_getFactory
+};
 
 static tresult factory_qi(void* self, const TUID iid, void** obj) {
     if (iid_equal(iid, FUnknown_iid) || iid_equal(iid, IPluginFactory_iid) ||
@@ -2848,15 +3037,31 @@ static tresult factory_getInfo(void*, PFactoryInfo* info) {
     return kResultOk;
 }
 
-static int32 factory_countClasses(void*) { return 1; }
+// One audio class, plus the ARA main-factory class when ARA is supported.
+static int32 factory_countClasses(void*) {
+    int32 n = ara_enabled() ? 2 : 1;
+    return n;
+}
 
 static tresult factory_getClassInfo(void*, int32 index, PClassInfo* info) {
-    if (index != 0 || !info || !g_desc) return kInvalidArgument;
-    memcpy(info->cid, g_desc->cid, 16);
-    info->cardinality = 0x7FFFFFFF; // kManyInstances
-    str_to_char8(info->category, g_desc->category, 32);
-    str_to_char8(info->name, g_desc->name, 64);
-    return kResultOk;
+    if (!info || !g_desc) return kInvalidArgument;
+    if (index == 0) {
+        memcpy(info->cid, g_desc->cid, 16);
+        info->cardinality = 0x7FFFFFFF; // kManyInstances
+        str_to_char8(info->category, g_desc->category, 32);
+        str_to_char8(info->name, g_desc->name, 64);
+        return kResultOk;
+    }
+    if (index == 1 && ara_enabled()) {
+        // Same name as the audio class (how the host pairs them), category
+        // marking it the ARA main factory.
+        memcpy(info->cid, g_desc->ara_cid, 16);
+        info->cardinality = 0x7FFFFFFF;
+        str_to_char8(info->category, kARAMainFactoryClass, 32);
+        str_to_char8(info->name, g_desc->name, 64);
+        return kResultOk;
+    }
+    return kInvalidArgument;
 }
 
 // IPluginFactory2::getClassInfo2
@@ -2866,14 +3071,17 @@ struct PClassInfo2 {
 };
 
 static tresult factory_getClassInfo2(void*, int32 index, PClassInfo2* info) {
-    if (index != 0 || !info || !g_desc) return kInvalidArgument;
+    if (!info || !g_desc) return kInvalidArgument;
+    if (index != 0 && !(index == 1 && ara_enabled())) return kInvalidArgument;
     memset(info, 0, sizeof(*info));
-    memcpy(info->cid, g_desc->cid, 16);
+    const bool ara = (index == 1);
+    memcpy(info->cid, ara ? g_desc->ara_cid : g_desc->cid, 16);
     info->cardinality = 0x7FFFFFFF;
-    str_to_char8(info->category, g_desc->category, 32);
+    str_to_char8(info->category, ara ? kARAMainFactoryClass : g_desc->category, 32);
     str_to_char8(info->name, g_desc->name, 64);
     info->classFlags = 0; // single-component (processor + controller in one object)
-    str_to_char8(info->subCategories, g_desc->subcategories, 128);
+    // The ARA main-factory class carries no audio subcategories.
+    str_to_char8(info->subCategories, ara ? "" : g_desc->subcategories, 128);
     str_to_char8(info->vendor, g_desc->vendor, 64);
     str_to_char8(info->version, g_desc->version, 64);
     str_to_char8(info->sdkVersion, "VST 3.7.1", 64);
@@ -2887,14 +3095,16 @@ struct PClassInfoW {
 };
 
 static tresult factory_getClassInfoW(void*, int32 index, PClassInfoW* info) {
-    if (index != 0 || !info || !g_desc) return kInvalidArgument;
+    if (!info || !g_desc) return kInvalidArgument;
+    if (index != 0 && !(index == 1 && ara_enabled())) return kInvalidArgument;
     memset(info, 0, sizeof(*info));
-    memcpy(info->cid, g_desc->cid, 16);
+    const bool ara = (index == 1);
+    memcpy(info->cid, ara ? g_desc->ara_cid : g_desc->cid, 16);
     info->cardinality = 0x7FFFFFFF;
-    str_to_char8(info->category, g_desc->category, 32);
+    str_to_char8(info->category, ara ? kARAMainFactoryClass : g_desc->category, 32);
     str_to_char16(info->name, g_desc->name, 64);
     info->classFlags = 0; // single-component
-    str_to_char8(info->subCategories, g_desc->subcategories, 128);
+    str_to_char8(info->subCategories, ara ? "" : g_desc->subcategories, 128);
     str_to_char16(info->vendor, g_desc->vendor, 64);
     str_to_char16(info->version, g_desc->version, 64);
     str_to_char16(info->sdkVersion, "VST 3.7.1", 64);
@@ -2905,6 +3115,22 @@ static tresult factory_setHostContext(void*, void*) { return kResultOk; }
 
 static tresult factory_createInstance(void*, FIDString cid, FIDString iid, void** obj) {
     if (!cid || !iid || !obj || !g_desc) return kInvalidArgument;
+
+    // ARA main-factory class: hand back a ref-counted IMainFactory object
+    // (no audio processor involved, so the host can build the ARA model
+    // without instantiating one).
+    if (ara_enabled() && memcmp(cid, g_desc->ara_cid, 16) == 0) {
+        auto* mf = (AraMainFactoryCOM*)calloc(1, sizeof(AraMainFactoryCOM));
+        if (!mf) return kResultFalse;
+        mf->vtbl = &g_ara_mf_vtbl;
+        mf->refCount = 1;
+        tresult r = ara_mf_qi(mf, reinterpret_cast<const int8_t*>(iid), obj);
+        // QI added a ref on success; drop the initial one either way (frees
+        // on a QI miss).
+        ara_mf_release(mf);
+        return r;
+    }
+
     if (memcmp(cid, g_desc->cid, 16) != 0) return kResultFalse;
 
     auto* com = create_component();

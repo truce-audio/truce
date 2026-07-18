@@ -137,6 +137,25 @@ macro_rules! __plugin_impl {
         /// Type alias for use in tests and external references.
         pub type Plugin = __HotShellWrapper;
 
+        // ARA export seam: when the plugin opts into ARA (its `ara`
+        // feature, which also enables `truce-clap/ara`), bind the wrapper
+        // to the author's `AraPlugin` logic type so the format wrappers
+        // can retrieve the ARA factory and expose the ARA discovery
+        // extensions. The logic-type alias carries no cfg (it resolves at
+        // the author's scope); the cfg'd impl lives in an allow'd module,
+        // mirroring `__truce_format_exports`, so a plugin crate without an
+        // `ara` feature doesn't warn on this optional cfg.
+        #[doc(hidden)]
+        pub type __TruceAraLogic = $logic;
+
+        #[allow(unexpected_cfgs)]
+        mod __truce_ara_export {
+            #[cfg(feature = "ara")]
+            impl ::truce_ara::AraExport for super::__HotShellWrapper {
+                type Ara = super::__TruceAraLogic;
+            }
+        }
+
         /// FFI export driven by `cargo truce screenshot`. Renders
         /// the plugin's editor (optionally after loading a
         /// `.pluginstate` blob) and writes the PNG to the caller-

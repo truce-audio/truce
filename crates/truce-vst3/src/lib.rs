@@ -30,6 +30,8 @@ use truce_core::midi::{
     per_note_bend_from_semitones, per_note_bend_semitones, pitch_bend_to_bytes,
 };
 use truce_core::plugin::PluginRuntime;
+#[cfg(feature = "ara")]
+use truce_core::process::ProcessContext;
 use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
@@ -176,6 +178,11 @@ struct Vst3Instance<P: PluginExport> {
     /// editor-notify - all run on the host main thread; `cb_process` never
     /// touches it, so it can't overlap the audio thread.
     gui: PluginCell<Vst3Gui>,
+    /// Owns this instance's ARA playback-renderer binding, created when the
+    /// host binds via `IPlugInEntryPoint2::bindToDocumentControllerWithRoles`.
+    /// `process_block` reads its renderer to route into `ara_render`.
+    #[cfg(feature = "ara")]
+    ara_binding: truce_ara::AraBindingCell,
 }
 
 impl<P: PluginExport> Vst3Instance<P> {
@@ -390,6 +397,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     note_id_map: NoteIdMap::new(),
                 }),
                 gui: PluginCell::new(Vst3Gui { editor: None }),
+                #[cfg(feature = "ara")]
+                ara_binding: truce_ara::AraBindingCell::new(),
             });
             let raw = Box::into_raw(instance);
             raw.cast::<std::ffi::c_void>()
@@ -939,24 +948,48 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         inst.transport_slot.write(&transport);
 
         let mut transport_snap = transport;
-        let chunk_args = ChunkedProcess {
-            events: &scr.event_list,
-            sub_event_scratch: &mut scr.sub_event_scratch,
-            transport: &mut transport_snap,
-            sample_rate: scr.sample_rate,
-            process_mode: vst3_process_mode(process_mode),
-            output_events: &mut scr.output_events,
-            params_fn: None,
-            meters_fn: None,
-            param_infos: &inst.param_infos,
-            min_subblock_samples: inst.min_subblock_samples,
-        };
-        process_chunked(
-            &mut *plugin,
-            inst.params_arc.as_ref() as &dyn Params,
-            &mut audio_buffer,
-            chunk_args,
-        );
+
+        // ARA playback render: when the instance is bound as a playback
+        // renderer, it generates output from its assigned regions and
+        // ignores the input, so route to `ara_render` and skip the normal
+        // (chunked) insert process.
+        #[cfg(feature = "ara")]
+        let ara_renderer = inst.ara_binding.renderer();
+        #[cfg(not(feature = "ara"))]
+        let ara_renderer: *mut std::ffi::c_void = std::ptr::null_mut();
+
+        if ara_renderer.is_null() {
+            let chunk_args = ChunkedProcess {
+                events: &scr.event_list,
+                sub_event_scratch: &mut scr.sub_event_scratch,
+                transport: &mut transport_snap,
+                sample_rate: scr.sample_rate,
+                process_mode: vst3_process_mode(process_mode),
+                output_events: &mut scr.output_events,
+                params_fn: None,
+                meters_fn: None,
+                param_infos: &inst.param_infos,
+                min_subblock_samples: inst.min_subblock_samples,
+            };
+            process_chunked(
+                &mut *plugin,
+                inst.params_arc.as_ref() as &dyn Params,
+                &mut audio_buffer,
+                chunk_args,
+            );
+        } else {
+            #[cfg(feature = "ara")]
+            {
+                let mut ctx = ProcessContext::new(
+                    &transport_snap,
+                    scr.sample_rate,
+                    nf,
+                    &mut scr.output_events,
+                )
+                .with_process_mode(vst3_process_mode(process_mode));
+                plugin.ara_render(ara_renderer, &mut audio_buffer, &mut ctx);
+            }
+        }
         // End the `audio_buffer` borrow before reaching back into scratch.
         let _ = audio_buffer;
         // For `f64` plugins the scratch holds the rendered output -
@@ -2414,10 +2447,12 @@ fn max_layout_channels(layouts: &[BusLayout]) -> (u32, u32) {
     })
 }
 
-pub fn register_vst3<P: PluginExport>() {
+pub fn register_vst3<P: PluginExport>(ara_factory: AraFactoryFn, ara_bind: AraBindFn) {
     // Called from the export macro's `extern "C" fn init()` static
     // initializer. Catch any panic so it doesn't cross the FFI
-    // boundary and abort the host process.
+    // boundary and abort the host process. `ara_factory` / `ara_bind` are
+    // ARA thunks (real under the `ara` feature, null stubs otherwise) the
+    // macro passes in because only it carries the `AraExport` bound.
     run_register::<P>("VST3", || {
         let Some((num_inputs, num_outputs)) = default_io_channels::<P>() else {
             log_missing_bus_layout::<P>("VST3");
@@ -2443,9 +2478,44 @@ pub fn register_vst3<P: PluginExport>() {
             );
             return;
         }
-        register_vst3_inner::<P>(num_inputs, num_outputs);
+        register_vst3_inner::<P>(num_inputs, num_outputs, ara_factory, ara_bind);
     });
 }
+
+/// Signature of the ARA-factory getter on the VST3 callback table (backs
+/// the ARA main-factory class's `IMainFactory::getFactory`).
+pub type AraFactoryFn = unsafe extern "C" fn(ctx: *mut std::ffi::c_void) -> *const std::ffi::c_void;
+/// Signature of the ARA bind callback on the VST3 callback table (backs
+/// `IPlugInEntryPoint2::bindToDocumentControllerWithRoles`).
+pub type AraBindFn = unsafe extern "C" fn(
+    ctx: *mut std::ffi::c_void,
+    document_controller: *const std::ffi::c_void,
+    known_roles: i32,
+    assigned_roles: i32,
+) -> *const std::ffi::c_void;
+
+/// Null ARA-factory getter for plug-ins without ARA: reports no factory,
+/// so the shim hides the ARA main-factory class. Dereferences nothing, so
+/// it stays safe (coerces to the `unsafe` table slot).
+pub extern "C" fn ara_factory_none(_ctx: *mut std::ffi::c_void) -> *const std::ffi::c_void {
+    std::ptr::null()
+}
+
+/// Null ARA bind for plug-ins without ARA.
+pub extern "C" fn ara_bind_none(
+    _ctx: *mut std::ffi::c_void,
+    _document_controller: *const std::ffi::c_void,
+    _known_roles: i32,
+    _assigned_roles: i32,
+) -> *const std::ffi::c_void {
+    std::ptr::null()
+}
+
+/// VST3 ARA discovery + binding thunks. Compiled only with the `ara`
+/// feature; `export_vst3!` installs its thunks on the callback table, in
+/// which case the plugin type must implement `truce_ara::AraExport`.
+#[cfg(feature = "ara")]
+pub mod ara;
 
 // VST3 `ParameterInfo::ParameterFlags`. Only these bits are defined by
 // the SDK (3.7); the previous code set a reserved `1 << 8`, which no host
@@ -2464,7 +2534,12 @@ const VST3_PARAM_IS_BYPASS: i32 = 1 << 16;
 // linear pass; splitting it further would scatter the one-time registration
 // wiring across helpers that each read once.
 #[allow(clippy::too_many_lines)]
-fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
+fn register_vst3_inner<P: PluginExport>(
+    num_inputs: u32,
+    num_outputs: u32,
+    ara_factory: AraFactoryFn,
+    ara_bind: AraBindFn,
+) {
     let info = P::info();
     // Static metadata path: derive emits a `LazyLock`-cached
     // `Vec<ParamInfo>` so registration skips the
@@ -2637,6 +2712,11 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         // output discard scratch has a distinct block for every channel of
         // any negotiable layout (see the field's `ffi` doc).
         max_outputs: max_layout_channels(&P::bus_layouts()).1,
+        // A second, stable class ID for the ARA main-factory class,
+        // distinct from the audio class's `cid`. All-zero disables it, but
+        // the shim keys ARA off the non-null `ara_factory` callback, so
+        // this is derived unconditionally (harmless when ARA is off).
+        ara_cid: state::vst3_cid(&format!("{}.ara", info.vst3_id)),
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {
@@ -2680,6 +2760,8 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         layout_bus_channels: cb_layout_bus_channels::<P>,
         match_bus_layout_perbus: cb_match_bus_layout_perbus::<P>,
         param_is_chunked: cb_param_is_chunked::<P>,
+        ara_factory,
+        ara_bind,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every
@@ -2713,7 +2795,19 @@ macro_rules! export_vst3 {
 
             #[unsafe(no_mangle)]
             pub extern "C" fn truce_vst3_init() {
-                ::truce_vst3::register_vst3::<$plugin_type>();
+                // Real ARA thunks under the plugin's `ara` feature (which
+                // also enables `truce-vst3/ara`, so `AraExport` is
+                // implemented and the `ara` module exists), null stubs
+                // otherwise.
+                #[cfg(feature = "ara")]
+                let ara_factory = ::truce_vst3::ara::ara_factory_thunk::<$plugin_type>;
+                #[cfg(not(feature = "ara"))]
+                let ara_factory = ::truce_vst3::ara_factory_none;
+                #[cfg(feature = "ara")]
+                let ara_bind = ::truce_vst3::ara::ara_bind_thunk::<$plugin_type>;
+                #[cfg(not(feature = "ara"))]
+                let ara_bind = ::truce_vst3::ara_bind_none;
+                ::truce_vst3::register_vst3::<$plugin_type>(ara_factory, ara_bind);
             }
 
             #[unsafe(no_mangle)]

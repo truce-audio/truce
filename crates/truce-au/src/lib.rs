@@ -36,6 +36,8 @@ use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr};
+#[cfg(feature = "ara")]
+use truce_core::process::ProcessContext;
 // Used by `cb_gui_set_size`, which the platform-agnostic `AuCallbacks` FFI
 // struct references on every target, so this import can't be apple-gated.
 use truce_core::TransportSlot;
@@ -341,6 +343,11 @@ struct AuInstance<P: PluginExport> {
     /// pointers handed out via `cb_legacy_state_key_at` stay valid
     /// for the instance lifetime.
     legacy_key_cstrings: Vec<CString>,
+    /// Owns this instance's ARA playback-renderer binding, created when
+    /// the host binds via `kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles`.
+    /// `cb_process` reads its renderer to route into `ara_render`.
+    #[cfg(feature = "ara")]
+    ara_binding: truce_ara::AraBindingCell,
 }
 
 /// Audio + lifecycle-owned per-block scratch (see [`AuInstance::audio`]).
@@ -485,6 +492,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     .iter()
                     .filter_map(|k| CString::new(*k).ok())
                     .collect(),
+                #[cfg(feature = "ara")]
+                ara_binding: truce_ara::AraBindingCell::new(),
             });
             let raw = Box::into_raw(instance);
             // Spawn the param-notify thread now that the instance has its final
@@ -829,27 +838,53 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inst.transport_slot.write(&transport);
 
         let mut transport_snap = transport;
-        let chunk_args = ChunkedProcess {
-            events: &scr.event_list,
-            sub_event_scratch: &mut scr.sub_event_scratch,
-            transport: &mut transport_snap,
-            sample_rate: scr.sample_rate,
-            // Host offline flag, forwarded by the shim (`cb_set_render_
-            // mode`); read per block so a mid-session toggle applies to
-            // the next block without waiting on a re-prep.
-            process_mode: ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed)),
-            output_events: &mut scr.output_events,
-            params_fn: None,
-            meters_fn: None,
-            param_infos: &inst.param_infos,
-            min_subblock_samples: inst.min_subblock_samples,
-        };
-        process_chunked(
-            &mut *plugin,
-            inst.params_arc.as_ref() as &dyn Params,
-            &mut audio_buffer,
-            chunk_args,
-        );
+
+        // ARA playback render: when the instance is bound as a playback
+        // renderer, it generates output from its assigned regions and
+        // ignores the input, so route to `ara_render` and skip the normal
+        // (chunked) insert process.
+        #[cfg(feature = "ara")]
+        let ara_renderer = inst.ara_binding.renderer();
+        #[cfg(not(feature = "ara"))]
+        let ara_renderer: *mut std::ffi::c_void = std::ptr::null_mut();
+
+        if ara_renderer.is_null() {
+            let chunk_args = ChunkedProcess {
+                events: &scr.event_list,
+                sub_event_scratch: &mut scr.sub_event_scratch,
+                transport: &mut transport_snap,
+                sample_rate: scr.sample_rate,
+                // Host offline flag, forwarded by the shim (`cb_set_render_
+                // mode`); read per block so a mid-session toggle applies to
+                // the next block without waiting on a re-prep.
+                process_mode: ProcessMode::from_u8(inst.render_mode.load(Ordering::Relaxed)),
+                output_events: &mut scr.output_events,
+                params_fn: None,
+                meters_fn: None,
+                param_infos: &inst.param_infos,
+                min_subblock_samples: inst.min_subblock_samples,
+            };
+            process_chunked(
+                &mut *plugin,
+                inst.params_arc.as_ref() as &dyn Params,
+                &mut audio_buffer,
+                chunk_args,
+            );
+        } else {
+            #[cfg(feature = "ara")]
+            {
+                let mut ctx = ProcessContext::new(
+                    &transport_snap,
+                    scr.sample_rate,
+                    num_frames,
+                    &mut scr.output_events,
+                )
+                .with_process_mode(ProcessMode::from_u8(
+                    inst.render_mode.load(Ordering::Relaxed),
+                ));
+                plugin.ara_render(ara_renderer, &mut audio_buffer, &mut ctx);
+            }
+        }
         let _ = audio_buffer;
         // Narrow rendered f64 output back to host f32 when needed.
         // No-op for `f32` plugins.
@@ -2075,6 +2110,43 @@ unsafe extern "C" {
 // Registration: called once from the export_au! macro
 // ---------------------------------------------------------------------------
 
+/// AU ARA discovery + binding thunks. Compiled only with the `ara`
+/// feature; `export_au!` installs its thunks on the callback table, in
+/// which case the plugin type must implement `truce_ara::AraExport`.
+#[cfg(feature = "ara")]
+pub mod ara;
+
+/// Signature of the ARA-factory getter on the AU callback table (backs
+/// `kAudioUnitProperty_ARAFactory`).
+pub type AuAraFactoryFn =
+    unsafe extern "C" fn(ctx: *mut std::ffi::c_void) -> *const std::ffi::c_void;
+/// Signature of the ARA bind callback on the AU callback table (backs
+/// `kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles`).
+pub type AuAraBindFn = unsafe extern "C" fn(
+    ctx: *mut std::ffi::c_void,
+    document_controller: *const std::ffi::c_void,
+    known_roles: i32,
+    assigned_roles: i32,
+) -> *const std::ffi::c_void;
+
+/// Null ARA-factory getter for plug-ins without ARA: reports no factory,
+/// so the shim treats `kAudioUnitProperty_ARAFactory` as unsupported.
+/// `export_au!` installs this when the `ara` feature is off. Dereferences
+/// nothing, so it stays safe (coerces to the `unsafe` table slot).
+pub extern "C" fn ara_factory_none(_ctx: *mut std::ffi::c_void) -> *const std::ffi::c_void {
+    std::ptr::null()
+}
+
+/// Null ARA bind for plug-ins without ARA.
+pub extern "C" fn ara_bind_none(
+    _ctx: *mut std::ffi::c_void,
+    _document_controller: *const std::ffi::c_void,
+    _known_roles: i32,
+    _assigned_roles: i32,
+) -> *const std::ffi::c_void {
+    std::ptr::null()
+}
+
 /// Register the plugin with the AU system. Must be called once at load time
 /// (typically from a constructor function generated by `export_au!`).
 /// Host-facing AU display name. Reads `truce.toml`'s `au_name`
@@ -2089,10 +2161,12 @@ fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
     resolve_name_override(info.au_name, info.name)
 }
 
-pub fn register_au<P: PluginExport>() {
+pub fn register_au<P: PluginExport>(ara_factory: AuAraFactoryFn, ara_bind: AuAraBindFn) {
     // Called from the export macro's `extern "C" fn init()` static
     // initializer. Catch any panic so it doesn't cross the FFI
-    // boundary and abort the host process.
+    // boundary and abort the host process. `ara_factory` / `ara_bind` are
+    // ARA thunks (real ones under the `ara` feature, null stubs otherwise)
+    // the macro passes in because only it has the `AraExport` bound.
     run_register::<P>("AU", || {
         let Some((num_inputs, num_outputs)) = default_io_channels::<P>() else {
             log_missing_bus_layout::<P>("AU");
@@ -2108,7 +2182,7 @@ pub fn register_au<P: PluginExport>() {
             );
             return;
         }
-        register_au_inner::<P>(num_inputs, num_outputs);
+        register_au_inner::<P>(num_inputs, num_outputs, ara_factory, ara_bind);
     });
 }
 
@@ -2187,7 +2261,12 @@ fn au_version_u32(version: &str) -> u32 {
     ((major & 0xFFFF) << 16) | ((minor & 0xFF) << 8) | (patch & 0xFF)
 }
 
-fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
+fn register_au_inner<P: PluginExport>(
+    num_inputs: u32,
+    num_outputs: u32,
+    ara_factory: AuAraFactoryFn,
+    ara_bind: AuAraBindFn,
+) {
     let info = P::info();
 
     // Static metadata path: derive emits a `LazyLock`-cached
@@ -2337,6 +2416,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         tail_samples: cb_tail_samples::<P>,
         set_render_mode: cb_set_render_mode::<P>,
         param_parse_value: cb_param_parse_value::<P>,
+        ara_factory,
+        ara_bind,
     }));
 
     let param_descs = param_descs.leak();
@@ -2375,7 +2456,19 @@ macro_rules! export_au {
             /// Called by the constructor to init the plugin.
             #[unsafe(no_mangle)]
             pub extern "C" fn truce_au_init() {
-                ::truce_au::register_au::<$plugin_type>();
+                // Select real ARA thunks under the plugin's `ara` feature
+                // (which also enables `truce-au/ara`, so `AraExport` is
+                // implemented and the `ara` module exists), null stubs
+                // otherwise.
+                #[cfg(feature = "ara")]
+                let ara_factory = ::truce_au::ara::ara_factory_thunk::<$plugin_type>;
+                #[cfg(not(feature = "ara"))]
+                let ara_factory = ::truce_au::ara_factory_none;
+                #[cfg(feature = "ara")]
+                let ara_bind = ::truce_au::ara::ara_bind_thunk::<$plugin_type>;
+                #[cfg(not(feature = "ara"))]
+                let ara_bind = ::truce_au::ara_bind_none;
+                ::truce_au::register_au::<$plugin_type>(ara_factory, ara_bind);
             }
 
             // AU v2 factory: delegates to au_v2_shim.c. The whole
@@ -2406,7 +2499,19 @@ macro_rules! export_au {
 
             #[unsafe(no_mangle)]
             pub extern "C" fn truce_au_init() {
-                ::truce_au::register_au::<$plugin_type>();
+                // Select real ARA thunks under the plugin's `ara` feature
+                // (which also enables `truce-au/ara`, so `AraExport` is
+                // implemented and the `ara` module exists), null stubs
+                // otherwise.
+                #[cfg(feature = "ara")]
+                let ara_factory = ::truce_au::ara::ara_factory_thunk::<$plugin_type>;
+                #[cfg(not(feature = "ara"))]
+                let ara_factory = ::truce_au::ara_factory_none;
+                #[cfg(feature = "ara")]
+                let ara_bind = ::truce_au::ara::ara_bind_thunk::<$plugin_type>;
+                #[cfg(not(feature = "ara"))]
+                let ara_bind = ::truce_au::ara_bind_none;
+                ::truce_au::register_au::<$plugin_type>(ara_factory, ara_bind);
             }
         }
     };

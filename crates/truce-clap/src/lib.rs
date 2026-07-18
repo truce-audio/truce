@@ -23,6 +23,18 @@ pub mod __macro_deps {
 
 pub mod presets;
 
+/// CLAP ARA discovery. Compiled only with the `ara` feature, in which
+/// case the plugin type passed to `export_clap!` must implement
+/// `truce_ara::AraExport`.
+#[cfg(feature = "ara")]
+pub mod ara;
+
+/// Type-erased per-instance ARA extension resolver. Defined ungated so
+/// [`ClapPluginData`] and [`create_plugin_instance`] keep one shape
+/// regardless of the feature; it stays `None` unless the `ara` feature
+/// installs one at instance creation.
+type AraExtResolver = unsafe extern "C" fn(*const clap_plugin, *const c_char) -> *const c_void;
+
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
 use std::mem::transmute;
@@ -117,7 +129,7 @@ use truce_core::midi::{
 };
 use truce_core::plugin::PluginRuntime;
 use truce_core::presets::parse_preset_file;
-use truce_core::process::ProcessStatus;
+use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::rt::{RtSection, audit};
 use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
@@ -313,6 +325,15 @@ struct ClapPluginData<P: PluginExport> {
     /// The pointers returned point into this box and stay valid for the
     /// instance's lifetime, which is exactly how long the host uses them.
     extensions: Extensions<P>,
+    /// Resolves ARA extensions for `clap_plugin_get_extension`. `None`
+    /// for a non-ARA plugin (or an ARA plugin built without the `ara`
+    /// feature); the `ara` feature installs
+    /// `ara::resolver::<P>` at creation.
+    ara_resolver: Option<AraExtResolver>,
+    /// Owns the per-instance ARA playback-renderer binding, created at
+    /// `bind_to_document_controller` and freed when this data is dropped.
+    #[cfg(feature = "ara")]
+    ara_binding: truce_ara::AraBindingCell,
 }
 
 /// Audio + lifecycle-owned per-block scratch (see [`ClapPluginData::audio`]).
@@ -524,6 +545,11 @@ impl DescriptorHolder {
 
         let mut features: Vec<*const c_char> =
             features_storage.iter().map(|f| f.as_ptr()).collect();
+        // Advertise ARA so hosts detect it early in setup. Under the `ara`
+        // feature every plugin in this build is ARA-capable (the feature is
+        // per-plugin-crate), so this is unconditional there.
+        #[cfg(feature = "ara")]
+        features.push(ara::CLAP_PLUGIN_FEATURE_ARA_SUPPORTED.as_ptr());
         features.push(ptr::null());
 
         let descriptor = clap_plugin_descriptor {
@@ -1803,24 +1829,47 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // `plugin.process` exactly once - the splitting machinery is
         // inert. See `chunked_process` for the per-sub-block contract.
         let mut transport_snap = transport;
-        let chunk_args = ChunkedProcess {
-            events: &scr.event_list,
-            sub_event_scratch: &mut scr.sub_event_scratch,
-            transport: &mut transport_snap,
-            sample_rate: scr.sample_rate,
-            process_mode: ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed)),
-            output_events: &mut scr.output_events,
-            params_fn: None,
-            meters_fn: None,
-            param_infos: &data.param_infos,
-            min_subblock_samples: data.info.automation.min_subblock_samples,
+
+        // ARA playback render: when the instance is bound as a playback
+        // renderer, it generates output from its assigned regions and
+        // ignores the input, so route to `ara_render` and skip the normal
+        // (chunked) insert process.
+        #[cfg(feature = "ara")]
+        let ara_renderer = data.ara_binding.renderer();
+        #[cfg(not(feature = "ara"))]
+        let ara_renderer: *mut c_void = std::ptr::null_mut();
+
+        let status = if ara_renderer.is_null() {
+            let chunk_args = ChunkedProcess {
+                events: &scr.event_list,
+                sub_event_scratch: &mut scr.sub_event_scratch,
+                transport: &mut transport_snap,
+                sample_rate: scr.sample_rate,
+                process_mode: ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed)),
+                output_events: &mut scr.output_events,
+                params_fn: None,
+                meters_fn: None,
+                param_infos: &data.param_infos,
+                min_subblock_samples: data.info.automation.min_subblock_samples,
+            };
+            process_chunked(
+                &mut *instance,
+                data.params_arc.as_ref() as &dyn Params,
+                &mut audio_buffer,
+                chunk_args,
+            )
+        } else {
+            let mut ctx = ProcessContext::new(
+                &transport_snap,
+                scr.sample_rate,
+                num_frames,
+                &mut scr.output_events,
+            )
+            .with_process_mode(ProcessMode::from_u8(
+                data.render_mode.load(Ordering::Relaxed),
+            ));
+            instance.ara_render(ara_renderer, &mut audio_buffer, &mut ctx)
         };
-        let status = process_chunked(
-            &mut *instance,
-            data.params_arc.as_ref() as &dyn Params,
-            &mut audio_buffer,
-            chunk_args,
-        );
 
         // Convert + copy back to host outputs for every channel that
         // rendered into scratch (wire precision differed from
@@ -2305,7 +2354,7 @@ pub fn rt_paranoid_smoke<P: PluginExport>() -> u32 {
     // buffers, the channel-pointer arrays, the output-event sink)
     // outlives each call, and the buffers are sized to `FRAMES`.
     unsafe {
-        let plugin = create_plugin_instance::<P>(descriptor, host);
+        let plugin = create_plugin_instance::<P>(descriptor, host, None);
         let vtable = &*plugin;
         (vtable.init.unwrap())(plugin);
         (vtable.activate.unwrap())(plugin, 48_000.0, 1, FRAMES);
@@ -4079,6 +4128,13 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         if ext_id == CLAP_EXT_RENDER {
             return (&raw const extensions.render).cast::<c_void>();
         }
+        // ARA plug-in extension (only installed under the `ara` feature).
+        if let Some(resolve) = data_from_plugin::<P>(plugin).ara_resolver {
+            let ptr = resolve(plugin, id);
+            if !ptr.is_null() {
+                return ptr;
+            }
+        }
         ptr::null()
     }
 }
@@ -4096,6 +4152,7 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
 pub unsafe fn create_plugin_instance<P: PluginExport>(
     descriptor: *const clap_plugin_descriptor,
     host: *const clap_host,
+    ara_resolver: Option<AraExtResolver>,
 ) -> *const clap_plugin {
     // Author `create` runs here (its `init` is guarded separately in
     // `clap_plugin_init`). Guard the constructor too - the factory's
@@ -4160,6 +4217,9 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             host_scale: AtomicU64::new(1.0f64.to_bits()),
             pending_resize: AtomicU64::new(0),
             extensions: Extensions::<P>::new(),
+            ara_resolver,
+            #[cfg(feature = "ara")]
+            ara_binding: truce_ara::AraBindingCell::new(),
             audio: PluginCell::new(ClapAudio {
                 event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
                 sounding_notes: SoundingNotes::new(midi_input_ports),
@@ -4284,7 +4344,15 @@ macro_rules! export_clap {
                     return ptr::null();
                 }
                 let descriptor = &get_descriptor().descriptor as *const clap_plugin_descriptor;
-                ::truce_clap::create_plugin_instance::<$plugin_type>(descriptor, host)
+                // Install the ARA extension resolver when the plugin's
+                // `ara` feature is on (which also enables `truce-clap/ara`,
+                // so `ara::resolver` exists and `$plugin_type: AraExport`).
+                #[cfg(feature = "ara")]
+                let ara_resolver =
+                    ::core::option::Option::Some(::truce_clap::ara::resolver::<$plugin_type>());
+                #[cfg(not(feature = "ara"))]
+                let ara_resolver = ::core::option::Option::None;
+                ::truce_clap::create_plugin_instance::<$plugin_type>(descriptor, host, ara_resolver)
             }
 
             unsafe extern "C" fn entry_init(plugin_path: *const c_char) -> bool {
@@ -4312,6 +4380,13 @@ macro_rules! export_clap {
                 {
                     return ::truce_clap::presets::discovery_factory::<$plugin_type>()
                         as *const c_void;
+                }
+                // Entry-level ARA factory (only when the plugin's `ara`
+                // feature is on, which enables `truce-clap/ara` and makes
+                // `$plugin_type: AraExport`).
+                #[cfg(feature = "ara")]
+                if id == ::truce_clap::ara::CLAP_EXT_ARA_FACTORY {
+                    return ::truce_clap::ara::clap_ara_factory::<$plugin_type>().cast();
                 }
                 ptr::null()
             }

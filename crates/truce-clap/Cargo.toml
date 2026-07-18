@@ -11,6 +11,9 @@ description = "CLAP format wrapper for truce"
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }
+# ARA companion support. Optional: only pulled in when a plugin enables
+# the `ara` feature, so non-ARA plugins never compile the ARA glue.
+truce-ara = { workspace = true, optional = true }
 clap-sys = "0.5"
 log = "0.4"
 # Wait-free bounded MPMC queue. Used for the GUI → audio param change
@@ -24,6 +27,12 @@ crossbeam-queue = "0.3"
 # leaves around it. Pure `msg_send!` against AppKit.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+
+[features]
+# Expose ARA discovery (the ara:supported feature, the ARA factory, and
+# the ARA plug-in extension). The plugin type passed to `export_clap!`
+# must implement `truce_ara::AraExport` when this is on.
+ara = ["dep:truce-ara"]
 
 [lints]
 workspace = true

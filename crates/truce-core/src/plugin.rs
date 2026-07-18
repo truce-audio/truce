@@ -109,6 +109,23 @@ pub trait PluginRuntime: Send + 'static {
         context: &mut ProcessContext,
     ) -> ProcessStatus;
 
+    /// ARA playback-render entry (real-time). Called by a companion-format
+    /// wrapper instead of [`Self::process`] when the instance is bound to
+    /// an ARA document controller with the playback-renderer role;
+    /// `renderer` is an opaque `truce_ara::PlaybackRenderer` pointer the
+    /// override reads its assigned regions from. The default renders
+    /// nothing - only an ARA-enabled wrapper overrides it, and the wrapper
+    /// is the only caller.
+    fn ara_render(
+        &mut self,
+        renderer: *mut core::ffi::c_void,
+        buffer: &mut AudioBuffer<Self::Sample>,
+        context: &mut ProcessContext,
+    ) -> ProcessStatus {
+        let _ = (renderer, buffer, context);
+        ProcessStatus::Normal
+    }
+
     /// Save extra state beyond parameter values. Empty `Vec` means
     /// "no extra state": matches the user-facing
     /// `truce_plugin::PluginLogic::save_state` shape so the wrapper

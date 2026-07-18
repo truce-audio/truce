@@ -43,9 +43,11 @@
 // change into a pre-v4 binary (the pointer would be past its tail).
 // v5: appended `param_parse_value`; a shim must not call it on a pre-v5
 // binary (the pointer would be past its tail).
+// v6: appended `ara_factory` / `ara_bind`; a shim must not call them on a
+// pre-v6 binary (the pointers would be past its tail).
 #define TRUCE_AU_ABI_MAGIC_MASK 0xFFFFFF00u
 #define TRUCE_AU_ABI_MAGIC 0x54417500u
-#define TRUCE_AU_ABI_VERSION 0x54417505u
+#define TRUCE_AU_ABI_VERSION 0x54417506u
 
 typedef struct {
     uint8_t component_type[4];
@@ -349,6 +351,20 @@ typedef struct {
      * (>= v5) before calling. */
     int32_t (*param_parse_value)(void *ctx, uint32_t id, const char *text,
                                  double *out_plain);
+    /* ARA (Audio Random Access) discovery + binding, backing the AU
+     * properties kAudioUnitProperty_ARAFactory ('AraF') and
+     * kAudioUnitProperty_ARAPlugInExtensionBindingWithRoles ('AraE').
+     * `ara_factory` returns the plug-in's `ARAFactory *` (NULL when the
+     * plug-in has no ARA support - the shim then reports the property
+     * invalid). `ara_bind` binds this instance to the host's document
+     * controller with the given roles and returns the
+     * `ARAPlugInExtensionInstance *` (NULL on failure). `known_roles` /
+     * `assigned_roles` are ARAPlugInInstanceRoleFlags (int32). Appended
+     * per the append-only rule; gate on abi_version (>= v6) before
+     * calling. */
+    const void *(*ara_factory)(void *ctx);
+    const void *(*ara_bind)(void *ctx, const void *document_controller,
+                            int32_t known_roles, int32_t assigned_roles);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

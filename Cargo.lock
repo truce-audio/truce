@@ -109,6 +109,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3827,11 +3836,21 @@ name = "truce-aax-bridge"
 version = "6.2.1"
 
 [[package]]
+name = "truce-ara"
+version = "6.2.1"
+dependencies = [
+ "arc-swap",
+ "truce-core",
+ "truce-params",
+]
+
+[[package]]
 name = "truce-au"
 version = "6.2.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
+ "truce-ara",
  "truce-core",
  "truce-params",
  "truce-shim-types",
@@ -3855,6 +3874,7 @@ dependencies = [
  "crossbeam-queue",
  "log",
  "objc",
+ "truce-ara",
  "truce-core",
  "truce-params",
 ]
@@ -3922,6 +3942,25 @@ dependencies = [
  "truce-gui",
  "truce-params",
  "wgpu 29.0.4",
+]
+
+[[package]]
+name = "truce-example-ara-passthrough"
+version = "6.2.1"
+dependencies = [
+ "clap-sys",
+ "egui",
+ "truce",
+ "truce-ara",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-egui",
+ "truce-font",
+ "truce-loader",
+ "truce-params",
+ "truce-test",
+ "truce-vst3",
 ]
 
 [[package]]
@@ -4858,6 +4897,7 @@ version = "6.2.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
+ "truce-ara",
  "truce-core",
  "truce-params",
 ]

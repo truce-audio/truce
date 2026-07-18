@@ -291,6 +291,11 @@ pub struct PluginDef {
     pub au_subtype: Option<String>,
     #[serde(default)]
     pub aax_category: Option<String>,
+    /// ARA (Audio Random Access) opt-in: `"supported"` (works with or
+    /// without ARA) or `"required"` (rare; no plain-insert fallback).
+    /// Absent means no ARA. Consumed by the `ara`-feature format wrappers.
+    #[serde(default)]
+    pub ara: Option<String>,
     /// VST3 "Plugin Type Categories" secondary token. The wrapper
     /// emits this after the primary token (`Fx|<sub>`,
     /// `Instrument|<sub>`) so hosts like Cubase can route the
