@@ -43,9 +43,10 @@ pub(crate) use util::tmp_verify;
 pub(crate) use util::{
     apply_extra_features, cargo_build, cargo_build_debug, check_cmd, codesign_bundle,
     confirm_prompt, detect_default_features, find_on_path, is_debug_profile, log_output, log_skip,
-    parse_extra_features, project_root, read_standalone_bin_name, release_lib, set_build_profile,
-    set_debug_profile, set_extra_features, set_target_cpu, tag_fail, tag_ok, tag_warn,
-    take_outputs, take_skipped, verify_shell_profile_declared, vprintln,
+    namespaced_nonformat_defaults, parse_extra_features, project_root, read_standalone_bin_name,
+    release_lib, set_build_profile, set_debug_profile, set_extra_features, set_no_default_features,
+    set_target_cpu, tag_fail, tag_ok, tag_warn, take_outputs, take_skipped,
+    verify_shell_profile_declared, vprintln,
 };
 // `run_sudo` shells out to `/usr/bin/sudo`, which only exists on macOS in
 // our supported targets. Windows admin elevation is per-process (UAC, not

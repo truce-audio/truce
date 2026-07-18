@@ -5,6 +5,7 @@
 //! to install, package, or doctor lives next to the command that uses it.
 
 use crate::CargoTruceError;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -309,6 +310,24 @@ pub(crate) fn set_extra_features(features: Vec<String>) {
 /// The extra Cargo features set for this invocation, or an empty slice.
 pub(crate) fn extra_features() -> &'static [String] {
     EXTRA_FEATURES.get().map_or(&[], Vec::as_slice)
+}
+
+/// Whether per-format builds re-add each plugin's non-format default
+/// features (see [`namespaced_nonformat_defaults`]). On by default;
+/// `cargo truce <cmd> --no-default-features` flips it off for a minimal
+/// build (just the format + the author's explicit `--features`).
+static KEEP_DEFAULT_FEATURES: OnceLock<bool> = OnceLock::new();
+
+/// Record whether the author passed `--no-default-features`. Idempotent
+/// (first set wins), matching the other invocation globals.
+pub(crate) fn set_no_default_features(on: bool) {
+    KEEP_DEFAULT_FEATURES.get_or_init(|| !on);
+}
+
+/// Whether to keep (re-add) plugin non-format default features. Defaults
+/// to `true` when the flag was never set.
+pub(crate) fn keep_default_features() -> bool {
+    *KEEP_DEFAULT_FEATURES.get().unwrap_or(&true)
 }
 
 /// Format-gating features truce enables itself per-build. Passing one
@@ -636,41 +655,135 @@ pub(crate) fn read_standalone_bin_name(crate_name: &str) -> Option<String> {
 ///    `[features].default` and returns the **union**, so `install`
 ///    tries the formats declared by at least one plugin and skips the
 ///    rest.
-pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
+pub(crate) fn detect_default_features() -> HashSet<String> {
     let root = project_root();
 
     // Single-crate layout: root Cargo.toml has a `[features]` table.
-    if let Ok(content) = fs::read_to_string(root.join("Cargo.toml"))
-        && let Ok(doc) = content.parse::<toml::Table>()
-        && let Some(toml::Value::Table(feat)) = doc.get("features")
-        && let Some(toml::Value::Array(defaults)) = feat.get("default")
-    {
-        return defaults
-            .iter()
-            .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
-            .collect();
+    let root_defaults = read_default_features(&root.join("Cargo.toml"));
+    if !root_defaults.is_empty() {
+        return root_defaults;
     }
 
     // Workspace layout: iterate plugins from `truce.toml` and union
     // their declared default features.
-    let mut union = std::collections::HashSet::new();
+    let mut union = HashSet::new();
     if let Ok(config) = crate::load_config() {
         for p in &config.plugin {
-            if let Some(manifest) = locate_plugin_manifest(&root, &p.crate_name)
-                && let Ok(content) = fs::read_to_string(&manifest)
-                && let Ok(doc) = content.parse::<toml::Table>()
-                && let Some(toml::Value::Table(feat)) = doc.get("features")
-                && let Some(toml::Value::Array(defaults)) = feat.get("default")
-            {
-                for v in defaults {
-                    if let Some(s) = v.as_str() {
-                        union.insert(s.to_string());
-                    }
+            union.extend(plugin_default_features(&root, &p.crate_name));
+        }
+    }
+    union
+}
+
+/// Parse a manifest's `[features]` table into `name -> its enabled
+/// entries` (feature names, `dep:pkg`, and `pkg/feat` alike). Empty when
+/// the file is unreadable or declares no features.
+fn read_features_table(manifest: &Path) -> BTreeMap<String, Vec<String>> {
+    let mut out = BTreeMap::new();
+    if let Ok(content) = fs::read_to_string(manifest)
+        && let Ok(doc) = content.parse::<toml::Table>()
+        && let Some(toml::Value::Table(feat)) = doc.get("features")
+    {
+        for (name, deps) in feat {
+            if let toml::Value::Array(deps) = deps {
+                let deps = deps
+                    .iter()
+                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
+                    .collect();
+                out.insert(name.clone(), deps);
+            }
+        }
+    }
+    out
+}
+
+/// A manifest's `[features].default` array as a set.
+fn read_default_features(manifest: &Path) -> HashSet<String> {
+    read_features_table(manifest)
+        .get("default")
+        .map(|d| d.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// One plugin crate's declared default features (its `[features].default`).
+/// Empty when the crate declares none or its manifest can't be located.
+/// Resolves the crate's own manifest, so it works in both the single-crate
+/// and workspace layouts.
+pub(crate) fn plugin_default_features(root: &Path, crate_name: &str) -> HashSet<String> {
+    locate_plugin_manifest(root, crate_name)
+        .map(|m| read_default_features(&m))
+        .unwrap_or_default()
+}
+
+/// Cargo `--features` tokens (`crate/feature`) for every non-format
+/// default feature the given plugins declare. A per-format build passes
+/// `--no-default-features` (to drop the *other* formats), which also
+/// strips companion defaults like `ara`; these tokens re-add them.
+///
+/// Namespaced per crate so a batched multi-plugin build enables each
+/// feature only on the plugin that declares it - a bare `--features ara`
+/// across `-p a -p b` would error when `b` has no `ara`. Returns empty
+/// when the author passed `--no-default-features`.
+pub(crate) fn namespaced_nonformat_defaults(root: &Path, crate_names: &[&str]) -> Vec<String> {
+    if !keep_default_features() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for name in crate_names {
+        let Some(manifest) = locate_plugin_manifest(root, name) else {
+            continue;
+        };
+        let table = read_features_table(&manifest);
+        for feat in nonformat_default_features(&table) {
+            out.push(format!("{name}/{feat}"));
+        }
+    }
+    out
+}
+
+/// A plugin's default features that carry no format, sorted for a
+/// deterministic cargo invocation. A default is dropped when it, or
+/// anything it transitively enables, is a reserved format feature - so
+/// `standalone-playback = ["standalone", ...]` is dropped (it would drag
+/// the standalone host into a plain CLAP build), while an orthogonal
+/// companion like `ara` is kept.
+fn nonformat_default_features(table: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    let Some(defaults) = table.get("default") else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = defaults
+        .iter()
+        .filter(|f| !feature_enables_format(f, table))
+        .cloned()
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// Whether `feature` is, or transitively enables, a reserved format
+/// feature within the plugin's own feature graph. Only local feature
+/// names are followed; `dep:pkg` and `pkg/feat` entries can't name a
+/// local format feature, so they're ignored.
+fn feature_enables_format(feature: &str, table: &BTreeMap<String, Vec<String>>) -> bool {
+    let mut stack = vec![feature.to_string()];
+    let mut seen = HashSet::new();
+    while let Some(f) = stack.pop() {
+        if RESERVED_FORMAT_FEATURES.contains(&f.as_str()) {
+            return true;
+        }
+        if !seen.insert(f.clone()) {
+            continue;
+        }
+        if let Some(deps) = table.get(&f) {
+            for d in deps {
+                if !d.starts_with("dep:") && !d.contains('/') {
+                    stack.push(d.clone());
                 }
             }
         }
     }
-    union
+    false
 }
 
 pub(crate) fn project_root() -> PathBuf {
@@ -1092,6 +1205,62 @@ mod tests {
             parse_extra_features(" fancy-dsp ").unwrap(),
             vec!["fancy-dsp".to_string()]
         );
+    }
+
+    /// Build a `[features]`-style graph from `(name, deps)` pairs.
+    fn feature_graph(entries: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
+        entries
+            .iter()
+            .map(|(n, deps)| {
+                (
+                    (*n).to_string(),
+                    deps.iter().map(|d| (*d).to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn nonformat_defaults_keep_companion_drop_formats() {
+        // Two formats plus one orthogonal companion feature.
+        let table = feature_graph(&[
+            ("default", &["clap", "vst3", "ara"]),
+            ("clap", &["dep:truce-clap"]),
+            ("vst3", &["dep:truce-vst3"]),
+            ("ara", &["dep:truce-ara"]),
+        ]);
+        assert_eq!(nonformat_default_features(&table), vec!["ara".to_string()]);
+    }
+
+    #[test]
+    fn nonformat_defaults_drop_transitive_format() {
+        // `standalone-playback` enables `standalone` (a format), so it must
+        // not be re-added to a plain format build - only `ara` survives.
+        let table = feature_graph(&[
+            ("default", &["clap", "vst3", "ara", "standalone-playback"]),
+            ("standalone", &["dep:truce-standalone"]),
+            (
+                "standalone-playback",
+                &["standalone", "truce-standalone/playback"],
+            ),
+            ("ara", &["dep:truce-ara"]),
+        ]);
+        assert_eq!(nonformat_default_features(&table), vec!["ara".to_string()]);
+    }
+
+    #[test]
+    fn nonformat_defaults_sorted_and_empty_cases() {
+        // Multiple companions come out sorted (map order is by key).
+        let table = feature_graph(&[("default", &["vst3", "zeta", "ara", "au"])]);
+        assert_eq!(
+            nonformat_default_features(&table),
+            vec!["ara".to_string(), "zeta".to_string()]
+        );
+        // Only formats → nothing to re-add.
+        let only_formats = feature_graph(&[("default", &["clap", "vst3", "standalone"])]);
+        assert!(nonformat_default_features(&only_formats).is_empty());
+        // No `default` key at all → empty.
+        assert!(nonformat_default_features(&BTreeMap::new()).is_empty());
     }
 
     #[test]

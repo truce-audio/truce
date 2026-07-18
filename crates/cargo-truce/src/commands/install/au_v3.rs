@@ -215,6 +215,14 @@ fn build_rust_framework_dylib(
         // unique class names (the .appex runs sandboxed per-process),
         // but keeping the env in lockstep with v2 avoids invalidating
         // the truce-au compile when packaging both formats.
+        // `au` plus the plugin's non-format default features (e.g. `ara`),
+        // which `--no-default-features` would otherwise strip.
+        let mut features = vec!["au".to_string()];
+        features.extend(crate::namespaced_nonformat_defaults(
+            root,
+            &[p.crate_name.as_str()],
+        ));
+        let features = features.join(",");
         cargo_build_for_arch(
             &[("TRUCE_AU_PLUGIN_ID", p.bundle_id.as_str())],
             &[
@@ -222,7 +230,7 @@ fn build_rust_framework_dylib(
                 &p.crate_name,
                 "--no-default-features",
                 "--features",
-                "au",
+                &features,
             ],
             arch,
             dt,

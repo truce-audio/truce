@@ -160,7 +160,17 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let plugin = plugins[0];
 
     crate::vprintln!("Building {} cdylib...", plugin.name);
-    let build_args = ["-p", &plugin.crate_name, "--no-default-features", "--lib"];
+    // No format feature (the screenshot loads the cdylib directly), but keep
+    // the plugin's non-format default features (e.g. `ara`) so the rendered
+    // editor matches what the plugin ships.
+    let mut build_args: Vec<&str> =
+        vec!["-p", &plugin.crate_name, "--no-default-features", "--lib"];
+    let defaults = crate::namespaced_nonformat_defaults(&root, &[plugin.crate_name.as_str()]);
+    let defaults = defaults.join(",");
+    if !defaults.is_empty() {
+        build_args.push("--features");
+        build_args.push(&defaults);
+    }
     if debug {
         cargo_build_debug(&[], &build_args, dt)?;
     } else {

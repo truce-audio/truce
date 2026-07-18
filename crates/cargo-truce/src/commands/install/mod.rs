@@ -119,6 +119,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
     let mut cli_scope: Option<InstallScope> = None;
     let mut user_features: Vec<String> = Vec::new();
+    let mut no_default_features = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -161,6 +162,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
                     "--features",
                 )?)?);
             }
+            "--no-default-features" => no_default_features = true,
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
@@ -174,6 +176,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // formats, shell logic, iOS) via the global read by
     // `apply_extra_features`. Set before the iOS short-circuit below.
     crate::set_extra_features(user_features);
+    // `--no-default-features` opts out of re-adding each plugin's
+    // non-format default features (e.g. `ara`) to the per-format builds.
+    crate::set_no_default_features(no_default_features);
 
     // Scope is resolved per-format inside `scope_for` / `effective_scope`:
     // - explicit `--user` / `--system` wins (subject to hard upgrades);
@@ -459,6 +464,9 @@ Options:
                    Extra Cargo features for the plugin crate, comma/space-
                    separated. Additive, applied to every underlying build.
                    Format features (clap/vst3/...) are reserved.
+  --no-default-features
+                   Don't re-add the plugin's non-format default features
+                   (e.g. ara) to each per-format build.
   -p <crate>       Install only the plugin with this cargo crate name.
   --target-cpu <value>
                    Override the x86_64 default. Accepted values:

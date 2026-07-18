@@ -20,6 +20,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     let mut debug = false;
     let mut target_cpu_arg: Option<String> = None;
     let mut extra_features: Vec<String> = Vec::new();
+    let mut no_default_features = false;
     let mut extra_args: Vec<String> = Vec::new();
     let mut past_separator = false;
     let mut i = 0;
@@ -50,6 +51,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
                             .map(str::to_string),
                     );
                 }
+                "--no-default-features" => no_default_features = true,
                 "--help" | "-h" => {
                     print_help();
                     return Ok(());
@@ -62,6 +64,9 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     }
 
     crate::set_debug_profile(debug);
+    // `--no-default-features` opts out of re-adding the plugin's non-format
+    // default features (e.g. `ara`) to the standalone build.
+    crate::set_no_default_features(no_default_features);
     let target_cpu = target_cpu_arg
         .as_deref()
         .map(parse_target_cpu_arg)
@@ -104,6 +109,12 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             "standalone".to_string(),
             "truce-standalone/playback".to_string(),
         ];
+        // The plugin's non-format default features (e.g. `ara`), which
+        // `--no-default-features` would otherwise strip.
+        features.extend(crate::namespaced_nonformat_defaults(
+            &root,
+            &[plugin.crate_name.as_str()],
+        ));
         features.extend(extra_features);
         let features = features.join(",");
         cargo_build(
@@ -315,10 +326,11 @@ Usage: cargo truce run [-p <crate>] [--no-build] [--debug]
 Build and run a plugin standalone. Pass `--debug` for a faster-compile
 dev-profile build (fine when iterating outside a DAW); release otherwise.
 
-The standalone is built `--no-default-features` (no format wrapper is
-needed to preview a plugin). Use `--features` to add cargo features -
-comma- or space-separated, enabled alongside `standalone` - e.g. to
-re-enable a format or turn on a plugin-specific feature.
+The standalone strips the format wrappers (none is needed to preview a
+plugin) but keeps the plugin's other default features (e.g. `ara`). Use
+`--features` to add more, comma- or space-separated, enabled alongside
+`standalone` - e.g. to re-enable a format or turn on a plugin-specific
+feature. Pass `--no-default-features` to drop the non-format defaults too.
 
 Anything after `--` is forwarded verbatim to the standalone binary
 (e.g. `cargo truce run -- --headless --bpm 140`).
