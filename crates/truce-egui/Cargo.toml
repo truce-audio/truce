@@ -12,10 +12,10 @@ description = "egui-based GUI backend for truce audio plugins"
 truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
-egui = "0.34"
+egui = "0.35"
 # default-features off so wgpu/default doesn't re-enable every backend;
 # truce-gpu gates them per target_os.
-egui-wgpu = { version = "0.34", default-features = false }
+egui-wgpu = { version = "0.35", default-features = false }
 wgpu = { workspace = true }
 pollster = "0.4"
 raw-window-handle = "0.5"

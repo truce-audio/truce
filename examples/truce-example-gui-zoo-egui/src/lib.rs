@@ -158,7 +158,7 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
     egui::Panel::top("header")
         .exact_size(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
@@ -171,7 +171,7 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
         });
     egui::CentralPanel::default()
         .frame(egui::Frame::central_panel(ui.style()).inner_margin(10.0))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(10.0, 12.0);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
