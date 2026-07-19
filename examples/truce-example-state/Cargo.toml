@@ -44,7 +44,7 @@ truce-standalone = { workspace = true, features = ["gui"], optional = true }
 truce-font = { workspace = true }
 truce-loader = { workspace = true }
 truce-egui = { workspace = true }
-egui = "0.34"
+egui = "0.35"
 
 [dev-dependencies]
 truce-test = { workspace = true }
