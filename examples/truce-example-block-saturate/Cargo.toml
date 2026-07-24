@@ -35,6 +35,7 @@ truce = { workspace = true }
 truce-core = { workspace = true }
 truce-params = { workspace = true }
 truce-simd = { workspace = true }
+truce-oversample = { workspace = true }
 truce-clap = { workspace = true, optional = true }
 truce-vst3 = { workspace = true, optional = true }
 truce-vst2 = { workspace = true, optional = true }
