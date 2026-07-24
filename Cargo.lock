@@ -4025,6 +4025,7 @@ dependencies = [
  "truce-gui-types",
  "truce-loader",
  "truce-lv2",
+ "truce-oversample",
  "truce-params",
  "truce-simd",
  "truce-standalone",
@@ -4768,6 +4769,10 @@ dependencies = [
  "truce-params",
  "x11-dl",
 ]
+
+[[package]]
+name = "truce-oversample"
+version = "6.3.0"
 
 [[package]]
 name = "truce-params"

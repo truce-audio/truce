@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.4.0
+
+- New crate `truce-oversample`: halfband-cascade oversampling (2x/4x/8x) for waveshapers, saturators, and true-peak limiters that need their nonlinearity running at a higher internal rate to avoid aliasing. Framework-agnostic, zero dependency on `truce` core. Wired into `truce-example-block-saturate` as a new `Oversample` param.
+
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.

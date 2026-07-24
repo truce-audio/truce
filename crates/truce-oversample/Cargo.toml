@@ -1,0 +1,14 @@
+[package]
+name = "truce-oversample"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Halfband-cascade oversampling (2x/4x/8x) for waveshapers, saturators, and true-peak limiting."
+
+[dependencies]
+
+[lints]
+workspace = true
