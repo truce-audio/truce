@@ -33,6 +33,7 @@ members = [
     "crates/truce-iced",
     "crates/truce-shim-types",
     "crates/truce-simd",
+    "crates/truce-oversample",
     "crates/truce-font",
     "crates/truce-utils",
     "examples/truce-example-gain",
@@ -141,6 +142,7 @@ truce-gpu = { version = "6.3.0", path = "crates/truce-gpu" }
 truce-egui = { version = "6.3.0", path = "crates/truce-egui" }
 truce-iced = { version = "6.3.0", path = "crates/truce-iced" }
 truce-simd = { version = "6.3.0", path = "crates/truce-simd" }
+truce-oversample = { version = "6.3.0", path = "crates/truce-oversample" }
 truce-font = { version = "6.3.0", path = "crates/truce-font" }
 truce-build = { version = "6.3.0", path = "crates/truce-build" }
 truce-shim-types = { version = "6.3.0", path = "crates/truce-shim-types" }
