@@ -13,6 +13,7 @@
 
 #![cfg(target_os = "macos")]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -258,20 +259,20 @@ impl Drop for DedupedArchive {
 }
 
 /// Extract `staticlib`'s members into a temp directory then recompose
-/// a fresh archive containing only the *latest* member at each name.
-///
-/// `ar -x` on macOS overwrites same-named files on extract, so the
-/// extracted directory naturally holds one file per unique member
-/// name. `ar -qc` then assembles those files into a clean archive
-/// suitable for `clang -bundle -all_load`.
+/// a fresh archive with byte-identical duplicate members removed.
 ///
 /// Why this exists: some sys-crate chains (skia-bindings carrying a
 /// full harfbuzz inside libskia.a is the live example) end up bundled
 /// into the rustc-emitted staticlib *twice* - once via the depending
 /// rlib's embedded native archive and once via the staticlib's own
-/// native-dep pass. The duplicate members are byte-identical, so the
-/// "keep the most recent extraction" rule never loses anything we
-/// care about; it only drops the redundant second copy.
+/// native-dep pass. Those duplicate members are byte-identical and can
+/// be dropped before `-all_load`.
+///
+/// Some native archives also contain multiple different object files with
+/// the same member name. A plain `ar -x` overwrites those on extraction,
+/// which silently drops required objects. We therefore read the archive
+/// directly, drop only exact byte duplicates, and give preserved members
+/// unique filesystem names before recomposing the archive.
 fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::CargoTruceError> {
     let parent = staticlib
         .parent()
@@ -295,49 +296,30 @@ fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::Car
     }
     std::fs::create_dir_all(&temp_dir)?;
 
-    let extract = Command::new("ar")
-        .arg("-x")
-        .arg(staticlib)
-        .current_dir(&temp_dir)
-        .output()
-        .map_err(|e| -> crate::CargoTruceError {
-            format!("invoking ar -x for archive dedupe: {e}").into()
-        })?;
-    if !extract.status.success() {
+    // Read the archive once; members borrow slices out of this buffer, so
+    // dedupe never copies payloads (peak memory stays ~one archive, not two
+    // - Skia-carrying staticlibs run to hundreds of MB).
+    let data = std::fs::read(staticlib)?;
+    let parsed = archive_members(&data)?;
+    let kept = dedupe_members(&parsed);
+    if kept.is_empty() {
         return Err(format!(
-            "ar -x failed for {}:\n{}",
-            staticlib.display(),
-            String::from_utf8_lossy(&extract.stderr),
+            "archive dedupe found no object members in {} - archive may be empty or corrupt",
+            staticlib.display()
         )
         .into());
     }
 
-    let mut members: Vec<PathBuf> = Vec::new();
-    for entry in std::fs::read_dir(&temp_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let path = entry.path();
-        // Skip the symbol-table index member. macOS ar extracts it as
-        // `__.SYMDEF` (or `__.SYMDEF SORTED`) but won't accept it back
-        // on append - and we don't need to, `-rcs` below regenerates
-        // the table from the object members.
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with("__.SYMDEF"))
-        {
-            continue;
-        }
-        members.push(path);
-    }
-    if members.is_empty() {
-        return Err(format!(
-            "ar -x produced no object members from {} - archive may be empty or corrupt",
-            staticlib.display()
-        )
-        .into());
+    // Write each kept member under a unique filesystem name so `ar` can't
+    // overwrite distinct objects that share an archive member name.
+    let mut members: Vec<PathBuf> = Vec::with_capacity(kept.len());
+    for (idx, member) in kept.iter().enumerate() {
+        let unique = temp_dir.join(format!(
+            "{idx:06}_{}",
+            archive_member_filename(&member.name)
+        ));
+        std::fs::write(&unique, member.bytes)?;
+        members.push(unique);
     }
 
     let archive_path = parent.join(format!("{stem}.dedup-{}.a", std::process::id()));
@@ -367,4 +349,270 @@ fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::Car
         archive_path,
         temp_dir,
     })
+}
+
+/// Choose which parsed members to carry into the recomposed archive.
+///
+/// Skips the symbol-table index members (`ar -rcs` regenerates the table)
+/// and drops exact byte-for-byte duplicates that share a member name,
+/// keeping the first. Distinct members that merely share a name are all
+/// kept - some native archives (ONNX Runtime, `CoreML`) pack different
+/// objects under one name, and dropping either loses required symbols.
+/// Comparison is on the in-memory slices, so there is no re-read and an
+/// I/O error can't be misread as "not a duplicate".
+fn dedupe_members<'a>(parsed: &'a [ArchiveMember<'a>]) -> Vec<&'a ArchiveMember<'a>> {
+    let mut kept: Vec<&ArchiveMember> = Vec::new();
+    let mut seen: HashMap<&str, Vec<&[u8]>> = HashMap::new();
+    for member in parsed {
+        let name = member.name.as_str();
+        if name.is_empty() || name.starts_with("__.SYMDEF") || name == "/" {
+            continue;
+        }
+        let bucket = seen.entry(name).or_default();
+        if bucket.contains(&member.bytes) {
+            continue;
+        }
+        bucket.push(member.bytes);
+        kept.push(member);
+    }
+    kept
+}
+
+fn archive_member_filename(name: &str) -> String {
+    name.chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' => '_',
+            ch => ch,
+        })
+        .collect()
+}
+
+struct ArchiveMember<'a> {
+    name: String,
+    bytes: &'a [u8],
+}
+
+fn archive_members(data: &[u8]) -> Result<Vec<ArchiveMember<'_>>, crate::CargoTruceError> {
+    const MAGIC: &[u8] = b"!<arch>\n";
+    const HEADER_LEN: usize = 60;
+
+    if !data.starts_with(MAGIC) {
+        return Err("input is not an ar archive".into());
+    }
+
+    let mut members = Vec::new();
+    let mut gnu_names: Option<&[u8]> = None;
+    let mut offset = MAGIC.len();
+    while offset + HEADER_LEN <= data.len() {
+        let header = &data[offset..offset + HEADER_LEN];
+        if &header[58..60] != b"`\n" {
+            return Err(format!("invalid ar header at byte {offset}").into());
+        }
+
+        let raw_name = ascii_field(&header[0..16]);
+        let size = ascii_field(&header[48..58]).parse::<usize>().map_err(
+            |e| -> crate::CargoTruceError {
+                format!("invalid ar member size at byte {offset}: {e}").into()
+            },
+        )?;
+        let payload_start = offset + HEADER_LEN;
+        let payload_end = payload_start
+            .checked_add(size)
+            .ok_or_else(|| -> crate::CargoTruceError { "overflowing ar member size".into() })?;
+        if payload_end > data.len() {
+            return Err(format!("truncated ar member at byte {offset}").into());
+        }
+
+        let payload = &data[payload_start..payload_end];
+        let (name, bytes) = parse_archive_member(&raw_name, payload, gnu_names)?;
+        if raw_name == "//" {
+            gnu_names = Some(payload);
+        } else {
+            members.push(ArchiveMember { name, bytes });
+        }
+
+        offset = payload_end + (payload_end % 2);
+    }
+
+    if offset != data.len() {
+        return Err("trailing bytes after the final ar member".into());
+    }
+
+    Ok(members)
+}
+
+fn parse_archive_member<'a>(
+    raw_name: &str,
+    payload: &'a [u8],
+    gnu_names: Option<&[u8]>,
+) -> Result<(String, &'a [u8]), crate::CargoTruceError> {
+    if let Some(name_len) = raw_name.strip_prefix("#1/") {
+        let name_len = name_len
+            .parse::<usize>()
+            .map_err(|e| -> crate::CargoTruceError {
+                format!("invalid BSD ar extended-name length `{name_len}`: {e}").into()
+            })?;
+        if name_len > payload.len() {
+            return Err(format!(
+                "BSD ar extended-name length {name_len} exceeds member payload size {}",
+                payload.len()
+            )
+            .into());
+        }
+        let name = archive_member_name(&String::from_utf8_lossy(&payload[..name_len]));
+        return Ok((name, &payload[name_len..]));
+    }
+
+    if let Some(offset) = raw_name.strip_prefix('/')
+        && raw_name != "/"
+        && raw_name != "//"
+        && offset.chars().all(|ch| ch.is_ascii_digit())
+    {
+        let offset = offset
+            .parse::<usize>()
+            .map_err(|e| -> crate::CargoTruceError {
+                format!("invalid GNU ar long-name offset `{offset}`: {e}").into()
+            })?;
+        let names = gnu_names.ok_or_else(|| -> crate::CargoTruceError {
+            "GNU ar long-name member appeared before the string table".into()
+        })?;
+        if offset >= names.len() {
+            return Err(format!(
+                "GNU ar long-name offset {offset} exceeds string table size {}",
+                names.len()
+            )
+            .into());
+        }
+        let end = names[offset..]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(names.len(), |idx| offset + idx);
+        let name = archive_member_name(&String::from_utf8_lossy(&names[offset..end]));
+        return Ok((name, payload));
+    }
+
+    Ok((archive_member_name(raw_name), payload))
+}
+
+fn ascii_field(field: &[u8]) -> String {
+    String::from_utf8_lossy(field)
+        .trim_matches([' ', '\0'])
+        .to_string()
+}
+
+fn archive_member_name(name: &str) -> String {
+    name.trim_end_matches(['\0', '/']).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArchiveMember, archive_members, dedupe_members};
+
+    /// Build one ar member: a 60-byte header (name field + decimal size)
+    /// then the payload, padded to an even length with `\n`.
+    fn ar_member(name_field: &str, payload: &[u8]) -> Vec<u8> {
+        let mut m = Vec::new();
+        let mut field = |s: &str, width: usize| {
+            let mut b = s.as_bytes().to_vec();
+            b.resize(width, b' ');
+            m.extend_from_slice(&b);
+        };
+        field(name_field, 16);
+        field("0", 12); // mtime
+        field("0", 6); // uid
+        field("0", 6); // gid
+        field("0", 8); // mode
+        field(&payload.len().to_string(), 10); // size
+        m.extend_from_slice(b"`\n");
+        m.extend_from_slice(payload);
+        if payload.len() % 2 == 1 {
+            m.push(b'\n');
+        }
+        m
+    }
+
+    fn ar_archive(members: &[Vec<u8>]) -> Vec<u8> {
+        let mut a = b"!<arch>\n".to_vec();
+        for m in members {
+            a.extend_from_slice(m);
+        }
+        a
+    }
+
+    #[test]
+    fn dedupe_keeps_distinct_members_sharing_a_name() {
+        let a = b"objectAAAA";
+        let b = b"objectBBBB";
+        let parsed = vec![
+            ArchiveMember {
+                name: "dup.o".into(),
+                bytes: a.as_slice(),
+            },
+            ArchiveMember {
+                name: "dup.o".into(),
+                bytes: b.as_slice(),
+            },
+        ];
+        let kept = dedupe_members(&parsed);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn dedupe_drops_identical_members_sharing_a_name() {
+        let a = b"identical-bytes";
+        let parsed = vec![
+            ArchiveMember {
+                name: "dup.o".into(),
+                bytes: a.as_slice(),
+            },
+            ArchiveMember {
+                name: "dup.o".into(),
+                bytes: a.as_slice(),
+            },
+        ];
+        let kept = dedupe_members(&parsed);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].bytes, a.as_slice());
+    }
+
+    #[test]
+    fn dedupe_skips_symbol_table_member() {
+        let sym = b"symtab";
+        let obj = b"realobj";
+        let parsed = vec![
+            ArchiveMember {
+                name: "__.SYMDEF SORTED".into(),
+                bytes: sym.as_slice(),
+            },
+            ArchiveMember {
+                name: "real.o".into(),
+                bytes: obj.as_slice(),
+            },
+        ];
+        let kept = dedupe_members(&parsed);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "real.o");
+    }
+
+    #[test]
+    fn parses_bsd_extended_name() {
+        let mut payload = b"longname".to_vec();
+        payload.extend_from_slice(b"OBJDATA");
+        let archive = ar_archive(&[ar_member("#1/8", &payload)]);
+        let members = archive_members(&archive).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].name, "longname");
+        assert_eq!(members[0].bytes, b"OBJDATA");
+    }
+
+    #[test]
+    fn skips_gnu_string_table_and_resolves_long_name() {
+        let table = b"verylongname.o/\n";
+        let archive = ar_archive(&[ar_member("//", table), ar_member("/0", b"GNUOBJ")]);
+        let members = archive_members(&archive).unwrap();
+        // The `//` string table is consumed, not returned as a member.
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].name, "verylongname.o");
+        assert_eq!(members[0].bytes, b"GNUOBJ");
+    }
 }
