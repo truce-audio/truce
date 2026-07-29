@@ -122,7 +122,7 @@ static const TUID IPluginFactory_iid  = MAKE_IID(0x7A4D811C, 0x52114A1F, 0xAED9D
 static const TUID IPlugView_iid       = MAKE_IID(0x5BC32507, 0xD06049EA, 0xA6151B52, 0x2B755B29);
 static const TUID IEditControllerHostEditing_iid = MAKE_IID(0x0F194781, 0x8D984ADA, 0xBBA0C1EF, 0xC011D8D0);
 static const TUID IMidiMapping_iid = MAKE_IID(0xDF0FF9F7, 0x49B74669, 0xB63AB732, 0x7ADBF5E5);
-static const TUID IProcessContextRequirements_iid = MAKE_IID(0x2A654303, 0xEF764E3C, 0xA8E8C6F3, 0xDBAE0F77);
+static const TUID IProcessContextRequirements_iid = MAKE_IID(0x2A654303, 0xEF764E3D, 0x95B5FE83, 0x730EF6D0);
 static const TUID IUnitInfo_iid       = MAKE_IID(0x3D4BD6B5, 0x913A4FD2, 0xA886E768, 0xA5332E1F);
 static const TUID INoteExpressionController_iid =
     MAKE_IID(0xB7F8F859, 0x41234872, 0x91169581, 0x4F3721A3);
@@ -2647,9 +2647,13 @@ static tresult pcr_qi(void* s, const TUID iid, void** obj) { return PCR(s).query
 static uint32 pcr_addRef(void* s) { return PCR(s).addRef(); }
 static uint32 pcr_release(void* s) { auto* com = com_from_pcr(s); auto r = com->impl.release(); if (r == 0) { com->impl.~TruceComponent(); free(com); } return r; }
 static uint32 pcr_getReqs(void*) {
-    // Request all context fields
-    return (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) |
-           (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10);
+    return (1 << 1) |  // kNeedContinousTimeSamples
+           (1 << 2) |  // kNeedProjectTimeMusic
+           (1 << 3) |  // kNeedBarPositionMusic
+           (1 << 4) |  // kNeedCycleMusic
+           (1 << 6) |  // kNeedTempo
+           (1 << 7) |  // kNeedTimeSignature
+           (1 << 10);  // kNeedTransportState
 }
 
 static IProcessContextRequirementsVtbl g_pcr_vtbl = {
