@@ -1,0 +1,63 @@
+[package]
+name = "truce-example-ir-loader"
+# Internal-only - workspace demonstrations not for crates.io.
+publish = false
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "truce-example-ir-loader-standalone"
+path = "src/main.rs"
+required-features = ["standalone"]
+
+[features]
+default = ["clap", "vst3", "standalone"]
+clap = ["dep:truce-clap", "dep:clap-sys"]
+vst3 = ["dep:truce-vst3"]
+vst2 = ["dep:truce-vst2"]
+lv2 = ["dep:truce-lv2"]
+aax = ["dep:truce-aax"]
+au = ["dep:truce-au"]
+standalone = ["dep:truce-standalone"]
+shell = ["truce/shell"]
+# Real-time allocation checking for the tests (dev/test only).
+rt-paranoid = ["truce/rt-paranoid"]
+
+[dependencies]
+truce = { workspace = true }
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+truce-clap = { workspace = true, optional = true }
+truce-vst3 = { workspace = true, optional = true }
+truce-vst2 = { workspace = true, optional = true }
+truce-lv2 = { workspace = true, optional = true }
+truce-aax = { workspace = true, optional = true }
+truce-au = { workspace = true, optional = true }
+clap-sys = { version = "0.5", optional = true }
+truce-standalone = { workspace = true, features = ["gui"], optional = true }
+truce-loader = { workspace = true }
+truce-egui = { workspace = true }
+truce-font = { workspace = true }
+egui = "0.34"
+truce-sample-loader = { workspace = true }
+# Lock-free handoff for decoded IR buffers, audio thread <-> decode task.
+crossbeam-queue = "0.3"
+
+# rfd's Linux backend pulls in wayland-sys/xdg-portal; macOS/Windows only.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+rfd = { version = "0.15", default-features = false }
+
+[dev-dependencies]
+truce-test = { workspace = true }
+hound = "3"
+tempfile = "3"
+
+[lints]
+workspace = true

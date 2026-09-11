@@ -4407,6 +4407,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-ir-loader"
+version = "6.3.0"
+dependencies = [
+ "clap-sys",
+ "crossbeam-queue",
+ "egui",
+ "hound",
+ "rfd",
+ "tempfile",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-egui",
+ "truce-font",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-sample-loader",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-midi-inspector"
 version = "6.3.0"
 dependencies = [
@@ -4783,6 +4810,16 @@ dependencies = [
  "truce-core",
  "truce-gui-types",
  "truce-params",
+]
+
+[[package]]
+name = "truce-sample-loader"
+version = "6.3.0"
+dependencies = [
+ "hound",
+ "symphonia",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

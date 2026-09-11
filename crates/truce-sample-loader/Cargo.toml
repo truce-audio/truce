@@ -1,0 +1,33 @@
+[package]
+name = "truce-sample-loader"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Off-audio-thread audio file decode + resample for truce plugins."
+
+[features]
+default = []
+# Broader format support (AIFF, FLAC, MP3, AAC-in-MP4) via symphonia.
+# Off by default: symphonia is heavy. hound (WAV only) stays on by default.
+symphonia = ["dep:symphonia"]
+
+[dependencies]
+hound = "3"
+thiserror = { workspace = true }
+symphonia = { version = "0.5", optional = true, default-features = false, features = [
+    "aiff",
+    "flac",
+    "mp3",
+    "pcm",
+    "isomp4",
+    "aac",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

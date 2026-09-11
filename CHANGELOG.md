@@ -2,6 +2,11 @@
 
 Notable changes per release.
 
+## 6.4.0
+
+- New crate `truce-sample-loader`: off-audio-thread WAV decode (hound, always on) + explicit resample step, with an optional `symphonia` feature for broader format support (AIFF/FLAC/MP3/AAC-in-MP4).
+- New `truce-example-ir-loader` shows the full plumbing - editor file-picker and session-restore both hand off to a background `LoadIrRequest`; decoded buffers swap into `process()` via a lock-free queue pair with a generation counter that rejects stale/superseded loads.
+
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
