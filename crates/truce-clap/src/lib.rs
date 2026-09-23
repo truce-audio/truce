@@ -2835,9 +2835,25 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         if let Some(ref mut editor) = data.gui.enter().editor {
             editor.state_changed();
         }
+        request_value_rescan(data);
 
         true
     })
+}
+
+/// A recalled state may change every parameter behind the host's back, and
+/// the host must hear it through `clap_host_params::rescan`. Coalesce onto
+/// `on_main_thread` like editor-originated changes, so a host that loads
+/// state from another thread still gets the rescan on the main thread.
+unsafe fn request_value_rescan<P: PluginExport>(data: &ClapPluginData<P>) {
+    unsafe {
+        if !data.needs_rescan.swap(true, Ordering::Relaxed)
+            && !data.host.is_null()
+            && let Some(request_callback) = (*data.host).request_callback
+        {
+            request_callback(data.host);
+        }
+    }
 }
 
 fn make_state_extension<P: PluginExport>() -> clap_plugin_state {
@@ -2908,6 +2924,7 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
         if let Some(ref mut editor) = data.gui.enter().editor {
             editor.state_changed();
         }
+        request_value_rescan(data);
 
         // Tell the host the preset landed so it can update its
         // preset chrome (Bitwig's preset name display reads this).
