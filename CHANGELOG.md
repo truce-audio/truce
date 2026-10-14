@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 6.3.1
+
+- Standalone: Fix flickering meters due to shared meter scalar receiving zeros sporadically
+
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
