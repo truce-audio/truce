@@ -148,7 +148,7 @@ jobs:
           path: |
             ~/.cargo/bin/clap-validator
             ~/.cargo/bin/clap-validator.exe
-          key: clap-validator-${{ matrix.os }}-2026-05-09
+          key: clap-validator-${{ matrix.os }}-2026-10-17
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'

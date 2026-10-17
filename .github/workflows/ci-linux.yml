@@ -169,7 +169,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator
-          key: clap-validator-linux-2026-05-09
+          key: clap-validator-linux-2026-10-17
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'
@@ -259,7 +259,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator
-          key: clap-validator-linux-2026-05-09
+          key: clap-validator-linux-2026-10-17
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'
@@ -350,7 +350,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator
-          key: clap-validator-linux-2026-05-09
+          key: clap-validator-linux-2026-10-17
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'

@@ -2,6 +2,11 @@
 
 Notable changes per release.
 
+## Unreleased
+
+- CLAP: a runtime latency change no longer calls `clap_host_latency::changed` outside `activate` (the spec marks it `[main-thread & being-activated]`); an active plugin now only calls `request_restart`, and the host reads the new value at re-activation.
+- CLAP: `state.load` and `preset_load.from_location` request `params.rescan(CLAP_PARAM_RESCAN_VALUES)`, so hosts re-read the restored values instead of showing the pre-load ones. Current clap-validator flags this in its `state-reproducibility-*` tests; CI's cached validator is refreshed to pick that up.
+
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
