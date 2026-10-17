@@ -792,21 +792,17 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
         }
 
-        // Latency changed on the audio thread: tell the host here, off
-        // the audio thread. `changed()` re-reads our reported latency;
-        // an active plugin additionally needs `request_restart` to apply
-        // the new delay compensation.
-        if data.latency_dirty.swap(false, Ordering::Relaxed) && !data.host.is_null() {
-            if !data.host_latency.is_null()
-                && let Some(changed) = (*data.host_latency).changed
-            {
-                changed(data.host);
-            }
-            if data.active.load(Ordering::Relaxed)
-                && let Some(req_restart) = (*data.host).request_restart
-            {
-                req_restart(data.host);
-            }
+        // Latency changed on the audio thread. Per `clap/ext/latency.h`,
+        // `changed()` is `[main-thread & being-activated]`, so it is never
+        // called from here: an active plugin asks for `request_restart` and
+        // the host re-reads the value cached in `activate`; an inactive one
+        // needs nothing, the host reads `latency.get` when it activates.
+        if data.latency_dirty.swap(false, Ordering::Relaxed)
+            && !data.host.is_null()
+            && data.active.load(Ordering::Relaxed)
+            && let Some(req_restart) = (*data.host).request_restart
+        {
+            req_restart(data.host);
         }
     }
 }
@@ -2760,6 +2756,21 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     })
 }
 
+/// Ask the host to re-read every parameter value after a state or preset
+/// load replaced them wholesale. Without it the host keeps showing (and
+/// automating from) the pre-load values. Main-thread only, like the
+/// `state.load` / `preset_load.from_location` calls that use it.
+unsafe fn request_values_rescan<P: PluginExport>(data: &ClapPluginData<P>) {
+    unsafe {
+        if !data.host.is_null()
+            && !data.host_params.is_null()
+            && let Some(rescan) = (*data.host_params).rescan
+        {
+            rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
+        }
+    }
+}
+
 unsafe extern "C" fn state_load<P: PluginExport>(
     plugin: *const clap_plugin,
     stream: *const clap_istream,
@@ -2811,6 +2822,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         // first running a process block - clap-validator reads back
         // immediately after a load round-trip.
         state::apply_params(&*data.params_arc, &deserialized);
+        request_values_rescan(data);
 
         if data.active.load(Ordering::Relaxed) {
             // Active: the audio thread will drain `pending_state` at the
@@ -2894,6 +2906,7 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
         };
 
         state::apply_params(&*data.params_arc, &deserialized);
+        request_values_rescan(data);
         // Same active/inactive split as `state_load`: while inactive no
         // `process` drains `pending_state`, so a synchronous apply is what
         // keeps offline preset browsing from stranding the custom-state
