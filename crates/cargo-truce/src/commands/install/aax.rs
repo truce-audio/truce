@@ -459,6 +459,8 @@ pub(crate) fn emit_aax_bundle(
         fs_ctx::create_dir_all(contents.join("Resources"))?;
 
         let exec_name = p.file_stem();
+        let version = crate::read_workspace_version(root)?;
+        let version_keys = crate::plist_version_keys(&version);
         fs_ctx::copy(&template, contents.join("MacOS").join(&exec_name))?;
         fs_ctx::copy(
             &dylib,
@@ -483,8 +485,7 @@ pub(crate) fn emit_aax_bundle(
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>TDMw</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
             display_name = p.name,

@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## Unreleased
+
+- cargo-truce writes the workspace version into macOS bundle Info.plists (`CFBundleShortVersionString`, `CFBundleVersion`, and the Audio Unit component version) instead of a placeholder 1.0. The macOS AU v3 appex build number stays a per-build timestamp so hosts reload a rebuilt extension.
+
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.

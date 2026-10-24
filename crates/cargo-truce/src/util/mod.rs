@@ -500,7 +500,7 @@ pub(crate) fn program_files() -> PathBuf {
 /// Read the version from `Cargo.toml`.
 /// Checks `[workspace.package] version` first, then `[package] version`.
 /// Consumed by the package pipelines (macOS .pkg, Windows .exe, Linux
-/// tarball).
+/// tarball) and by every bundle Info.plist writer.
 ///
 /// # Errors
 ///
@@ -536,6 +536,39 @@ pub(crate) fn read_workspace_version(root: &Path) -> Result<String, crate::Cargo
         path.display()
     )
     .into())
+}
+
+/// Apple's `AudioComponents` version integer:
+/// `(major << 16) | (minor << 8) | bug`.
+///
+/// Major is 16 bits, minor and bug are 8; a component that doesn't fit
+/// saturates. Each piece keeps its leading digits (`0.2.0-beta` is
+/// `0.2.0`); a piece with no leading digits ends the parse. Missing
+/// components are 0, so `0.2.0` is `512` (`0x00000200`). The old
+/// hardcoded `65536` is `1.0.0` (`0x00010000`), which is not the crate
+/// version.
+pub(crate) fn au_version_word(version: &str) -> u32 {
+    let mut parts = [0u32; 3];
+    for (i, part) in version.split('.').take(3).enumerate() {
+        let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            break;
+        }
+        let n: u32 = digits.parse().unwrap_or(0);
+        parts[i] = if i == 0 { n.min(0xffff) } else { n.min(0xff) };
+    }
+    (parts[0] << 16) | (parts[1] << 8) | parts[2]
+}
+
+/// `CFBundleVersion` plus `CFBundleShortVersionString`, indented to match
+/// the macOS bundle plist writers. Finder shows the short string. Both
+/// keys take the workspace version (`0.2.0`); a dotted triple is a valid
+/// build number, so they stay equal.
+pub(crate) fn plist_version_keys(version: &str) -> String {
+    let v = crate::preset_codec::xml_escape(version);
+    format!(
+        "    <key>CFBundleVersion</key>\n    <string>{v}</string>\n    <key>CFBundleShortVersionString</key>\n    <string>{v}</string>"
+    )
 }
 
 /// Resolve a plugin crate's `Cargo.toml` path via `cargo metadata`.
@@ -1329,5 +1362,25 @@ mod tests {
             krate.canonicalize().unwrap()
         );
         let _ = fs::remove_dir_all(&krate);
+    }
+
+    #[test]
+    fn au_version_word_packs_major_minor_bug() {
+        assert_eq!(au_version_word("0.2.0"), 512);
+        assert_eq!(au_version_word("1.0.0"), 65536);
+        assert_eq!(au_version_word("1.2.3"), (1 << 16) | (2 << 8) | 3);
+        assert_eq!(au_version_word("0.2"), 512);
+        assert_eq!(au_version_word("0.2.0-beta"), 512);
+        assert_eq!(au_version_word("0.300.1"), (255 << 8) | 1);
+        assert_eq!(au_version_word(""), 0);
+    }
+
+    #[test]
+    fn plist_version_keys_use_the_workspace_version() {
+        let keys = plist_version_keys("0.2.0");
+        assert!(keys.contains("<string>0.2.0</string>"));
+        assert!(!keys.contains(">1.0<"));
+        assert!(!keys.contains(">1<"));
+        assert_eq!(keys.matches("0.2.0").count(), 2);
     }
 }

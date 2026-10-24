@@ -39,7 +39,15 @@ pub mod au3 {
         /// Each entry renders as its own `<string>...</string>` line
         /// inside the `tags` array.
         pub extra_au_tags: &'a [&'a str],
+        /// `CFBundleVersion`. On macOS this is a timestamp so hosts
+        /// notice a rebuilt appex; it is not the product version.
         pub au_ver: &'a str,
+        /// `CFBundleShortVersionString`. The workspace version
+        /// (`0.2.0`), the string Finder shows.
+        pub marketing_version: &'a str,
+        /// `AudioComponents` `version` integer, decimal. Packed from
+        /// [`crate::au_version_word`], not the old `65536` (`1.0.0`).
+        pub au_component_version: &'a str,
         pub min_os: &'a str,
         pub supported_platform: &'a str,
         /// `$(...)` xcodebuild-style tokens. `Some` on the iOS path
@@ -81,6 +89,8 @@ pub mod au3 {
             ("AUTAG", values.au_tag),
             ("EXTRATAGS", extra_tags_block.as_str()),
             ("AUVER", values.au_ver),
+            ("MARKETINGVER", values.marketing_version),
+            ("AUCOMPONENTVER", values.au_component_version),
             ("MINIOS", values.min_os),
             ("SUPPORTEDPLAT", values.supported_platform),
         ];
@@ -119,6 +129,8 @@ pub mod au3 {
                 au_tag: "Effect",
                 extra_au_tags: &[],
                 au_ver: "1",
+                marketing_version: "0.2.0",
+                au_component_version: "512",
                 min_os: "13.0",
                 supported_platform: "MacOSX",
                 xcode_tokens: None,
@@ -134,6 +146,8 @@ pub mod au3 {
                 au_tag: "Effect",
                 extra_au_tags: &["resizable"],
                 au_ver: "1",
+                marketing_version: "0.2.0",
+                au_component_version: "512",
                 min_os: "15.0",
                 supported_platform: "iPhoneOS",
                 xcode_tokens: Some(XcodeTokens {
@@ -199,6 +213,11 @@ pub mod au3 {
             assert!(plist.contains("<string>Acme</string>"));
             assert!(plist.contains("<string>Effect</string>"));
             assert!(plist.contains("<string>Acme: Tremolo</string>"));
+            assert!(plist.contains("<string>0.2.0</string>"));
+            assert!(plist.contains("<integer>512</integer>"));
+            assert!(!plist.contains("65536"));
+            assert!(!plist.contains("MARKETINGVER"));
+            assert!(!plist.contains("AUCOMPONENTVER"));
         }
     }
 }
