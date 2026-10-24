@@ -135,7 +135,9 @@ fn build_au_v3_for_plugin(
         factory_presets.as_ref(),
         &version,
     )?;
-    write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name, &version)?;
+    write_xcode_project_files(
+        &build_dir, &fw_build, p, config, team_id, &fw_name, &version,
+    )?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
 
     // The containing app. With a standalone bin it's the plugin's host
