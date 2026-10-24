@@ -17,7 +17,7 @@
     <key>CFBundleVersion</key>
     <string>AUVER</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>MARKETINGVER</string>
     <key>MinimumOSVersion</key>
     <string>MINIOS</string>
     <key>CFBundleSupportedPlatforms</key>
@@ -46,7 +46,7 @@
                     <key>name</key>
                     <string>AUNAME</string>
                     <key>version</key>
-                    <integer>65536</integer>
+                    <integer>AUCOMPONENTVER</integer>
                     <key>sandboxSafe</key>
                     <true/>
                     <key>tags</key>
