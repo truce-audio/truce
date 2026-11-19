@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## Unreleased
+
+- `truce-egui`: with the plug-in window focused, a key the editor is not using is returned as ignored, so the host can run it (Space, Return, and the arrange commands). A focused text field still takes the key. A key the UI has claimed, with no Ctrl, Alt, or Command held, stays in the editor. The host receives the key when `baseview-truce` forwards ignored keys.
+
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
