@@ -261,12 +261,14 @@ fn stage_macos_app_bundle(
         false
     };
 
+    let version = crate::read_workspace_version(&crate::project_root())?;
     crate::commands::package::stage::write_standalone_info_plist(
         staged,
         plugin,
         &exe_name,
         vendor,
         icon_present,
+        &version,
     )
 }
 

@@ -186,6 +186,8 @@ pub(crate) fn build_bundle(
     let app_name = &p.name;
     let app_file = p.file_stem();
     let dylib_stem = p.dylib_stem();
+    let version = crate::read_workspace_version(root)?;
+    let au_component_version = crate::au_version_word(&version).to_string();
 
     eprintln!(
         "==> [1/5] cargo build ({}, --features au)",
@@ -215,7 +217,7 @@ pub(crate) fn build_bundle(
     )?;
     fs_ctx::write(
         fw_dir.join("Info.plist"),
-        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target, &version),
     )?;
 
     // Factory presets into the framework's flat `Presets/` directory.
@@ -273,7 +275,9 @@ pub(crate) fn build_bundle(
             au_mfr,
             au_tag,
             extra_au_tags: &extra_au_tags,
-            au_ver: "1",
+            au_ver: &version,
+            marketing_version: &version,
+            au_component_version: &au_component_version,
             min_os: &min_ios,
             supported_platform: target.supported_platform(),
             xcode_tokens: Some(crate::templates::au3::XcodeTokens {
@@ -471,6 +475,7 @@ pub(crate) fn build_bundle(
             &min_ios,
             target,
             &orientations_xml,
+            &version,
         ),
     )?;
 
@@ -767,6 +772,7 @@ pub(crate) fn build_xcframework(
     let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
     // Resolved once; staged into every slice's framework below.
     let factory_presets = super::presets::load_factory_presets(root, p, &cfg)?;
+    let version = crate::read_workspace_version(root)?;
     let mut slices: Vec<PathBuf> = Vec::with_capacity(2);
     for target in [IosTarget::Device, IosTarget::Simulator] {
         eprintln!(
@@ -804,7 +810,7 @@ pub(crate) fn build_xcframework(
         )?;
         fs_ctx::write(
             slice_dir.join("Info.plist"),
-            framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+            framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target, &version),
         )?;
         // Factory presets into each slice's flat `Presets/` directory
         // (iOS frameworks are shallow bundles - a `Resources/` subdir
@@ -1273,8 +1279,10 @@ fn framework_info_plist(
     bundle_id: &str,
     min_ios: &str,
     target: IosTarget,
+    version: &str,
 ) -> String {
     let platform = target.supported_platform();
+    let version = crate::preset_codec::xml_escape(version);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -1285,8 +1293,8 @@ fn framework_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{fw_name}</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>
 </dict>
@@ -1343,8 +1351,10 @@ fn app_info_plist(
     min_ios: &str,
     target: IosTarget,
     orientations_xml: &str,
+    version: &str,
 ) -> String {
     let platform = target.supported_platform();
+    let version = crate::preset_codec::xml_escape(version);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -1355,8 +1365,8 @@ fn app_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{app_name}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>

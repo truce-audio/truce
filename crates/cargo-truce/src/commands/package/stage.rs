@@ -226,6 +226,8 @@ fn stage_clap_macos(
     fs::create_dir_all(&macos_dir)?;
     let exec_name = p.file_stem();
     fs::copy(&dylib, macos_dir.join(&exec_name))?;
+    let version = crate::read_workspace_version(root)?;
+    let version_keys = crate::plist_version_keys(&version);
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -240,8 +242,7 @@ fn stage_clap_macos(
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
         display_name = xml_escape(&p.name),
@@ -341,6 +342,8 @@ fn stage_vst3_macos(root: &Path, p: &PluginDef, config: &Config, bundle: &Path) 
     fs::create_dir_all(&macos_dir)?;
     let exec_name = p.file_stem();
     fs::copy(&dylib, macos_dir.join(&exec_name))?;
+    let version = crate::read_workspace_version(root)?;
+    let version_keys = crate::plist_version_keys(&version);
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -355,8 +358,7 @@ fn stage_vst3_macos(root: &Path, p: &PluginDef, config: &Config, bundle: &Path) 
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
         display_name = xml_escape(&p.name),
@@ -475,6 +477,8 @@ pub(crate) fn stage_vst2(
         fs::create_dir_all(&macos_dir)?;
         let exec_name = p.file_stem();
         fs::copy(&dylib, macos_dir.join(&exec_name))?;
+        let version = crate::read_workspace_version(root)?;
+        let version_keys = crate::plist_version_keys(&version);
 
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -489,8 +493,7 @@ pub(crate) fn stage_vst2(
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
             display_name = xml_escape(&p.name),
@@ -523,6 +526,8 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     fs::create_dir_all(&macos_dir)?;
     let exec_name = p.file_stem();
     fs::copy(&dylib, macos_dir.join(&exec_name))?;
+    let version = crate::read_workspace_version(root)?;
+    let version_keys = crate::plist_version_keys(&version);
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -537,8 +542,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
     <key>AudioComponents</key>
     <array>
         <dict>
@@ -553,7 +557,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
             <key>description</key>
             <string>{display_name}</string>
             <key>version</key>
-            <integer>65536</integer>
+            <integer>{au_version}</integer>
             <key>factoryFunction</key>
             <string>TruceAUFactory</string>
             <key>sandboxSafe</key>
@@ -575,6 +579,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
         au_mfr = xml_escape(&config.vendor.au_manufacturer),
         au_tag = xml_escape(&p.au_tag),
         exec_name = xml_escape(&exec_name),
+        au_version = crate::au_version_word(&version),
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     // The shim's kAudioUnitProperty_FactoryPresets handler enumerates
@@ -751,7 +756,15 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
         false
     };
 
-    write_standalone_info_plist(&staged_app, p, &bin_stem, &config.vendor, icon_present)?;
+    let version = crate::read_workspace_version(root)?;
+    write_standalone_info_plist(
+        &staged_app,
+        p,
+        &bin_stem,
+        &config.vendor,
+        icon_present,
+        &version,
+    )?;
 
     // Factory presets into Contents/Resources/Presets, before
     // codesign so the seal covers them. The installed app resolves
@@ -779,6 +792,7 @@ pub(crate) fn write_standalone_info_plist(
     bin_stem: &str,
     vendor: &crate::config::VendorConfig,
     icon_present: bool,
+    version: &str,
 ) -> Res {
     let mic_usage = format!(
         "{} would like to use the microphone for plugin audio input.",
@@ -787,6 +801,7 @@ pub(crate) fn write_standalone_info_plist(
     // Emit `CFBundleIconFile` only when the caller staged an
     // `icon.icns` next to Info.plist. macOS will otherwise scribble a
     // missing-resource error in the system log on first launch.
+    let version_keys = crate::plist_version_keys(version);
     let icon_key = if icon_present {
         "    <key>CFBundleIconFile</key>\n    <string>icon</string>\n"
     } else {
@@ -807,10 +822,7 @@ pub(crate) fn write_standalone_info_plist(
     <string>{exe}</string>
 {icon_key}    <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+{version_keys}
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>

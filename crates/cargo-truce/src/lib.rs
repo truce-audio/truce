@@ -75,6 +75,7 @@ pub(crate) use util::tmp_lv2;
 // `read_workspace_version` is consumed by all three packagers
 // (macOS / Windows / Linux tarball), so it stays unconditional.
 pub(crate) use util::read_workspace_version;
+pub(crate) use util::{au_version_word, plist_version_keys};
 
 // `release_lib_for_target` resolves a per-triple build output path; it
 // powers macOS universal lipo, Windows x64+arm64, and Linux dual-arch
