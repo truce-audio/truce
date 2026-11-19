@@ -1326,7 +1326,10 @@ fn convert_kb_modifiers(mods: keyboard_types::Modifiers) -> egui::Modifiers {
 const CLAIMED_KEYS: &str = "truce-egui.claimed-keys";
 
 fn claimed_keys(ctx: &egui::Context) -> Vec<egui::Key> {
-    ctx.data(|data| data.get_temp(egui::Id::new(CLAIMED_KEYS)).unwrap_or_default())
+    ctx.data(|data| {
+        data.get_temp(egui::Id::new(CLAIMED_KEYS))
+            .unwrap_or_default()
+    })
 }
 
 fn egui_key_of(key: &keyboard_types::Key) -> Option<egui::Key> {
@@ -1732,7 +1735,13 @@ mod key_tests {
         assert_eq!(space, None);
         assert!(!keep_key(false, false, space, &[], false));
         assert!(keep_key(true, false, space, &[], false));
-        assert!(!keep_key(false, true, Some(egui::Key::Space), &[egui::Key::Space], false));
+        assert!(!keep_key(
+            false,
+            true,
+            Some(egui::Key::Space),
+            &[egui::Key::Space],
+            false
+        ));
     }
 
     #[test]
