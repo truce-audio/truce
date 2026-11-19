@@ -3,6 +3,7 @@
 //! On `open()`, creates a baseview child window and a wgpu surface.
 //! Each `on_frame()` tick, runs the egui frame, tessellates, and renders.
 
+use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -385,6 +386,10 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     #[cfg(target_os = "windows")]
     render_thread: Option<RenderThread>,
     pending_events: Vec<egui::Event>,
+    /// Physical keys whose key-down this editor kept. The matching key-up
+    /// stays here even if a modifier landed in between, so a held note
+    /// still releases and the host does not see a key-up it never got.
+    held_keys: HashSet<keyboard_types::Code>,
     modifiers: egui::Modifiers,
     start_time: std::time::Instant,
     size: (u32, u32),
@@ -1078,6 +1083,26 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 Event::Keyboard(kb) => {
                     use keyboard_types::KeyState;
                     self.modifiers = convert_kb_modifiers(kb.modifiers);
+                    // Decided before this frame. A text field keeps every key.
+                    // Anything else is kept only when the UI published it last
+                    // frame (`truce-egui.claimed-keys`). The host gets the rest,
+                    // on Logic and on Live (AU and VST): both deliver keys to
+                    // this view once the plug-in window is key.
+                    let text_focused = self.egui_ctx.text_edit_focused();
+                    let claimed = claimed_keys(&self.egui_ctx);
+                    let chord = self.modifiers.command || self.modifiers.ctrl || self.modifiers.alt;
+                    let key = egui_key_of(&kb.key);
+                    let was_held = self.held_keys.contains(&kb.code);
+                    if kb.state == KeyState::Up {
+                        self.held_keys.remove(&kb.code);
+                    }
+                    let keep = keep_key(text_focused, chord, key, &claimed, was_held);
+                    if keep && kb.state == KeyState::Down {
+                        self.held_keys.insert(kb.code);
+                    }
+                    if !keep {
+                        return EventStatus::Ignored;
+                    }
 
                     // Text input. Suppress Text events when Ctrl/Cmd is
                     // held - otherwise Ctrl+A/Ctrl+C/etc. would also insert
@@ -1095,8 +1120,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         }
                     }
 
-                    // Key event
-                    if let Some(key) = convert_key(&kb.key) {
+                    if let Some(key) = key {
                         self.pending_events.push(egui::Event::Key {
                             key,
                             physical_key: None,
@@ -1294,6 +1318,37 @@ fn convert_kb_modifiers(mods: keyboard_types::Modifiers) -> egui::Modifiers {
         mac_cmd,
         command,
     }
+}
+
+/// Id shared with fmdrum-ui. The value is the `egui::Key`s the editor
+/// wants on the next key event. A text field does not need an entry:
+/// `text_edit_focused` keeps every key while it is up.
+const CLAIMED_KEYS: &str = "truce-egui.claimed-keys";
+
+fn claimed_keys(ctx: &egui::Context) -> Vec<egui::Key> {
+    ctx.data(|data| data.get_temp(egui::Id::new(CLAIMED_KEYS)).unwrap_or_default())
+}
+
+fn egui_key_of(key: &keyboard_types::Key) -> Option<egui::Key> {
+    if let keyboard_types::Key::Character(text) = key {
+        match text.as_str() {
+            "," => return Some(egui::Key::Comma),
+            "." => return Some(egui::Key::Period),
+            _ => {}
+        }
+    }
+    convert_key(key)
+}
+
+/// `held` is a key-up for a key-down this editor already kept.
+fn keep_key(
+    text_focused: bool,
+    chord: bool,
+    key: Option<egui::Key>,
+    claimed: &[egui::Key],
+    held: bool,
+) -> bool {
+    text_focused || held || (!chord && key.is_some_and(|key| claimed.contains(&key)))
 }
 
 fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
@@ -1510,6 +1565,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     #[cfg(target_os = "windows")]
                     render_thread,
                     pending_events: Vec::new(),
+                    held_keys: HashSet::new(),
                     modifiers: egui::Modifiers::NONE,
                     start_time: std::time::Instant::now(),
                     size,
@@ -1663,5 +1719,30 @@ impl<P: Params + ?Sized> Drop for EguiEditor<P> {
         if let Some(mut window) = self.window.take() {
             window.close();
         }
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::{egui_key_of, keep_key};
+
+    #[test]
+    fn space_passes_unless_a_text_field_has_it() {
+        let space = egui_key_of(&keyboard_types::Key::Character(" ".into()));
+        assert_eq!(space, None);
+        assert!(!keep_key(false, false, space, &[], false));
+        assert!(keep_key(true, false, space, &[], false));
+        assert!(!keep_key(false, true, Some(egui::Key::Space), &[egui::Key::Space], false));
+    }
+
+    #[test]
+    fn claimed_plain_keys_stay_and_chords_do_not() {
+        let claimed = [egui::Key::Num1, egui::Key::M, egui::Key::Comma];
+        let one = egui_key_of(&keyboard_types::Key::Character("1".into()));
+        let comma = egui_key_of(&keyboard_types::Key::Character(",".into()));
+        assert!(keep_key(false, false, one, &claimed, false));
+        assert!(keep_key(false, false, comma, &claimed, false));
+        assert!(!keep_key(false, true, one, &claimed, false));
+        assert!(keep_key(false, true, one, &claimed, true));
     }
 }
