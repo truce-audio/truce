@@ -266,13 +266,19 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     // MARK: - AU v3 view resizing
 
-    /// Accept every view configuration the host proposes. This is what
-    /// surfaces the resize / expand affordance in hosts like GarageBand -
-    /// without it the host treats the AU v3 view as a single fixed size and
-    /// never offers to enlarge it, regardless of the `resizable`
-    /// AudioComponents tag. Returning all indices says "we can render at any
-    /// size the host offers"; the embedded editor reflows to the host bounds
-    /// in the view controller's layout pass (`fitGUIToSafeArea`).
+    /// iOS hosts (GarageBand, AUM) only offer a resize control when the
+    /// audio unit accepts their view configurations. Returning every index
+    /// says the editor can draw at any of those sizes; the view controller
+    /// refits in `fitGUIToSafeArea`.
+    ///
+    /// macOS must not override this. Logic Pro offers a short list of
+    /// oversized 4:3 configurations (1024×768, 1366×1024). Accepting any of
+    /// them locks the plugin window to that aspect at every View zoom, so a
+    /// wide editor sits in a taller frame with an empty band under the
+    /// layout. An empty index set is worse: Apple's header reads that as
+    /// "use the largest configuration". Leaving the base implementation in
+    /// place makes Logic size the window from `preferredContentSize`.
+#if os(iOS)
     override func supportedViewConfigurations(
         _ availableViewConfigurations: [AUAudioUnitViewConfiguration]
     ) -> IndexSet {
@@ -283,6 +289,7 @@ class TruceAUAudioUnit: AUAudioUnit {
     /// tracks its parent's bounds and refits on the next layout pass, so this
     /// only needs to exist for the host's `select` call to succeed.
     override func select(_ viewConfiguration: AUAudioUnitViewConfiguration) {}
+#endif
 
     override var parameterTree: AUParameterTree? {
         get { _parameterTree }
@@ -1138,6 +1145,10 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     /// open; subsequent layouts (genuine user resize) still
     /// propagate.
     private var didInitialLayout = false
+    /// One shot per off-aspect stretch. Logic's 4:3 frame otherwise stays
+    /// put, because `preferredContentSize` was already the editor size and
+    /// a same-value write does not notify. Cleared once the frame matches.
+    private var aspectNudged = false
 
     override func loadView() {
         // Query editor size using a temporary Rust context.
@@ -1256,6 +1267,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         } else {
             didInitialLayout = true
         }
+        reassertAspect()
         centerGUI()
     }
     #else
@@ -1287,9 +1299,12 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         else { return }
         let hostW = self.view.bounds.width
         let hostH = self.view.bounds.height
-        guard hostW > 0, hostH > 0,
-              (hostW, hostH) != (guiPtSize.width, guiPtSize.height)
-        else { return }
+        let hostSize = NSSize(width: hostW, height: hostH)
+        guard hostW > 0, hostH > 0, !sameSize(hostSize, guiPtSize) else { return }
+        // A View-menu zoom scales both axes and keeps the editor's aspect.
+        // Logic's 4:3 view configuration does not. Adopting that height
+        // makes the layout letterbox, which is the empty band under the UI.
+        guard aspectClose(hostSize, guiPtSize) else { return }
         let newW = UInt32(max(1, hostW.rounded()))
         let newH = UInt32(max(1, hostH.rounded()))
         cb.pointee.gui_set_size(ctx, newW, newH)
@@ -1412,8 +1427,60 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     private func startParamSync() {
         paramSyncTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+            self?.publishEditorResize()
+            self?.reassertAspect()
             self?.syncParamsToHost()
         }
+    }
+
+    /// The editor asked for a size the host has not applied yet (the scale
+    /// menu). Tell the host through `preferredContentSize`. A size that
+    /// already matches our bounds was applied by the host (Logic's View
+    /// zoom); pushing that back would make the zoomed size the new 100%.
+    private func publishEditorResize() {
+        #if os(macOS)
+        guard guiSetUp, let ctx = myCtx, let cb = g_callbacks else { return }
+        var w: UInt32 = 0, h: UInt32 = 0
+        cb.pointee.gui_get_size(ctx, &w, &h)
+        guard w > 0, h > 0 else { return }
+        let size = NSSize(width: CGFloat(w), height: CGFloat(h))
+        if sameSize(size, guiPtSize) || sameSize(size, self.view.bounds.size) { return }
+        guiPtSize = size
+        preferredContentSize = size
+        centerGUI()
+        #endif
+    }
+
+    /// Logic's window is taller than the editor. Ask again for the editor's
+    /// own size. A uniform zoom has the same aspect and is left alone.
+    private func reassertAspect() {
+        #if os(macOS)
+        guard guiSetUp, guiPtSize.width > 1, guiPtSize.height > 1 else { return }
+        let bounds = self.view.bounds.size
+        guard bounds.width > 1, bounds.height > 1 else { return }
+        if aspectClose(bounds, guiPtSize) {
+            aspectNudged = false
+            return
+        }
+        guard !aspectNudged else { return }
+        aspectNudged = true
+        if sameSize(preferredContentSize, guiPtSize) {
+            willChangeValue(forKey: "preferredContentSize")
+            didChangeValue(forKey: "preferredContentSize")
+        } else {
+            preferredContentSize = guiPtSize
+        }
+        #endif
+    }
+
+    private func sameSize(_ a: NSSize, _ b: NSSize) -> Bool {
+        abs(a.width - b.width) < 0.5 && abs(a.height - b.height) < 0.5
+    }
+
+    private func aspectClose(_ a: NSSize, _ b: NSSize) -> Bool {
+        guard a.width > 1, a.height > 1, b.width > 1, b.height > 1 else { return true }
+        let ratio = (a.width / a.height) / (b.width / b.height)
+        return abs(ratio - 1) < 0.02
     }
 
     private func stopParamSync() {
