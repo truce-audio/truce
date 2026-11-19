@@ -6,6 +6,8 @@ Notable changes per release.
 
 - `truce-egui`: with the plug-in window focused, a key the editor is not using is returned as ignored, so the host can run it (Space, Return, and the arrange commands). A focused text field still takes the key. A key the UI has claimed, with no Ctrl, Alt, or Command held, stays in the editor. The host receives the key when `baseview-truce` forwards ignored keys.
 - `cargo truce package --arch x86_64|arm64` builds that one macOS slice even when it is not the host, so an Apple Silicon Mac can produce an Intel-only installer. The default stays universal, and `--host-only` stays the host slice. Passing `--arch` and `--host-only` together is an error.
+- cargo-truce writes the workspace version into macOS bundle Info.plists (`CFBundleShortVersionString`, `CFBundleVersion`, and the Audio Unit component version) instead of a placeholder 1.0. The macOS AU v3 appex build number stays a per-build timestamp so hosts reload a rebuilt extension.
+- AU v3 on macOS no longer accepts every host view configuration. Logic Pro was locking the editor to a 4:3 frame, leaving an empty band under a wide layout and ignoring the plugin's own size. iOS still accepts every configuration so GarageBand can resize. A plugin-requested resize updates `preferredContentSize`, so Logic's window follows the editor scale instead of clipping it.
 
 ## 6.3.0
 
