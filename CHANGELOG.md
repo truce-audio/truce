@@ -5,7 +5,7 @@ Notable changes per release.
 ## Unreleased
 
 - cargo-truce writes the workspace version into macOS bundle Info.plists (`CFBundleShortVersionString`, `CFBundleVersion`, and the Audio Unit component version) instead of a placeholder 1.0. The macOS AU v3 appex build number stays a per-build timestamp so hosts reload a rebuilt extension.
-- AU v3 on macOS no longer accepts every host view configuration. Logic Pro was locking the editor to a 4:3 frame, leaving an empty band under a wide layout and ignoring the plugin's own size. iOS still accepts every configuration so GarageBand can resize. A plugin-requested resize updates `preferredContentSize`, so Logic's window follows the editor scale instead of clipping it.
+- AU v3 on macOS no longer accepts every host view configuration. Logic Pro was locking the editor to a 4:3 frame, leaving an empty band under a wide layout and ignoring the plugin's own size. With the override gone, Logic sizes the window from `preferredContentSize` when it opens. A later plugin resize still publishes that size, and Logic leaves the already-open window where it is: scaling the editor up clips it, scaling down leaves a margin, until Logic's own View zoom rescales the window. iOS still accepts every configuration so GarageBand can resize.
 
 ## 6.3.0
 
