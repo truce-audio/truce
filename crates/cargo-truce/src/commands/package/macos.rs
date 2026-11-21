@@ -105,8 +105,15 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     eprintln!("Package scope: {}", scope.label());
 
     // Universal by default: produce a fat Mach-O covering both Apple arches.
-    // `--host-only` falls back to the host-only build for faster dev iteration.
-    let archs: Vec<MacArch> = if parsed.host_only {
+    // `--host-only` builds the host arch. `--arch` builds that one arch
+    // even when it is not the host, so an Apple Silicon Mac can emit the
+    // Intel installer.
+    if parsed.arch.is_some() && parsed.host_only {
+        return Err("--arch and --host-only cannot both be set".into());
+    }
+    let archs: Vec<MacArch> = if let Some(arch) = parsed.arch {
+        vec![arch]
+    } else if parsed.host_only {
         vec![MacArch::host()]
     } else {
         vec![MacArch::X86_64, MacArch::Arm64]
@@ -637,6 +644,7 @@ struct PackageArgs {
     format_str: Option<String>,
     no_notarize: bool,
     host_only: bool,
+    arch: Option<MacArch>,
     no_pace_sign: bool,
     cli_scope: Option<PkgScope>,
     target_cpu_arg: Option<String>,
@@ -647,6 +655,7 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::CargoTruceE
     let mut format_str: Option<String> = None;
     let mut no_notarize = false;
     let mut host_only = false;
+    let mut arch: Option<MacArch> = None;
     let mut no_pace_sign = false;
     let mut cli_scope: Option<PkgScope> = None;
     let mut target_cpu_arg: Option<String> = None;
@@ -674,6 +683,16 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::CargoTruceE
             // scripts that also hit Windows keep working.
             "--universal" | "--no-installer" => {}
             "--host-only" => host_only = true,
+            "--arch" => {
+                let value = crate::util::arg_value(args, &mut i, "--arch")?;
+                arch = Some(match value {
+                    "x86_64" | "intel" => MacArch::X86_64,
+                    "arm64" | "aarch64" => MacArch::Arm64,
+                    other => {
+                        return Err(format!("--arch must be x86_64 or arm64 (got {other})").into());
+                    }
+                });
+            }
             "--target-cpu" => {
                 target_cpu_arg =
                     Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
@@ -688,6 +707,7 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::CargoTruceE
         format_str,
         no_notarize,
         host_only,
+        arch,
         no_pace_sign,
         cli_scope,
         target_cpu_arg,
@@ -1780,5 +1800,21 @@ mod tests {
             drop_standalone_if_au3(vec![PkgFormat::Clap, PkgFormat::Standalone]),
             vec![PkgFormat::Clap, PkgFormat::Standalone]
         );
+    }
+
+    fn flag_args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn arch_selects_intel() {
+        let parsed = parse_package_args(&flag_args(&["--arch", "x86_64"])).unwrap();
+        assert_eq!(parsed.arch, Some(MacArch::X86_64));
+        assert!(!parsed.host_only);
+    }
+
+    #[test]
+    fn arch_rejects_an_unknown_name() {
+        assert!(parse_package_args(&flag_args(&["--arch", "ppc"])).is_err());
     }
 }
