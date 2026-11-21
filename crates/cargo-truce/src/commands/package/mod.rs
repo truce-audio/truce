@@ -515,7 +515,7 @@ fn print_help() {
 Usage: cargo truce package [-p <crate>] [--suite <name>] \
 [--no-suite|--no-per-plugin] [--formats <list>] \
 [--user|--system|--ask] [--no-notarize] [--no-sign|--no-pace-sign] \
-[--host-only|--universal]
+[--host-only|--universal] [--arch <x86_64|arm64>]
 
 Build, sign, and package plugins into installers. Per-plugin dist
 filenames use the cargo crate name (e.g. `truce-example-gain`);
@@ -566,6 +566,9 @@ Signing / notarization (macOS / Windows):
 Build target (macOS):
   --host-only          Single-arch build of the host. Default is universal.
   --universal          Explicit universal (no-op; same as default).
+  --arch <x86_64|arm64>
+                       Single-arch build of that architecture. The host
+                       may be the other one. Not with --host-only.
 
 Build invocation (Linux):
   --no-build           Skip the implicit `cargo truce build` and use the

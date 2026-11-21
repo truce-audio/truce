@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## Unreleased
+
+- `cargo truce package --arch x86_64|arm64` builds that one macOS slice even when it is not the host, so an Apple Silicon Mac can produce an Intel-only installer. The default stays universal, and `--host-only` stays the host slice. Passing `--arch` and `--host-only` together is an error.
+
 ## 6.3.0
 
 - Per-format builds (`cargo truce build` / `install` / `package` / `run` / `screenshot`) keep a plugin's non-format default features instead of dropping them; `--no-default-features` opts back into a minimal build.
