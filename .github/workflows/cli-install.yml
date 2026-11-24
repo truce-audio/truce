@@ -23,8 +23,8 @@ concurrency:
 # parallel; AAX and AU v3 are skipped (no SDK / no Developer ID in CI).
 jobs:
   macos:
-    name: install + validate (macos-14)
-    runs-on: macos-14
+    name: install + validate (macos-15)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +32,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: cli-install-macos-14
+          key: cli-install-macos-15
           cache-bin: false
 
       - name: Build cargo-truce
@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator
-          key: clap-validator-macos-2026-05-09
+          key: clap-validator-macos-2026-11-24
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'
@@ -188,7 +188,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator
-          key: clap-validator-linux-2026-05-09
+          key: clap-validator-linux-2026-11-24
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'
@@ -275,7 +275,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator.exe
-          key: clap-validator-windows-2026-05-09
+          key: clap-validator-windows-2026-11-24
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'
