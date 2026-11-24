@@ -273,6 +273,10 @@ fn render_manifest(b: &Lv2Bundle, layout: &Layout, ttl_basename: &str, so_name: 
         #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
         let _ = writeln!(f, "    a ui:X11UI ;");
         let _ = writeln!(f, "    ui:binary <{so_name}> ;");
+        // Advertise the idle interface so hosts tick the UI on their
+        // main loop; `ui_extension_data` returns an `LV2UI_Idle_Interface`
+        // that drives the editor's `idle` (repaint / animation).
+        let _ = writeln!(f, "    lv2:extensionData ui:idleInterface ;");
 
         // Subscribe the UI to the DSP's notify-out port.
         let _ = writeln!(f, "    ui:portNotification [");

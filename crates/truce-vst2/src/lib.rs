@@ -17,7 +17,9 @@ use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{
+    ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle, SendPtr,
+};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginInfo, resolve_name_override};
@@ -151,6 +153,8 @@ struct Vst2Audio<P: PluginExport> {
 /// Main/UI-thread-owned editor state (see [`Vst2Instance::gui`]).
 struct Vst2Gui {
     editor: Option<Box<dyn Editor>>,
+    /// Frame clock for the `dt` passed to `Editor::idle`.
+    idle_clock: IdleClock,
     /// Whether state has been loaded at least once (via effSetChunk).
     state_loaded: bool,
     /// Buffered parent window handle when editor open arrives before state load.
@@ -343,6 +347,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 }),
                 gui: PluginCell::new(Vst2Gui {
                     editor: None,
+                    idle_clock: IdleClock::new(),
                     state_loaded: false,
                     pending_editor_parent: None,
                 }),
@@ -1312,6 +1317,23 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     });
 }
 
+/// Editor idle tick, driven by the host's `effEditIdle`. `editor.idle` is
+/// author code; firewall it. `try_enter`, not `enter`: the host can tick
+/// while an outer editor callback holds the cell - skip rather than alias.
+/// No editor open -> no-op.
+unsafe extern "C" fn cb_gui_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+    run_extern_callback_with::<P, ()>("vst2", "gui_idle", (), || unsafe {
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        let Some(mut gui) = inst.gui.try_enter() else {
+            return;
+        };
+        let dt = gui.idle_clock.tick();
+        if let Some(editor) = gui.editor.as_mut() {
+            editor.idle(dt);
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -1411,6 +1433,7 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
+        gui_idle: cb_gui_idle::<P>,
     }));
 
     // Build param descriptors (param_infos was already collected for

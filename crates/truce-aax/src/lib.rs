@@ -24,7 +24,7 @@ use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo, resolve_name_override};
@@ -370,6 +370,7 @@ struct AaxAudio<P: PluginExport> {
 /// Main/UI-thread-owned editor state (see [`AaxInstance::gui`]).
 struct AaxGui {
     editor: Option<Box<dyn Editor>>,
+    idle_clock: IdleClock,
 }
 
 /// Shared, invalidatable handle to the AAX host GUI object
@@ -1040,7 +1041,10 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
                     prepared: false,
                     scratch: RawBufferScratch::default(),
                 }),
-                gui: PluginCell::new(AaxGui { editor: None }),
+                gui: PluginCell::new(AaxGui {
+                    editor: None,
+                    idle_clock: IdleClock::new(),
+                }),
                 editor_host: Arc::new(HostGuiHandle::new()),
                 transport_slot: TransportSlot::new(),
                 state_cache: Mutex::new(None),
@@ -2054,8 +2058,10 @@ pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
     // `editor.idle` runs author code that can panic; firewall it.
     run_extern_callback_with::<P, ()>("aax", "editor_idle", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
-        if let Some(ref mut editor) = inst.gui.enter().editor {
-            editor.idle();
+        let mut gui = inst.gui.enter();
+        let dt = gui.idle_clock.tick();
+        if let Some(ref mut editor) = gui.editor {
+            editor.idle(dt);
         }
     });
 }

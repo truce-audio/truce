@@ -100,7 +100,7 @@ impl Editor for NoEditor {
     }
     fn open(&mut self, _: RawWindowHandle, _: PluginContext) {}
     fn close(&mut self) {}
-    fn idle(&mut self) {}
+    fn idle(&mut self, _dt: std::time::Duration) {}
 }
 
 fn shell<L>() -> StaticShell<StateParams, L>

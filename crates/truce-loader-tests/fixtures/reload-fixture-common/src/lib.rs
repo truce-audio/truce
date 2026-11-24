@@ -122,5 +122,5 @@ impl Editor for NoEditor {
     }
     fn open(&mut self, _: truce::core::editor::RawWindowHandle, _: PluginContext) {}
     fn close(&mut self) {}
-    fn idle(&mut self) {}
+    fn idle(&mut self, _dt: std::time::Duration) {}
 }

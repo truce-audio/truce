@@ -1213,7 +1213,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         }
     }
 
-    fn idle(&mut self) {
+    fn idle(&mut self, _dt: std::time::Duration) {
         // baseview drives its own frame loop.
     }
 
