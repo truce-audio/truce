@@ -386,17 +386,22 @@ impl ParamField {
 /// A nested Params field (delegates to inner struct).
 pub(crate) struct NestedField {
     pub(crate) ident: syn::Ident,
-    /// Field type, retained so the derive can call associated
-    /// functions on it without an instance - specifically
-    /// `Params::param_infos_static` for the registration-time
-    /// "no temp plugin" path.
+    /// Element `Params` type. For `#[nested] f: [T; N]` this is `T`
+    /// (not the array), so the derive can call associated functions on
+    /// it without an instance - specifically `Params::param_infos_static`
+    /// for the registration-time "no temp plugin" path.
     pub(crate) ty: syn::Type,
     /// Explicit base from `#[nested(base = N)]`, the global id of this
     /// group's local id 0. `None` auto-assigns the base by packing the
     /// group right after the preceding params (own params, then each
     /// earlier nested group's span). Pin it for wire stability the same
-    /// way you pin a param `id`.
+    /// way you pin a param `id`. On an array the base pins element 0;
+    /// element `i` packs at `base + i * element_count`.
     pub(crate) base: Option<u32>,
+    /// `Some(N)` for a fixed-size array `#[nested] f: [T; N]`; `None`
+    /// for a single nested field. Each array element is its own group,
+    /// packed contiguously after the one before it.
+    pub(crate) array_len: Option<usize>,
 }
 
 /// A meter slot field.
@@ -980,23 +985,48 @@ fn std_f64_const(path: &syn::Path) -> Option<f64> {
     }
 }
 
+/// Split a `#[nested]` field's type into its element `Params` type and
+/// optional array length. `[T; N]` yields `(T, Some(N))`; any other
+/// type yields `(ty, None)`. A non-literal array length (`[T; SOME_CONST]`)
+/// is a hard error because the derive needs the count at expansion time
+/// to lay out the per-element id ranges.
+fn nested_elem_and_len(ty: &syn::Type) -> Result<(syn::Type, Option<usize>), syn::Error> {
+    let syn::Type::Array(arr) = ty else {
+        return Ok((ty.clone(), None));
+    };
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Int(lit),
+        ..
+    }) = &arr.len
+    else {
+        return Err(syn::Error::new_spanned(
+            &arr.len,
+            "#[nested] array length must be an integer literal, e.g. `[T; 10]`",
+        ));
+    };
+    let len = lit.base10_parse::<usize>()?;
+    Ok(((*arr.elem).clone(), Some(len)))
+}
+
 /// Collect parameter fields, nested fields, and meter fields from a struct.
 type CollectedFields = (
     Vec<ParamField>,
     Vec<NestedField>,
     Vec<MeterField>,
     Vec<syn::Ident>,
+    Vec<proc_macro2::TokenStream>,
 );
 
 fn collect_fields(fields: &Fields) -> CollectedFields {
     let Fields::Named(named) = fields else {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     };
 
     let mut params = Vec::new();
     let mut nested = Vec::new();
     let mut meters = Vec::new();
     let mut skipped = Vec::new();
+    let mut errors = Vec::new();
 
     for f in &named.named {
         let Some(ident) = f.ident.clone() else {
@@ -1014,11 +1044,15 @@ fn collect_fields(fields: &Fields) -> CollectedFields {
         }
 
         if has_nested_attr(f) {
-            nested.push(NestedField {
-                ident,
-                ty: f.ty.clone(),
-                base: nested_base(f),
-            });
+            match nested_elem_and_len(&f.ty) {
+                Ok((ty, array_len)) => nested.push(NestedField {
+                    ident,
+                    ty,
+                    base: nested_base(f),
+                    array_len,
+                }),
+                Err(e) => errors.push(e.to_compile_error()),
+            }
             continue;
         }
 
@@ -1043,7 +1077,7 @@ fn collect_fields(fields: &Fields) -> CollectedFields {
         }
     }
 
-    (params, nested, meters, skipped)
+    (params, nested, meters, skipped, errors)
 }
 
 /// Parse a range string like "linear(-60, 24)" into tokens.
@@ -1734,7 +1768,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     };
 
-    let (mut param_fields, nested_fields, mut meter_fields, skip_fields) = collect_fields(fields);
+    let (mut param_fields, nested_fields, mut meter_fields, skip_fields, nested_type_errors) =
+        collect_fields(fields);
 
     // `#[persist]` fields are non-params the host saves alongside param
     // values (editor-editable config). Also present in `skip_fields` so
@@ -1910,10 +1945,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // walks the sidecar tree to aggregate. Failures here are silent -
     // they surface at TTL-emit time when the aggregator can't find
     // the data it needs.
-    let nested_for_sidecar: Vec<(syn::Ident, syn::Type, Option<u32>)> = nested_fields
-        .iter()
-        .map(|n| (n.ident.clone(), n.ty.clone(), n.base))
-        .collect();
+    let nested_for_sidecar: Vec<(syn::Ident, syn::Type, Option<u32>, Option<usize>)> =
+        nested_fields
+            .iter()
+            .map(|n| (n.ident.clone(), n.ty.clone(), n.base, n.array_len))
+            .collect();
     lv2_emit::write_struct_sidecar(
         struct_name,
         scheme == IdScheme::Hash,
@@ -1934,10 +1970,38 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // --- Count ---
     let own_count = param_fields.len();
     let nested_idents: Vec<_> = nested_fields.iter().map(|n| &n.ident).collect();
+
+    // Per-nested-field delegation. A single field runs the body once on
+    // `self.<field>`; an array runs it per element (`__n` bound to each
+    // `&self.<field>[i]`). Keeps every delegation site (count, infos,
+    // get/set, persist, ...) array-aware without repeating the branch.
+    let nested_stmt = |make: &dyn Fn(&proc_macro2::TokenStream) -> proc_macro2::TokenStream| {
+        nested_fields
+            .iter()
+            .map(|n| {
+                let ident = &n.ident;
+                if n.array_len.is_some() {
+                    let body = make(&quote!(__n));
+                    quote! { for __n in &self.#ident { #body } }
+                } else {
+                    make(&quote!(self.#ident))
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
     let count_expr = if nested_fields.is_empty() {
         quote! { #own_count }
     } else {
-        quote! { #own_count #(+ self.#nested_idents.count())* }
+        let terms = nested_fields.iter().map(|n| {
+            let ident = &n.ident;
+            if n.array_len.is_some() {
+                quote! { self.#ident.iter().map(|__n| __n.count()).sum::<usize>() }
+            } else {
+                quote! { self.#ident.count() }
+            }
+        });
+        quote! { #own_count #(+ #terms)* }
     };
 
     // --- param_infos ---
@@ -1956,9 +2020,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         // pushes directly into the shared buffer instead of building
         // its own `Vec` that the outer call then extends. Saves
         // O(depth) intermediate allocations per `param_infos()` call.
+        let appends = nested_stmt(&|i| quote! { #i.append_param_infos(&mut infos); });
         quote! {
             let mut infos = vec![#(#own_infos),*];
-            #(self.#nested_idents.append_param_infos(&mut infos);)*
+            #(#appends)*
             infos
         }
     };
@@ -1969,10 +2034,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let append_infos_impl = if nested_fields.is_empty() {
         quote! {}
     } else {
+        let appends = nested_stmt(&|i| quote! { #i.append_param_infos(into); });
         quote! {
             fn append_param_infos(&self, into: &mut Vec<::truce::params::ParamInfo>) {
                 #(into.push(#own_infos);)*
-                #(self.#nested_idents.append_param_infos(into);)*
+                #(#appends)*
             }
         }
     };
@@ -1990,49 +2056,85 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .iter()
         .filter_map(gen_param_info_literal)
         .collect();
+    // Group base (global id of the group's - or an array's element 0's -
+    // local id 0) in the static / no-instance context. An explicit
+    // `#[nested(base=N)]` pins it; otherwise, by scheme:
+    //  - ordinal: packed right after the own params and every earlier
+    //    nested group's full span (`element_count * array_len`), so
+    //    ranges stay contiguous.
+    //  - hash: a stable hash of the slot field name, so ids don't shift
+    //    when nested groups reorder.
+    // The child's ids are then folded in additively and masked back into
+    // the param range; the constructor's `offset_ids` does the same fold,
+    // so both paths agree.
+    let static_group_base = |i: usize, n: &NestedField| -> proc_macro2::TokenStream {
+        if let Some(b) = n.base {
+            return quote! { #b };
+        }
+        match scheme {
+            IdScheme::Ordinal => {
+                let prev = nested_fields[..i].iter().map(|p| {
+                    let pty = &p.ty;
+                    if let Some(len) = p.array_len {
+                        let mult = u32::try_from(len).unwrap_or(0);
+                        quote! {
+                            (#mult * <#pty as ::truce::params::Params>::param_infos_static().len() as u32)
+                        }
+                    } else {
+                        quote! {
+                            (<#pty as ::truce::params::Params>::param_infos_static().len() as u32)
+                        }
+                    }
+                });
+                quote! { (#own_count as u32) #(+ #prev)* }
+            }
+            IdScheme::Hash => {
+                let salt = name_hash_id(&n.ident.to_string());
+                quote! { #salt }
+            }
+        }
+    };
     let nested_static_calls: Vec<proc_macro2::TokenStream> = nested_fields
         .iter()
         .enumerate()
         .map(|(i, n)| {
             let ty = &n.ty;
-            // Base/salt for the group, by scheme (an explicit
-            // `#[nested(base=N)]` overrides either):
-            //  - ordinal: auto-packed right after the own params and
-            //    every earlier nested group's span (contiguous ranges).
-            //  - hash: a stable hash of the slot field name, so the
-            //    group's ids don't shift when nested groups reorder.
-            // The child's ids are then folded in additively and masked
-            // back into the param range; the constructor's `offset_ids`
-            // does the same fold, so both paths agree.
-            let base_expr = if let Some(b) = n.base {
-                quote! { #b }
-            } else {
-                match scheme {
-                    IdScheme::Ordinal => {
-                        let prev = nested_fields[..i].iter().map(|p| &p.ty);
-                        quote! {
-                            (#own_count as u32)
-                            #(+ <#prev as ::truce::params::Params>::param_infos_static().len() as u32)*
+            let base_expr = static_group_base(i, n);
+            match n.array_len {
+                None => quote! {
+                    {
+                        let __base: u32 = #base_expr;
+                        infos.extend(
+                            <#ty as ::truce::params::Params>::param_infos_static()
+                                .into_iter()
+                                .map(|mut __info| {
+                                    __info.id =
+                                        (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
+                                    __info
+                                }),
+                        );
+                    }
+                },
+                Some(len) => {
+                    let n_elems = u32::try_from(len).unwrap_or(0);
+                    quote! {
+                        {
+                            let __group_base: u32 = #base_expr;
+                            let __c = <#ty as ::truce::params::Params>::param_infos_static().len() as u32;
+                            for __i in 0u32..#n_elems {
+                                let __base = __group_base + __i * __c;
+                                infos.extend(
+                                    <#ty as ::truce::params::Params>::param_infos_static()
+                                        .into_iter()
+                                        .map(|mut __info| {
+                                            __info.id =
+                                                (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
+                                            __info
+                                        }),
+                                );
+                            }
                         }
                     }
-                    IdScheme::Hash => {
-                        let salt = name_hash_id(&n.ident.to_string());
-                        quote! { #salt }
-                    }
-                }
-            };
-            quote! {
-                {
-                    let __base: u32 = #base_expr;
-                    infos.extend(
-                        <#ty as ::truce::params::Params>::param_infos_static()
-                            .into_iter()
-                            .map(|mut __info| {
-                                __info.id =
-                                    (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
-                                __info
-                            }),
-                    );
                 }
             }
         })
@@ -2074,9 +2176,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let meter_ids_expr = if nested_fields.is_empty() {
         quote! { vec![#(#own_meter_ids),*] }
     } else {
+        let extends = nested_stmt(&|i| quote! { ids.extend(#i.meter_ids()); });
         quote! {
             let mut ids = vec![#(#own_meter_ids),*];
-            #(ids.extend(self.#nested_idents.meter_ids());)*
+            #(#extends)*
             ids
         }
     };
@@ -2103,9 +2206,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let get_plain_fallthrough = if nested_fields.is_empty() {
         quote! { _ => None, }
     } else {
+        let probes =
+            nested_stmt(&|i| quote! { if let Some(v) = #i.get_plain(id) { return Some(v); } });
         quote! {
             _ => {
-                #(if let Some(v) = self.#nested_idents.get_plain(id) { return Some(v); })*
+                #(#probes)*
                 None
             }
         }
@@ -2144,9 +2249,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let get_normalized_fallthrough = if nested_fields.is_empty() {
         quote! { _ => None, }
     } else {
+        let probes =
+            nested_stmt(&|i| quote! { if let Some(v) = #i.get_normalized(id) { return Some(v); } });
         quote! {
             _ => {
-                #(if let Some(v) = self.#nested_idents.get_normalized(id) { return Some(v); })*
+                #(#probes)*
                 None
             }
         }
@@ -2166,9 +2273,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let set_plain_fallthrough = if nested_fields.is_empty() {
         quote! { _ => {} }
     } else {
+        let sets = nested_stmt(&|i| quote! { #i.set_plain(id, value); });
         quote! {
             _ => {
-                #(self.#nested_idents.set_plain(id, value);)*
+                #(#sets)*
             }
         }
     };
@@ -2200,9 +2308,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let set_normalized_fallthrough = if nested_fields.is_empty() {
         quote! { _ => {} }
     } else {
+        let sets = nested_stmt(&|i| quote! { #i.set_normalized(id, value); });
         quote! {
             _ => {
-                #(self.#nested_idents.set_normalized(id, value);)*
+                #(#sets)*
             }
         }
     };
@@ -2246,9 +2355,12 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let format_fallthrough = if nested_fields.is_empty() {
         quote! { _ => None, }
     } else {
+        let probes = nested_stmt(
+            &|i| quote! { if let Some(v) = #i.format_value(id, value) { return Some(v); } },
+        );
         quote! {
             _ => {
-                #(if let Some(v) = self.#nested_idents.format_value(id, value) { return Some(v); })*
+                #(#probes)*
                 None
             }
         }
@@ -2271,9 +2383,12 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         let nested_parse = if nested_fields.is_empty() {
             quote! { _ => None, }
         } else {
+            let probes = nested_stmt(
+                &|i| quote! { if let Some(v) = #i.parse_value(id, text) { return Some(v); } },
+            );
             quote! {
                 _ => {
-                    #(if let Some(v) = self.#nested_idents.parse_value(id, text) { return Some(v); })*
+                    #(#probes)*
                     None
                 }
             }
@@ -2315,6 +2430,17 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // Nested delegation for the trait methods that fan out unconditionally.
+    let nested_snap = nested_stmt(&|i| quote! { #i.snap_smoothers(); });
+    let nested_sr = nested_stmt(&|i| quote! { #i.set_sample_rate(sample_rate); });
+    let nested_collect = nested_stmt(&|i| {
+        quote! {
+            let (nids, nvals) = #i.collect_values();
+            ids.extend(nids);
+            values.extend(nvals);
+        }
+    });
+
     // --- Generate new() ---
     let new_impl = if generate_new {
         let param_inits: Vec<_> = param_fields
@@ -2353,7 +2479,9 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
         // Rebase each nested group by its base, after construction (the
         // child built itself at its own local ids). The base is explicit
-        // or auto-packed after the own params and each earlier group.
+        // or auto-packed after the own params and each earlier group. An
+        // array rebases each element contiguously (`base + i *
+        // element_count`), mirroring the static table's layout.
         let offset_stmts: Vec<_> = nested_fields
             .iter()
             .enumerate()
@@ -2364,11 +2492,17 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 } else {
                     match scheme {
                         IdScheme::Ordinal => {
-                            let prev = nested_fields[..i].iter().map(|p| &p.ident);
-                            quote! {
-                                (#own_count as u32)
-                                #(+ ::truce::params::Params::count(&me.#prev) as u32)*
-                            }
+                            let prev = nested_fields[..i].iter().map(|p| {
+                                let pid = &p.ident;
+                                if p.array_len.is_some() {
+                                    quote! {
+                                        (me.#pid.iter().map(|__e| ::truce::params::Params::count(__e)).sum::<usize>() as u32)
+                                    }
+                                } else {
+                                    quote! { (::truce::params::Params::count(&me.#pid) as u32) }
+                                }
+                            });
+                            quote! { (#own_count as u32) #(+ #prev)* }
                         }
                         IdScheme::Hash => {
                             let salt = name_hash_id(&n.ident.to_string());
@@ -2376,7 +2510,21 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         }
                     }
                 };
-                quote! { me.#ident.offset_ids(#base_expr); }
+                match n.array_len {
+                    None => quote! { me.#ident.offset_ids(#base_expr); },
+                    Some(0) => quote! {},
+                    Some(_) => quote! {
+                        {
+                            let __group_base: u32 = #base_expr;
+                            let __c = ::truce::params::Params::count(&me.#ident[0]) as u32;
+                            let mut __off = __group_base;
+                            for __elem in &mut me.#ident {
+                                __elem.offset_ids(__off);
+                                __off += __c;
+                            }
+                        }
+                    },
+                }
             })
             .collect();
         let me_binding = if nested_fields.is_empty() {
@@ -2424,6 +2572,17 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // their dedicated id range and aren't shifted. Always emitted so a
     // parent can rebase any nested child, leaf or not.
     let own_param_idents: Vec<_> = param_fields.iter().map(|f| &f.ident).collect();
+    let nested_offset_recurse: Vec<_> = nested_fields
+        .iter()
+        .map(|n| {
+            let ident = &n.ident;
+            if n.array_len.is_some() {
+                quote! { for __n in &mut self.#ident { __n.offset_ids(id_base); } }
+            } else {
+                quote! { self.#ident.offset_ids(id_base); }
+            }
+        })
+        .collect();
     let offset_ids_impl = quote! {
         impl #struct_name {
             #[doc(hidden)]
@@ -2431,10 +2590,46 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 #(self.#own_param_idents.info.id =
                     (self.#own_param_idents.info.id + id_base)
                         & (::truce::params::METER_ID_BASE - 1);)*
-                #(self.#nested_idents.offset_ids(id_base);)*
+                #(#nested_offset_recurse)*
             }
         }
     };
+
+    // For each `#[nested] f: [T; N]`, a static id resolver so element
+    // params are addressable without a live instance:
+    // `MyParams::f_id(i, TParamId::X)`. Mirrors the static table's
+    // layout exactly (`group_base + i * element_count + local`), so the
+    // id it returns is the one the running plugin exposes.
+    let nested_array_helpers: Vec<proc_macro2::TokenStream> = nested_fields
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.array_len.is_some())
+        .map(|(i, n)| {
+            let ty = &n.ty;
+            let base_expr = static_group_base(i, n);
+            let fn_name = syn::Ident::new(&format!("{}_id", n.ident), n.ident.span());
+            let doc = format!(
+                "Global parameter id of element `index`'s `sub` param in the `{}` array.",
+                n.ident
+            );
+            quote! {
+                impl #struct_name {
+                    #[doc = #doc]
+                    #[must_use]
+                    // `index` is bounded by the array length (small); the
+                    // cast cannot truncate in practice.
+                    #[allow(clippy::cast_possible_truncation)]
+                    pub fn #fn_name(index: usize, sub: impl ::core::convert::Into<u32>) -> u32 {
+                        let __c =
+                            <#ty as ::truce::params::Params>::param_infos_static().len() as u32;
+                        let __group_base: u32 = #base_expr;
+                        (__group_base + (index as u32) * __c + sub.into())
+                            & (::truce::params::METER_ID_BASE - 1)
+                    }
+                }
+            }
+        })
+        .collect();
 
     // --- Generate ParamId enum (includes both params and meters) ---
     let param_id_enum = if !param_fields.is_empty() || !meter_fields.is_empty() {
@@ -2516,6 +2711,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let attr_errors: Vec<proc_macro2::TokenStream> = param_fields
         .iter()
         .flat_map(|f| f.attrs.errors.iter().cloned())
+        .chain(nested_type_errors.iter().cloned())
         .collect();
 
     // `#[persist]` codegen. The blob is a self-delimiting keyed list so
@@ -2523,7 +2719,47 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // saves: a `u32` count, then per entry a `String` key and a
     // `u32`-length-prefixed value. Own `#[persist]` fields and `#[nested]`
     // sub-params share one list; a nested entry's value is that
-    // sub-struct's own `serialize_persist` blob, so it recurses.
+    // sub-struct's own `serialize_persist` blob, so it recurses. Each
+    // array element is its own keyed entry (`field[i]`) so loads route
+    // back to the matching element.
+    let nested_persist_entries: Vec<(String, proc_macro2::TokenStream)> = nested_fields
+        .iter()
+        .flat_map(|n| {
+            let ident = &n.ident;
+            match n.array_len {
+                None => vec![(
+                    ident.to_string(),
+                    quote! { __buf.extend_from_slice(&self.#ident.serialize_persist()); },
+                )],
+                Some(len) => (0..len)
+                    .map(|i| {
+                        (
+                            format!("{ident}[{i}]"),
+                            quote! { __buf.extend_from_slice(&self.#ident[#i].serialize_persist()); },
+                        )
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    let nested_persist_read_arms: Vec<proc_macro2::TokenStream> = nested_fields
+        .iter()
+        .flat_map(|n| {
+            let ident = &n.ident;
+            match n.array_len {
+                None => {
+                    let key = ident.to_string();
+                    vec![quote! { #key => self.#ident.load_persist(__value), }]
+                }
+                Some(len) => (0..len)
+                    .map(|i| {
+                        let key = format!("{ident}[{i}]");
+                        quote! { #key => self.#ident[#i].load_persist(__value), }
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
     let persist_write_stmts: Vec<proc_macro2::TokenStream> = persist_fields
         .iter()
         .map(|(ident, key)| {
@@ -2534,14 +2770,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 },
             )
         })
-        .chain(nested_idents.iter().map(|ident| {
-            (
-                ident.to_string(),
-                quote! {
-                    __buf.extend_from_slice(&self.#ident.serialize_persist());
-                },
-            )
-        }))
+        .chain(nested_persist_entries.iter().cloned())
         .map(|(key, write)| {
             quote! {
                 <::std::string::String as ::truce::core::custom_state::StateField>::write_field(
@@ -2567,16 +2796,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 ),
             }
         })
-        .chain(nested_idents.iter().map(|ident| {
-            let key = ident.to_string();
-            quote! {
-                #key => self.#ident.load_persist(__value),
-            }
-        }))
+        .chain(nested_persist_read_arms.iter().cloned())
         .collect();
 
     #[allow(clippy::cast_possible_truncation)]
-    let persist_count = (persist_fields.len() + nested_idents.len()) as u32;
+    let persist_count = (persist_fields.len() + nested_persist_entries.len()) as u32;
 
     // Nothing to carry: leave the empty-`Vec` trait default so a plugin
     // without persisted config adds no bytes to its saved state.
@@ -2628,6 +2852,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         #new_impl
 
         #offset_ids_impl
+
+        #(#nested_array_helpers)*
 
         #param_id_enum
 
@@ -2691,12 +2917,12 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
             fn snap_smoothers(&self) {
                 #(#snap_stmts)*
-                #(self.#nested_idents.snap_smoothers();)*
+                #(#nested_snap)*
             }
 
             fn set_sample_rate(&self, sample_rate: f64) {
                 #(#sr_stmts)*
-                #(self.#nested_idents.set_sample_rate(sample_rate);)*
+                #(#nested_sr)*
             }
 
             fn collect_values(&self) -> (Vec<u32>, Vec<f64>) {
@@ -2705,11 +2931,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                     .iter()
                     .map(|id| self.get_plain(*id).expect("id was emitted by #[derive(Params)] and so must resolve"))
                     .collect();
-                #({
-                    let (nids, nvals) = self.#nested_idents.collect_values();
-                    ids.extend(nids);
-                    values.extend(nvals);
-                })*
+                #(#nested_collect)*
                 (ids, values)
             }
 
