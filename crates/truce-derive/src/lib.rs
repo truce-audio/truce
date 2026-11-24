@@ -421,15 +421,18 @@ impl MeterField {
 }
 
 /// A resolved `default = ...` expression plus the tokens to emit
-/// for it. `value` drives the derive's compile-time range / shape
-/// checks; `path_tokens` carries the original `std::f64::consts::*`
-/// path through to the generated `ParamInfo` so clippy lints like
-/// `approx_constant` see the path, not the resolved literal. For
-/// numeric literals `path_tokens` stays `None` and the f64 value
-/// gets quoted in the usual way.
+/// for it. `value` is `Some` when the default is a known literal (or a
+/// whitelisted `std::f64::consts::*`), which drives the derive's
+/// compile-time range / shape checks; it is `None` for an arbitrary
+/// user const, whose value the derive can't see (the range check is
+/// deferred to a generated `const` assertion). `path_tokens` carries
+/// the original path through to the generated `ParamInfo` so the const
+/// resolves in context (and clippy lints like `approx_constant` see the
+/// path, not a resolved literal). For numeric literals `path_tokens`
+/// stays `None` and the f64 value gets quoted in the usual way.
 #[derive(Clone)]
 pub(crate) struct DefaultExpr {
-    pub(crate) value: f64,
+    pub(crate) value: Option<f64>,
     pub(crate) path_tokens: Option<TokenStream2>,
 }
 
@@ -694,15 +697,28 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                             let path_tokens =
                                 matches!(expr, Expr::Path(syn::ExprPath { qself: None, .. }))
                                     .then(|| expr.to_token_stream());
-                            attrs.default = Some(DefaultExpr { value, path_tokens });
+                            attrs.default = Some(DefaultExpr {
+                                value: Some(value),
+                                path_tokens,
+                            });
+                        }
+                        // An arbitrary const path whose value the derive
+                        // can't resolve: emit the path verbatim (rustc
+                        // resolves it) and defer the range check to the
+                        // generated `const` assertion.
+                        None if matches!(expr, Expr::Path(syn::ExprPath { qself: None, .. })) => {
+                            attrs.default = Some(DefaultExpr {
+                                value: None,
+                                path_tokens: Some(expr.to_token_stream()),
+                            });
                         }
                         None => push_err(
                             &mut attrs,
                             syn::Error::new_spanned(
                                 &expr,
-                                "expected a numeric literal or `std::f64::consts::*` constant for \
-                                 `default` (e.g. `default = 0.5`, `default = -1`, \
-                                 `default = std::f64::consts::SQRT_2`)",
+                                "expected a numeric literal or a const for `default` \
+                                 (e.g. `default = 0.5`, `default = -1`, \
+                                 `default = std::f64::consts::SQRT_2`, `default = MY_CONST`)",
                             ),
                         ),
                     }
@@ -1113,6 +1129,64 @@ fn usize_lit(v: usize) -> proc_macro2::TokenStream {
     quote! { #lit }
 }
 
+/// A numeric slot in a `range` / `smooth` attribute: either a literal
+/// (value known at expansion, so macro-time validation and the LV2 TTL
+/// can read it) or a const expression (emitted verbatim for rustc to
+/// resolve, with validation deferred to a generated `const` assertion).
+struct NumSlot<T> {
+    /// `Some` when the slot parsed as a numeric literal of type `T`.
+    lit: Option<T>,
+    /// Tokens to emit into the generated code.
+    tokens: proc_macro2::TokenStream,
+}
+
+/// Parse a slot as a const expression (not a literal). Rejects anything
+/// `syn` can't read as an expression so typos stay loud. Referenced
+/// consts must be of the slot's type (`f64` for range bounds / smoothing
+/// ms), since the tokens flow straight into typed struct fields.
+fn num_slot_expr(s: &str) -> Result<proc_macro2::TokenStream, String> {
+    match syn::parse_str::<Expr>(s) {
+        Ok(expr) => Ok(expr.to_token_stream()),
+        Err(_) => Err(format!("`{s}` is not a number or a valid const expression")),
+    }
+}
+
+/// Parse an `f64` range / smoothing slot, falling back to a const expr.
+fn num_slot_f64(s: &str) -> Result<NumSlot<f64>, String> {
+    let s = s.trim();
+    if let Ok(v) = s.parse::<f64>() {
+        return Ok(NumSlot {
+            lit: Some(v),
+            tokens: f64_lit(v),
+        });
+    }
+    num_slot_expr(s).map(|tokens| NumSlot { lit: None, tokens })
+}
+
+/// Parse an `i64` range slot (`discrete`), falling back to a const expr.
+fn num_slot_i64(s: &str) -> Result<NumSlot<i64>, String> {
+    let s = s.trim();
+    if let Ok(v) = s.parse::<i64>() {
+        return Ok(NumSlot {
+            lit: Some(v),
+            tokens: i64_lit(v),
+        });
+    }
+    num_slot_expr(s).map(|tokens| NumSlot { lit: None, tokens })
+}
+
+/// Parse a `usize` range slot (`enum` count), falling back to a const expr.
+fn num_slot_usize(s: &str) -> Result<NumSlot<usize>, String> {
+    let s = s.trim();
+    if let Ok(v) = s.parse::<usize>() {
+        return Ok(NumSlot {
+            lit: Some(v),
+            tokens: usize_lit(v),
+        });
+    }
+    num_slot_expr(s).map(|tokens| NumSlot { lit: None, tokens })
+}
+
 /// Parse the two power-law taper shapes (`skewed(min, max, factor)` and
 /// `sym_skewed(min, max, factor, center)`). `None` when neither prefix
 /// matches; `Some(compile_error!)` on a malformed match. Split out of
@@ -1133,35 +1207,33 @@ fn parse_skew_range(range: &str) -> Option<proc_macro2::TokenStream> {
                 "skewed range needs three arguments `skewed(min, max, factor)`, got `skewed({inner})`"
             )));
         }
-        let Ok(min) = parts[0].parse::<f64>() else {
-            return Some(bad(format!(
-                "skewed range min `{}` is not a number",
-                parts[0]
-            )));
+        let min = match num_slot_f64(parts[0]) {
+            Ok(s) => s,
+            Err(e) => return Some(bad(format!("skewed range min {e}"))),
         };
-        let Ok(max) = parts[1].parse::<f64>() else {
-            return Some(bad(format!(
-                "skewed range max `{}` is not a number",
-                parts[1]
-            )));
+        let max = match num_slot_f64(parts[1]) {
+            Ok(s) => s,
+            Err(e) => return Some(bad(format!("skewed range max {e}"))),
         };
-        let Ok(factor) = parts[2].parse::<f64>() else {
-            return Some(bad(format!(
-                "skewed range factor `{}` is not a number",
-                parts[2]
-            )));
+        let factor = match num_slot_f64(parts[2]) {
+            Ok(s) => s,
+            Err(e) => return Some(bad(format!("skewed range factor {e}"))),
         };
-        if min >= max {
+        if let (Some(lo), Some(hi)) = (min.lit, max.lit)
+            && lo >= hi
+        {
             return Some(bad(format!(
-                "skewed range needs min < max, got `skewed({min}, {max}, {factor})`"
+                "skewed range needs min < max, got `skewed({lo}, {hi})`"
             )));
         }
-        if bad_factor(factor) {
+        if let Some(f) = factor.lit
+            && bad_factor(f)
+        {
             return Some(bad(format!(
-                "skewed range needs a strictly positive factor, got `{factor}`"
+                "skewed range needs a strictly positive factor, got `{f}`"
             )));
         }
-        let (min, max, factor) = (f64_lit(min), f64_lit(max), f64_lit(factor));
+        let (min, max, factor) = (min.tokens, max.tokens, factor.tokens);
         return Some(quote! {
             ::truce::params::ParamRange::Skewed { min: #min, max: #max, factor: #factor }
         });
@@ -1177,48 +1249,45 @@ fn parse_skew_range(range: &str) -> Option<proc_macro2::TokenStream> {
                  got `sym_skewed({inner})`"
             )));
         }
-        let Ok(min) = parts[0].parse::<f64>() else {
-            return Some(bad(format!(
-                "sym_skewed range min `{}` is not a number",
-                parts[0]
-            )));
+        let min = match num_slot_f64(parts[0]) {
+            Ok(s) => s,
+            Err(e) => return Some(bad(format!("sym_skewed range min {e}"))),
         };
-        let Ok(max) = parts[1].parse::<f64>() else {
-            return Some(bad(format!(
-                "sym_skewed range max `{}` is not a number",
-                parts[1]
-            )));
+        let max = match num_slot_f64(parts[1]) {
+            Ok(s) => s,
+            Err(e) => return Some(bad(format!("sym_skewed range max {e}"))),
         };
-        let Ok(factor) = parts[2].parse::<f64>() else {
-            return Some(bad(format!(
-                "sym_skewed range factor `{}` is not a number",
-                parts[2]
-            )));
+        let factor = match num_slot_f64(parts[2]) {
+            Ok(s) => s,
+            Err(e) => return Some(bad(format!("sym_skewed range factor {e}"))),
         };
-        let Ok(center) = parts[3].parse::<f64>() else {
-            return Some(bad(format!(
-                "sym_skewed range center `{}` is not a number",
-                parts[3]
-            )));
+        let center = match num_slot_f64(parts[3]) {
+            Ok(s) => s,
+            Err(e) => return Some(bad(format!("sym_skewed range center {e}"))),
         };
-        if min >= max {
+        if let (Some(lo), Some(hi)) = (min.lit, max.lit) {
+            if lo >= hi {
+                return Some(bad(format!(
+                    "sym_skewed range needs min < max, got `sym_skewed({lo}, {hi})`"
+                )));
+            }
+            if let Some(c) = center.lit
+                && (c <= lo || c >= hi)
+            {
+                return Some(bad(format!(
+                    "sym_skewed center must be strictly between min and max, got center={c} \
+                     for [{lo}, {hi}]"
+                )));
+            }
+        }
+        if let Some(f) = factor.lit
+            && bad_factor(f)
+        {
             return Some(bad(format!(
-                "sym_skewed range needs min < max, got `sym_skewed({min}, {max}, {factor}, {center})`"
+                "sym_skewed range needs a strictly positive factor, got `{f}`"
             )));
         }
-        if bad_factor(factor) {
-            return Some(bad(format!(
-                "sym_skewed range needs a strictly positive factor, got `{factor}`"
-            )));
-        }
-        if center <= min || center >= max {
-            return Some(bad(format!(
-                "sym_skewed center must be strictly between min and max, got center={center} \
-                 for [{min}, {max}]"
-            )));
-        }
-        let (min, max, factor, center) =
-            (f64_lit(min), f64_lit(max), f64_lit(factor), f64_lit(center));
+        let (min, max, factor, center) = (min.tokens, max.tokens, factor.tokens, center.tokens);
         return Some(quote! {
             ::truce::params::ParamRange::SymmetricalSkewed {
                 min: #min, max: #max, factor: #factor, center: #center
@@ -1241,18 +1310,22 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "linear range needs two arguments `linear(min, max)`, got `linear({inner})`"
             ));
         }
-        let Ok(min) = parts[0].parse::<f64>() else {
-            return bad(format!("linear range min `{}` is not a number", parts[0]));
+        let min = match num_slot_f64(parts[0]) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("linear range min {e}")),
         };
-        let Ok(max) = parts[1].parse::<f64>() else {
-            return bad(format!("linear range max `{}` is not a number", parts[1]));
+        let max = match num_slot_f64(parts[1]) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("linear range max {e}")),
         };
-        if min >= max {
+        if let (Some(lo), Some(hi)) = (min.lit, max.lit)
+            && lo >= hi
+        {
             return bad(format!(
-                "linear range needs min < max, got `linear({min}, {max})`"
+                "linear range needs min < max, got `linear({lo}, {hi})`"
             ));
         }
-        let (min, max) = (f64_lit(min), f64_lit(max));
+        let (min, max) = (min.tokens, max.tokens);
         return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
     }
     if let Some(inner) = range.strip_prefix("log(").and_then(|s| s.strip_suffix(')')) {
@@ -1262,23 +1335,25 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "log range needs two arguments `log(min, max)`, got `log({inner})`"
             ));
         }
-        let Ok(min) = parts[0].parse::<f64>() else {
-            return bad(format!("log range min `{}` is not a number", parts[0]));
+        let min = match num_slot_f64(parts[0]) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("log range min {e}")),
         };
-        let Ok(max) = parts[1].parse::<f64>() else {
-            return bad(format!("log range max `{}` is not a number", parts[1]));
+        let max = match num_slot_f64(parts[1]) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("log range max {e}")),
         };
-        if min <= 0.0 || max <= 0.0 {
-            return bad(format!(
-                "log range needs strictly positive bounds, got `log({min}, {max})`"
-            ));
+        if let (Some(lo), Some(hi)) = (min.lit, max.lit) {
+            if lo <= 0.0 || hi <= 0.0 {
+                return bad(format!(
+                    "log range needs strictly positive bounds, got `log({lo}, {hi})`"
+                ));
+            }
+            if lo >= hi {
+                return bad(format!("log range needs min < max, got `log({lo}, {hi})`"));
+            }
         }
-        if min >= max {
-            return bad(format!(
-                "log range needs min < max, got `log({min}, {max})`"
-            ));
-        }
-        let (min, max) = (f64_lit(min), f64_lit(max));
+        let (min, max) = (min.tokens, max.tokens);
         return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
     }
     if let Some(inner) = range
@@ -1291,42 +1366,40 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "discrete range needs two arguments `discrete(min, max)`, got `discrete({inner})`"
             ));
         }
-        let Ok(min) = parts[0].parse::<i64>() else {
-            return bad(format!(
-                "discrete range min `{}` is not an integer",
-                parts[0]
-            ));
+        let min = match num_slot_i64(parts[0]) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("discrete range min {e}")),
         };
-        let Ok(max) = parts[1].parse::<i64>() else {
-            return bad(format!(
-                "discrete range max `{}` is not an integer",
-                parts[1]
-            ));
+        let max = match num_slot_i64(parts[1]) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("discrete range max {e}")),
         };
-        if min >= max {
+        if let (Some(lo), Some(hi)) = (min.lit, max.lit)
+            && lo >= hi
+        {
             return bad(format!(
-                "discrete range needs min < max, got `discrete({min}, {max})`"
+                "discrete range needs min < max, got `discrete({lo}, {hi})`"
             ));
         }
-        let (min, max) = (i64_lit(min), i64_lit(max));
+        let (min, max) = (min.tokens, max.tokens);
         return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
     }
     if let Some(inner) = range
         .strip_prefix("enum(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        let Ok(count) = inner.trim().parse::<usize>() else {
-            return bad(format!(
-                "enum count `{}` is not a non-negative integer",
-                inner.trim()
-            ));
+        let count = match num_slot_usize(inner.trim()) {
+            Ok(s) => s,
+            Err(e) => return bad(format!("enum count {e}")),
         };
-        if count < 2 {
+        if let Some(c) = count.lit
+            && c < 2
+        {
             return bad(format!(
-                "enum range needs at least 2 variants, got `enum({count})`"
+                "enum range needs at least 2 variants, got `enum({c})`"
             ));
         }
-        let count = usize_lit(count);
+        let count = count.tokens;
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
     if let Some(tokens) = parse_skew_range(range) {
@@ -1347,6 +1420,101 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
          skewed(min, max, factor), sym_skewed(min, max, factor, center), \
          discrete(min, max), enum(count), reversed(<range>)"
     ))
+}
+
+/// Whether any numeric slot of a range string is a const expression
+/// rather than a literal. The LV2 sidecar flags such params so the
+/// install-time TTL renderer (which can't evaluate a const) rejects them
+/// loudly instead of emitting a wrong port range.
+pub(crate) fn range_has_const(range: &str) -> bool {
+    let range = range.trim();
+    if let Some(inner) = range
+        .strip_prefix("reversed(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        return range_has_const(inner);
+    }
+    let any_non_literal = |inner: &str| inner.split(',').any(|s| s.trim().parse::<f64>().is_err());
+    for prefix in ["linear(", "log(", "skewed(", "sym_skewed(", "discrete("] {
+        if let Some(inner) = range.strip_prefix(prefix).and_then(|s| s.strip_suffix(')')) {
+            return any_non_literal(inner);
+        }
+    }
+    if let Some(inner) = range
+        .strip_prefix("enum(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        return inner.trim().parse::<f64>().is_err();
+    }
+    false
+}
+
+/// The min / max bound tokens of a float range (`linear` / `log` /
+/// `skewed` / `sym_skewed`), each a literal or a const expression. Used
+/// to emit a `const` assertion when a slot is a const, since the
+/// expansion-time numeric check can't run. `None` for shapes without
+/// float bounds (`discrete` / `enum` / rangeless).
+fn float_range_bound_tokens(
+    range: &str,
+) -> Option<(proc_macro2::TokenStream, proc_macro2::TokenStream)> {
+    let range = range.trim();
+    if let Some(inner) = range
+        .strip_prefix("reversed(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        return float_range_bound_tokens(inner);
+    }
+    for prefix in ["linear(", "log(", "skewed(", "sym_skewed("] {
+        if let Some(inner) = range.strip_prefix(prefix).and_then(|s| s.strip_suffix(')')) {
+            let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+            let min = num_slot_f64(parts.first()?).ok()?.tokens;
+            let max = num_slot_f64(parts.get(1)?).ok()?.tokens;
+            return Some((min, max));
+        }
+    }
+    None
+}
+
+/// A compile-time assertion recovering the `min < max` / default-in-range
+/// checks for a param whose range or default is a const expression (the
+/// expansion-time checks need literal values). Emitted as a `const`
+/// block that rustc evaluates in const context, so it stays a build-time
+/// error with zero runtime cost. `None` when the param is all-literal
+/// (the expansion-time checks already ran) or when the shape has no float
+/// bounds to assert against.
+fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
+    let a = &f.attrs;
+    let range_const = a.range.as_deref().is_some_and(range_has_const);
+    let default_const = matches!(a.default.as_ref(), Some(DefaultExpr { value: None, .. }));
+    if !range_const && !default_const {
+        return None;
+    }
+    let (min, max) = float_range_bound_tokens(a.range.as_deref()?)?;
+    let default_tokens = match a.default.as_ref() {
+        Some(DefaultExpr {
+            path_tokens: Some(t),
+            ..
+        }) => Some(t.clone()),
+        Some(DefaultExpr { value: Some(v), .. }) => Some(f64_lit(*v)),
+        _ => None,
+    };
+    let name = a.name.as_deref().unwrap_or("param");
+    let order_msg = format!("param `{name}`: range needs min < max");
+    let default_assert = default_tokens.map(|d| {
+        let msg = format!("param `{name}`: default is outside its range");
+        quote! {
+            let __def: f64 = #d;
+            assert!(__def >= __min && __def <= __max, #msg);
+        }
+    });
+    Some(quote! {
+        const _: () = {
+            let __min: f64 = #min;
+            let __max: f64 = #max;
+            assert!(__min < __max, #order_msg);
+            #default_assert
+        };
+    })
 }
 
 /// The concrete `(min, max)` a range string spans, for expansion-time
@@ -1411,7 +1579,9 @@ fn default_range_error(f: &ParamField) -> Option<String> {
         return None;
     }
     let (lo, hi) = range_bounds(a.range.as_deref()?)?;
-    let effective = a.default.as_ref().map_or(0.0, |d| d.value);
+    // A const default has no expansion-time value; its range check is the
+    // generated `const` assertion, not this one.
+    let effective = a.default.as_ref().and_then(|d| d.value).unwrap_or(0.0);
     if !effective.is_finite() || (effective >= lo && effective <= hi) {
         return None;
     }
@@ -1498,11 +1668,14 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
         .strip_prefix("linear(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return match inner.trim().parse::<f64>() {
-            Ok(ms) => quote! { ::truce::params::SmoothingStyle::Linear(#ms) },
+        return match num_slot_f64(inner) {
+            Ok(ms) => {
+                let ms = ms.tokens;
+                quote! { ::truce::params::SmoothingStyle::Linear(#ms) }
+            }
             Err(_) => bad(format!(
-                "smooth = \"linear({inner})\" expects a numeric milliseconds value \
-                 (e.g. `smooth = \"linear(20)\"`)",
+                "smooth = \"linear({inner})\" expects a milliseconds value - a number or an \
+                 `f64` const (e.g. `smooth = \"linear(20)\"`)",
             )),
         };
     }
@@ -1510,11 +1683,14 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
         .strip_prefix("exp(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return match inner.trim().parse::<f64>() {
-            Ok(ms) => quote! { ::truce::params::SmoothingStyle::Exponential(#ms) },
+        return match num_slot_f64(inner) {
+            Ok(ms) => {
+                let ms = ms.tokens;
+                quote! { ::truce::params::SmoothingStyle::Exponential(#ms) }
+            }
             Err(_) => bad(format!(
-                "smooth = \"exp({inner})\" expects a numeric milliseconds value \
-                 (e.g. `smooth = \"exp(5)\"`)",
+                "smooth = \"exp({inner})\" expects a milliseconds value - a number or an \
+                 `f64` const (e.g. `smooth = \"exp(5)\"`)",
             )),
         };
     }
@@ -1522,11 +1698,14 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
         .strip_prefix("log(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return match inner.trim().parse::<f64>() {
-            Ok(ms) => quote! { ::truce::params::SmoothingStyle::Logarithmic(#ms) },
+        return match num_slot_f64(inner) {
+            Ok(ms) => {
+                let ms = ms.tokens;
+                quote! { ::truce::params::SmoothingStyle::Logarithmic(#ms) }
+            }
             Err(_) => bad(format!(
-                "smooth = \"log({inner})\" expects a numeric milliseconds value \
-                 (e.g. `smooth = \"log(20)\"` for multiplicative smoothing)",
+                "smooth = \"log({inner})\" expects a milliseconds value - a number or an \
+                 `f64` const (e.g. `smooth = \"log(20)\"` for multiplicative smoothing)",
             )),
         };
     }
@@ -1558,11 +1737,11 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             path_tokens: Some(t),
             ..
         }) => t.clone(),
-        Some(DefaultExpr { value, .. }) => f64_lit(*value),
-        None => quote! { 0.0 },
+        Some(DefaultExpr { value: Some(v), .. }) => f64_lit(*v),
+        _ => quote! { 0.0 },
     };
 
-    if let Some(d) = a.default.as_ref().map(|d| d.value) {
+    if let Some(d) = a.default.as_ref().and_then(|d| d.value) {
         // Integer round-trip exactness checks - an epsilon-based
         // comparison would silently accept fractional defaults like
         // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`
@@ -1680,11 +1859,13 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     // runs at construction time because `variant_count()` isn't
     // visible to the macro at expansion time without per-call
     // const-eval plumbing.
-    if let Some(d) = a.default.as_ref().map(|d| d.value) {
+    if let Some(d) = a.default.as_ref().and_then(|d| d.value) {
         // Integer round-trip exactness checks - an epsilon-based
         // comparison would silently accept fractional defaults like
         // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`
-        // truncations are the round-trip's whole point.
+        // truncations are the round-trip's whole point. A const default
+        // (value `None`) is round-trip-checked by the generated `const`
+        // assertion instead.
         #[allow(
             clippy::float_cmp,
             clippy::cast_possible_truncation,
@@ -2714,6 +2895,14 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .chain(nested_type_errors.iter().cloned())
         .collect();
 
+    // Compile-time `min < max` / default-in-range checks for params whose
+    // range or default is a const (the expansion-time checks need literal
+    // values). Evaluated by rustc in const context - still a build error.
+    let const_range_asserts: Vec<proc_macro2::TokenStream> = param_fields
+        .iter()
+        .filter_map(gen_const_range_assert)
+        .collect();
+
     // `#[persist]` codegen. The blob is a self-delimiting keyed list so
     // fields can be added / removed / reordered without breaking older
     // saves: a `u32` count, then per entry a `String` key and a
@@ -2848,6 +3037,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #(#attr_errors)*
+
+        #(#const_range_asserts)*
 
         #new_impl
 
