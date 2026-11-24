@@ -1474,6 +1474,18 @@ macro_rules! export_vst2 {
                 // SAFETY: the host passes its `audioMasterCallback` (or null).
                 unsafe { ::truce_vst2::vst2_entry(host) }
             }
+
+            // Legacy macOS entry alias: older Steinberg hosts look up
+            // `main_macho` (the original VST2.4 Mach-O entry name) rather
+            // than `VSTPluginMain`. Same trampoline, macOS-only.
+            #[cfg(target_os = "macos")]
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn main_macho(
+                host: *mut ::core::ffi::c_void,
+            ) -> *mut ::core::ffi::c_void {
+                // SAFETY: the host passes its `audioMasterCallback` (or null).
+                unsafe { ::truce_vst2::vst2_entry(host) }
+            }
         }
     };
 }
