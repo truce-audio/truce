@@ -595,6 +595,23 @@ windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
+[[plugin]]
+name = "Truce Idle Anim"
+bundle_id = "idle-anim"
+crate = "truce-example-idle-anim"
+# Demonstrates the `Editor::idle` hook: the editor animates a meter from
+# its idle tick (no DSP drives it), so the bar moves only while `idle`
+# fires on the host UI thread.
+category = "effect"
+fourcc = "TIdl"
+au3_subtype = "TId3"
+au_tag = "Effects"
+vst3_subcategory = "Tools"
+au3_name = "Truce Idle Anim (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
 # Suite installer wrapping every example above. `cargo truce package`
 # (no flags) produces both per-plugin installers and this suite installer.
 # Pass `--no-per-plugin` for suite-only output, `--no-suite` to drop it.

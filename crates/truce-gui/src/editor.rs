@@ -1754,7 +1754,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         }
     }
 
-    fn idle(&mut self) {
+    fn idle(&mut self, _dt: std::time::Duration) {
         // baseview drives `on_frame` via its internal timer; idle is
         // only meaningful for the headless/standalone case where the
         // caller wants a render cycle to pull pixel data out.

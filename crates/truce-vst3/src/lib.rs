@@ -18,7 +18,7 @@ use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
 use truce_core::editor::{
-    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, clamp_logical_size,
+    ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle, SendPtr, clamp_logical_size,
     fit_logical_size,
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
@@ -213,6 +213,7 @@ struct Vst3Scratch<P: PluginExport> {
 /// Main/UI-thread-owned editor state (see [`Vst3Instance::gui`]).
 struct Vst3Gui {
     editor: Option<Box<dyn Editor>>,
+    idle_clock: IdleClock,
 }
 
 /// Fixed-capacity `(port, noteId) -> (channel, note)` correlation for
@@ -389,7 +390,10 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     scratch: RawBufferScratch::default(),
                     note_id_map: NoteIdMap::new(),
                 }),
-                gui: PluginCell::new(Vst3Gui { editor: None }),
+                gui: PluginCell::new(Vst3Gui {
+                    editor: None,
+                    idle_clock: IdleClock::new(),
+                }),
             });
             let raw = Box::into_raw(instance);
             raw.cast::<std::ffi::c_void>()
@@ -2381,6 +2385,24 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     });
 }
 
+/// Editor idle tick, driven by the shim's per-instance UI-thread timer.
+/// `editor.idle` is author code; firewall it. `try_enter`, not `enter`: the
+/// timer can fire while an outer editor callback still holds the cell - skip
+/// that frame rather than alias. With no editor open it's a no-op (the timer
+/// runs for the component's whole life).
+unsafe extern "C" fn cb_gui_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+    run_extern_callback_with::<P, ()>("vst3", "gui_idle", (), || unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let Some(mut gui) = inst.gui.try_enter() else {
+            return;
+        };
+        let dt = gui.idle_clock.tick();
+        if let Some(editor) = gui.editor.as_mut() {
+            editor.idle(dt);
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -2672,6 +2694,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_can_resize: cb_gui_can_resize::<P>,
         gui_check_size_constraint: cb_gui_check_size_constraint::<P>,
         gui_set_size: cb_gui_set_size::<P>,
+        gui_idle: cb_gui_idle::<P>,
         midi_mapping_get_param_id: cb_midi_mapping_get_param_id::<P>,
         get_output_param_count: cb_get_output_param_count::<P>,
         get_output_param: cb_get_output_param::<P>,

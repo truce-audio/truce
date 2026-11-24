@@ -58,7 +58,7 @@ impl truce::prelude::Editor for NoEditor {
     }
     fn open(&mut self, _: truce_core::editor::RawWindowHandle, _: truce::prelude::PluginContext) {}
     fn close(&mut self) {}
-    fn idle(&mut self) {}
+    fn idle(&mut self, _dt: std::time::Duration) {}
 }
 
 #[test]

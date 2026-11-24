@@ -43,7 +43,7 @@ use truce_core::cast::{len_u32, size_of_u32};
 #[cfg(target_os = "macos")]
 use truce_core::editor::fit_size;
 use truce_core::editor::{
-    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
+    ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
 };
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
@@ -104,6 +104,17 @@ unsafe impl Sync for Lv2UiDescriptor {}
 pub const LV2_UI__PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
 pub const LV2_UI__RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
 pub const LV2_UI__TOUCH: &str = "http://lv2plug.in/ns/extensions/ui#touch";
+pub const LV2_UI__IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
+
+/// `LV2UI_Idle_Interface`: the host calls `idle` periodically on the UI
+/// thread (it declares `ui:idleInterface` in the TTL and queries it via
+/// `extension_data`). Returns 0 to keep running, non-zero to ask the host
+/// to close the UI. We drive [`truce_core::editor::Editor::idle`] and
+/// always return 0.
+#[repr(C)]
+pub struct Lv2UiIdle {
+    pub idle: Option<unsafe extern "C" fn(ui: *mut c_void) -> i32>,
+}
 
 /// Layout of the host-provided `ui:resize` feature. Data pointer in the
 /// `LV2_Feature` is an `&LV2UI_Resize`. The UI calls `ui_resize` with
@@ -150,6 +161,8 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// `write_function` + controller are captured by `PluginContext`'s
     /// closures and don't need to live on the struct itself.
     editor: Option<Box<dyn Editor>>,
+    /// Frame clock for the `dt` passed to `Editor::idle`.
+    idle_clock: IdleClock,
     /// Set once `open()` has run so cleanup can be idempotent.
     opened: AtomicBool,
     /// Host-interned URIDs. Needed to recognize the notify-out atom
@@ -453,6 +466,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             param_slots,
             meter_slots,
             editor: Some(editor),
+            idle_clock: IdleClock::new(),
             opened: AtomicBool::new(true),
             urid_map,
             notify_port_index: layout.notify_out_port(),
@@ -636,7 +650,49 @@ pub unsafe fn ui_extension_data<P: PluginExport>(uri: *const c_char) -> *const c
         // `instantiate_ui`, which is a `*mut Lv2UiInstance<P>`.
         return ui_resize_iface::<P>();
     }
+    if cstr.to_bytes() == LV2_UI__IDLE_INTERFACE.as_bytes() {
+        // The host ticks `idle` on the UI thread so the editor can
+        // repaint / animate (`Editor::idle`), the LV2 equivalent of the
+        // CLAP timer and the VST3 / AU view timers.
+        return ui_idle_iface::<P>();
+    }
     std::ptr::null()
+}
+
+/// Per-`P` cached `Lv2UiIdle` table (same leak-once pattern as
+/// [`ui_resize_iface`]).
+fn ui_idle_iface<P: PluginExport>() -> *const c_void {
+    use std::any::TypeId;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<TypeId, usize>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().expect("ui_idle cache poisoned");
+    let entry = map.entry(TypeId::of::<P>()).or_insert_with(|| {
+        let iface = Box::leak(Box::new(Lv2UiIdle {
+            idle: Some(ui_idle_dispatch::<P>),
+        }));
+        std::ptr::from_ref(iface) as usize
+    });
+    *entry as *const c_void
+}
+
+/// Host-driven idle tick. The handle is the `*mut Lv2UiInstance<P>` we
+/// returned from `instantiate_ui`. Drives author `Editor::idle`;
+/// firewalled so a panic can't unwind across the C ABI into the host UI
+/// loop. Always returns 0 (keep the UI open).
+unsafe extern "C" fn ui_idle_dispatch<P: PluginExport>(ui: *mut c_void) -> i32 {
+    run_extern_callback_with::<P, i32>("LV2", "ui_idle", 0, || unsafe {
+        if ui.is_null() {
+            return 0;
+        }
+        let inst = &mut *ui.cast::<Lv2UiInstance<P>>();
+        let dt = inst.idle_clock.tick();
+        if let Some(editor) = inst.editor.as_mut() {
+            editor.idle(dt);
+        }
+        0
+    })
 }
 
 /// Per-`P` static `Lv2UiResize` interface returned from

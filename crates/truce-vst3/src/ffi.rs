@@ -281,6 +281,12 @@ pub struct Vst3Callbacks {
     /// the Rust side scales to logical using the cached host
     /// content-scale before handing to the editor.
     pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
+    /// Editor idle tick. The shim's per-instance UI-thread timer calls this
+    /// ~60fps while the component lives; the Rust side drives
+    /// [`truce_core::editor::Editor::idle`] when an editor is open (and
+    /// no-ops otherwise), so animation / deferred work runs on the host UI
+    /// thread the same way it does under CLAP and standalone.
+    pub gui_idle: unsafe extern "C" fn(ctx: *mut c_void),
     /// `IMidiMapping::getMidiControllerAssignment`. Given the event-input
     /// bus, MIDI channel (0..=15), and a VST3 `ControllerNumbers` value
     /// (`0..=127` CC, `kAfterTouch`/`kPitchBend`/`kCtrlProgramChange`),

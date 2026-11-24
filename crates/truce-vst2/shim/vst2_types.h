@@ -383,6 +383,10 @@ typedef struct {
     void (*gui_get_size)(void* ctx, uint32_t* w, uint32_t* h);
     void (*gui_open)(void* ctx, void* parent);
     void (*gui_close)(void* ctx);
+    /* Editor idle tick. The host drives this via `effEditIdle` while the
+     * editor is open; the Rust side forwards it to `Editor::idle` (and
+     * no-ops with no editor). */
+    void (*gui_idle)(void* ctx);
 } Vst2Callbacks;
 
 /* Globals set by Rust registration */
