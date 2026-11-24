@@ -41,7 +41,7 @@ base64 = { workspace = true }
 # `cargo truce preset`: decode host-saved `.aupreset` files (Logic
 # writes binary plists) and read/write preset packs.
 plist = "1"
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
 [dependencies.libloading]
 version = "0.9"
