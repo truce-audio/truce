@@ -75,6 +75,11 @@ pub(crate) fn write_struct_sidecar(
         let _ = writeln!(buf, "kind = \"{}\"", param_kind_str(p.kind));
         if let Some(r) = &p.attrs.range {
             let _ = writeln!(buf, "range = \"{}\"", toml_escape(r));
+            // A const bound can't be rendered into the TTL at build time;
+            // flag it so the aggregator rejects it under the lv2 feature.
+            if crate::range_has_const(r) {
+                let _ = writeln!(buf, "range_const = true");
+            }
         } else if matches!(p.kind, crate::ParamKind::Enum)
             && let Some(ty) = p.enum_type()
             && let Some(seg) = type_last_segment(ty)
@@ -90,9 +95,18 @@ pub(crate) fn write_struct_sidecar(
         // `gen_param_info_literal`); the LV2 sidecar has to mirror
         // that, otherwise hosts read `lv2:default` from the TTL and
         // open the plugin at the range's minimum (e.g. gain at -60 dB)
-        // while VST3 / standalone honour the runtime's 0.0.
-        let default = p.attrs.default.as_ref().map_or(0.0, |d| d.value);
-        let _ = writeln!(buf, "default = {default}");
+        // while VST3 / standalone honour the runtime's 0.0. A const
+        // default has no build-time value, so it's flagged instead - the
+        // aggregator rejects it (the LV2 TTL can't encode a const).
+        match p.attrs.default.as_ref() {
+            Some(d) if d.value.is_none() => {
+                let _ = writeln!(buf, "default_const = true");
+            }
+            other => {
+                let default = other.and_then(|d| d.value).unwrap_or(0.0);
+                let _ = writeln!(buf, "default = {default}");
+            }
+        }
         if let Some(u) = &p.attrs.unit {
             let _ = writeln!(buf, "unit = \"{}\"", toml_escape(u));
         }
@@ -448,6 +462,22 @@ fn parse_param_entry(v: &toml::Value, sidecar_dir: &std::path::Path) -> Result<L
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
+    // A const in `range` / `default` has no build-time value, so the LV2
+    // TTL (rendered without running the plugin) can't encode the port's
+    // bounds. Reject it loudly; every other format reads the const at
+    // runtime through `param_infos_static` and is unaffected.
+    if v.get("range_const").and_then(toml::Value::as_bool) == Some(true) {
+        return Err(format!(
+            "param `{name}` uses a const in its `range`, which the LV2 TTL can't encode at \
+             build time. Use literal bounds, or build this plugin without the `lv2` feature."
+        ));
+    }
+    if v.get("default_const").and_then(toml::Value::as_bool) == Some(true) {
+        return Err(format!(
+            "param `{name}` uses a const `default`, which the LV2 TTL can't encode at build \
+             time. Use a literal default, or build this plugin without the `lv2` feature."
+        ));
+    }
     let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("Float");
     let range_str = v.get("range").and_then(|x| x.as_str()).unwrap_or("");
     // The sidecar writer always emits `default`; the `NaN` sentinel
