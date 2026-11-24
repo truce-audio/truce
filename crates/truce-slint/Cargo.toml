@@ -47,7 +47,7 @@ truce-core = { version = "6.3.0", path = "../truce-core" }
 truce-gui = { version = "6.3.0", path = "../truce-gui", default-features = false }
 truce-gpu = { version = "6.3.0", path = "../truce-gpu" }
 truce-params = { version = "6.3.0", path = "../truce-params" }
-slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
+slint = { version = "=1.19.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 raw-window-handle = "0.5"
 bytemuck = { version = "1", features = ["derive"] }
 paste = "1"
@@ -60,7 +60,7 @@ log = "0.4"
 # stack; iOS gets the lightweight stub editor in `editor_ios.rs`.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 baseview = { package = "baseview-truce", version = "0.1.1-truce.13" }
-wgpu = { version = "29", default-features = false, features = ["wgsl"] }
+wgpu = { version = "30", default-features = false, features = ["wgsl"] }
 pollster = "0.4"
 # Translate baseview key events into Slint key events. Pinned to the same
 # major baseview emits so the `KeyboardEvent` types unify.
