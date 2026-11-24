@@ -32,6 +32,17 @@ on:
   # still happens via `cargo test` in the per-platform CI workflows.
   pull_request:
 
+# A new push to the PR supersedes its in-flight bake (the artifact would be
+# for a stale head), so cancel it - one group per PR. A manual dispatch gets
+# a group of its own (keyed on its run id): a hand-run bake (often a
+# platform subset) is never cancelled or queued behind a PR push or another
+# dispatch, and dispatches still run in parallel. A shared group couldn't
+# promise that - GitHub keeps one pending run per group, so a third
+# dispatch would silently cancel a waiting second one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -219,8 +230,8 @@ jobs:
 
   macos:
     if: github.event_name != 'workflow_dispatch' || contains(inputs.platforms, 'macos')
-    name: bake (macos-14)
-    runs-on: macos-14
+    name: bake (macos-15)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -245,7 +256,7 @@ jobs:
       # history if this needs revisiting.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: bake-macos-14
+          key: bake-macos-15
           cache-bin: false
 
       - name: Build cargo-truce
