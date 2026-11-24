@@ -222,13 +222,15 @@ fn spawn_wgpu_pump(
                     desired_maximum_frame_latency: 2,
                     alpha_mode: wgpu::CompositeAlphaMode::Auto,
                     view_formats: vec![],
+                    // `Auto` keeps wgpu's historical sRGB behavior.
+                    color_space: wgpu::SurfaceColorSpace::Auto,
                 };
                 let parts = SlintWgpu {
                     device: device.clone(),
-                    queue,
+                    queue: queue.clone(),
                     surface_config: surface_config.clone(),
                 };
-                Some((parts, device, surface_config))
+                Some((parts, device, queue, surface_config))
             }),
         )
     }

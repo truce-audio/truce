@@ -41,7 +41,14 @@ clap-sys = { version = "0.5", optional = true }
 truce-standalone = { version = "6.3.0", path = "../../../truce-standalone", features = ["gui"], optional = true }
 truce-loader = { version = "6.3.0", path = "../../../truce-loader" }
 truce-slint = { version = "6.3.0", path = "../.." }
-slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
+slint = { version = "=1.19.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
+# This demo embeds a PNG (`carrot.png`) and pulls in std-widgets whose
+# icons embed SVGs, so the generated code calls
+# `load_image_from_embedded_data`. slint 1.19 gates image/SVG decoding
+# behind its windowing backend, which the embedded software-render path
+# doesn't use; the `slint` facade doesn't forward those knobs. Enabling
+# them on `i-slint-core` directly unifies onto the same crate slint uses.
+i-slint-core = { version = "=1.19.1", features = ["image-decoders", "image-default-formats", "svg"] }
 
 [build-dependencies]
 truce-slint-build = { version = "6.3.0", path = "../../build" }

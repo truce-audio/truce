@@ -31,6 +31,17 @@ thread_local! {
     static NEXT_WINDOW: RefCell<Option<Rc<MinimalSoftwareWindow>>> = const { RefCell::new(None) };
 }
 
+/// Full-frame repaint for the editor window. `ReusedBuffer` (partial
+/// repaint) composites a `PopupWindow` into the retained buffer, so an
+/// open popup is only as intact as the last partial repaint that covered
+/// it. A plugin editor re-syncs its params from the host every frame, so
+/// the region under an open menu keeps dirtying - and the stale popup
+/// pixels get overdrawn by the window content beneath, bleeding through
+/// the menu. Full repaint redraws the whole scene each frame, which
+/// avoids that; the cost (~1.8ms -> ~4.7ms/frame on a 1120x694 editor)
+/// sits well inside a 60fps budget.
+const EDITOR_REPAINT_BUFFER: RepaintBufferType = RepaintBufferType::NewBuffer;
+
 struct TrucePlatform;
 
 impl Platform for TrucePlatform {
@@ -39,7 +50,7 @@ impl Platform for TrucePlatform {
     ) -> Result<Rc<dyn slint::platform::WindowAdapter>, PlatformError> {
         // Return the pre-created window if one was set, otherwise create a new one.
         let window = NEXT_WINDOW.with(|slot| slot.borrow_mut().take());
-        Ok(window.unwrap_or_else(|| MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer)))
+        Ok(window.unwrap_or_else(|| MinimalSoftwareWindow::new(EDITOR_REPAINT_BUFFER)))
     }
 }
 
@@ -125,7 +136,7 @@ pub fn create_slint_window() -> Rc<MinimalSoftwareWindow> {
              Slint components."
         ),
     });
-    let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
+    let window = MinimalSoftwareWindow::new(EDITOR_REPAINT_BUFFER);
     NEXT_WINDOW.with(|slot| *slot.borrow_mut() = Some(window.clone()));
     window
 }
