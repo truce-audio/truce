@@ -34,8 +34,8 @@ concurrency:
 # the standalone factory-preset packaging is exercised on every OS.
 jobs:
   macos:
-    name: package (macos-14)
-    runs-on: macos-14
+    name: package (macos-15)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +43,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: cli-package-macos-14
+          key: cli-package-macos-15
           cache-bin: false
 
       - name: Build cargo-truce

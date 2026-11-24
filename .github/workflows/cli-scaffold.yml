@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-24.04, windows-latest]
+        os: [macos-15, ubuntu-24.04, windows-latest]
         shape:
           - id: effect
             new_args: "acme-fx --vendor Acme --vendor-id com.acme.test"
@@ -96,14 +96,14 @@ jobs:
       # are shared across workflows.
       # ─────────────────────────────────────────────────────────────────
       - name: Cache pluginval (macOS)
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-15'
         id: cache-pluginval-mac
         uses: actions/cache@v4
         with:
           path: /Applications/pluginval.app
           key: pluginval-macos-1.0.4
       - name: Download pluginval (macOS)
-        if: matrix.os == 'macos-14' && steps.cache-pluginval-mac.outputs.cache-hit != 'true'
+        if: matrix.os == 'macos-15' && steps.cache-pluginval-mac.outputs.cache-hit != 'true'
         run: |
           curl -fsSL -o /tmp/pluginval.zip \
             https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
@@ -148,7 +148,7 @@ jobs:
           path: |
             ~/.cargo/bin/clap-validator
             ~/.cargo/bin/clap-validator.exe
-          key: clap-validator-${{ matrix.os }}-2026-05-09
+          key: clap-validator-${{ matrix.os }}-2026-11-24
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'

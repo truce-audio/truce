@@ -18,8 +18,8 @@ concurrency:
 
 jobs:
   test:
-    name: macos-14 (stable)
-    runs-on: macos-14
+    name: macos-15 (stable)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +50,7 @@ jobs:
       # history if this needs revisiting.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: macos-14
+          key: macos-15
           cache-bin: false
 
       - name: clippy
@@ -152,7 +152,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator
-          key: clap-validator-macos-2026-05-09
+          key: clap-validator-macos-2026-11-24
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'
@@ -162,6 +162,12 @@ jobs:
         run: |
           command -v clap-validator
           test -x /Applications/pluginval.app/Contents/MacOS/pluginval
+          # CLAP state-recall coverage guard (#232): the validate step runs
+          # clap-validator's full suite and fails on any FAILED, but only
+          # exercises state recall if the installed validator actually has
+          # these tests. A stale cache pin silently drops them - fail loudly.
+          clap-validator list tests | grep -q state-reproducibility \
+            || { echo "::error::clap-validator lacks state-reproducibility tests (#232) - bump the cache key"; exit 1; }
 
       - name: Install plugin (CLAP + VST3)
         # Release profile: pluginval's process-without-setActive paths trip
@@ -254,7 +260,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/clap-validator
-          key: clap-validator-macos-2026-05-09
+          key: clap-validator-macos-2026-11-24
 
       - name: Install clap-validator
         if: steps.cache-clap-validator.outputs.cache-hit != 'true'
@@ -264,6 +270,12 @@ jobs:
         run: |
           command -v clap-validator
           test -x /Applications/pluginval.app/Contents/MacOS/pluginval
+          # CLAP state-recall coverage guard (#232): the validate step runs
+          # clap-validator's full suite and fails on any FAILED, but only
+          # exercises state recall if the installed validator actually has
+          # these tests. A stale cache pin silently drops them - fail loudly.
+          clap-validator list tests | grep -q state-reproducibility \
+            || { echo "::error::clap-validator lacks state-reproducibility tests (#232) - bump the cache key"; exit 1; }
 
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
