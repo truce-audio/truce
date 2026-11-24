@@ -34,6 +34,9 @@ use truce_gui::to_physical_px;
 use truce_slint::platform;
 
 slint::slint! {
+    // slint 1.19 introduced language editions; pin ours so the macro
+    // doesn't warn and the behavior is fixed across future bumps.
+    #[edition = "1.19"]
     // A window whose content fills whatever physical extent `set_size`
     // dictates, so the software renderer's buffer-vs-window assertion is
     // exercised against a real `window_item` logical size.
