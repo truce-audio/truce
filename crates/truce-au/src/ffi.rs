@@ -104,8 +104,9 @@ pub struct AuParamDescriptor {
 /// unreleased tail callback's signature); a test asserts they match.
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
 /// argument. v3: appended `latency_samples` / `tail_samples`. v4:
-/// appended `set_render_mode`. v5: appended `param_parse_value`.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7505;
+/// appended `set_render_mode`. v5: appended `param_parse_value`. v6:
+/// appended `gui_idle`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7506;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -300,6 +301,10 @@ pub struct AuCallbacks {
         text: *const c_char,
         out_plain: *mut f64,
     ) -> i32,
+    /// Editor idle tick (v6). The v2 view's UI-thread timer calls this
+    /// ~60fps; the Rust side drives [`truce_core::editor::Editor::idle`]
+    /// when an editor is open and no-ops otherwise.
+    pub gui_idle: unsafe extern "C" fn(ctx: *mut c_void),
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

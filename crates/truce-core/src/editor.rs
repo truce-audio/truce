@@ -1,11 +1,39 @@
 use std::ops::Deref;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use truce_params::Params;
 use truce_params::sample::Float;
 
 use crate::events::TransportInfo;
 use crate::tasks::{AnyTaskSpawner, TaskSpawner};
+
+/// Monotonic frame clock each format wrapper keeps per open editor, so the
+/// `dt` passed to [`Editor::idle`] is real wall-clock elapsed time rather
+/// than a per-tick assumption. Hosts tick `idle` at different (often
+/// sub-60fps, uneven) rates, so advancing animation by `dt` is the only
+/// way to run at a fixed speed everywhere.
+#[derive(Default)]
+pub struct IdleClock {
+    last: Option<Instant>,
+}
+
+impl IdleClock {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Elapsed time since the previous `tick`. Returns [`Duration::ZERO`]
+    /// on the first call (no prior sample) and is saturating, so a
+    /// non-monotonic clock read can never yield a negative/huge jump.
+    pub fn tick(&mut self) -> Duration {
+        let now = Instant::now();
+        self.last
+            .replace(now)
+            .map_or(Duration::ZERO, |prev| now.saturating_duration_since(prev))
+    }
+}
 
 /// A lock-free editor factory bound to a plugin's param store.
 ///
@@ -106,8 +134,22 @@ pub trait Editor: Send {
     /// Destroy the GUI.
     fn close(&mut self);
 
-    /// Called ~60fps on the host's UI thread for repaint/animation.
-    fn idle(&mut self) {}
+    /// Called ~60fps on the host's UI thread for repaint / animation and
+    /// deferred setup.
+    ///
+    /// `dt` is the real wall-clock time since the previous `idle` (zero on
+    /// the first call). Drive animation by `dt` - hosts tick at different,
+    /// uneven rates, so a fixed per-call step runs at the wrong speed.
+    ///
+    /// Driven by the standalone host (baseview's frame loop), CLAP
+    /// (`clap.timer-support`), VST3 (a per-instance UI-thread timer), AU v2
+    /// / VST2 (the Cocoa view's `NSTimer` / `effEditIdle`), and LV2
+    /// (`ui:idleInterface`). The AU v3 app-extension view does **not** drive
+    /// it yet: a baseview-backed editor (the built-in editor, or the egui /
+    /// iced / vizia / slint backends) repaints through its own frame loop
+    /// regardless, but a raw-window-handle editor under AU v3 must run its
+    /// own timer until it does.
+    fn idle(&mut self, _dt: std::time::Duration) {}
 
     /// Host requests a resize. Return true to accept.
     fn set_size(&mut self, _width: u32, _height: u32) -> bool {

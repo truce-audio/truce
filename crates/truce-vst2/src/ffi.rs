@@ -163,6 +163,9 @@ pub struct Vst2Callbacks {
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
     pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
+    /// Editor idle tick, driven by the host's `effEditIdle` opcode while the
+    /// editor is open. Forwards to [`truce_core::editor::Editor::idle`].
+    pub gui_idle: unsafe extern "C" fn(ctx: *mut c_void),
 }
 
 unsafe extern "C" {

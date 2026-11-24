@@ -792,7 +792,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         log::info!("editor closed");
     }
 
-    fn idle(&mut self) {
+    fn idle(&mut self, _dt: std::time::Duration) {
         // baseview drives its own frame loop via on_frame().
     }
 

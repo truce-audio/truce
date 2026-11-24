@@ -454,7 +454,7 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         }
     }
 
-    fn idle(&mut self) {
+    fn idle(&mut self, _dt: std::time::Duration) {
         // vizia drives its own repaint loop via baseview, so no tick is
         // needed for that. The one thing truce must forward is a *late*
         // host content-scale report: REAPER on Linux only calls

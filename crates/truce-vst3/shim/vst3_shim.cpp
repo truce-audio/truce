@@ -419,6 +419,10 @@ struct Vst3Callbacks {
     int32_t (*gui_can_resize)(void*);
     void (*gui_check_size_constraint)(void*, uint32_t*, uint32_t*);
     void (*gui_set_size)(void*, uint32_t, uint32_t);
+    // Editor idle tick, called ~60fps on the host UI thread by the
+    // per-instance timer below. The Rust side drives `Editor::idle` when an
+    // editor is open and no-ops otherwise.
+    void (*gui_idle)(void*);
     // IMidiMapping: resolve a (bus, channel, controllerNumber) query to
     // a parameter id. Returns 1 (kResultOk) + writes *out on a hit.
     int32_t (*midi_mapping_get_param_id)(void*, int32_t, int16_t, int16_t, uint32_t*);
@@ -627,6 +631,7 @@ static TruceComponent* g_ctx_map_comp[kMaxInstances] = {};
 // wire the dispatch source's event handler.
 static TruceComponent* ctx_lookup(void* ctx);
 static void truce_vst3_restart_source_event(void* key);
+static void truce_vst3_idle_source_event(void* key);
 #endif
 
 #if defined(__linux__)
@@ -666,10 +671,11 @@ static constexpr int32_t kRunLoopUnregisterTimerIndex = 6;
 #endif
 
 #if defined(__linux__) || defined(_WIN32)
-// Poll interval for the restart timer (Linux run-loop timer, Windows
-// thread timer). A latency re-report only needs to reach the host
-// "soon"; 30 ms is imperceptible and keeps the idle cost negligible.
-static constexpr uint64_t kRestartTimerIntervalMs = 30;
+// Poll interval for the per-instance UI-thread timer (Linux run-loop
+// timer, Windows thread timer). It drains any pending restart *and* ticks
+// the editor's `idle`, so it runs at ~60fps for smooth animation; the
+// restart drain (an atomic exchange) stays negligible at that rate.
+static constexpr uint64_t kRestartTimerIntervalMs = 16;
 #endif
 
 #if defined(_WIN32)
@@ -768,6 +774,11 @@ public:
     // on the host main thread - the editor-closed / no-param-poll path
     // the callback hooks below can't cover. Null if creation failed.
     dispatch_source_t restartSource = nullptr;
+    // Periodic main-queue timer driving the editor's `idle` at ~60fps.
+    // macOS has no run-loop/thread timer like Linux/Windows, so idle needs
+    // its own source. Fires for the component's whole life; the Rust side
+    // no-ops when no editor is open. Null if creation failed.
+    dispatch_source_t idleSource = nullptr;
 #endif
 #if defined(__linux__)
     // Linux run-loop bridge. `restartTimer` is the ITimerHandler we
@@ -826,6 +837,19 @@ public:
                         restartSource, truce_vst3_restart_source_event);
                     dispatch_resume(restartSource);
                 }
+                // ~60fps editor idle tick. Same ctx-key context so the
+                // handler resolves the component safely during teardown.
+                idleSource = dispatch_source_create(
+                    DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+                if (idleSource) {
+                    dispatch_set_context(idleSource, ctx);
+                    dispatch_source_set_timer(
+                        idleSource, dispatch_time(DISPATCH_TIME_NOW, 0),
+                        16 * NSEC_PER_MSEC, 4 * NSEC_PER_MSEC);
+                    dispatch_source_set_event_handler_f(
+                        idleSource, truce_vst3_idle_source_event);
+                    dispatch_resume(idleSource);
+                }
 #endif
 #if defined(__linux__)
                 // No syscall here - just wire the timer handler's
@@ -872,6 +896,11 @@ public:
             dispatch_source_cancel(restartSource);
             dispatch_release(restartSource);
             restartSource = nullptr;
+        }
+        if (idleSource) {
+            dispatch_source_cancel(idleSource);
+            dispatch_release(idleSource);
+            idleSource = nullptr;
         }
 #endif
 #if defined(__linux__)
@@ -2012,7 +2041,12 @@ static void th_onTimer(void* self) {
     // editor is open. Cheap when idle: flushPendingRestart exchanges the
     // atomic and returns immediately when no bits are set.
     auto* h = (RestartTimerHandler*)self;
-    if (h->comp) h->comp->flushPendingRestart();
+    if (h->comp) {
+        h->comp->flushPendingRestart();
+        // Same UI thread, same cadence: tick the editor. The Rust side
+        // no-ops when no editor is open.
+        if (g_cb && g_cb->gui_idle && h->comp->ctx) g_cb->gui_idle(h->comp->ctx);
+    }
 }
 #endif
 
@@ -2031,6 +2065,9 @@ static void CALLBACK truce_vst3_restart_timer_proc(
         TruceComponent* comp = g_ctx_map_comp[i];
         if (comp && comp->restartTimerId == id) {
             comp->flushPendingRestart();
+            // Same UI thread, same cadence: tick the editor. The Rust side
+            // no-ops when no editor is open.
+            if (g_cb && g_cb->gui_idle && comp->ctx) g_cb->gui_idle(comp->ctx);
             return;
         }
     }
@@ -3055,6 +3092,12 @@ void truce_vst3_mark_restart(void* ctx, int32_t flags) {
 // is a safe no-op, then drains any pending restartComponent.
 static void truce_vst3_restart_source_event(void* key) {
     if (TruceComponent* comp = ctx_lookup(key)) comp->flushPendingRestart();
+}
+
+static void truce_vst3_idle_source_event(void* key) {
+    // `key` is the ctx; resolve the component first so a tick that races
+    // teardown no-ops. The Rust side also no-ops when no editor is open.
+    if (ctx_lookup(key) && g_cb && g_cb->gui_idle) g_cb->gui_idle(key);
 }
 #endif
 

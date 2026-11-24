@@ -78,6 +78,9 @@ use clap_sys::ext::render::{
 };
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_plugin_state};
 use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_host_tail, clap_plugin_tail};
+use clap_sys::ext::timer_support::{
+    CLAP_EXT_TIMER_SUPPORT, clap_host_timer_support, clap_plugin_timer_support,
+};
 use clap_sys::factory::preset_discovery::{
     CLAP_PRESET_DISCOVERY_LOCATION_FILE, clap_preset_discovery_location_kind,
 };
@@ -104,7 +107,8 @@ use truce_core::cast::{len_u32, size_of_u32};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::{
-    ClosureBridge, Editor, EditorBuilder, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
+    ClosureBridge, Editor, EditorBuilder, IdleClock, PluginContext, RawWindowHandle, SendPtr,
+    fit_logical_size,
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -247,6 +251,10 @@ struct ClapPluginData<P: PluginExport> {
     /// Host tail extension (for `changed`). Null if the host doesn't
     /// expose `clap.tail`.
     host_tail: *const clap_host_tail,
+    /// Host timer-support extension (`clap.timer-support`). Null if the
+    /// host doesn't expose it; when present we register a UI-thread timer
+    /// while the editor is open to drive [`Editor::idle`].
+    host_timer: *const clap_host_timer_support,
     /// Set on the audio thread when `latency()` changes; drained on the
     /// main thread, which notifies the host. Coalesces a burst of
     /// changes into one host notification per main-thread callback.
@@ -365,7 +373,17 @@ struct ClapGui {
     editor: Option<Box<dyn Editor>>,
     /// Whether the GUI has been created via the gui extension.
     gui_created: bool,
+    /// The `clap.timer-support` timer id driving [`Editor::idle`] while the
+    /// GUI is alive, if the host provides timer support. Registered in
+    /// `gui_create`, unregistered in `gui_destroy`.
+    editor_timer_id: Option<clap_id>,
+    /// Frame clock for the `dt` passed to `Editor::idle`.
+    idle_clock: IdleClock,
 }
+
+/// `Editor::idle` cadence hint (~60fps). CLAP timer periods are advisory;
+/// the host clamps to what its UI loop can deliver.
+const EDITOR_IDLE_PERIOD_MS: u32 = 16;
 
 impl<P: PluginExport> ClapPluginData<P> {
     fn host_scale(&self) -> f64 {
@@ -627,6 +645,10 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
             let tail_ext = get_ext(data.host, CLAP_EXT_TAIL.as_ptr());
             if !tail_ext.is_null() {
                 data.host_tail = tail_ext.cast::<clap_host_tail>();
+            }
+            let timer_ext = get_ext(data.host, CLAP_EXT_TIMER_SUPPORT.as_ptr());
+            if !timer_ext.is_null() {
+                data.host_timer = timer_ext.cast::<clap_host_timer_support>();
             }
         }
         true
@@ -3320,6 +3342,20 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
         // from the reloaded dylib).
         gui.editor = (data.editor_builder)(data.params_arc.clone());
         gui.gui_created = gui.editor.is_some();
+        // Register the UI-thread idle timer while the editor is live. Hosts
+        // that lack `clap.timer-support` leave `host_timer` null; baseview-
+        // backed editors still repaint via their own loop, but a raw editor
+        // depends on this tick (see `Editor::idle`).
+        if gui.editor.is_some()
+            && gui.editor_timer_id.is_none()
+            && !data.host_timer.is_null()
+            && let Some(register) = (*data.host_timer).register_timer
+        {
+            let mut timer_id: clap_id = 0;
+            if register(data.host, EDITOR_IDLE_PERIOD_MS, &raw mut timer_id) {
+                gui.editor_timer_id = Some(timer_id);
+            }
+        }
         gui.gui_created
     })
 }
@@ -3333,6 +3369,14 @@ unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
         let editor = {
             let mut gui = data.gui.enter();
             gui.gui_created = false;
+            // Stop the idle timer before tearing the editor down so no
+            // `on_timer` can land on a half-destroyed editor.
+            if let Some(timer_id) = gui.editor_timer_id.take()
+                && !data.host_timer.is_null()
+                && let Some(unregister) = (*data.host_timer).unregister_timer
+            {
+                unregister(data.host, timer_id);
+            }
             gui.editor.take()
         };
         // Both `editor.close()` and the `Box<dyn Editor>` drop run author
@@ -3978,7 +4022,32 @@ struct Extensions<P: PluginExport> {
     latency: clap_plugin_latency,
     tail: clap_plugin_tail,
     render: clap_plugin_render,
+    timer_support: clap_plugin_timer_support,
     _phantom: PhantomData<P>,
+}
+
+/// `clap.timer-support::on_timer`: the host ticks us on the main thread.
+/// Drive the editor's `idle` (repaint / animation / deferred setup) when
+/// the tick is our editor timer and an editor is live.
+unsafe extern "C" fn clap_plugin_on_timer<P: PluginExport>(
+    plugin: *const clap_plugin,
+    timer_id: clap_id,
+) {
+    run_extern_callback_with::<P, ()>("CLAP", "on_timer", (), || unsafe {
+        let data = data_from_plugin::<P>(plugin);
+        // `try_enter`: the host may tick while an outer editor callback
+        // (open / resize) still holds the cell; skip this frame if so.
+        let Some(mut gui) = data.gui.try_enter() else {
+            return;
+        };
+        if gui.editor_timer_id != Some(timer_id) {
+            return;
+        }
+        let dt = gui.idle_clock.tick();
+        if let Some(editor) = gui.editor.as_mut() {
+            editor.idle(dt);
+        }
+    });
 }
 
 unsafe extern "C" fn latency_get<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
@@ -4043,6 +4112,9 @@ impl<P: PluginExport> Extensions<P> {
                 has_hard_realtime_requirement: Some(render_has_hard_realtime::<P>),
                 set: Some(render_set::<P>),
             },
+            timer_support: clap_plugin_timer_support {
+                on_timer: Some(clap_plugin_on_timer::<P>),
+            },
             _phantom: PhantomData,
         }
     }
@@ -4095,6 +4167,9 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         }
         if ext_id == CLAP_EXT_RENDER {
             return (&raw const extensions.render).cast::<c_void>();
+        }
+        if ext_id == CLAP_EXT_TIMER_SUPPORT {
+            return (&raw const extensions.timer_support).cast::<c_void>();
         }
         ptr::null()
     }
@@ -4167,6 +4242,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             host_params: ptr::null(),
             host_latency: ptr::null(),
             host_tail: ptr::null(),
+            host_timer: ptr::null(),
             latency_dirty: AtomicBool::new(false),
             gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
             pending_state: Arc::new(StateLoadQueue::new(1)),
@@ -4193,6 +4269,8 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             gui: PluginCell::new(ClapGui {
                 editor: None,
                 gui_created: false,
+                editor_timer_id: None,
+                idle_clock: IdleClock::new(),
             }),
         });
 

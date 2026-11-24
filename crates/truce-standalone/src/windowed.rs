@@ -21,7 +21,7 @@ use keyboard_types::{Code, KeyState, Modifiers};
 use raw_window_handle::HasRawDisplayHandle;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
 
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle};
 use truce_core::events::EventBody;
 use truce_core::export::{PluginExport, read_custom_state_offthread};
 use truce_core::info::PluginCategory;
@@ -422,6 +422,7 @@ where
 
         StandaloneHandler {
             editor,
+            idle_clock: IdleClock::new(),
             pending_resize,
             current_size: (lw, lh),
             #[cfg(target_os = "macos")]
@@ -458,6 +459,8 @@ where
     /// before the outer one. Also actively driven by `on_frame` /
     /// `on_event` for the resize round-trip.
     editor: Box<dyn Editor>,
+    /// Frame clock for the `dt` passed to `Editor::idle` each `on_frame`.
+    idle_clock: IdleClock,
     /// Shared with the editor's `request_resize` closure. Polled
     /// every `on_frame` tick; non-zero values are popped and
     /// applied via `Window::resize`.
@@ -552,8 +555,15 @@ where
     P::Params: 'static,
 {
     fn on_frame(&mut self, window: &mut Window) {
-        // Editor drives its own frame loop inside its child window;
-        // the standalone outer handler does two things here:
+        // Drive the documented `Editor::idle` tick. baseview calls
+        // `on_frame` on the UI thread at the display refresh, so this is the
+        // ~60fps host-UI-thread hook editors expect for repaint/animation
+        // and deferred setup. baseview-backed editors also repaint via their
+        // own child loop; a raw-window-handle editor with no loop of its own
+        // relies solely on this call.
+        let dt = self.idle_clock.tick();
+        self.editor.idle(dt);
+        // The standalone outer handler also does two things here:
         //  (1) honour pending resize requests posted by the editor
         //      through the `request_resize` closure;
         //  (2) poll the OS window size and forward user-driven

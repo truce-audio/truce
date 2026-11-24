@@ -302,7 +302,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> Editor for IcedEditor<P, M
         log::info!("iced editor closed on iOS");
     }
 
-    fn idle(&mut self) {
+    fn idle(&mut self, _dt: std::time::Duration) {
         // CADisplayLink drives the frame loop via tick:.
     }
 

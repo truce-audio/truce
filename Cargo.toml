@@ -68,6 +68,7 @@ members = [
     "examples/truce-example-mpe-synth",
     "examples/truce-example-multiport",
     "examples/truce-example-midi-inspector",
+    "examples/truce-example-idle-anim",
 ]
 
 [workspace.package]

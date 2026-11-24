@@ -26,7 +26,7 @@ use std::thread::{self, JoinHandle, Thread};
 use truce_core::Float;
 use truce_core::SYSEX_POOL_PREALLOC;
 use truce_core::cast::{len_u32, sample_pos_i64};
-use truce_core::editor::Editor;
+use truce_core::editor::{Editor, IdleClock};
 // `ClosureBridge`, `PluginContext`, `SendPtr`, `RawWindowHandle` are
 // consumed only inside the apple-gated body of `cb_gui_open` - the
 // AppKit/UiKit variants don't exist on Linux/Windows. Importing them
@@ -385,6 +385,7 @@ struct AuAudio<P: PluginExport> {
 /// Main/UI-thread-owned editor state (see [`AuInstance::gui`]).
 struct AuGui {
     editor: Option<Box<dyn Editor>>,
+    idle_clock: IdleClock,
 }
 
 // ---------------------------------------------------------------------------
@@ -465,7 +466,10 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     prepared: false,
                     scratch: RawBufferScratch::default(),
                 }),
-                gui: PluginCell::new(AuGui { editor: None }),
+                gui: PluginCell::new(AuGui {
+                    editor: None,
+                    idle_clock: IdleClock::new(),
+                }),
                 pending_resize: AtomicU64::new(0),
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
@@ -2055,6 +2059,24 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     }
 }
 
+/// Editor idle tick, driven ~60fps by the AU v2 view's `NSTimer`.
+/// `editor.idle` is author code reachable across the `ObjC` boundary, so
+/// firewall it. `try_enter`, not `enter`: the timer can fire during an
+/// outer editor callback (the `viewDidLayoutSubviews` re-entry chain) - skip
+/// that frame rather than alias. No editor open -> no-op.
+unsafe extern "C" fn cb_gui_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+    run_extern_callback_with::<P, ()>("au", "gui_idle", (), || unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        let Some(mut gui) = inst.gui.try_enter() else {
+            return;
+        };
+        let dt = gui.idle_clock.tick();
+        if let Some(editor) = gui.editor.as_mut() {
+            editor.idle(dt);
+        }
+    });
+}
+
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut std::ffi::c_void;
     fn free(ptr: *mut std::ffi::c_void);
@@ -2337,6 +2359,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         tail_samples: cb_tail_samples::<P>,
         set_render_mode: cb_set_render_mode::<P>,
         param_parse_value: cb_param_parse_value::<P>,
+        gui_idle: cb_gui_idle::<P>,
     }));
 
     let param_descs = param_descs.leak();

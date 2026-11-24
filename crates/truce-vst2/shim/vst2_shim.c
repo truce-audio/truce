@@ -100,6 +100,11 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             return 0;
 
         case effEditIdle:
+            // The host ticks this while the editor is open - the VST2 idle
+            // hook. Drive `Editor::idle` (the Rust side no-ops with no
+            // editor). `gui_idle` is the last-appended callback; guard it.
+            if (g_vst2_callbacks && inst->rust_ctx && g_vst2_callbacks->gui_idle)
+                g_vst2_callbacks->gui_idle(inst->rust_ctx);
             return 0;
 
         case effEditGetRect: {

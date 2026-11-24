@@ -52,6 +52,7 @@
 @interface TRUCE_AU_FIXED_CONTAINER_NAME : NSView
 @property(nonatomic, assign) void *rustCtx;
 @property(nonatomic, assign) const AuCallbacks *callbacks;
+@property(nonatomic, strong) NSTimer *idleTimer;
 @end
 
 @implementation TRUCE_AU_FIXED_CONTAINER_NAME
@@ -68,6 +69,44 @@
         }
     }
     [super setFrameSize:newSize];
+}
+
+// Drive `Editor::idle` ~60fps on the UI thread while the view is on screen
+// (started when it gains a window, stopped when it loses one). Common
+// run-loop modes so the tick survives menu / resize tracking. The block
+// holds a weak ref, so the timer never keeps the view alive; the view
+// owns the timer and invalidates it on removal / dealloc.
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    if (self.window) {
+        // `gui_idle` is a v6 (append-only) callback; guard the pointer in
+        // case a host ever pairs this view with an older core build.
+        if (!self.idleTimer && self.callbacks && self.callbacks->gui_idle) {
+            __weak TRUCE_AU_FIXED_CONTAINER_NAME *weakSelf = self;
+            NSTimer *t = [NSTimer timerWithTimeInterval:1.0 / 60.0
+                                                repeats:YES
+                                                  block:^(NSTimer *timer) {
+                                                    TRUCE_AU_FIXED_CONTAINER_NAME *s = weakSelf;
+                                                    if (!s) {
+                                                        [timer invalidate];
+                                                        return;
+                                                    }
+                                                    if (s.rustCtx && s.callbacks &&
+                                                        s.callbacks->gui_idle) {
+                                                        s.callbacks->gui_idle(s.rustCtx);
+                                                    }
+                                                  }];
+            [[NSRunLoop mainRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
+            self.idleTimer = t;
+        }
+    } else {
+        [self.idleTimer invalidate];
+        self.idleTimer = nil;
+    }
+}
+
+- (void)dealloc {
+    [self.idleTimer invalidate];
 }
 @end
 
