@@ -572,3 +572,123 @@ fn nested_param_ids_are_stable_across_reorder_and_insert() {
     assert_eq!(a.len(), 4);
     assert_eq!(a, b, "reordering nested slots moved a nested param id");
 }
+
+// --- nested arrays `#[nested] f: [T; N]` -------------------------------
+
+// Own param, then a 3-element array pinned at base 1. `Band` has two
+// ordinal params (gain 0, q 1), so the array spans ids 1..=6.
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct BandArray {
+    #[param(id = 0, name = "Master", range = "linear(0, 1)", default = 0.5)]
+    master: FloatParam,
+    #[nested(base = 1)]
+    bands: [Band; 3],
+}
+
+#[test]
+fn ordinal_array_packs_each_element_contiguously() {
+    let p = BandArray::new();
+    assert_eq!(p.count(), 7);
+    let ids: Vec<u32> = p.param_infos().iter().map(|i| i.id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6]);
+
+    // The static table agrees id-for-id (preset / LV2 wire contract).
+    let stat: Vec<u32> = BandArray::param_infos_static()
+        .iter()
+        .map(|i| i.id)
+        .collect();
+    assert_eq!(stat, ids);
+
+    // The public array field is indexable and each element's live id is
+    // the rebased global id.
+    assert_eq!(p.bands[0].gain.id(), 1);
+    assert_eq!(p.bands[2].q.id(), 6);
+
+    // Elements are independent: writing one leaves the others at default.
+    p.set_plain(3, -6.0); // bands[1].gain
+    assert_eq!(p.get_plain(3), Some(-6.0));
+    assert_eq!(p.get_plain(1), Some(0.0)); // bands[0].gain still default
+}
+
+#[test]
+fn array_id_helper_matches_live_field() {
+    let p = BandArray::new();
+    // The shipped static helper resolves element ids without an instance.
+    assert_eq!(BandArray::bands_id(0, BandParamId::Gain), 1);
+    assert_eq!(BandArray::bands_id(2, BandParamId::Q), 6);
+    // It returns exactly what the running plugin exposes.
+    for i in 0..3 {
+        assert_eq!(
+            BandArray::bands_id(i, BandParamId::Gain),
+            p.bands[i].gain.id()
+        );
+        assert_eq!(BandArray::bands_id(i, BandParamId::Q), p.bands[i].q.id());
+    }
+}
+
+// An auto-based array between two other groups: the ordinal packer must
+// advance by the array's *full* span, not one element.
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct AutoArray {
+    #[param(name = "G", range = "linear(0, 1)", default = 0.1)]
+    g: FloatParam,
+    #[nested]
+    bands: [Band; 2],
+    #[nested]
+    tail: Band,
+}
+
+#[test]
+fn ordinal_array_span_offsets_following_groups() {
+    let p = AutoArray::new();
+    // g 0; bands elem0 1-2, elem1 3-4; tail packs after the whole array
+    // at 5-6.
+    assert_eq!(p.count(), 7);
+    let ids: Vec<u32> = p.param_infos().iter().map(|i| i.id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3, 4, 5, 6]);
+    let stat: Vec<u32> = AutoArray::param_infos_static()
+        .iter()
+        .map(|i| i.id)
+        .collect();
+    assert_eq!(stat, ids);
+    assert_eq!(p.tail.gain.id(), 5);
+}
+
+// Hash scheme: each element bases at `hash(field) + i * element_count`.
+#[derive(Params)]
+struct HashArray {
+    #[nested]
+    bands: [HashBand; 3],
+}
+
+#[test]
+fn hash_array_elements_get_distinct_ids() {
+    let p = HashArray::new();
+    assert_eq!(p.count(), 6);
+
+    let infos = p.param_infos();
+    let mut ids: Vec<u32> = infos.iter().map(|i| i.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        6,
+        "every array element param must get a distinct id"
+    );
+    assert!(ids.iter().all(|&id| id < truce_params::METER_ID_BASE));
+
+    // Static path agrees with the instance.
+    let stat: Vec<u32> = HashArray::param_infos_static()
+        .iter()
+        .map(|i| i.id)
+        .collect();
+    let inst: Vec<u32> = infos.iter().map(|i| i.id).collect();
+    assert_eq!(stat, inst);
+
+    // Round-trips at a live element id.
+    let id = p.bands[1].gain.id();
+    p.set_plain(id, -3.0);
+    assert_eq!(p.get_plain(id), Some(-3.0));
+}

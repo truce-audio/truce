@@ -47,7 +47,7 @@ pub(crate) fn write_struct_sidecar(
     hash_scheme: bool,
     params: &[ParamField],
     meters: &[MeterField],
-    nested: &[(syn::Ident, Type, Option<u32>)],
+    nested: &[(syn::Ident, Type, Option<u32>, Option<usize>)],
 ) {
     let Some(out_dir) = sidecar_dir() else {
         return;
@@ -119,7 +119,7 @@ pub(crate) fn write_struct_sidecar(
             let _ = writeln!(buf, "id = {id}\n");
         }
     }
-    for (field, ty, base) in nested {
+    for (field, ty, base, array_len) in nested {
         if let Some(t) = type_last_segment(ty) {
             buf.push_str("[[nested]]\n");
             let _ = writeln!(buf, "type = \"{t}\"");
@@ -128,6 +128,11 @@ pub(crate) fn write_struct_sidecar(
             let _ = writeln!(buf, "field = \"{}\"", toml_escape(&field.to_string()));
             if let Some(b) = base {
                 let _ = writeln!(buf, "base = {b}");
+            }
+            // An array group is walked `array_len` times by the
+            // aggregator, each element packed after the one before it.
+            if let Some(n) = array_len {
+                let _ = writeln!(buf, "array_len = {n}");
             }
             buf.push('\n');
         }
@@ -394,24 +399,38 @@ fn aggregate(
                 .and_then(toml::Value::as_integer)
                 .and_then(|b| u32::try_from(b).ok())
                 .unwrap_or(auto_base);
-            let before = params.len();
-            aggregate(
-                sidecar_dir,
-                t,
-                (id_base + base) & mask,
-                params,
-                meter_ids,
-                fields,
-                ancestors,
-            )?;
-            let added = u32::try_from(params.len() - before).unwrap_or(0);
-            // Runtime `offset_ids` packs each auto group at `own_count + Σ
-            // count(previous nested)` - it sums the previous groups' sizes
-            // and ignores their explicit bases. Accumulate `added` from the
-            // running total (not `base + added`), or an explicit `base` on
-            // an earlier group would shift every later auto group's ids away
-            // from where the live plugin puts them.
-            next_base += added;
+            // A single `#[nested]` writes no `array_len` and walks once;
+            // an array writes its literal length (`0` walks zero times).
+            // Each element walks the child type at `base + i *
+            // element_count`, the count discovered by how many params the
+            // walk added.
+            let array_len = entry
+                .get("array_len")
+                .and_then(toml::Value::as_integer)
+                .and_then(|n| usize::try_from(n).ok())
+                .unwrap_or(1);
+            let mut elem_base = base;
+            for _ in 0..array_len {
+                let before = params.len();
+                aggregate(
+                    sidecar_dir,
+                    t,
+                    (id_base + elem_base) & mask,
+                    params,
+                    meter_ids,
+                    fields,
+                    ancestors,
+                )?;
+                let added = u32::try_from(params.len() - before).unwrap_or(0);
+                elem_base = elem_base.wrapping_add(added);
+                // Runtime `offset_ids` packs each auto group at `own_count +
+                // Σ count(previous nested)` - it sums the previous groups'
+                // sizes and ignores their explicit bases. Accumulate `added`
+                // from the running total (not `base + added`), or an explicit
+                // `base` on an earlier group would shift every later auto
+                // group's ids away from where the live plugin puts them.
+                next_base += added;
+            }
         }
     }
     ancestors.remove(struct_name);
