@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use crate::iced::event::Status;
 use crate::iced::{Event, Size};
 use truce_core::editor::{Editor, PluginContext, ResizeCorrector};
 use truce_gui::EditorScale;
@@ -647,14 +648,22 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     baseview::EventStatus::Captured
                 }
                 baseview::Event::Keyboard(kb) => {
-                    // Feed native keys into the `UserInterface` event queue;
-                    // iced widgets (text_input, a custom key-capture widget)
-                    // then receive them. Keys only arrive when the host grants
-                    // the editor window OS focus, which varies by DAW.
-                    runtime
-                        .pending_events
-                        .push(Event::Keyboard(crate::keyboard::to_iced_event(&kb)));
-                    baseview::EventStatus::Captured
+                    // Apply queued input plus this key synchronously so we can
+                    // report iced's real consumption status. Draining the queue
+                    // first preserves order (a click that focuses a field lands
+                    // before the keystroke). baseview forwards a key the UI did
+                    // not consume to the host, so Space and transport shortcuts
+                    // keep working while the editor is focused. Keys only arrive
+                    // when the host grants the editor OS focus, which varies by
+                    // DAW.
+                    let mut batch = std::mem::take(&mut runtime.pending_events);
+                    batch.push(Event::Keyboard(crate::keyboard::to_iced_event(&kb)));
+                    match runtime.apply_events(batch).last() {
+                        // Consumed by a widget, or the renderer is not ready yet
+                        // (empty: the key was re-queued) - keep it either way.
+                        Some(Status::Captured) | None => baseview::EventStatus::Captured,
+                        Some(_) => baseview::EventStatus::Ignored,
+                    }
                 }
                 baseview::Event::Window(_) => baseview::EventStatus::Ignored,
             }
