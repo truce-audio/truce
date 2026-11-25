@@ -95,12 +95,12 @@ impl ConstZero for StereoSample {
 ///
 /// # Panics
 ///
-/// Panics if `freq < 0`, `freq >= sr / 2`, or `q <= 0` - all
-/// catastrophic-misuse cases the upstream `from_params` reports
-/// via `Errors`. The EQ's param ranges keep us well inside the
-/// valid zone, so the unwrap here is a contract assertion, not a
-/// reachable failure mode.
+/// Panics if `q <= 0` or `sr <= 0`. `freq` is first clamped to just
+/// below Nyquist (`sr / 2`), so a band whose center sits above Nyquist
+/// at a low sample rate pins to the top of the usable range instead of
+/// tripping the upstream `from_params` Nyquist check.
 pub fn peaking(freq: f64, gain_db: f64, q: f64, sr: f64) -> Coefficients<f64> {
+    let freq = freq.min(sr * 0.5 - 1.0);
     Coefficients::<f64>::from_params(
         Type::PeakingEQ(gain_db),
         Hertz::<f64>::from_hz(sr).expect("sample rate > 0"),
@@ -111,6 +111,7 @@ pub fn peaking(freq: f64, gain_db: f64, q: f64, sr: f64) -> Coefficients<f64> {
 }
 
 pub fn low_shelf(freq: f64, gain_db: f64, q: f64, sr: f64) -> Coefficients<f64> {
+    let freq = freq.min(sr * 0.5 - 1.0);
     Coefficients::<f64>::from_params(
         Type::LowShelf(gain_db),
         Hertz::<f64>::from_hz(sr).expect("sample rate > 0"),
@@ -121,6 +122,7 @@ pub fn low_shelf(freq: f64, gain_db: f64, q: f64, sr: f64) -> Coefficients<f64> 
 }
 
 pub fn high_shelf(freq: f64, gain_db: f64, q: f64, sr: f64) -> Coefficients<f64> {
+    let freq = freq.min(sr * 0.5 - 1.0);
     Coefficients::<f64>::from_params(
         Type::HighShelf(gain_db),
         Hertz::<f64>::from_hz(sr).expect("sample rate > 0"),

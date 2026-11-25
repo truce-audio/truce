@@ -152,6 +152,16 @@ impl FundspReverbSimpleDspState {
     }
 }
 
+/// Highest filter cutoff that keeps the fundsp state-variable filters
+/// stable at `sample_rate`: just below Nyquist. At or above `sr / 2`,
+/// `tan(PI * cutoff / sr)` blows up and the SVF emits NaN.
+// Sample rates are small integers well inside f32's range, so the
+// f64 -> f32 narrowing here cannot actually truncate.
+#[allow(clippy::cast_possible_truncation)]
+fn nyquist_hz(sample_rate: f64) -> f32 {
+    (sample_rate * 0.5 - 1.0) as f32
+}
+
 impl PluginLogic for FundspReverbSimple {
     type Params = FundspReverbSimpleParams;
     type DspState = FundspReverbSimpleDspState;
@@ -207,9 +217,13 @@ impl PluginLogic for FundspReverbSimple {
         // the host picked. `for_each_stereo_frame` fans a mono input into
         // both graph inputs (the stereo->stereo bus maps 1:1), so no
         // per-width branch is needed.
+        // Clamp the filter cutoffs below Nyquist. A fixed-Hz cutoff
+        // above sr/2 makes the fundsp SVF unstable (NaN output) at low
+        // or fractional sample rates, so pin it just under Nyquist.
+        let nyquist = nyquist_hz(state.last_built_sr);
         buffer.for_each_stereo_frame(|frame_in, frame_out| {
-            state.low_cut_shared.set_value(params.low_cut.read());
-            state.high_cut_shared.set_value(params.high_cut.read());
+            state.low_cut_shared.set_value(params.low_cut.read().min(nyquist));
+            state.high_cut_shared.set_value(params.high_cut.read().min(nyquist));
             state.mix_shared.set_value(params.mix.read());
             state.graph.tick(frame_in, frame_out);
         });
