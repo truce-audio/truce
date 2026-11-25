@@ -618,12 +618,9 @@ fn array_id_helper_matches_live_field() {
     assert_eq!(BandArray::bands_id(0, BandParamId::Gain), 1);
     assert_eq!(BandArray::bands_id(2, BandParamId::Q), 6);
     // It returns exactly what the running plugin exposes.
-    for i in 0..3 {
-        assert_eq!(
-            BandArray::bands_id(i, BandParamId::Gain),
-            p.bands[i].gain.id()
-        );
-        assert_eq!(BandArray::bands_id(i, BandParamId::Q), p.bands[i].q.id());
+    for (i, band) in p.bands.iter().enumerate() {
+        assert_eq!(BandArray::bands_id(i, BandParamId::Gain), band.gain.id());
+        assert_eq!(BandArray::bands_id(i, BandParamId::Q), band.q.id());
     }
 }
 

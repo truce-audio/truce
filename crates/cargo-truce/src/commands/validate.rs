@@ -1183,7 +1183,7 @@ cmd_result:
         let map = parse_dsh_session(out);
         let a = map.get("/A.aaxplugin").expect("plugin A tallied");
         assert_eq!((a.total, a.passed), (2, 2));
-        assert!(a.failed.is_empty());
+        assert_eq!(a.failed, [] as [std::string::String; 0]);
         let b = map.get("/B.aaxplugin").expect("plugin B tallied");
         assert_eq!((b.total, b.passed), (2, 1));
         assert_eq!(

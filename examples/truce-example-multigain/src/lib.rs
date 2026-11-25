@@ -144,14 +144,14 @@ mod tests {
     #[test]
     fn id_helper_matches_live_field() {
         let p = MultiGainParams::new();
-        for i in 0..NUM_STAGES {
+        for (i, stage) in p.stages.iter().enumerate() {
             assert_eq!(
                 MultiGainParams::stages_id(i, StageParamsParamId::Gain),
-                p.stages[i].gain.id()
+                stage.gain.id()
             );
             assert_eq!(
                 MultiGainParams::stages_id(i, StageParamsParamId::Active),
-                p.stages[i].active.id()
+                stage.active.id()
             );
         }
     }

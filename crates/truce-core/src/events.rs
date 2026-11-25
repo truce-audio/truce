@@ -630,7 +630,7 @@ mod tests {
             note: 60,
             velocity: 100,
         };
-        assert!(list.sysex_bytes(&body).is_empty());
+        assert_eq!(list.sysex_bytes(&body), []);
     }
 
     #[test]

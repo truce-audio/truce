@@ -193,7 +193,7 @@ mod tests {
         let file = write_preset_file(&meta, &[]);
         let (parsed, blob) = parse_preset_file(&file).unwrap();
         assert_eq!(parsed, meta);
-        assert!(blob.is_empty());
+        assert_eq!(blob, [] as [u8; 0]);
     }
 
     #[test]

@@ -2240,7 +2240,7 @@ impl WgpuBackend {
         // same convention `truce-slint::screenshot::render_with_state` uses.
         // Un-premultiply here so the GPU readback matches the headless
         // contract instead of leaking the GPU's internal format.
-        for px in pixels.chunks_exact_mut(4) {
+        for px in pixels.as_chunks_mut::<4>().0 {
             let a = px[3];
             if a == 0 || a == 255 {
                 continue;
@@ -2305,7 +2305,10 @@ mod tests {
         atlas.ensure_glyph(&font, 'C', 14.0);
 
         assert_eq!(atlas.glyphs.len(), 3);
-        assert!(!atlas.pending.is_empty());
+        assert_ne!(
+            atlas.pending,
+            [] as [(u32, u32, u32, u32, std::vec::Vec<u8>); 0]
+        );
 
         // Same glyph at same size should not create a new entry
         atlas.ensure_glyph(&font, 'A', 14.0);

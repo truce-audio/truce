@@ -129,7 +129,6 @@ pub type Res = std::result::Result<(), CargoTruceError>;
 /// arg-stripping live in `main.rs`. Unknown commands here surface
 /// back to the caller as an error so `main` can render its own help
 /// block.
-#[must_use]
 pub fn run(args: &[String]) -> ExitCode {
     // Strip global `-v` / `--verbose` from anywhere in the arg list.
     // Setting the static once here means every subcommand picks it up
