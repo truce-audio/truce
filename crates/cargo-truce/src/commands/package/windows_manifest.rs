@@ -44,17 +44,18 @@ const MANIFEST_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="y
 </assembly>
 "#;
 
-/// Embed the DPI-aware manifest into `exe`. Falls back to a sidecar
-/// `<exe>.manifest` if `mt.exe` isn't available. Best-effort: warnings
-/// are printed but the function doesn't fail the build.
-pub(crate) fn embed_dpi_manifest(exe: &Path) -> Res {
+/// Embed the DPI-aware manifest into `exe`. `version` is the plug-in's
+/// resolved version (`crate::plugin_version`: `[[plugin]].version`, else
+/// the plug-in crate's), matching what the plug-in reports at runtime.
+/// Falls back to a sidecar `<exe>.manifest` if `mt.exe` isn't available.
+/// Best-effort: warnings are printed but the function doesn't fail the
+/// build.
+pub(crate) fn embed_dpi_manifest(exe: &Path, version: &str) -> Res {
     let manifest_path = tmp_manifests().join("truce-standalone.manifest");
     // A win32 assembly identity needs a 4-part `n.n.n.n` version; build it
     // from the plugin version (`major.minor.patch.0`) so the standalone
     // host's identity tracks releases instead of a fixed `1.0.0.0`.
-    let word = truce_utils::version_word(
-        &crate::read_workspace_version(&crate::project_root()).unwrap_or_else(|_| "0.0.0".into()),
-    );
+    let word = truce_utils::version_word(version);
     let assembly_version = format!(
         "{}.{}.{}.0",
         (word >> 16) & 0xFFFF,

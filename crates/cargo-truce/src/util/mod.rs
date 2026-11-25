@@ -601,7 +601,7 @@ pub(crate) fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> O
 /// `{"name":"<crate>","version":"<v>",...}`; a *dependency* entry uses
 /// `"req"` (not `"version"`) right after its name, so matching the
 /// adjacent `,"version":"` lands on the package, never a dependency.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn read_plugin_crate_version(project_root: &Path, crate_name: &str) -> Option<String> {
     let out = Command::new("cargo")
         .args([
@@ -637,7 +637,7 @@ pub(crate) fn read_plugin_crate_version(project_root: &Path, crate_name: &str) -
 /// crate's version can't be read from `cargo metadata` - unlike reading
 /// the workspace root, a plug-in crate always has a version, so a
 /// workspace without a root `[workspace.package] version` resolves fine.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn plugin_version(
     p: &crate::config::PluginDef,
     root: &Path,
