@@ -1192,6 +1192,10 @@ unsafe fn open_editor_inner<P: PluginExport>(
     parent: *mut std::ffi::c_void,
 ) {
     unsafe {
+        // Reset the idle clock on open: it persists across close/open on the
+        // per-instance gui, so the first `dt` after reopening would otherwise
+        // be the whole closed interval and jump animations.
+        gui.idle_clock.reset();
         if let Some(ref mut editor) = gui.editor {
             let params = Arc::clone(&inst.params_arc);
             let meter_store = Arc::clone(&inst.meter_store);

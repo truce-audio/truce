@@ -1945,6 +1945,10 @@ pub unsafe fn _editor_open<P: PluginExport>(
         }
         let inst = &*ctx.cast::<AaxInstance<P>>();
         let mut gui = inst.gui.enter();
+        // Reset the idle clock on open: it persists across close/open on the
+        // per-instance gui cell, so the first `dt` after reopening would
+        // otherwise be the whole closed interval and jump animations.
+        gui.idle_clock.reset();
         let Some(editor) = gui.editor.as_mut() else {
             return;
         };

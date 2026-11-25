@@ -3512,6 +3512,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         let mut gui = data.gui.enter();
+        // Reset the idle clock on open: it persists across close/open on the
+        // per-instance gui cell, so the first `dt` after reopening would
+        // otherwise be the whole closed interval and jump animations.
+        gui.idle_clock.reset();
         let Some(editor) = gui.editor.as_mut() else {
             return false;
         };
