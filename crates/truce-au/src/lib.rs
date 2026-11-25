@@ -10,11 +10,10 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::slice;
 
-use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 // The AU v2 param-notify pump is macOS-only (v2 doesn't exist on iOS).
-#[cfg(target_os = "macos")]
-use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "macos")]
 use std::thread::{self, JoinHandle, Thread};
 
@@ -69,8 +68,8 @@ use truce_core::ump::{
     encode_ump_channel_voice_1, encode_ump_channel_voice_2, sysex7_packet_count,
 };
 use truce_core::wrapper::{
-    ParamCStrings, PluginCell, SharedPlugin, copy_c_str, default_io_channels, enter_plugin,
-    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
+    ParamCStrings, PluginCell, PluginGuard, SharedPlugin, copy_c_str, default_io_channels,
+    enter_plugin, log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
     run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
@@ -314,9 +313,11 @@ struct AuInstance<P: PluginExport> {
     /// overlap, so the cell is never held twice at once.
     audio: PluginCell<AuAudio<P>>,
     /// Main/UI-thread-owned editor state, behind a `PluginCell` for the same
-    /// reason. Its owners - the GUI callbacks and `cb_state_load`'s
+    /// reason. Its owners - the GUI callbacks and the state loads'
     /// editor-notify - all run on the host main thread; `cb_process` never
-    /// touches it.
+    /// touches it. A state load the host runs on a background thread hands
+    /// its notify to the main queue ([`notify_state_changed`]) instead of
+    /// taking the cell, so a `gui_close` it overlaps can't run off main.
     gui: PluginCell<AuGui>,
     /// Deferred editor resize requested through `PluginContext::request_resize`
     /// while the `gui` cell was already held (author code re-entering from
@@ -325,6 +326,25 @@ struct AuInstance<P: PluginExport> {
     /// the cell; `cb_gui_get_size` applies it before reporting the size. GUI
     /// thread only; atomic for interior mutability through the shared `&inst`.
     pending_resize: AtomicU64,
+    /// A `gui_close` that arrived while the `gui` cell was held (a host
+    /// driving close from inside another editor callback's layout pass).
+    /// `try_enter` can't run the close then, and the AU v3 template drops
+    /// the container and never re-drives close, so the skipped close would
+    /// be lost. Whichever callback holds the cell runs it from this flag
+    /// when it releases the cell ([`GuiHold`]'s `Drop`), and `gui_open`
+    /// clears it so a close left over from a previous view can never close
+    /// the reopened editor. GUI thread only.
+    pending_close: AtomicBool,
+    /// A background state load's editor notify is queued on the main queue
+    /// and not yet run; later loads ride the same one.
+    state_notify_queued: AtomicBool,
+    /// Cached `gui_has_editor` answer (`HAS_EDITOR_*`), so an off-main
+    /// query doesn't take the `gui` cell.
+    has_editor: AtomicU8,
+    /// Cleared by `cb_destroy` before it frees the instance. A queued main
+    /// thread job holds the lock across its check and its use of the
+    /// instance, so destroy - on whatever thread - waits for it to finish.
+    alive: Arc<Mutex<bool>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
@@ -390,6 +410,222 @@ struct AuAudio<P: PluginExport> {
 struct AuGui {
     editor: Option<Box<dyn Editor>>,
     idle_clock: IdleClock,
+}
+
+/// A held `gui` cell. Every GUI-thread entry goes through
+/// [`gui_enter`] / [`gui_try_enter`] rather than the raw cell, so that a
+/// `gui_close` that re-entered while this callback held the cell (and so
+/// only set [`AuInstance::pending_close`]) runs before the cell is
+/// released - whichever callback the host happened to re-enter from. A
+/// holder that skipped draining would leave the flag set to close a later,
+/// reopened editor.
+struct GuiHold<'a> {
+    gui: PluginGuard<'a, AuGui>,
+    pending_close: &'a AtomicBool,
+}
+
+impl Deref for GuiHold<'_> {
+    type Target = AuGui;
+    fn deref(&self) -> &AuGui {
+        &self.gui
+    }
+}
+
+impl DerefMut for GuiHold<'_> {
+    fn deref_mut(&mut self) -> &mut AuGui {
+        &mut self.gui
+    }
+}
+
+impl Drop for GuiHold<'_> {
+    fn drop(&mut self) {
+        if self.pending_close.swap(false, Ordering::Relaxed) {
+            // SAFETY: GUI thread, and this guard owns the cell.
+            unsafe { au_close_editor(&mut self.gui) };
+            // This close covers any that re-entered during it (as in
+            // `cb_gui_close`); don't leave the flag for the next holder.
+            self.pending_close.store(false, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Enter the `gui` cell. See [`GuiHold`]. Only `cb_gui_open` (Apple-only)
+/// takes it unconditionally; everything else uses [`gui_try_enter`].
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn gui_enter<P: PluginExport>(inst: &AuInstance<P>) -> GuiHold<'_> {
+    GuiHold {
+        gui: inst.gui.enter(),
+        pending_close: &inst.pending_close,
+    }
+}
+
+/// Enter the `gui` cell unless a callback further up this thread's stack
+/// already holds it. See [`GuiHold`].
+fn gui_try_enter<P: PluginExport>(inst: &AuInstance<P>) -> Option<GuiHold<'_>> {
+    Some(GuiHold {
+        gui: inst.gui.try_enter()?,
+        pending_close: &inst.pending_close,
+    })
+}
+
+/// Tell the editor a state load landed. Hosts may load state or a preset on
+/// a background thread; the `gui` cell and the editor belong to the main
+/// thread (taking the cell there would race `gui_open` / `gui_close` and
+/// could run a pending close - view and GPU teardown - off main), so a
+/// background load queues the notify on the main queue instead. One queued
+/// notify covers any loads that land before it runs.
+fn notify_state_changed<P: PluginExport>(inst: &AuInstance<P>) {
+    if is_main_thread() {
+        // `try_enter`: a load reached from a nested run loop while the cell
+        // is held up this stack falls through to the queued path below.
+        if let Some(mut gui) = gui_try_enter(inst) {
+            if let Some(ref mut editor) = gui.editor {
+                editor.state_changed();
+            }
+            return;
+        }
+    }
+    if !inst.state_notify_queued.swap(true, Ordering::AcqRel) {
+        on_main_queue(
+            Arc::clone(&inst.alive),
+            std::ptr::from_ref(inst).cast(),
+            0,
+            notify_job::<P>,
+        );
+    }
+}
+
+/// The queued half of [`notify_state_changed`], on the main queue.
+fn notify_job<P: PluginExport>(ctx: *const std::ffi::c_void) {
+    // SAFETY: `on_main_queue` runs this only while the instance is alive,
+    // holding `alive`'s lock so destroy can't free it.
+    let inst = unsafe { &*ctx.cast::<AuInstance<P>>() };
+    // Main-queue blocks also run inside nested run loops (a modal dialog
+    // opened from an editor callback), where the cell can already be held
+    // further up this stack: retry shortly rather than alias it.
+    let Some(mut gui) = gui_try_enter(inst) else {
+        on_main_queue(
+            Arc::clone(&inst.alive),
+            ctx,
+            NOTIFY_RETRY_NS,
+            notify_job::<P>,
+        );
+        return;
+    };
+    // A read-modify-write, not a store: it synchronizes with a background
+    // load's `swap(true)`, so that load either sees `false` and queues its
+    // own notify or lands before this one reads its params.
+    inst.state_notify_queued.swap(false, Ordering::AcqRel);
+    if let Some(ref mut editor) = gui.editor {
+        editor.state_changed();
+    }
+}
+
+/// Build the editor into the `gui` cell if it isn't yet (main thread),
+/// recording the answer for off-main `gui_has_editor` queries. Built from
+/// the lock-free param store the wrapper already holds outside the plugin,
+/// so opening the GUI never stalls the audio thread.
+fn ensure_editor<P: PluginExport>(inst: &AuInstance<P>, gui: &mut AuGui) {
+    if gui.editor.is_none() {
+        gui.editor = (inst.editor_builder)(inst.params_arc.clone());
+    }
+    inst.has_editor.store(
+        if gui.editor.is_some() {
+            HAS_EDITOR_YES
+        } else {
+            HAS_EDITOR_NO
+        },
+        Ordering::Release,
+    );
+}
+
+const HAS_EDITOR_UNKNOWN: u8 = 0;
+const HAS_EDITOR_NO: u8 = 1;
+const HAS_EDITOR_YES: u8 = 2;
+
+/// Retry delay for a queued notify that found the `gui` cell held.
+const NOTIFY_RETRY_NS: u64 = 10_000_000;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+unsafe extern "C" {
+    fn pthread_main_np() -> i32;
+    static _dispatch_main_q: u8;
+    fn dispatch_async_f(
+        queue: *const u8,
+        context: *mut std::ffi::c_void,
+        work: unsafe extern "C" fn(*mut std::ffi::c_void),
+    );
+    fn dispatch_time(when: u64, delta: i64) -> u64;
+    fn dispatch_after_f(
+        when: u64,
+        queue: *const u8,
+        context: *mut std::ffi::c_void,
+        work: unsafe extern "C" fn(*mut std::ffi::c_void),
+    );
+}
+
+fn is_main_thread() -> bool {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        // SAFETY: no preconditions.
+        unsafe { pthread_main_np() != 0 }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        true
+    }
+}
+
+/// Run `job(ctx)` on the main queue (after `delay_ns`, 0 for asap) if the
+/// instance is still alive then. `alive`'s lock is held across the check
+/// and the job, so a `cb_destroy` on another thread waits for the job
+/// instead of freeing under it. (A job that synchronously destroyed its
+/// own instance on main would deadlock here; nothing in the notify path
+/// can.)
+fn on_main_queue(
+    alive: Arc<Mutex<bool>>,
+    ctx: *const std::ffi::c_void,
+    delay_ns: u64,
+    job: fn(*const std::ffi::c_void),
+) {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        struct Req {
+            alive: Arc<Mutex<bool>>,
+            ctx: *const std::ffi::c_void,
+            job: fn(*const std::ffi::c_void),
+        }
+        unsafe extern "C" fn run(req: *mut std::ffi::c_void) {
+            // SAFETY: `req` is the box leaked below, handed over once.
+            let req = unsafe { Box::from_raw(req.cast::<Req>()) };
+            let alive = req.alive.lock().unwrap_or_else(PoisonError::into_inner);
+            if *alive {
+                let job = req.job;
+                let ctx = req.ctx;
+                if std::panic::catch_unwind(move || job(ctx)).is_err() {
+                    eprintln!("[truce-au] main-queue editor notify panicked");
+                }
+            }
+            drop(alive);
+        }
+        let req = Box::into_raw(Box::new(Req { alive, ctx, job }));
+        let queue = std::ptr::addr_of!(_dispatch_main_q);
+        // SAFETY: the main queue lives for the process; `run` frees `req`.
+        unsafe {
+            if delay_ns == 0 {
+                dispatch_async_f(queue, req.cast(), run);
+            } else {
+                // DISPATCH_TIME_NOW is 0.
+                let when = dispatch_time(0, i64::try_from(delay_ns).unwrap_or(i64::MAX));
+                dispatch_after_f(when, queue, req.cast(), run);
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        // No AU off Apple; nothing reaches here (`is_main_thread` is true).
+        let _ = (alive, ctx, delay_ns, job);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +712,10 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                     idle_clock: IdleClock::new(),
                 }),
                 pending_resize: AtomicU64::new(0),
+                pending_close: AtomicBool::new(false),
+                state_notify_queued: AtomicBool::new(false),
+                has_editor: AtomicU8::new(HAS_EDITOR_UNKNOWN),
+                alive: Arc::new(Mutex::new(true)),
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
                 sysex_ready: SysExQueue::new(SYSEX_INPUT_SLOTS),
@@ -529,6 +769,9 @@ unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
             // so catching here keeps a live host alive; the
             // instance is being torn down anyway.
             let raw = ctx.cast::<AuInstance<P>>();
+            // Wait out a main-queue notify running on another thread and
+            // stop queued ones from touching the instance once it's freed.
+            *(*raw).alive.lock().unwrap_or_else(PoisonError::into_inner) = false;
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 drop(Box::from_raw(raw));
             }));
@@ -1138,9 +1381,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // blob - see the `pending_state` field comment for why
             // newest-wins is the right policy.
             let _ = inst.pending_state.force_push(deserialized);
-            if let Some(ref mut editor) = inst.gui.enter().editor {
-                editor.state_changed();
-            }
+            notify_state_changed(inst);
         }
     });
 }
@@ -1193,9 +1434,7 @@ unsafe extern "C" fn cb_state_load_foreign<P: PluginExport>(
         let deserialized: state::DeserializedState = migrated.into();
         state::apply_params(&*inst.params_arc, &deserialized);
         let _ = inst.pending_state.force_push(deserialized);
-        if let Some(ref mut editor) = inst.gui.enter().editor {
-            editor.state_changed();
-        }
+        notify_state_changed(inst);
         1
     })
 }
@@ -1358,9 +1597,7 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
         // handoff, editor notified.
         state::apply_params(&*inst.params_arc, &deserialized);
         let _ = inst.pending_state.force_push(deserialized);
-        if let Some(ref mut editor) = inst.gui.enter().editor {
-            editor.state_changed();
-        }
+        notify_state_changed(inst);
         1
     })
 }
@@ -1738,21 +1975,26 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
             return 0;
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
+        // AU v2 answers `GetPropertyInfo(CocoaUI)` through here on whatever
+        // thread the host queries properties from. The `gui` cell belongs to
+        // the main thread, and building an editor isn't main-safe either
+        // (constructors read `NSScreen` for the backing scale), so off main
+        // answer from the main thread's cached result - or "yes" until it
+        // has one: `uiViewForAudioUnit` (main) builds the editor and returns
+        // nil if there's none.
+        if !is_main_thread() {
+            return i32::from(inst.has_editor.load(Ordering::Acquire) != HAS_EDITOR_NO);
+        }
         // `try_enter`, not `enter`: the host can query `hasEditor` synchronously
         // during a layout pass (from `viewDidLayoutSubviews`) while an outer
         // editor callback still holds the cell. `enter` would alias the live
         // `&mut` in release. The first (non-re-entrant) call builds the editor;
         // a re-entrant call defers - the outer holder already has one - and
         // reports `0` this frame rather than aliasing.
-        let Some(mut gui) = inst.gui.try_enter() else {
+        let Some(mut gui) = gui_try_enter(inst) else {
             return 0;
         };
-        if gui.editor.is_none() {
-            // Built from the lock-free param store the wrapper already
-            // holds outside the plugin, so opening the GUI never
-            // stalls the audio thread.
-            gui.editor = (inst.editor_builder)(inst.params_arc.clone());
-        }
+        ensure_editor(inst, &mut gui);
         i32::from(gui.editor.is_some())
     })
 }
@@ -1774,7 +2016,7 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
         // while an outer editor callback still holds the cell. `enter` would
         // hand out a second aliasing `&mut` in release. Report not-resizable
         // this frame - the firewall's `0` default - when busy.
-        let Some(gui) = inst.gui.try_enter() else {
+        let Some(gui) = gui_try_enter(inst) else {
             return 0;
         };
         i32::from(gui.editor.as_ref().is_some_and(|e| e.can_resize()))
@@ -1800,7 +2042,7 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
         // back into this callback on the same thread, `enter` would
         // double-enter the still-held cell. Skipping a re-entrant commit is
         // safe - the host re-asserts the size on its next layout pass.
-        let Some(mut gui) = inst.gui.try_enter() else {
+        let Some(mut gui) = gui_try_enter(inst) else {
             return;
         };
         if let Some(editor) = gui.editor.as_mut()
@@ -1809,6 +2051,9 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
             let (cw, ch) = fit_logical_size(w, h, editor.as_ref());
             editor.set_size(cw, ch);
         }
+        // A `gui_close` that re-entered during the layout above (hitting a
+        // held cell) runs when `gui` drops here, before we return into the
+        // host's teardown that drops the container.
     });
 }
 
@@ -1835,7 +2080,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         // `cb_gui_set_size`. If busy, report the size the plugin last
         // requested (still pending), leaving the host's value when there is
         // none - never re-enter the cell.
-        let Some(mut gui) = inst.gui.try_enter() else {
+        let Some(mut gui) = gui_try_enter(inst) else {
             let packed = inst.pending_resize.load(Ordering::Relaxed);
             if packed != 0 {
                 #[allow(clippy::cast_possible_truncation)]
@@ -1846,12 +2091,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             }
             return;
         };
-        if gui.editor.is_none() {
-            // Built from the lock-free param store the wrapper already
-            // holds outside the plugin, so opening the GUI never
-            // stalls the audio thread.
-            gui.editor = (inst.editor_builder)(inst.params_arc.clone());
-        }
+        ensure_editor(inst, &mut gui);
         // Apply a resize the plugin requested re-entrantly through
         // `request_resize` (deferred there because the `gui` cell was held)
         // before reporting the size, so the host sees the value the plugin
@@ -1899,7 +2139,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         unsafe {
             let inst = &*ctx.cast::<AuInstance<P>>();
-            let mut gui = inst.gui.enter();
+            let mut gui = gui_enter(inst);
+            // A close left pending by a previous view belongs to that view;
+            // drop it so it can't close the editor we're about to open.
+            inst.pending_close.store(false, Ordering::Relaxed);
             // Reset the idle clock on open: it persists across close/open on
             // the per-instance gui cell, so the first `dt` after reopening
             // would otherwise be the whole closed interval and jump animations.
@@ -1998,7 +2241,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             // the cell is free (the common editor-loop path)
                             // and otherwise stashes it for `cb_gui_get_size` to
                             // apply on the next size query.
-                            if let Some(mut gui) = inst.gui.try_enter() {
+                            if let Some(mut gui) = gui_try_enter(inst) {
                                 gui.editor.as_mut().is_some_and(|e| e.set_size(w, h))
                             } else {
                                 inst.pending_resize
@@ -2058,28 +2301,38 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     });
 }
 
+/// Run the editor's `close` if one is open, firewalling the author's
+/// `close` (wgpu surface drop, baseview `NSView` removal) so a panic can't
+/// cross the FFI line as an unhandled `ObjC` exception. The editor struct is
+/// kept, not dropped - only its window / GPU resources are released, and the
+/// next `gui_open` reopens it in place (see `cb_gui_close`).
+unsafe fn au_close_editor(gui: &mut AuGui) {
+    if let Some(editor) = gui.editor.as_mut() {
+        let editor_ptr: *mut dyn Editor = editor.as_mut();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            (*editor_ptr).close();
+        }));
+    }
+}
+
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         // `try_enter`, not `enter`: a host can drive `gui_close` synchronously
         // from inside another editor callback's layout pass (the AU
         // `viewDidLayoutSubviews` re-entry chain), so `enter` would alias the
-        // live `&mut` in release. Defer when busy - the outer holder is mid
-        // editor work, and the host re-drives close after it returns.
-        let Some(mut gui) = inst.gui.try_enter() else {
+        // live `&mut` in release. When busy, stash a `pending_close` that the
+        // outer holder runs as it releases the cell (see `GuiHold`): the AU
+        // v3 template drops the container right after `gui_close` and never
+        // re-drives it, so the skipped close must not be lost.
+        let Some(mut gui) = gui_try_enter(inst) else {
+            inst.pending_close.store(true, Ordering::Relaxed);
             return;
         };
-        if let Some(editor) = gui.editor.as_mut() {
-            // Same boundary-protection as `cb_destroy`: any panic
-            // during `editor.close()` (wgpu surface drop, baseview
-            // window close, NSView removal) would otherwise cross
-            // the FFI line and become an unhandled ObjC exception
-            // in the host.
-            let editor_ptr: *mut dyn Editor = editor.as_mut();
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (*editor_ptr).close();
-            }));
-        }
+        au_close_editor(&mut gui);
+        // This close covers any that re-entered during it; don't let the
+        // guard run a second `close` on the already-closed editor.
+        inst.pending_close.store(false, Ordering::Relaxed);
         // Keep the editor alive - just closed, not dropped.
         //
         // Dropping the editor here would synchronously deallocate its
@@ -2105,13 +2358,15 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 unsafe extern "C" fn cb_gui_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     run_extern_callback_with::<P, ()>("au", "gui_idle", (), || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let Some(mut gui) = inst.gui.try_enter() else {
+        let Some(mut gui) = gui_try_enter(inst) else {
             return;
         };
         let dt = gui.idle_clock.tick();
         if let Some(editor) = gui.editor.as_mut() {
             editor.idle(dt);
         }
+        // A `gui_close` that re-entered during `idle` (Logic / Pro Tools
+        // drive close from inside their NSTimer fire) runs when `gui` drops.
     });
 }
 
@@ -2460,6 +2715,62 @@ macro_rules! export_au {
 
 #[cfg(test)]
 mod tests {
+    use super::{AuGui, GuiHold};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use truce_core::editor::{Editor, IdleClock, PluginContext, RawWindowHandle};
+    use truce_core::wrapper::PluginCell;
+
+    struct CountingEditor(Arc<AtomicUsize>);
+
+    impl Editor for CountingEditor {
+        fn size(&self) -> (u32, u32) {
+            (100, 100)
+        }
+        fn open(&mut self, _parent: RawWindowHandle, _context: PluginContext) {}
+        fn close(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn gui_cell(closes: &Arc<AtomicUsize>) -> PluginCell<AuGui> {
+        PluginCell::new(AuGui {
+            editor: Some(Box::new(CountingEditor(closes.clone()))),
+            idle_clock: IdleClock::new(),
+        })
+    }
+
+    /// A `gui_close` that re-entered while some callback held the cell
+    /// (and only set the flag) runs when that holder releases it - for
+    /// every holder, not just the two that used to drain it by hand - and
+    /// the flag doesn't outlive the drain to close a reopened editor.
+    #[test]
+    fn pending_close_runs_when_any_holder_releases() {
+        let closes = Arc::new(AtomicUsize::new(0));
+        let cell = gui_cell(&closes);
+        let pending = AtomicBool::new(false);
+        {
+            let _hold = GuiHold {
+                gui: cell.enter(),
+                pending_close: &pending,
+            };
+            assert!(
+                cell.try_enter().is_none(),
+                "re-entrant close sees a held cell"
+            );
+            pending.store(true, Ordering::Relaxed);
+            assert_eq!(closes.load(Ordering::Relaxed), 0);
+        }
+        assert_eq!(closes.load(Ordering::Relaxed), 1);
+        assert!(!pending.load(Ordering::Relaxed), "drained, not left stale");
+
+        // The next holder (a reopened editor's callbacks) closes nothing.
+        drop(GuiHold {
+            gui: cell.enter(),
+            pending_close: &pending,
+        });
+        assert_eq!(closes.load(Ordering::Relaxed), 1);
+    }
     use truce_core::SYSEX_POOL_PREALLOC;
     use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList};
     use truce_shim_types::AU_SHIM_TYPES_H;
