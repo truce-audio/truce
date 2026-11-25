@@ -44,9 +44,11 @@
 // v5: appended `param_parse_value`; a shim must not call it on a pre-v5
 // binary (the pointer would be past its tail).
 // v6: appended `gui_idle`; gate on abi_version >= v6 before calling it.
+// v7: appended `gui_has_aspect_lock`; gate on abi_version >= v7 before
+// calling it.
 #define TRUCE_AU_ABI_MAGIC_MASK 0xFFFFFF00u
 #define TRUCE_AU_ABI_MAGIC 0x54417500u
-#define TRUCE_AU_ABI_VERSION 0x54417506u
+#define TRUCE_AU_ABI_VERSION 0x54417507u
 
 typedef struct {
     uint8_t component_type[4];
@@ -355,6 +357,13 @@ typedef struct {
      * `Editor::idle` when an editor is open and no-ops otherwise. Appended
      * per the append-only rule; gate on abi_version (>= v6) before calling. */
     void (*gui_idle)(void *ctx);
+    /* 1 if the editor locks its aspect ratio (`Editor::aspect_ratio`
+     * is `Some`), 0 for free aspect. The AU v3 Swift shim only refuses an
+     * off-aspect host resize (Logic's 4:3 view configuration) for a
+     * locked editor; a free-aspect editor follows any resize. Appended
+     * per the append-only rule; gate on abi_version (>= v7) before
+     * calling. */
+    int32_t (*gui_has_aspect_lock)(void *ctx);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

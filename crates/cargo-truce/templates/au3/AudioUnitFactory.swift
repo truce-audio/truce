@@ -1303,8 +1303,15 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         guard hostW > 0, hostH > 0, !sameSize(hostSize, guiPtSize) else { return }
         // A View-menu zoom scales both axes and keeps the editor's aspect.
         // Logic's 4:3 view configuration does not. Adopting that height
-        // makes the layout letterbox, which is the empty band under the UI.
-        guard aspectClose(hostSize, guiPtSize) else { return }
+        // makes an aspect-locked layout letterbox, which is the empty band
+        // under the UI - so a locked editor ignores off-aspect resizes. A
+        // free-aspect editor follows them: it can fill any shape, and a
+        // non-uniform drag is a real resize. A pre-v7 binary can't say, so
+        // keep the guard there.
+        let aspectLocked = truceAbiTailVersion(cb) < 7 || cb.pointee.gui_has_aspect_lock(ctx) != 0
+        if aspectLocked {
+            guard aspectClose(hostSize, guiPtSize) else { return }
+        }
         let newW = UInt32(max(1, hostW.rounded()))
         let newH = UInt32(max(1, hostH.rounded()))
         cb.pointee.gui_set_size(ctx, newW, newH)
