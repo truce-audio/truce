@@ -799,7 +799,8 @@ fn stage_standalone(
     fs::create_dir_all(&dst_dir)?;
     let dst = dst_dir.join(&exe_name);
     fs::copy(&built, &dst)?;
-    super::windows_manifest::embed_dpi_manifest(&dst)?;
+    let version = crate::plugin_version(p, root)?;
+    super::windows_manifest::embed_dpi_manifest(&dst, &version)?;
     if let Some(icon) = plugin_windows_icon(p, root) {
         super::windows_manifest::embed_icon(&dst, &icon)?;
     }
