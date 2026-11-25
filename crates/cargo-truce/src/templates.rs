@@ -39,7 +39,17 @@ pub mod au3 {
         /// Each entry renders as its own `<string>...</string>` line
         /// inside the `tags` array.
         pub extra_au_tags: &'a [&'a str],
+        /// `CFBundleVersion`. On macOS this is a per-build timestamp so a
+        /// host reloads a rebuilt appex; it is not the product version.
         pub au_ver: &'a str,
+        /// `CFBundleShortVersionString` - the plugin version in Apple's
+        /// dotted-integer form (`truce_utils::version_triple`). The string
+        /// users see; on iOS it also doubles as `CFBundleVersion` so the
+        /// appex matches its container for App Store submission.
+        pub marketing_version: &'a str,
+        /// `AudioComponents` `version` integer (decimal), packed from the
+        /// plugin version by `truce_utils::version_word`.
+        pub au_component_version: &'a str,
         pub min_os: &'a str,
         pub supported_platform: &'a str,
         /// `$(...)` xcodebuild-style tokens. `Some` on the iOS path
@@ -81,6 +91,8 @@ pub mod au3 {
             ("AUTAG", values.au_tag),
             ("EXTRATAGS", extra_tags_block.as_str()),
             ("AUVER", values.au_ver),
+            ("MARKETINGVER", values.marketing_version),
+            ("AUCOMPONENTVER", values.au_component_version),
             ("MINIOS", values.min_os),
             ("SUPPORTEDPLAT", values.supported_platform),
         ];
@@ -119,6 +131,8 @@ pub mod au3 {
                 au_tag: "Effect",
                 extra_au_tags: &[],
                 au_ver: "1",
+                marketing_version: "0.2.0",
+                au_component_version: "512",
                 min_os: "13.0",
                 supported_platform: "MacOSX",
                 xcode_tokens: None,
@@ -134,6 +148,8 @@ pub mod au3 {
                 au_tag: "Effect",
                 extra_au_tags: &["resizable"],
                 au_ver: "1",
+                marketing_version: "0.2.0",
+                au_component_version: "512",
                 min_os: "15.0",
                 supported_platform: "iPhoneOS",
                 xcode_tokens: Some(XcodeTokens {

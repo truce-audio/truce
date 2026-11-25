@@ -519,6 +519,8 @@ pub(crate) fn install_clap(
         let contents = bundle.join("Contents");
         let macos_dir = contents.join("MacOS");
         let exec_name = p.file_stem();
+        let version = crate::plugin_version(p, root)?;
+        let version_keys = crate::plist_version_keys(&version);
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -532,8 +534,7 @@ pub(crate) fn install_clap(
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
             display_name = p.name,
@@ -633,6 +634,8 @@ fn install_vst3(
         let contents = bundle.join("Contents");
         let macos_dir = contents.join("MacOS");
         let exec_name = p.file_stem();
+        let version = crate::plugin_version(p, root)?;
+        let version_keys = crate::plist_version_keys(&version);
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -646,8 +649,7 @@ fn install_vst3(
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
             display_name = p.name,
@@ -724,6 +726,8 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
         let bundle = vst_dir.join(format!("{}.vst", p.file_stem()));
         let macos_dir = bundle.join("Contents/MacOS");
         let exec_name = p.file_stem();
+        let version = crate::plugin_version(p, root)?;
+        let version_keys = crate::plist_version_keys(&version);
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -737,8 +741,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
             display_name = p.name,
@@ -925,6 +928,9 @@ fn install_au(
         fs_ctx::copy(&dylib, macos_dir.join(&exec_name))?;
     }
 
+    let version = crate::plugin_version(p, root)?;
+    let version_keys = crate::plist_version_keys(&version);
+    let au_version = truce_utils::version_word(&version);
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -938,8 +944,7 @@ fn install_au(
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
     <key>AudioComponents</key>
     <array>
         <dict>
@@ -954,7 +959,7 @@ fn install_au(
             <key>description</key>
             <string>{display_name}</string>
             <key>version</key>
-            <integer>65536</integer>
+            <integer>{au_version}</integer>
             <key>factoryFunction</key>
             <string>TruceAUFactory</string>
             <key>sandboxSafe</key>

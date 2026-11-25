@@ -54,4 +54,4 @@ pub use util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
 // can use them without inheriting `truce-core`'s `truce-params` + `png`
 // publish chain. Re-exported here under `truce_core::cast::*` etc.
 // for callers that already depend on truce-core.
-pub use truce_utils::{cast, shell_sidecar, slugify};
+pub use truce_utils::{cast, shell_sidecar, slugify, version_word};

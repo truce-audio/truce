@@ -124,6 +124,7 @@ fn build_au_v3_for_plugin(
     // whether a standalone host exists.
     let lipo_dst = build_rust_framework_dylib(root, p, archs, dt, reuse_au_artifacts)?;
     let factory_presets = super::presets::load_factory_presets(root, p, config)?;
+    let version = crate::plugin_version(p, root)?;
     assemble_framework_bundle(
         &fw_build,
         &fw_name,
@@ -132,8 +133,11 @@ fn build_au_v3_for_plugin(
         config,
         sign_id,
         factory_presets.as_ref(),
+        &version,
     )?;
-    write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
+    write_xcode_project_files(
+        &build_dir, &fw_build, p, config, team_id, &fw_name, &version,
+    )?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
 
     // The containing app. With a standalone bin it's the plugin's host
@@ -254,6 +258,10 @@ fn build_rust_framework_dylib(
 /// Preserves `fw_build` across runs so xcodebuild's link-time
 /// framework metadata cache survives - we overwrite the pieces that
 /// change (dylib, plist, symlinks) idempotently.
+// Cohesive bundle-assembly inputs (paths, identity, signing, presets,
+// version); grouping them into a struct would only move the argument list
+// elsewhere without making any call site clearer.
+#[allow(clippy::too_many_arguments)]
 fn assemble_framework_bundle(
     fw_build: &Path,
     fw_name: &str,
@@ -262,6 +270,7 @@ fn assemble_framework_bundle(
     config: &Config,
     sign_id: &str,
     factory_presets: Option<&super::presets::FactoryPresets>,
+    version: &str,
 ) -> Res {
     let fw_dir = fw_build.join(format!("{fw_name}.framework/Versions/A"));
     fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
@@ -323,9 +332,11 @@ fn assemble_framework_bundle(
 <key>CFBundleExecutable</key><string>{fw}</string>
 <key>CFBundleIdentifier</key><string>{vendor_id}.{suf}.framework</string>
 <key>CFBundlePackageType</key><string>FMWK</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleVersion</key><string>{version}</string>
+<key>CFBundleShortVersionString</key><string>{version}</string>
 </dict></plist>"#,
             fw = fw_name,
+            version = truce_utils::version_triple(version),
             // Vendor-rooted, matching the app/appex ids below; a hardcoded
             // `com.` prefix would mangle any vendor id not starting with it.
             vendor_id = config.vendor.id,
@@ -368,7 +379,10 @@ fn write_xcode_project_files(
     config: &Config,
     team_id: &str,
     fw_name: &str,
+    version: &str,
 ) -> Res {
+    let marketing = truce_utils::version_triple(version);
+    let au_component_version = truce_utils::version_word(version).to_string();
     fs_ctx::create_dir_all(build_dir.join("AUExt"))?;
     fs_ctx::create_dir_all(build_dir.join("App"))?;
     fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
@@ -437,6 +451,8 @@ fn write_xcode_project_files(
         // `resizable` / `size:` tags are an iOS-only affordance.
         extra_au_tags: &[],
         au_ver: &ver,
+        marketing_version: &marketing,
+        au_component_version: &au_component_version,
         min_os: "13.0",
         supported_platform: "MacOSX",
         xcode_tokens: None,
@@ -470,7 +486,9 @@ fn write_xcode_project_files(
     } else {
         ""
     };
-    let app_plist = templates::au3::APP_INFO_PLIST.replace("APPICON_KEYS", icon_keys);
+    let app_plist = templates::au3::APP_INFO_PLIST
+        .replace("APPICON_KEYS", icon_keys)
+        .replace("MARKETINGVER", &marketing);
     fs_ctx::write_if_changed(build_dir.join("App/Info.plist"), app_plist)?;
     Ok(())
 }

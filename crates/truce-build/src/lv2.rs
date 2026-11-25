@@ -45,6 +45,10 @@ pub struct Lv2Bundle {
     pub plugin_name: String,
     pub vendor: String,
     pub url: String,
+    /// Plugin version (`"major.minor.patch"`). LV2 has no major component
+    /// (incompatible changes belong in the plugin URI), so the TTL maps
+    /// minor/patch onto `lv2:minorVersion` / `lv2:microVersion`.
+    pub version: String,
     /// Plugin URI. Caller computes (typically `<vendor.url>/lv2/<clap_id>`
     /// or `urn:truce:<clap_id>` when `url` is empty) - kept explicit so
     /// the URI scheme stays in one place at the call site.
@@ -343,6 +347,14 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
         let _ = writeln!(f, "    a lv2:Plugin, {category} ;");
     }
     let _ = writeln!(f, "    doap:name \"{}\" ;", escape_turtle(&b.plugin_name));
+    // LV2 versioning is minor/micro only; derive both from the plugin
+    // version via the shared packer (major is dropped - it belongs in the
+    // URI). Hosts pick the highest version among bundles sharing a URI. The
+    // LV2 convention that odd = development is not enforced; the real
+    // components ship as-is.
+    let version_word = truce_utils::version_word(&b.version);
+    let _ = writeln!(f, "    lv2:minorVersion {} ;", (version_word >> 8) & 0xFF);
+    let _ = writeln!(f, "    lv2:microVersion {} ;", version_word & 0xFF);
     let _ = writeln!(f, "    doap:maintainer [");
     let _ = writeln!(
         f,
@@ -847,6 +859,7 @@ mod tests {
             plugin_name: "Test".into(),
             vendor: "Vendor".into(),
             url: "https://example.com".into(),
+            version: "1.2.3".into(),
             uri: plugin_uri("https://example.com", "test"),
             ui_uri: ui_uri("https://example.com", "test"),
             category,

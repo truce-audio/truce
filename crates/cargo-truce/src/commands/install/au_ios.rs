@@ -186,6 +186,12 @@ pub(crate) fn build_bundle(
     let app_name = &p.name;
     let app_file = p.file_stem();
     let dylib_stem = p.dylib_stem();
+    // iOS: the appex and its container app must carry matching version
+    // keys for App Store submission, so `CFBundleVersion` is the plugin
+    // version here (not the per-build timestamp the macOS appex uses).
+    let version = crate::plugin_version(p, root)?;
+    let marketing = truce_utils::version_triple(&version);
+    let au_component_version = truce_utils::version_word(&version).to_string();
 
     eprintln!(
         "==> [1/5] cargo build ({}, --features au)",
@@ -215,7 +221,7 @@ pub(crate) fn build_bundle(
     )?;
     fs_ctx::write(
         fw_dir.join("Info.plist"),
-        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+        framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target, &version),
     )?;
 
     // Factory presets into the framework's flat `Presets/` directory.
@@ -273,7 +279,9 @@ pub(crate) fn build_bundle(
             au_mfr,
             au_tag,
             extra_au_tags: &extra_au_tags,
-            au_ver: "1",
+            au_ver: &marketing,
+            marketing_version: &marketing,
+            au_component_version: &au_component_version,
             min_os: &min_ios,
             supported_platform: target.supported_platform(),
             xcode_tokens: Some(crate::templates::au3::XcodeTokens {
@@ -471,6 +479,7 @@ pub(crate) fn build_bundle(
             &min_ios,
             target,
             &orientations_xml,
+            &version,
         ),
     )?;
 
@@ -767,6 +776,7 @@ pub(crate) fn build_xcframework(
     let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
     // Resolved once; staged into every slice's framework below.
     let factory_presets = super::presets::load_factory_presets(root, p, &cfg)?;
+    let version = crate::plugin_version(p, root)?;
     let mut slices: Vec<PathBuf> = Vec::with_capacity(2);
     for target in [IosTarget::Device, IosTarget::Simulator] {
         eprintln!(
@@ -804,7 +814,7 @@ pub(crate) fn build_xcframework(
         )?;
         fs_ctx::write(
             slice_dir.join("Info.plist"),
-            framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
+            framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target, &version),
         )?;
         // Factory presets into each slice's flat `Presets/` directory
         // (iOS frameworks are shallow bundles - a `Resources/` subdir
@@ -877,7 +887,7 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
     // other formats: `<crate>-<version>-ios.ipa`.
     let dist_dir = truce_build::target_dir(root).join("dist");
     fs_ctx::create_dir_all(&dist_dir)?;
-    let version = crate::read_workspace_version(root).unwrap_or_else(|e| {
+    let version = crate::plugin_version(p, root).unwrap_or_else(|e| {
         eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
         "0.0.0".to_string()
     });
@@ -1273,8 +1283,10 @@ fn framework_info_plist(
     bundle_id: &str,
     min_ios: &str,
     target: IosTarget,
+    version: &str,
 ) -> String {
     let platform = target.supported_platform();
+    let version = truce_utils::version_triple(version);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -1285,8 +1297,8 @@ fn framework_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{fw_name}</string>
     <key>CFBundlePackageType</key><string>FMWK</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>
 </dict>
@@ -1343,8 +1355,10 @@ fn app_info_plist(
     min_ios: &str,
     target: IosTarget,
     orientations_xml: &str,
+    version: &str,
 ) -> String {
     let platform = target.supported_platform();
+    let version = truce_utils::version_triple(version);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -1355,8 +1369,8 @@ fn app_info_plist(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>{app_name}</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>{version}</string>
+    <key>CFBundleVersion</key><string>{version}</string>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>

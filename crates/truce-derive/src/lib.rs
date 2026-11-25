@@ -157,11 +157,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let vendor = &config.vendor.name;
     let url = &config.vendor.url;
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
-    let version = plugin
-        .version
-        .as_deref()
-        .unwrap_or(&pkg_version)
-        .to_string();
+    let version = truce_build::effective_plugin_version(plugin.version.as_deref(), &pkg_version);
 
     // Category-string vocabulary parsed by every consumer that reads
     // `truce.toml`. Note-effect plugins (`midi` / `note_effect`) must
