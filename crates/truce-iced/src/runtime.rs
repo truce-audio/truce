@@ -752,6 +752,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
     ///
     /// Returns an empty vec when the renderer is not ready yet; the caller
     /// re-queues those events for the first `tick` and keeps the key.
+    // Only the desktop editor's key path calls this; iOS has no host to
+    // return unconsumed keys to.
+    #[cfg_attr(target_os = "ios", allow(dead_code))]
     pub(crate) fn apply_events(&mut self, events: Vec<Event>) -> Vec<Status> {
         let Some(render) = self.render.as_mut() else {
             self.pending_events.extend(events);
