@@ -20,7 +20,9 @@ use truce_core::editor::EditorBuilder;
 use truce_core::editor::{
     ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle, SendPtr,
 };
-use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{
+    Event, EventBody, EventList, TransportInfo, block_event_capacity, initial_event_capacity,
+};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginInfo, resolve_name_override};
 use truce_core::meters::MeterStore;
@@ -310,6 +312,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
             plugin.init();
             let info = P::info();
             let param_infos = plugin.params().param_infos();
+            let initial_event_cap = initial_event_capacity(param_infos.len());
             let params_arc = plugin.params_arc();
             let meter_store = plugin.meter_store();
             let snapshot = plugin.snapshot_slot();
@@ -333,10 +336,10 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 transport_slot: TransportSlot::new(),
                 pending_state: Arc::new(StateLoadQueue::new(1)),
                 audio: PluginCell::new(Vst2Audio {
-                    event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    event_list: EventList::with_capacity(initial_event_cap),
                     sysex_inputs_pending: false,
-                    output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                    sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    output_events: EventList::with_capacity(initial_event_cap),
+                    sub_event_scratch: EventList::with_capacity(initial_event_cap),
                     sample_rate: 44100.0,
                     // 8192 covers the largest block sizes mainstream DAWs use; a
                     // non-zero default keeps the process-before-prepared path
@@ -398,6 +401,13 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let max_frames = (max_frames as usize).max(1024);
         audio.sample_rate = sample_rate;
         audio.max_block_size = max_frames;
+        // Grow the event rings to the block's worst case here, off the
+        // audio thread, so a dense input block (host automation + MIDI)
+        // never overflows a fail-closed `push` during processing.
+        let event_cap = block_event_capacity(max_frames, inst.param_infos.len());
+        audio.event_list.reserve_events(event_cap);
+        audio.output_events.reserve_events(event_cap);
+        audio.sub_event_scratch.reserve_events(event_cap);
         // Size scratch from the widest declared layout, not the default
         // one, so a host that later selects a wider layout doesn't allocate
         // in `process`.

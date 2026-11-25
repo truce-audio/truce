@@ -25,7 +25,9 @@ use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::editor::EditorBuilder;
 use truce_core::editor::{ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle};
-use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{
+    Event, EventBody, EventList, TransportInfo, block_event_capacity, initial_event_capacity,
+};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo, resolve_name_override};
 use truce_core::meters::MeterStore;
@@ -1018,6 +1020,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
             plugin.init();
             let info = P::info();
             let param_infos = plugin.params().param_infos();
+            let initial_event_cap = initial_event_capacity(param_infos.len());
             let params_arc = plugin.params_arc();
             let meter_store = plugin.meter_store();
             let snapshot = plugin.snapshot_slot();
@@ -1039,10 +1042,10 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
                 min_subblock_samples: info.automation.min_subblock_samples,
                 plugin_id_hash: state::shared_plugin_state_hash(&info),
                 audio: PluginCell::new(AaxAudio {
-                    event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    event_list: EventList::with_capacity(initial_event_cap),
                     sysex_inputs_pending: false,
-                    output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                    sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    output_events: EventList::with_capacity(initial_event_cap),
+                    sub_event_scratch: EventList::with_capacity(initial_event_cap),
                     sample_rate: 44100.0,
                     max_block_size: 8192,
                     prepared: false,
@@ -1093,6 +1096,13 @@ pub unsafe fn _reset<P: PluginExport>(
         let max_frames = (max_frames as usize).max(1024);
         audio.sample_rate = sample_rate;
         audio.max_block_size = max_frames;
+        // Grow the event rings to the block's worst case here, off the
+        // audio thread, so a dense input block (host automation + MIDI)
+        // never overflows a fail-closed `push` during processing.
+        let event_cap = block_event_capacity(max_frames, inst.param_infos.len());
+        audio.event_list.reserve_events(event_cap);
+        audio.output_events.reserve_events(event_cap);
+        audio.sub_event_scratch.reserve_events(event_cap);
         // Size scratch to the widest declared layout: a multi-layout plugin
         // gets one AAX component per stem, and this instance may be any of
         // them, so pre-allocating for the max keeps `_process` off the audio

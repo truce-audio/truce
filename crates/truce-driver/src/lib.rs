@@ -899,18 +899,21 @@ impl<P: PluginExport> PluginDriver<P> {
         };
 
         let mut cursor = 0usize;
-        let mut event_list = EventList::with_capacity(script_events.len().min(256));
-        // Hoisted out of the loop and reused. `with_capacity` reserves
-        // both the event ring and the `SysEx` byte pool (`default()`
-        // reserves neither), so the plugin's `push_sysex` into
-        // `output_events` and the chunker's rebase into the scratch
-        // stay allocation-free and don't silently drop `SysEx`.
-        let mut output_events_block = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        // Offline render: no RT constraint, so every list here is
+        // growable - a reallocation is harmless, a dropped scripted event
+        // is a wrong test result. `growable_with_capacity` still reserves
+        // the `SysEx` byte pool (`default()` doesn't), so the plugin's
+        // `push_sysex` into `output_events` and the chunker's rebase into
+        // the scratch don't fail with `PoolFull`. The initial sizes only
+        // avoid regrowth.
+        let event_cap = script_events.len().max(EVENT_LIST_PREALLOC);
+        let mut event_list = EventList::growable_with_capacity(event_cap);
+        let mut output_events_block = EventList::growable_with_capacity(EVENT_LIST_PREALLOC);
         // Per-sub-block scratch + cached static info so the offline
         // render routes through the same `chunked_process` helper the
         // format wrappers use. Tests scripting `set_param` at known
         // offsets get the same deferred-apply behavior live hosts see.
-        let mut sub_event_scratch = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        let mut sub_event_scratch = EventList::growable_with_capacity(event_cap);
         let param_infos = plugin.params().param_infos();
         let params_arc = plugin.params_arc();
         let min_subblock_samples = P::info().automation.min_subblock_samples;
