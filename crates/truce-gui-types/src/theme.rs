@@ -39,6 +39,11 @@ pub struct Theme {
     pub knob_pointer: Color,
     pub header_bg: Color,
     pub header_text: Color,
+    /// Track of an *off* toggle while hovered (`knob_track` when idle,
+    /// `knob_fill` when on).
+    pub toggle_track_hover: Color,
+    /// A toggle's sliding knob.
+    pub toggle_thumb: Color,
 }
 
 impl Theme {
@@ -56,6 +61,8 @@ impl Theme {
             knob_pointer: Color::rgb(0.95, 0.95, 0.97),
             header_bg: Color::rgb(0.08, 0.08, 0.10),
             header_text: Color::rgb(0.75, 0.75, 0.80),
+            toggle_track_hover: Color::rgb(0.30, 0.30, 0.36),
+            toggle_thumb: Color::rgb(1.0, 1.0, 1.0),
         }
     }
 }
