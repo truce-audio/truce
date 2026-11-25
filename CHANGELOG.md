@@ -15,6 +15,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 - **Minimum supported Rust is now 1.98** (was 1.92). The build uses `Option` / `Result::map_or_default`, stabilized in 1.98, so a plug-in on an older toolchain no longer compiles. **Migration:** `rustup update`.
 - **An unknown `aax_category` is now a compile error.** `truce.toml` categories are validated against the recognized set at macro-expansion time instead of being silently accepted; only an AAX build that named an out-of-set category is affected. **Migration:** set `aax_category` to a recognized value.
 - **`Editor::idle` gained a `dt` parameter.** `fn idle(&mut self)` is now `fn idle(&mut self, dt: std::time::Duration)` — `dt` is the wall-clock time since the previous call, so animation can be driven frame-rate-independently across hosts that tick at different rates. A custom `Editor` that overrides `idle` no longer compiles. **Migration:** add the parameter (`fn idle(&mut self, _dt: std::time::Duration)` if you don't use it). A plug-in on a built-in editor is unaffected.
+- **`truce-egui` editors receive a key only when they claim it or a text field is focused.** So a DAW's shortcuts keep working while a plug-in window is focused, an unclaimed key now returns to the host instead of reaching the editor — a plug-in that reads keys directly (custom shortcuts, Tab / Enter navigation) stops seeing them until it opts in. **Migration:** call `truce_egui::claim_keys(ui.ctx(), &[…])` each frame with the keys you handle (or `egui::Key::ALL` for all of them, as `gui-zoo-egui` now does). A focused text field still keeps every key; an unclaimed Cmd / Ctrl / Alt chord routes to the host, and you can claim specific chords with `truce_egui::claim_shortcuts(ui.ctx(), &[egui::KeyboardShortcut::new(…)])`.
 
 ### Migrating from 6.x
 
@@ -60,7 +61,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 
 ### Other changes
 
-- Keyboard forwarding: with the editor focused, a key it does not use goes back to the host (Space, Return, arrange shortcuts); egui / iced / slint report unused keys, a focused text field keeps all, and `truce-egui` adds `claim_keys` to hold keys without a chord.
+- Keyboard forwarding: with the editor focused, a key it does not use goes back to the host (Space, Return, arrange shortcuts) so DAW commands keep working; egui / iced / slint report unused keys and a focused text field keeps all. egui's `claim_keys` opt-in is a breaking change for plug-ins that read keys directly — see Breaking.
 - `truce-egui`: recovers from a failed surface acquire instead of staying black, fixing a freeze and a GPU / host memory leak (#248).
 - `truce-slint`: fixed content bleeding through popups and enabled image / SVG decoding on the software path (#241).
 - Built-in GUI: restyled toggle widget, picked up on rebuild with no code change.

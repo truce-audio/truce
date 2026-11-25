@@ -38,7 +38,7 @@ pub mod widgets;
 mod editor_ios;
 
 #[cfg(not(target_os = "ios"))]
-pub use editor::{EditorUi, EguiEditor};
+pub use editor::{EditorUi, EguiEditor, claim_keys, claim_shortcuts};
 
 #[cfg(target_os = "ios")]
 pub use editor_ios::{EditorUi, EguiEditor};

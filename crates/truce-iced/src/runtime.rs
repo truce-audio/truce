@@ -10,6 +10,7 @@
 use std::fmt::Debug;
 use std::sync::Arc;
 
+use crate::iced::event::Status;
 use crate::iced::{Color, Event, Point, Size, Task};
 use iced_wgpu::wgpu;
 use truce_core::editor::PluginContext;
@@ -723,6 +724,77 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         self.pump = None;
         self.client = None;
         self.spawn_pump(window)
+    }
+
+    /// Apply input `events` through a build/update cycle and commit the
+    /// result, returning iced's per-event [`Status`] parallel to `events`.
+    /// GPU-free: no draw or present - the next [`Self::tick`] repaints from
+    /// the updated cache. The keyboard path in `on_event` needs the status
+    /// synchronously because baseview forwards keys the UI did not consume
+    /// to the host (so Space and transport shortcuts keep working while the
+    /// editor is focused), and iced only reports consumption here.
+    ///
+    /// Returns an empty vec when the renderer is not ready yet; the caller
+    /// re-queues those events for the first `tick` and keeps the key.
+    pub(crate) fn apply_events(&mut self, events: Vec<Event>) -> Vec<Status> {
+        let Some(render) = self.render.as_mut() else {
+            self.pending_events.extend(events);
+            return Vec::new();
+        };
+        if events.is_empty() {
+            return Vec::new();
+        }
+        let cursor = crate::iced::mouse::Cursor::Available(self.cursor_position);
+        let logical_size = render.viewport.logical_size();
+
+        let mut messages: Vec<Message<M::Message>> = Vec::new();
+        let cache = render
+            .ui_cache
+            .take()
+            .unwrap_or_else(iced_runtime::user_interface::Cache::new);
+        let view_element = render.program.view();
+        let mut user_interface = iced_runtime::UserInterface::build(
+            view_element,
+            logical_size,
+            cache,
+            &mut render.renderer,
+        );
+        let (ui_state, statuses) = user_interface.update(
+            &events,
+            cursor,
+            &mut render.renderer,
+            &mut iced_runtime::core::clipboard::Null,
+            &mut messages,
+        );
+        // A focused text/IME widget wants text input; keep this fresh so the
+        // iOS soft-keyboard signal and the editor's keep-keys decision track
+        // focus changes that a keystroke just caused.
+        if let iced_runtime::user_interface::State::Updated { input_method, .. } = ui_state {
+            render.wants_keyboard =
+                matches!(input_method, crate::iced::InputMethod::Enabled { .. });
+        }
+        render.ui_cache = Some(user_interface.into_cache());
+
+        let recipes =
+            iced_runtime::futures::subscription::into_recipes(render.program.plugin.subscription());
+        self.sub_runtime.track(recipes);
+        for (event, status) in events.iter().zip(&statuses) {
+            self.sub_runtime
+                .broadcast(iced_runtime::futures::subscription::Event::Interaction {
+                    window: self.window_id,
+                    event: event.clone(),
+                    status: *status,
+                });
+        }
+        while let Ok(message) = self.sub_rx.try_recv() {
+            messages.push(message);
+        }
+        for message in messages {
+            render.program.dispatch(message);
+        }
+        // Applied off the render path; repaint next tick from the new cache.
+        self.force_render = true;
+        statuses
     }
 
     /// Drive one frame: update iced state + present to surface.

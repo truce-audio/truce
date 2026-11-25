@@ -383,9 +383,16 @@ fn egui_widgets_section(ui: &mut egui::Ui) {
 }
 
 /// Keyboard demo: a text box (keys reach the focused widget) over a label
-/// that mirrors the last key press from anywhere. `zoo_ui` is stateless, so
-/// the box contents and last-key label live in egui's `Context` memory.
+/// that mirrors the last key press. truce-egui returns unclaimed keys to
+/// the host, so this section calls `claim_keys(.., Key::ALL)` to catch
+/// every key while the editor is focused - the one example that exercises
+/// `claim_keys`. `zoo_ui` is stateless, so the box contents and last-key
+/// label live in egui's `Context` memory.
 fn keyboard_section(ui: &mut egui::Ui) {
+    // Without this, only the focused text box below would see keys.
+    // Unclaimed chords (Cmd/Ctrl/Alt) still go to the host; claim specific
+    // ones with `truce_egui::claim_shortcuts` if an editor needs them.
+    truce_egui::claim_keys(ui.ctx(), egui::Key::ALL);
     let box_id = egui::Id::unique("zoo_keyboard_textbox");
     let key_id = egui::Id::unique("zoo_keyboard_last");
 

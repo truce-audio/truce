@@ -1108,19 +1108,27 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     use keyboard_types::KeyState;
                     self.modifiers = convert_kb_modifiers(kb.modifiers);
                     // Decided before this frame. A text field keeps every key.
-                    // Anything else is kept only when the UI published it last
-                    // frame (`truce-egui.claimed-keys`). The host gets the rest,
-                    // on Logic and on Live (AU and VST): both deliver keys to
-                    // this view once the plug-in window is key.
+                    // A plain key is kept when claimed via `claim_keys`, a
+                    // modifier chord when claimed via `claim_shortcuts`. The
+                    // host gets the rest, on Logic and on Live (AU and VST):
+                    // both deliver keys to this view once the plug-in window
+                    // is key.
                     let text_focused = self.egui_ctx.text_edit_focused();
                     let claimed = claimed_keys(&self.egui_ctx);
-                    let chord = self.modifiers.command || self.modifiers.ctrl || self.modifiers.alt;
+                    let shortcuts = claimed_shortcuts(&self.egui_ctx);
                     let key = egui_key_of(&kb.key);
                     let was_held = self.held_keys.contains(&kb.code);
                     if kb.state == KeyState::Up {
                         self.held_keys.remove(&kb.code);
                     }
-                    let keep = keep_key(text_focused, chord, key, &claimed, was_held);
+                    let keep = keep_key(
+                        text_focused,
+                        self.modifiers,
+                        key,
+                        &claimed,
+                        &shortcuts,
+                        was_held,
+                    );
                     if keep && kb.state == KeyState::Down {
                         self.held_keys.insert(kb.code);
                     }
@@ -1344,15 +1352,62 @@ fn convert_kb_modifiers(mods: keyboard_types::Modifiers) -> egui::Modifiers {
     }
 }
 
-/// Id shared with fmdrum-ui. The value is the `egui::Key`s the editor
-/// wants on the next key event. A text field does not need an entry:
-/// `text_edit_focused` keeps every key while it is up.
-const CLAIMED_KEYS: &str = "truce-egui.claimed-keys";
+/// The keys the editor's UI handles on the next key event. Keyed in
+/// egui's temp store by this private type (not a string), so only
+/// [`claim_keys`] can write the slot and no foreign value can collide.
+#[derive(Clone, Default)]
+struct ClaimedKeys(Vec<egui::Key>);
+
+/// Declare the keys this editor handles this frame. Call once per frame
+/// from your egui UI with the keys you use (a step sequencer's arrows,
+/// preset number keys, `egui::Key::Space` for a transport toggle, ...).
+/// Every *unclaimed* key is returned to the host so its own commands keep
+/// running while the plug-in window is focused. Two cases bypass this
+/// list: a key held with a Cmd / Ctrl / Alt modifier always goes to the
+/// host unless you claim it via [`claim_shortcuts`]), and a
+/// focused text field keeps every key. Pass [`egui::Key::ALL`] to claim
+/// everything.
+///
+/// ```ignore
+/// truce_egui::claim_keys(ui.ctx(), &[egui::Key::ArrowLeft, egui::Key::ArrowRight]);
+/// ```
+pub fn claim_keys(ctx: &egui::Context, keys: &[egui::Key]) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::NULL, ClaimedKeys(keys.to_vec())));
+}
 
 fn claimed_keys(ctx: &egui::Context) -> Vec<egui::Key> {
     ctx.data(|data| {
-        data.get_temp(egui::Id::new(CLAIMED_KEYS))
+        data.get_temp::<ClaimedKeys>(egui::Id::NULL)
+            .map(|claimed| claimed.0)
             .unwrap_or_default()
+    })
+}
+
+/// The modifier chords the editor's UI handles on the next key event.
+/// A separate temp slot from [`ClaimedKeys`] (distinct type at the same
+/// id), so [`claim_keys`] and [`claim_shortcuts`] don't clobber each other.
+#[derive(Clone, Default)]
+struct ClaimedShortcuts(Vec<egui::KeyboardShortcut>);
+
+/// Like [`claim_keys`], but for modifier chords (Cmd+Z, Ctrl+Shift+A, ...).
+/// Call once per frame with the chords your editor handles; an unclaimed
+/// chord returns to the host so its own shortcuts keep working. Modifier
+/// matching is egui's [`egui::Modifiers::matches_exact`], so
+/// `Modifiers::COMMAND` is Cmd on macOS and Ctrl elsewhere, and `alt` /
+/// `shift` must match exactly.
+///
+/// ```ignore
+/// use egui::{Key, KeyboardShortcut, Modifiers};
+/// truce_egui::claim_shortcuts(ui.ctx(), &[KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)]);
+/// ```
+pub fn claim_shortcuts(ctx: &egui::Context, shortcuts: &[egui::KeyboardShortcut]) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::NULL, ClaimedShortcuts(shortcuts.to_vec())));
+}
+
+fn claimed_shortcuts(ctx: &egui::Context) -> Vec<egui::KeyboardShortcut> {
+    ctx.data(|data| {
+        data.get_temp::<ClaimedShortcuts>(egui::Id::NULL)
+            .map_or_default(|claimed| claimed.0)
     })
 }
 
@@ -1370,12 +1425,28 @@ fn egui_key_of(key: &keyboard_types::Key) -> Option<egui::Key> {
 /// `held` is a key-up for a key-down this editor already kept.
 fn keep_key(
     text_focused: bool,
-    chord: bool,
+    modifiers: egui::Modifiers,
     key: Option<egui::Key>,
     claimed: &[egui::Key],
+    shortcuts: &[egui::KeyboardShortcut],
     held: bool,
 ) -> bool {
-    text_focused || held || (!chord && key.is_some_and(|key| claimed.contains(&key)))
+    if text_focused || held {
+        return true;
+    }
+    let Some(key) = key else {
+        return false;
+    };
+    // A plain key is claimed without a Cmd / Ctrl / Alt modifier (Shift
+    // still counts as text, not a chord). A chord routes to the host
+    // unless it was explicitly claimed via `claim_shortcuts`.
+    let chord = modifiers.command || modifiers.ctrl || modifiers.alt;
+    if !chord && claimed.contains(&key) {
+        return true;
+    }
+    shortcuts
+        .iter()
+        .any(|s| s.logical_key == key && modifiers.matches_exact(s.modifiers))
 }
 
 fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
@@ -1421,6 +1492,7 @@ fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
             "7" => egui::Key::Num7,
             "8" => egui::Key::Num8,
             "9" => egui::Key::Num9,
+            " " => egui::Key::Space,
             _ => return None,
         },
         Enter => egui::Key::Enter,
@@ -1752,30 +1824,89 @@ impl<P: Params + ?Sized> Drop for EguiEditor<P> {
 #[cfg(test)]
 mod key_tests {
     use super::{egui_key_of, keep_key};
+    use egui::{Key, KeyboardShortcut, Modifiers};
 
     #[test]
-    fn space_passes_unless_a_text_field_has_it() {
+    fn space_goes_to_host_unless_focused_or_claimed() {
         let space = egui_key_of(&keyboard_types::Key::Character(" ".into()));
-        assert_eq!(space, None);
-        assert!(!keep_key(false, false, space, &[], false));
-        assert!(keep_key(true, false, space, &[], false));
+        // Space maps to a key so an editor can opt into it via `claim_keys`.
+        assert_eq!(space, Some(Key::Space));
+        // Unclaimed, no text field: Space returns to the host (play/pause).
+        assert!(!keep_key(false, Modifiers::NONE, space, &[], &[], false));
+        // A focused text field keeps every key, including Space.
+        assert!(keep_key(true, Modifiers::NONE, space, &[], &[], false));
+        // Claimed as a plain key: kept.
+        assert!(keep_key(
+            false,
+            Modifiers::NONE,
+            space,
+            &[Key::Space],
+            &[],
+            false
+        ));
+        // A Cmd chord over a plain claim still routes to the host.
         assert!(!keep_key(
             false,
-            true,
-            Some(egui::Key::Space),
-            &[egui::Key::Space],
+            Modifiers::COMMAND,
+            space,
+            &[Key::Space],
+            &[],
             false
         ));
     }
 
     #[test]
-    fn claimed_plain_keys_stay_and_chords_do_not() {
-        let claimed = [egui::Key::Num1, egui::Key::M, egui::Key::Comma];
+    fn claimed_plain_keys_stay_and_chords_go_to_host() {
+        let claimed = [Key::Num1, Key::M, Key::Comma];
         let one = egui_key_of(&keyboard_types::Key::Character("1".into()));
         let comma = egui_key_of(&keyboard_types::Key::Character(",".into()));
-        assert!(keep_key(false, false, one, &claimed, false));
-        assert!(keep_key(false, false, comma, &claimed, false));
-        assert!(!keep_key(false, true, one, &claimed, false));
-        assert!(keep_key(false, true, one, &claimed, true));
+        assert!(keep_key(false, Modifiers::NONE, one, &claimed, &[], false));
+        assert!(keep_key(
+            false,
+            Modifiers::NONE,
+            comma,
+            &claimed,
+            &[],
+            false
+        ));
+        // A Cmd chord over a plainly-claimed key goes to the host...
+        assert!(!keep_key(
+            false,
+            Modifiers::COMMAND,
+            one,
+            &claimed,
+            &[],
+            false
+        ));
+        // ...unless it's the key-up for a key-down already kept.
+        assert!(keep_key(
+            false,
+            Modifiers::COMMAND,
+            one,
+            &claimed,
+            &[],
+            true
+        ));
+    }
+
+    #[test]
+    fn claimed_shortcuts_capture_chords_by_exact_modifiers() {
+        let z = egui_key_of(&keyboard_types::Key::Character("z".into()));
+        let shortcuts = [KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)];
+        // Cmd+Z is kept because it's claimed as a shortcut.
+        assert!(keep_key(
+            false,
+            Modifiers::COMMAND,
+            z,
+            &[],
+            &shortcuts,
+            false
+        ));
+        // Plain Z (no modifier) does not match the Cmd+Z claim.
+        assert!(!keep_key(false, Modifiers::NONE, z, &[], &shortcuts, false));
+        // A different chord must match alt / shift exactly: Cmd+Shift+Z
+        // does not satisfy a Cmd+Z claim.
+        let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert!(!keep_key(false, cmd_shift, z, &[], &shortcuts, false));
     }
 }
