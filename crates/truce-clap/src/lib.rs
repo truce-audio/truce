@@ -1180,13 +1180,6 @@ fn build_transport_info(t: &clap_event_transport, sample_rate: f64) -> Transport
     }
 }
 
-/// MIDI port an inbound CLAP event arrived on, read from the event's
-/// `port_index`. Non-MIDI events (params, transport) report `0`. The
-/// wildcard-capable events (notes, note expressions) resolve a `-1`
-/// port in their own fan-out paths ([`push_note_offs`],
-/// [`push_note_expressions`]) - the collapse to `0` here only feeds
-/// concrete-address routing, and the raw MIDI / `SysEx` events carry
-/// an unsigned `port_index` with no wildcard to lose.
 /// Minimum bytes a CLAP event of `type_` must declare in its `size`
 /// header for the whole typed struct to be in bounds before we cast and
 /// deref it. Returns `0` for event types the wrapper never casts (the
@@ -1209,6 +1202,13 @@ fn clap_event_min_size(type_: u16) -> usize {
     }
 }
 
+/// MIDI port an inbound CLAP event arrived on, read from the event's
+/// `port_index`. Non-MIDI events (params, transport) report `0`. The
+/// wildcard-capable events (notes, note expressions) resolve a `-1`
+/// port in their own fan-out paths ([`push_note_offs`],
+/// [`push_note_expressions`]) - the collapse to `0` here only feeds
+/// concrete-address routing, and the raw MIDI / `SysEx` events carry
+/// an unsigned `port_index` with no wildcard to lose.
 unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
     unsafe {
         let idx: i32 = match type_ {

@@ -67,24 +67,50 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 
 ### Other changes
 
-- Keyboard forwarding: with the editor focused, a key it does not use goes back to the host (Space, Return, arrange shortcuts) so DAW commands keep working; egui / iced / slint report unused keys and a focused text field keeps all. egui's `claim_keys` opt-in is a breaking change for plug-ins that read keys directly — see Breaking.
-- `truce-egui`: recovers from a failed surface acquire instead of staying black, fixing a freeze and a GPU / host memory leak (#248).
-- `truce-slint`: fixed window content bleeding through open popups via a full-frame software repaint (#241); a `.slint` UI that renders images or SVGs opts into decoding per plug-in via `i-slint-core` (see the slint migration note).
+#### Editors and GUI
+
+- **`idle()` everywhere.** `Editor::idle` is now driven on CLAP, VST3, VST2, AU v2, LV2 and the standalone host (#233); AAX already drove it, and the AU v3 app-extension view still does not. A side-effecting `idle()` now fires on the newly covered formats. The `dt` clock resets when an editor opens, so the first tick after a reopen doesn't report the whole closed interval, and `dt` is capped at 100 ms so a GUI-thread stall can't make animation jump. VST3 ticks `idle()` at ~60 fps only while an editor is open; with none open, only a slow restart poll runs (Windows). See the new `idle-anim` example.
+- **Keyboard forwarding.** With the editor focused, a key it doesn't use goes back to the host (Space, Return, arrange shortcuts), so DAW commands keep working. egui, iced and slint all report unused keys, and a focused text field keeps every key. egui's `claim_keys` / `claim_shortcuts` opt-in is breaking for plug-ins that read keys directly (see Breaking). A claim covers only the frame that made it, so a UI that stops claiming (say, a panel closes) hands those keys back on the next rendered frame. Keys held when the window loses focus are released instead of staying claimed.
+- `truce-egui`: recovers from a failed surface acquire instead of staying black, fixing a freeze and a GPU / host memory leak (#248). A frame dropped unrendered at shutdown or during a render panic no longer trips egui's texture-delta assert, which could abort the host in debug builds.
+- `truce-egui`: bundles Noto Music (`truce_font::NOTO_MUSIC`, SIL OFL 1.1) as a symbol fallback, so glyphs like `♩` render instead of tofu now that egui 0.37 makes its own symbol fonts opt-in.
+- `truce-slint`: fixed window content bleeding through open popups by repainting the full frame in software (#241). A `.slint` UI that renders images or SVGs opts into decoding per plug-in via `i-slint-core` (see the slint migration note).
 - Built-in GUI: restyled toggle widget, picked up on rebuild with no code change.
-- `#[nested]` accepts a fixed-size array (`[T; N]`) with contiguous id ranges and a `<field>_id(i, sub)` resolver.
-- `range` / `smooth` / `default` accept an `f64` const (a const in `range` / `default` is a build error under `lv2`).
-- `cargo truce package --arch x86_64|arm64` builds a single non-host macOS slice; `--arch` with `--host-only` errors.
-- Version numbers propagate from the workspace version across Info.plists, the AU component version, VST2, and the LV2 TTL (was `1.0`; superset of #240); the AU v3 appex build number stays a per-build timestamp.
-- `cargo truce validate` fails on a missing validator instead of passing, and parses AAX validator status correctly (#245).
-- Packaging dedupes macOS archives safely and rejects an empty `[vendor].name` (previously deleted every file).
-- AU v3: no longer accepts every host view config — Logic sizes from `preferredContentSize`; iOS still accepts all so GarageBand can resize.
-- CLAP: parameter rescan after state / preset load (#232); main-thread drain requests a restart only while active (#238).
-- VST3: correct Steinberg interface IDs for `IUnitInfo` / `IEditControllerHostEditing`.
-- VST2: restored the legacy macOS entry alias and fixed the wrapper IID.
-- AAX: fewer host transport-API calls per block.
-- `idle()` is now driven on CLAP, VST3, VST2, AU v2, LV2, and the standalone host (#233); AAX already drove it, and the AU v3 app-extension view still does not. A side-effecting `idle()` now fires on the newly-covered formats.
-- New `stepgate` example (`#[nested]` array params, AAX category).
-- Hardening: param get / set callbacks panic-firewalled across the C ABI (AU / VST2 / VST3); AAX save-blob cache no longer serves stale state; LV2 refuses a layout mismatching the category's TTL ports; CLAP / VST2 validate host-declared event / chunk sizes; `EventList::push` fails closed at capacity; bumped `zip` for a `cargo audit` advisory.
+
+#### Parameters
+
+- `#[nested]` accepts a fixed-size array (`[T; N]`, any `N`) with contiguous id ranges and a `<field>_id(i, sub)` resolver. Each element's parameter names get an index suffix (`Level 1` … `Level N`) so hosts and the GUI can tell them apart.
+- `range` / `smooth` / `default` accept an `f64` const. A const in `range` / `default` is a build error under `lv2`. A const `default` on an Int, Enum or Bool param is now range-checked at compile time like a float's: Int / Enum defaults must be whole numbers, and a Bool default must be 0 or 1.
+
+#### Formats
+
+- CLAP: requests a parameter rescan after state / preset load, fixing clap-validator's state-reproducibility tests on scaffolded plug-ins (#232). The main-thread drain requests a restart only while active (#238), and `activate` now calls the host's `latency.changed()` so a host's delay compensation can't go stale.
+- VST3: correct Steinberg interface IDs for `IUnitInfo`, `IEditControllerHostEditing` and `IProcessContextRequirements`. All three were wrong, so hosts never found these interfaces. `IProcessContextRequirements` now asks only for the fields the wrapper reads (continuous time, project / bar position, cycle, tempo, time signature, transport state) and no longer requests samples-to-next-clock, chord or frame rate.
+- VST2: restored the legacy macOS entry alias.
+- AU v3: Logic sizes the window from the editor's `preferredContentSize` instead of accepting every host view config (a 4:3 box); iOS still accepts all so GarageBand can resize. A `gui_close` that re-enters during another editor callback is now run once that callback finishes, instead of being lost and leaving the editor open after the host drops its container.
+- AAX: makes fewer host transport-API calls per block. The sample-location and bar / beat queries run only while the transport is rolling. The tick position is still read while stopped so `position_beats` tracks the edit cursor, as it does on the other formats.
+- Version numbers propagate from the workspace version to Info.plists, the AU component version, VST2 and the LV2 TTL (was `1.0`; superset of #240). The AU v3 appex build number stays a per-build timestamp.
+
+#### CLI
+
+- `cargo truce package --arch x86_64|arm64` builds a single non-host macOS slice; `--arch` with `--host-only` is an error.
+- `cargo truce validate` reports a missing validator as a failure instead of a pass, reads clap-validator's coloured summary counts correctly (it showed `PASS (0/44)` instead of `38/44`, #245), and uses clap-validator 0.4.1's `--exclude` argument.
+- Packaging dedupes macOS archives safely, and an empty `[vendor].name` is rejected (it made `reset-aax` / `reset-au` / `uninstall --stale` match and delete every file).
+- Building for the host target no longer requires a rustup-managed toolchain; only cross targets go through rustup.
+- Scaffolded MIDI plug-ins declare an explicit empty audio bus layout, fixing clap-validator failures.
+
+#### Real-time safety and hardening
+
+- Event lists are pre-sized at activate to the host's worst-case block, off the audio thread, and `EventList::push` fails closed at capacity instead of reallocating on the audio thread. A dense block of automation plus MIDI no longer drops events.
+- Parameter get / set callbacks are panic-firewalled across the C ABI (AU / VST2 / VST3).
+- CLAP / VST2 validate host-declared event and chunk sizes before reading them, closing out-of-bounds reads.
+- AAX's save-blob cache no longer serves stale state after a GUI-driven state change.
+- LV2 refuses to instantiate when the plug-in's audio layout doesn't match the category's TTL ports.
+- Bumped `zip` for a `cargo audit` advisory.
+
+#### Examples
+
+- New `stepgate` example (`#[nested]` array params, AAX category) and `idle-anim` example (`Editor::idle` with `dt`).
+- EQ and fundsp reverb examples clamp frequencies to pass clap-validator.
 
 ## 6.3.0
 
