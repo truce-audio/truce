@@ -760,6 +760,10 @@ public:
     // fail createInstance rather than hand the host a do-nothing plugin.
     bool constructed() const { return ctx != nullptr; }
 
+    // Rust-side context for the file-scope timer handlers (gui_idle);
+    // null when construction failed.
+    void* rawCtx() const { return ctx; }
+
     void* componentHandler;  // IComponentHandler*, stored with addRef
     // Pending IComponentHandler::restartComponent flags (RestartFlags
     // bitmask, e.g. kLatencyChanged = 8). The audio thread sets bits via
@@ -2045,7 +2049,7 @@ static void th_onTimer(void* self) {
         h->comp->flushPendingRestart();
         // Same UI thread, same cadence: tick the editor. The Rust side
         // no-ops when no editor is open.
-        if (g_cb && g_cb->gui_idle && h->comp->ctx) g_cb->gui_idle(h->comp->ctx);
+        if (g_cb && g_cb->gui_idle && h->comp->rawCtx()) g_cb->gui_idle(h->comp->rawCtx());
     }
 }
 #endif
@@ -2067,7 +2071,7 @@ static void CALLBACK truce_vst3_restart_timer_proc(
             comp->flushPendingRestart();
             // Same UI thread, same cadence: tick the editor. The Rust side
             // no-ops when no editor is open.
-            if (g_cb && g_cb->gui_idle && comp->ctx) g_cb->gui_idle(comp->ctx);
+            if (g_cb && g_cb->gui_idle && comp->rawCtx()) g_cb->gui_idle(comp->rawCtx());
             return;
         }
     }
