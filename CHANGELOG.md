@@ -35,11 +35,17 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
    +egui::SidePanel::left("p").show(ui, |ui| { /* ... */ });
    ```
 
-   **slint 1.15 → 1.19** — bump `slint` and `slint-build` to `=1.19.1`. Image / SVG decoding is now feature-gated; a plug-in that decodes images through slint enables the `image-decoders` / `svg` features (`truce-slint` already does this internally):
+   **slint 1.15 → 1.19** — bump `slint` and `slint-build` to `=1.19.1`:
 
    ```diff
    -slint = "=1.15.1"
    +slint = "=1.19.1"
+   ```
+
+   slint 1.19 gates image / SVG decoding behind its windowing backend, which truce's embedded software-render path doesn't use, and the `slint` facade doesn't expose those feature knobs. So a plug-in whose `.slint` markup renders images or SVGs (an embedded PNG, or `std-widgets` icons, which embed SVGs) adds a *direct* `i-slint-core` dependency to turn them on — cargo unifies it onto the same crate `slint` already pulls in (see the `gui-zoo-slint` example). A plug-in with no image / SVG markup needs only the version bump above.
+
+   ```toml
+   i-slint-core = { version = "=1.19.1", features = ["image-decoders", "image-default-formats", "svg"] }
    ```
 
    **wgpu 29 → 30** — only if your editor drives wgpu directly:
@@ -63,7 +69,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 
 - Keyboard forwarding: with the editor focused, a key it does not use goes back to the host (Space, Return, arrange shortcuts) so DAW commands keep working; egui / iced / slint report unused keys and a focused text field keeps all. egui's `claim_keys` opt-in is a breaking change for plug-ins that read keys directly — see Breaking.
 - `truce-egui`: recovers from a failed surface acquire instead of staying black, fixing a freeze and a GPU / host memory leak (#248).
-- `truce-slint`: fixed content bleeding through popups and enabled image / SVG decoding on the software path (#241).
+- `truce-slint`: fixed window content bleeding through open popups via a full-frame software repaint (#241); a `.slint` UI that renders images or SVGs opts into decoding per plug-in via `i-slint-core` (see the slint migration note).
 - Built-in GUI: restyled toggle widget, picked up on rebuild with no code change.
 - `#[nested]` accepts a fixed-size array (`[T; N]`) with contiguous id ranges and a `<field>_id(i, sub)` resolver.
 - `range` / `smooth` / `default` accept an `f64` const (a const in `range` / `default` is a build error under `lv2`).
