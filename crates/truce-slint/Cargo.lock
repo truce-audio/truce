@@ -402,9 +402,9 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "baseview-truce"
-version = "0.1.1-truce.13"
+version = "0.1.1-truce.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dc830ece0415c778e700c97d38bb28f4d8af0280f9d140f50ea094d0fed3e27"
+checksum = "edbfdca945c40d6e0d4a748ccf8544e8ae7dd85d897a3e9f6c684c3b18b242f5"
 dependencies = [
  "keyboard-types 0.7.0",
  "nix 0.22.3",
@@ -4962,7 +4962,6 @@ version = "6.3.0"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
- "log",
  "objc",
  "truce-core",
  "truce-params",

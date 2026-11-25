@@ -69,7 +69,7 @@ members = [
     "examples/truce-example-multiport",
     "examples/truce-example-midi-inspector",
     "examples/truce-example-idle-anim",
-    "examples/truce-example-multigain",
+    "examples/truce-example-stepgate",
 ]
 
 [workspace.package]
@@ -82,12 +82,8 @@ edition = "2024"
 # (the rider is not captured by `Apache-2.0 OR MIT` alone).
 license = "LicenseRef-TruceLicense-1.0"
 rust-version = "1.92"
-description = "Build audio plugins in Rust. One codebase, every format."
 repository = "https://github.com/truce-audio/truce"
 homepage = "https://truce.audio"
-categories = ["multimedia::audio", "development-tools::cargo-plugins"]
-keywords = ["audio", "plugin", "vst", "clap", "daw", "aax", "sfx", "effects", "cubase", "protools", "ableton"]
-readme = "README.md"
 
 # Workspace-wide lint config. Crates opt in with `lints.workspace = true`.
 # `objc` 0.2's `msg_send!` / `class!` / `sel!` macros emit
@@ -178,7 +174,7 @@ wgpu = { version = "30", default-features = false, features = ["wgsl"] }
 # `crates/truce-vizia/` (its own Cargo workspace). Whatever patch
 # wiring vizia ends up needing belongs there, not here - keeping the
 # parent lockfile + iOS bake free of the vizia mess.
-baseview = { package = "baseview-truce", version = "0.1.1-truce.13" }
+baseview = { package = "baseview-truce", version = "0.1.1-truce.14" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features
