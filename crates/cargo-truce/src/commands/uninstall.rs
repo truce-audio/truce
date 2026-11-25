@@ -356,7 +356,13 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    if !name_str.contains(vendor) || !name_str.ends_with(".app") {
+                    // Guard the empty-vendor trap: `contains("")` matches every
+                    // app, so a blank vendor would queue every `.app` in
+                    // /Applications (load_config also rejects it).
+                    if vendor.is_empty()
+                        || !name_str.contains(vendor)
+                        || !name_str.ends_with(".app")
+                    {
                         continue;
                     }
                     let looks_like_au3 =

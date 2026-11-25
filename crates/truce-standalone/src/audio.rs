@@ -463,19 +463,15 @@ fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
             .and_then(|d| d.description().map(|desc| desc.name().to_string()).ok())
     };
     let names = if output {
-        host.output_devices()
-            .map(|it| {
-                it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
-                    .collect()
-            })
-            .unwrap_or_default()
+        host.output_devices().map_or_default(|it| {
+            it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
+                .collect()
+        })
     } else {
-        host.input_devices()
-            .map(|it| {
-                it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
-                    .collect()
-            })
-            .unwrap_or_default()
+        host.input_devices().map_or_default(|it| {
+            it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
+                .collect()
+        })
     };
     (default_name, names)
 }
@@ -529,10 +525,7 @@ impl DeviceCache {
     #[must_use]
     pub fn outputs(&self) -> Vec<String> {
         self.ensure_warm();
-        self.inner
-            .lock()
-            .map(|g| g.outputs.clone())
-            .unwrap_or_default()
+        self.inner.lock().map_or_default(|g| g.outputs.clone())
     }
 
     /// Cached input device names. Same cold-read guarantee as
@@ -540,10 +533,7 @@ impl DeviceCache {
     #[must_use]
     pub fn inputs(&self) -> Vec<String> {
         self.ensure_warm();
-        self.inner
-            .lock()
-            .map(|g| g.inputs.clone())
-            .unwrap_or_default()
+        self.inner.lock().map_or_default(|g| g.inputs.clone())
     }
 
     fn ensure_warm(&self) {
@@ -1394,6 +1384,16 @@ fn open_output_stream<P: PluginExport>(
         p.reset(&AudioConfig::new(sample_rate, frame_bound));
     }
     scratch.ensure_capacity(num_in, num_out, frame_bound);
+    // Pre-size the per-channel output/input scratch inner Vecs to the frame
+    // bound, off the audio thread, so the first callback's `resize` (and any
+    // block up to the bound) doesn't `malloc` inside cpal's real-time
+    // callback - the `RawBufferScratch` pre-grow above only covers the
+    // widening scratch, not these. The outer length matches what the
+    // callback re-shapes to (`num_out` / `num_in`), so its `resize_with`
+    // stays a no-op rather than a truncate that frees inner Vecs on the RT
+    // thread.
+    channel_bufs.resize_with(num_out, || vec![0.0; frame_bound]);
+    input_bufs.resize_with(num_in, || vec![0.0; frame_bound]);
     // `num_main_in` (the main/sidechain split of the selected layout) is
     // resolved by the caller and passed in - the layout is fixed for the
     // stream's lifetime.

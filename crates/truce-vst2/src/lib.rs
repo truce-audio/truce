@@ -891,20 +891,24 @@ unsafe extern "C" fn cb_output_sysex_at<P: PluginExport>(
 }
 
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
-    unsafe {
+    // `Params::count` is hand-implementable author code; firewall a panic so
+    // it can't unwind across the C ABI into the host (0 default).
+    run_extern_callback_with::<P, u32>("vst2", "param_count", 0, || unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
         len_u32(inst.params_arc.count())
-    }
+    })
 }
 
 unsafe extern "C" fn cb_param_get_normalized<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
 ) -> f64 {
-    unsafe {
+    // `Params::get_normalized` is hand-implementable author code; firewall a
+    // panic so it can't unwind across the C ABI (0.0 default).
+    run_extern_callback_with::<P, f64>("vst2", "param_get_normalized", 0.0, || unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.params_arc.get_normalized(id).unwrap_or(0.0)
-    }
+    })
 }
 
 unsafe extern "C" fn cb_param_set_normalized<P: PluginExport>(
@@ -912,10 +916,12 @@ unsafe extern "C" fn cb_param_set_normalized<P: PluginExport>(
     id: u32,
     value: f64,
 ) {
-    unsafe {
+    // `Params::set_normalized` is hand-implementable author code reachable
+    // from host automation; firewall a panic so it can't abort the host.
+    run_extern_callback_with::<P, ()>("vst2", "param_set_normalized", (), || unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.params_arc.set_normalized(id, value);
-    }
+    });
 }
 
 /// Parse host text-entry into a plain value and apply it (backs

@@ -982,10 +982,12 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
 ) -> f64 {
-    unsafe {
+    // `Params::get_plain` is hand-implementable author code; firewall a
+    // panic so it can't unwind across the C ABI into the host (0.0 default).
+    run_extern_callback_with::<P, f64>("au", "param_get_value", 0.0, || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         inst.params_arc.get_plain(id).unwrap_or(0.0)
-    }
+    })
 }
 
 unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
@@ -993,10 +995,13 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     id: u32,
     value: f64,
 ) {
-    unsafe {
+    // `Params::set_plain` is hand-implementable author code reachable from
+    // host automation (legally on the render thread in AU); firewall a
+    // panic so it can't abort the host.
+    run_extern_callback_with::<P, ()>("au", "param_set_value", (), || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         inst.params_arc.set_plain(id, value);
-    }
+    });
 }
 
 unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
@@ -1721,7 +1726,15 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
             return 0;
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let mut gui = inst.gui.enter();
+        // `try_enter`, not `enter`: the host can query `hasEditor` synchronously
+        // during a layout pass (from `viewDidLayoutSubviews`) while an outer
+        // editor callback still holds the cell. `enter` would alias the live
+        // `&mut` in release. The first (non-re-entrant) call builds the editor;
+        // a re-entrant call defers - the outer holder already has one - and
+        // reports `0` this frame rather than aliasing.
+        let Some(mut gui) = inst.gui.try_enter() else {
+            return 0;
+        };
         if gui.editor.is_none() {
             // Built from the lock-free param store the wrapper already
             // holds outside the plugin, so opening the GUI never
@@ -1744,13 +1757,15 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
             return 0;
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
-        i32::from(
-            inst.gui
-                .enter()
-                .editor
-                .as_ref()
-                .is_some_and(|e| e.can_resize()),
-        )
+        // `try_enter`, not `enter`: the host can query `canResize` synchronously
+        // from `viewDidLayoutSubviews` (driven by a plugin `request_resize`)
+        // while an outer editor callback still holds the cell. `enter` would
+        // hand out a second aliasing `&mut` in release. Report not-resizable
+        // this frame - the firewall's `0` default - when busy.
+        let Some(gui) = inst.gui.try_enter() else {
+            return 0;
+        };
+        i32::from(gui.editor.as_ref().is_some_and(|e| e.can_resize()))
     })
 }
 
@@ -2034,7 +2049,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let mut gui = inst.gui.enter();
+        // `try_enter`, not `enter`: a host can drive `gui_close` synchronously
+        // from inside another editor callback's layout pass (the AU
+        // `viewDidLayoutSubviews` re-entry chain), so `enter` would alias the
+        // live `&mut` in release. Defer when busy - the outer holder is mid
+        // editor work, and the host re-drives close after it returns.
+        let Some(mut gui) = inst.gui.try_enter() else {
+            return;
+        };
         if let Some(editor) = gui.editor.as_mut() {
             // Same boundary-protection as `cb_destroy`: any panic
             // during `editor.close()` (wgpu surface drop, baseview

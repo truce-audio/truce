@@ -1073,7 +1073,9 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
 ) -> f64 {
-    unsafe {
+    // `Params::get_plain` is hand-implementable author code; firewall a
+    // panic so it can't unwind across the C ABI into the host (0.0 default).
+    run_extern_callback_with::<P, f64>("vst3", "param_get_value", 0.0, || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         if let Some(rel) = id.checked_sub(MIDI_PROXY_ID_BASE)
             && let Some(slot) = inst.midi_proxy_values.get(rel as usize)
@@ -1081,7 +1083,7 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
             return f64::from_bits(slot.load(Ordering::Relaxed));
         }
         inst.params_arc.get_plain(id).unwrap_or(0.0)
-    }
+    })
 }
 
 unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
@@ -1089,7 +1091,9 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     id: u32,
     value: f64,
 ) {
-    unsafe {
+    // `Params::set_plain` is hand-implementable author code reachable from
+    // host automation; firewall a panic so it can't abort the host.
+    run_extern_callback_with::<P, ()>("vst3", "param_set_value", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         if let Some(rel) = id.checked_sub(MIDI_PROXY_ID_BASE)
             && let Some(slot) = inst.midi_proxy_values.get(rel as usize)
@@ -1098,7 +1102,7 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
             return;
         }
         inst.params_arc.set_plain(id, value);
-    }
+    });
 }
 
 /// Whether `id` is a `CHUNKED` param. The shim keys its block-rate
@@ -2049,13 +2053,16 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
             return 0;
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        i32::from(
-            inst.gui
-                .enter()
-                .editor
-                .as_ref()
-                .is_some_and(|e| e.can_resize()),
-        )
+        // `try_enter`, not `enter`: a host answering a plugin `request_resize`
+        // (legally issued from inside `open`) synchronously queries `canResize`
+        // while the outer editor callback still holds the cell. `enter` would
+        // hand out a second aliasing `&mut` in release. When busy, report
+        // not-resizable this frame - the firewall's `0` default - matching the
+        // `checkSizeConstraint` / `set_size` siblings.
+        let Some(gui) = inst.gui.try_enter() else {
+            return 0;
+        };
+        i32::from(gui.editor.as_ref().is_some_and(|e| e.can_resize()))
     })
 }
 

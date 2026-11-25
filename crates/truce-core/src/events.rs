@@ -392,7 +392,21 @@ impl EventList {
     /// (the audio thread can't recover from an out-of-range offset, so
     /// we treat that as a contract violation rather than panicking).
     pub fn push(&mut self, event: Event) {
-        self.events.push(event);
+        // A never-allocated (default-constructed) list is a non-RT context -
+        // take a one-time reservation so those callers grow normally. The
+        // audio path uses `with_capacity`, so it never lands here.
+        if self.events.capacity() == 0 {
+            self.events.reserve(EVENT_LIST_PREALLOC);
+        }
+        // Fail closed at capacity rather than reallocating on the audio
+        // thread. Wrappers prealloc to `EVENT_LIST_PREALLOC`; a dense MPE /
+        // CC block (VST3 emits two events per MIDI-mapped param change) that
+        // exceeds it drops the overflow instead of taking an RT-unsafe `Vec`
+        // growth mid-`process()` - the same fail-closed policy the `SysEx`
+        // pool uses. `len < capacity` guarantees `Vec::push` won't grow.
+        if self.events.len() < self.events.capacity() {
+            self.events.push(event);
+        }
     }
 
     /// Sort the list by `sample_offset` if it isn't already, keeping

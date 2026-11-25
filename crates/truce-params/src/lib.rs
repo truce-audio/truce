@@ -6,7 +6,9 @@ pub mod sample;
 mod smooth;
 mod types;
 
-pub use info::{MidiSource, ParamFlags, ParamInfo, ParamUnit, ParamValueKind, map_source_to_param};
+pub use info::{
+    MidiSource, ParamFlags, ParamInfo, ParamUnit, ParamValueKind, indexed_name, map_source_to_param,
+};
 pub use range::ParamRange;
 pub use sample::{Float, Sample};
 pub use smooth::{Smoother, SmoothingStyle};

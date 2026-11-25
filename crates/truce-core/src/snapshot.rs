@@ -18,7 +18,7 @@
 //! audio-thread producer (`publish`) uses `try_lock` and never blocks, so
 //! there is no priority inversion on the audio side.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// Capacity the inline publish buffer is pre-warmed to by
@@ -45,6 +45,13 @@ pub struct SnapshotSlot {
     /// Set once *either* lane publishes for the first time. Until then a
     /// reader falls back to the locked `save_state()` path.
     supported: AtomicBool,
+    /// Bumped every time the off-thread lane swaps in new bytes
+    /// ([`Self::store_arc`]). A GUI-driven state change (a sample load, a
+    /// wavetable swap) publishes there without going through the wrapper's
+    /// param / state-load revision, so a save-blob cache keyed only on that
+    /// revision would return stale bytes. Consumers fold this into their
+    /// cache key so an off-thread republish invalidates it.
+    generation: AtomicU64,
 }
 
 impl SnapshotSlot {
@@ -66,6 +73,7 @@ impl SnapshotSlot {
             bytes: Mutex::new(Vec::with_capacity(cap)),
             swapped: Mutex::new(None),
             supported: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
         };
         // Warm both locks off the audio thread: some platforms' std
         // `Mutex` (macOS boxes a `pthread_mutex_t`) lazily allocate the OS
@@ -109,6 +117,30 @@ impl SnapshotSlot {
     pub fn store_arc(&self, bytes: Vec<u8>) {
         *self.swapped.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(bytes));
         self.supported.store(true, Ordering::Release);
+        self.mark_published();
+    }
+
+    /// Bump the publish generation. Called by [`Self::store_arc`] and by a
+    /// wrapper that republishes loaded state into the slot (a host/editor
+    /// state load), so a save-blob cache keyed on the generation invalidates.
+    /// Not called per audio block - only on an actual state change - so the
+    /// cache stays effective for steady-state saves.
+    ///
+    /// Publishes *after* the bytes (`Release`) so a consumer that reads the
+    /// generation, serializes, then re-checks it (seqlock-style) can't miss
+    /// the update.
+    pub fn mark_published(&self) {
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+
+    /// The off-thread publish generation (see the `generation` field).
+    /// Starts at 0; each [`Self::store_arc`] / [`Self::mark_published`]
+    /// bumps it. A save-blob cache keyed partly on this re-serializes after
+    /// a GUI-driven off-thread state change (a sample load) even when no
+    /// parameter moved.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
     /// Whether the plugin has ever published a snapshot on either lane.

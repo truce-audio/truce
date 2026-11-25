@@ -1484,7 +1484,16 @@ fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     if !range_const && !default_const {
         return None;
     }
-    let (min, max) = float_range_bound_tokens(a.range.as_deref()?)?;
+    // Bounds as `f64` tokens. A float range may carry const bounds (a token
+    // stream); an Int (`discrete`), Enum (`enum`) or Bool range resolves to
+    // literal bounds, so a const default on *those* kinds is range-checked
+    // too - previously only floats were, which the `lib.rs` comment denied.
+    let (min, max) = if let Some(mm) = a.range.as_deref().and_then(float_range_bound_tokens) {
+        mm
+    } else {
+        let (lo, hi) = const_assert_bounds(f)?;
+        (f64_lit(lo), f64_lit(hi))
+    };
     let default_tokens = match a.default.as_ref() {
         Some(DefaultExpr {
             path_tokens: Some(t),
@@ -1496,10 +1505,24 @@ fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     let name = a.name.as_deref().unwrap_or("param");
     let order_msg = format!("param `{name}`: range needs min < max");
     let default_assert = default_tokens.map(|d| {
-        let msg = format!("param `{name}`: default is outside its range");
+        let range_msg = format!("param `{name}`: default is outside its range");
+        // Match the expansion-time round-trip the comment promises: Int /
+        // Enum defaults must be whole numbers, a Bool default must be 0 or 1.
+        let shape_assert = match f.kind {
+            ParamKind::Int | ParamKind::Enum => {
+                let msg = format!("param `{name}`: default must be an integer");
+                quote! { assert!(__def as i64 as f64 == __def, #msg); }
+            }
+            ParamKind::Bool => {
+                let msg = format!("param `{name}`: default must be 0 or 1");
+                quote! { assert!(__def == 0.0 || __def == 1.0, #msg); }
+            }
+            ParamKind::Float => quote! {},
+        };
         quote! {
             let __def: f64 = #d;
-            assert!(__def >= __min && __def <= __max, #msg);
+            assert!(__def >= __min && __def <= __max, #range_msg);
+            #shape_assert
         }
     });
     Some(quote! {
@@ -1510,6 +1533,17 @@ fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             #default_assert
         };
     })
+}
+
+/// Literal `(min, max)` bounds for a non-float param kind, used by the
+/// const default assertion when `float_range_bound_tokens` can't supply
+/// them. Int (`discrete`) / Enum (`enum`) read the range string; a Bool
+/// spans `0..=1` and carries no range attribute.
+fn const_assert_bounds(f: &ParamField) -> Option<(f64, f64)> {
+    match f.kind {
+        ParamKind::Bool => Some((0.0, 1.0)),
+        _ => range_bounds(f.attrs.range.as_deref()?),
+    }
 }
 
 /// The concrete `(min, max)` a range string spans, for expansion-time
@@ -2189,17 +2223,45 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    // Recurse via `append_param_infos` so each nested struct pushes
+    // directly into the shared buffer instead of building its own `Vec`
+    // that the outer call then extends - saves O(depth) intermediate
+    // allocations per `param_infos()` call. Array elements additionally
+    // get their just-appended leaf names index-suffixed (`Level` ->
+    // `Level 1` .. `Level N`) so hosts and the GUI can tell them apart;
+    // a single (non-array) nested group can't collide, so it's left raw.
+    // `into` is the `&mut Vec` buffer in both the override and the
+    // `param_infos()` body below.
+    let infos_appends: Vec<_> = nested_fields
+        .iter()
+        .map(|n| {
+            let ident = &n.ident;
+            if n.array_len.is_some() {
+                quote! {
+                    for (__i, __n) in self.#ident.iter().enumerate() {
+                        let __start = into.len();
+                        __n.append_param_infos(into);
+                        let __idx = u32::try_from(__i).unwrap_or(u32::MAX);
+                        for __info in &mut into[__start..] {
+                            __info.name = ::truce::params::indexed_name(__info.name, __idx);
+                        }
+                    }
+                }
+            } else {
+                quote! { self.#ident.append_param_infos(into); }
+            }
+        })
+        .collect();
+
     let infos_expr = if nested_fields.is_empty() {
         quote! { vec![#(#own_infos),*] }
     } else {
-        // Recurse via `append_param_infos` so each nested struct
-        // pushes directly into the shared buffer instead of building
-        // its own `Vec` that the outer call then extends. Saves
-        // O(depth) intermediate allocations per `param_infos()` call.
-        let appends = nested_stmt(&|i| quote! { #i.append_param_infos(&mut infos); });
         quote! {
             let mut infos = vec![#(#own_infos),*];
-            #(#appends)*
+            {
+                let into = &mut infos;
+                #(#infos_appends)*
+            }
             infos
         }
     };
@@ -2210,11 +2272,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let append_infos_impl = if nested_fields.is_empty() {
         quote! {}
     } else {
-        let appends = nested_stmt(&|i| quote! { #i.append_param_infos(into); });
         quote! {
             fn append_param_infos(&self, into: &mut Vec<::truce::params::ParamInfo>) {
                 #(into.push(#own_infos);)*
-                #(#appends)*
+                #(#infos_appends)*
             }
         }
     };
@@ -2305,6 +2366,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                                         .map(|mut __info| {
                                             __info.id =
                                                 (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
+                                            // Match the runtime path: disambiguate each
+                                            // element's leaf names (`Level` -> `Level 1` ..).
+                                            __info.name =
+                                                ::truce::params::indexed_name(__info.name, __i);
                                             __info
                                         }),
                                 );
@@ -2632,7 +2697,16 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             .iter()
             .map(|f| {
                 let ident = &f.ident;
-                quote! { #ident: ::core::default::Default::default() }
+                if f.array_len.is_some() {
+                    // `[T; N]: Default` only exists for `N <= 32` (and fails
+                    // with an unhelpful trait error past that), so build each
+                    // element explicitly - `from_fn` infers `N` from the type.
+                    quote! {
+                        #ident: ::core::array::from_fn(|_| ::core::default::Default::default())
+                    }
+                } else {
+                    quote! { #ident: ::core::default::Default::default() }
+                }
             })
             .collect();
 

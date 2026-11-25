@@ -3880,7 +3880,6 @@ version = "6.3.0"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
- "log",
  "objc",
  "truce-core",
  "truce-params",

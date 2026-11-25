@@ -27,6 +27,21 @@ pub struct FramePacket {
     pub pixels_per_point: f32,
 }
 
+impl Drop for FramePacket {
+    fn drop(&mut self) {
+        // epaint's `TexturesDelta::drop` debug-asserts the delta was
+        // applied. On the normal path the renderer already cleared it
+        // (`EguiRenderer::render` / `skip_frame`), so this is a no-op. But a
+        // packet dropped *unrendered* - one still sitting in the mailbox at
+        // shutdown, or `f` unwinding when `render` panics partway through its
+        // uploads - would trip that assert, and firing inside a `Drop`
+        // mid-unwind aborts. Clear it: the textures are GPU-side and torn
+        // down with the surface regardless. (egui's own assert message
+        // prescribes `clear` for an intentional drop.)
+        self.textures_delta.clear();
+    }
+}
+
 /// GPU init still running on the render thread.
 const STATE_INIT: u8 = 0;
 /// Renderer built; the thread is consuming frames.
@@ -164,7 +179,10 @@ impl RenderThread {
             prev.textures_delta
                 .free
                 .extend(packet.textures_delta.free.drain());
-            packet.textures_delta = prev.textures_delta;
+            // `mem::take`, not a move: `FramePacket: Drop` forbids moving a
+            // field out of `prev`, and it leaves `prev` an empty (drop-safe)
+            // delta for when it falls out of scope here.
+            packet.textures_delta = std::mem::take(&mut prev.textures_delta);
         }
         slot.frame = Some(packet);
         drop(slot);
@@ -283,4 +301,33 @@ fn mark_exited(shared: &Shared) {
     slot.exited = true;
     drop(slot);
     shared.cv.notify_all();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `FramePacket` that never reaches the renderer - the mailbox still
+    /// holds one at shutdown, or a render panic unwinds past the delta's
+    /// `clear` - must still drop cleanly. epaint's `TexturesDelta::drop`
+    /// debug-asserts the delta was applied, so an unapplied one would panic
+    /// here (and, in the real unwind case, abort). `FramePacket`'s `Drop`
+    /// clears it; without that, this test panics in debug builds.
+    #[test]
+    fn unrendered_packet_drops_without_tripping_textures_delta_assert() {
+        let mut textures_delta = egui::TexturesDelta::default();
+        // A single `free` entry is enough to make the delta non-empty (no
+        // `ImageDelta` construction needed).
+        textures_delta.free.insert(egui::TextureId::Managed(0));
+        assert!(!textures_delta.is_empty(), "test needs a non-empty delta");
+
+        let packet = FramePacket {
+            textures_delta,
+            primitives: Vec::new(),
+            pixels_per_point: 1.0,
+        };
+        // Drop it unrendered. The `Drop` impl clears the delta, so epaint's
+        // debug_assert does not fire.
+        drop(packet);
+    }
 }

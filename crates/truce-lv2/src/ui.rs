@@ -184,7 +184,11 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// `&self` (the LV2 host hands us a `LV2UI_Handle`, which we cast
     /// to `&Lv2UiInstance<P>`) - fine on the UI thread, which hosts
     /// are required to use single-threaded.
-    notify_scratch: core::cell::RefCell<Vec<u8>>,
+    // `Vec<u64>`, not `Vec<u8>`: the buffer is cast to `*OneEvent` (i64 /
+    // `Atom` fields need 8-byte alignment), and a `u8` allocation is only
+    // align-1 - UB, and a SIGBUS on strict-alignment targets. A `u64`
+    // allocation is 8-aligned, so the byte views below stay aligned.
+    notify_scratch: core::cell::RefCell<Vec<u64>>,
     /// Child `NSView`s registered for the aspect/max fit observer
     /// (`NSViewFrameDidChangeNotification`), stored as raw pointers so
     /// `cleanup_ui` can unregister them before the views are torn down.
@@ -472,7 +476,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             notify_port_index: layout.notify_out_port(),
             atom_event_transfer_urid,
             transport_slot,
-            notify_scratch: core::cell::RefCell::new(Vec::new()),
+            notify_scratch: core::cell::RefCell::new(Vec::<u64>::new()),
             #[cfg(target_os = "macos")]
             fit_observer_children,
             _phantom: PhantomData,
@@ -609,10 +613,14 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         let Ok(mut scratch) = ui.notify_scratch.try_borrow_mut() else {
             return;
         };
-        if scratch.len() < needed {
-            scratch.resize(needed, 0);
+        // `needed` is a byte count; the backing is `u64` (8-aligned), so
+        // size it in whole 8-byte words. `base` is the aligned byte view.
+        let words_needed = needed.div_ceil(core::mem::size_of::<u64>());
+        if scratch.len() < words_needed {
+            scratch.resize(words_needed, 0);
         }
-        let one = scratch.as_mut_ptr().cast::<OneEvent>();
+        let base = scratch.as_mut_ptr().cast::<u8>();
+        let one = base.cast::<OneEvent>();
         (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
         (*one).seq_header.atom.size = len_u32(
             core::mem::size_of::<AtomSequenceBody>()
@@ -624,11 +632,11 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         (*one).seq_header.body.pad = 0;
         (*one).event_time = 0;
         (*one).event_body = atom_hdr;
-        let ev_body_dest = scratch.as_mut_ptr().add(core::mem::size_of::<OneEvent>());
+        let ev_body_dest = base.add(core::mem::size_of::<OneEvent>());
         core::ptr::copy_nonoverlapping(body_ptr, ev_body_dest, body_size);
 
         let mut info = TransportInfo::default();
-        let reader = AtomSequenceReader::new(scratch.as_ptr().cast::<AtomSequence>(), &ui.urid_map);
+        let reader = AtomSequenceReader::new(base.cast::<AtomSequence>(), &ui.urid_map);
         if reader.apply_time_position(&mut info) {
             ui.transport_slot.write(&info);
         }
