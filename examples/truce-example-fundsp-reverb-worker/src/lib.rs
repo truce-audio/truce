@@ -126,6 +126,16 @@ fn build_graph(
     graph
 }
 
+/// Highest filter cutoff that keeps the fundsp state-variable filters
+/// stable at `sample_rate`: just below Nyquist. At or above `sr / 2`,
+/// `tan(PI * cutoff / sr)` blows up and the SVF emits NaN.
+// Sample rates are small integers well inside f32's range, so the
+// f64 -> f32 narrowing here cannot actually truncate.
+#[allow(clippy::cast_possible_truncation)]
+fn nyquist_hz(sample_rate: f64) -> f32 {
+    (sample_rate * 0.5 - 1.0) as f32
+}
+
 /// Inputs the worker needs to build a graph. SR is paired with each
 /// request so the audio thread can detect (and reject) a ready graph
 /// that was built for a stale SR after a `reset()`.
@@ -289,9 +299,13 @@ impl PluginLogic for FundspReverbWorker {
         // the host picked. `for_each_stereo_frame` fans a mono input into
         // both graph inputs (the stereo->stereo bus maps 1:1), so no
         // per-width branch is needed.
+        // Clamp the filter cutoffs below Nyquist. A fixed-Hz cutoff
+        // above sr/2 makes the fundsp SVF unstable (NaN output) at low
+        // or fractional sample rates, so pin it just under Nyquist.
+        let nyquist = nyquist_hz(state.last_built_sr);
         buffer.for_each_stereo_frame(|frame_in, frame_out| {
-            w.low_cut.set_value(params.low_cut.read());
-            w.high_cut.set_value(params.high_cut.read());
+            w.low_cut.set_value(params.low_cut.read().min(nyquist));
+            w.high_cut.set_value(params.high_cut.read().min(nyquist));
             w.mix.set_value(params.mix.read());
             state.graph.tick(frame_in, frame_out);
         });
