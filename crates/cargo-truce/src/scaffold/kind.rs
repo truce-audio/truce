@@ -79,7 +79,15 @@ impl PluginKind {
                  vec![BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)]\n    \
                  }\n\n"
             }
-            _ => "",
+            Self::Midi => {
+                "    // MIDI effect: no audio I/O. CLAP / VST3 / AU / LV2 honor this;\n    \
+                 // AAX auto-adds a stereo passthrough inside truce-aax so the\n    \
+                 // DAW's track audio flows through unchanged.\n    \
+                 fn bus_layouts() -> Vec<BusLayout> {\n        \
+                 vec![BusLayout::new()]\n    \
+                 }\n\n"
+            }
+            Self::Effect => "",
         }
     }
 

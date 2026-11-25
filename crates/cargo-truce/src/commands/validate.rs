@@ -330,6 +330,12 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let plugins: Vec<&PluginDef> = super::pick_plugins(&config, plugin_filter.as_deref())?;
 
     let mut failures = 0;
+    // Formats whose validator was missing while the format was in scope
+    // (explicitly requested, or installed so there was something to
+    // validate). Distinct from `failures` (a validator ran and reported a
+    // problem): "couldn't validate" must not be reported as a pass, but it
+    // isn't a validation failure either.
+    let mut skipped: Vec<String> = Vec::new();
 
     // auval (macOS only, AU v2)
     if run_auval {
@@ -506,8 +512,16 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             }
         } else {
             eprintln!("  pluginval not found. Install from https://github.com/Tracktion/pluginval");
-            if pluginval_explicit {
-                failures += 1;
+            // A missing validator is only a non-pass when VST3 was in scope:
+            // the user asked for it, or a bundle is installed so there was
+            // something to validate. Otherwise there's genuinely nothing to do.
+            let any_installed = plugins.iter().any(|p| {
+                let name = format!("{}.vst3", p.file_stem());
+                InstallScope::User.vst3_dir().join(&name).exists()
+                    || InstallScope::System.vst3_dir().join(&name).exists()
+            });
+            if pluginval_explicit || any_installed {
+                skipped.push("VST3 (pluginval not found)".into());
             }
         }
     }
@@ -583,7 +597,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 // fails them identically). Skip those tests here
                 // until the validator accepts Windows paths.
                 #[cfg(target_os = "windows")]
-                cmd.args(["--test-filter", "preset-discovery", "--invert-filter"]);
+                cmd.args(["--exclude", "preset-discovery"]);
                 let output = cmd.output()?;
 
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -613,8 +627,15 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 "  Install: cargo install --git https://github.com/free-audio/clap-validator"
             );
             eprintln!("  Or set CLAP_VALIDATOR=/path/to/clap-validator");
-            if clap_explicit {
-                failures += 1;
+            // Only a non-pass when CLAP was in scope: explicitly asked for,
+            // or installed so there was a bundle to validate.
+            let any_installed = plugins.iter().any(|p| {
+                let name = format!("{}.clap", p.file_stem());
+                InstallScope::User.clap_dir().join(&name).exists()
+                    || InstallScope::System.clap_dir().join(&name).exists()
+            });
+            if clap_explicit || any_installed {
+                skipped.push("CLAP (clap-validator not found)".into());
             }
         }
     }
@@ -649,11 +670,21 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 
     eprintln!();
     if failures > 0 {
-        Err(format!("{failures} validation(s) failed").into())
-    } else {
-        eprintln!("All validations passed.");
-        Ok(())
+        return Err(format!("{failures} validation(s) failed").into());
     }
+    // A missing validator for an in-scope format is not a pass: exit
+    // non-zero with a distinct message so a CI script reading the status
+    // doesn't read "validated nothing" as success.
+    if !skipped.is_empty() {
+        eprintln!(
+            "Validation incomplete - could not run: {}.",
+            skipped.join(", ")
+        );
+        eprintln!("Install the validator(s) above, or scope the run to formats you can validate.");
+        return Err(format!("validation incomplete ({} skipped)", skipped.len()).into());
+    }
+    eprintln!("All validations passed.");
+    Ok(())
 }
 
 fn print_help() {
@@ -1052,10 +1083,37 @@ pub(crate) fn find_pluginrunner() -> Option<String> {
 /// Pull the test counts out of clap-validator's summary line, e.g.
 /// `"20 tests run, 16 passed, 0 failed, 4 skipped, 1 warnings"`. Returns
 /// `" (16/20, 4 skipped)"` or an empty string if the summary isn't found.
+/// Strip ANSI escape sequences (CSI / SGR colour codes) from `s`.
+/// clap-validator colours its summary counts; the reset sequence
+/// `\x1b[0m` otherwise lands a stray `0` right before a keyword and
+/// corrupts numeric parsing.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // Drop the sequence through its final byte. CSI/SGR sequences
+            // end in an ASCII letter (`m` for colours, also `K`/`J`/`H`/...).
+            for e in chars.by_ref() {
+                if e.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn parse_clap_summary(output: &str) -> String {
-    let Some(summary) = output.lines().find(|l| l.contains("tests run")) else {
+    let Some(raw) = output.lines().find(|l| l.contains("tests run")) else {
         return String::new();
     };
+    // Parse the de-coloured line: clap-validator wraps each count in SGR
+    // escapes (`\x1b[1;32m38\x1b[0m passed`), and the raw reset `\x1b[0m`
+    // would otherwise read as `0 passed` / `0 skipped`.
+    let summary = strip_ansi(raw);
     let pick = |key: &str| -> Option<u32> {
         let idx = summary.find(key)?;
         summary[..idx]
@@ -1126,6 +1184,22 @@ fn find_clap_validator() -> Option<String> {
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clap_summary_parses_through_ansi_colour() {
+        // clap-validator colours each count; the reset `\x1b[0m` used to be
+        // misread as a leading `0` (PASS (0/44) instead of 38/44, 6 skipped).
+        let coloured = "44 tests run, \u{1b}[1;32m38\u{1b}[0m passed, \
+             \u{1b}[1;31m0\u{1b}[0m failed, 0 warnings, \u{1b}[1;33m6\u{1b}[0m skipped";
+        assert_eq!(parse_clap_summary(coloured), " (38/44, 6 skipped)");
+
+        // Plain (no colour) still works, and zero-skipped omits the clause.
+        let plain = "44 tests run, 44 passed, 0 failed, 0 warnings, 0 skipped";
+        assert_eq!(parse_clap_summary(plain), " (44/44)");
+
+        // No summary line -> empty.
+        assert_eq!(parse_clap_summary("nothing here"), "");
+    }
 
     #[test]
     fn dsh_session_drops_warmup_and_tallies_per_bundle() {
