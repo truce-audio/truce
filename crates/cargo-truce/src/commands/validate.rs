@@ -1080,9 +1080,6 @@ pub(crate) fn find_pluginrunner() -> Option<String> {
     None
 }
 
-/// Pull the test counts out of clap-validator's summary line, e.g.
-/// `"20 tests run, 16 passed, 0 failed, 4 skipped, 1 warnings"`. Returns
-/// `" (16/20, 4 skipped)"` or an empty string if the summary isn't found.
 /// Strip ANSI escape sequences (CSI / SGR colour codes) from `s`.
 /// clap-validator colours its summary counts; the reset sequence
 /// `\x1b[0m` otherwise lands a stray `0` right before a keyword and
@@ -1106,6 +1103,9 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+/// Pull the test counts out of clap-validator's summary line, e.g.
+/// `"20 tests run, 16 passed, 0 failed, 4 skipped, 1 warnings"`. Returns
+/// `" (16/20, 4 skipped)"` or an empty string if the summary isn't found.
 fn parse_clap_summary(output: &str) -> String {
     let Some(raw) = output.lines().find(|l| l.contains("tests run")) else {
         return String::new();
