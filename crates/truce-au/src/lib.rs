@@ -2023,6 +2023,31 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
     })
 }
 
+/// Whether the editor locks its aspect ratio. The AU v3 Swift shim
+/// refuses an off-aspect host resize (Logic's 4:3 view configuration,
+/// which would letterbox the layout) only for a locked editor, so a
+/// free-aspect editor can still follow a non-uniform drag.
+unsafe extern "C" fn cb_gui_has_aspect_lock<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+    // `Editor::aspect_ratio` is author code; firewall it. The fallback (`1`)
+    // keeps the shim's aspect guard, the pre-v7 behaviour.
+    run_extern_callback_with::<P, i32>("au", "gui_has_aspect_lock", 1, || unsafe {
+        if ctx.is_null() {
+            return 1;
+        }
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        // `try_enter`: same layout-pass re-entry guard as `cb_gui_can_resize`;
+        // report locked (the safe default) when busy.
+        let Some(gui) = gui_try_enter(inst) else {
+            return 1;
+        };
+        i32::from(
+            gui.editor
+                .as_ref()
+                .is_none_or(|e| e.aspect_ratio().is_some()),
+        )
+    })
+}
+
 /// Host-driven `set_size`. The AU v2 Cocoa view's
 /// `setFrameSize:` / superview-frame observer calls this when the
 /// host resizes its outer container; the AU v3 Swift shim calls
@@ -2638,6 +2663,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         set_render_mode: cb_set_render_mode::<P>,
         param_parse_value: cb_param_parse_value::<P>,
         gui_idle: cb_gui_idle::<P>,
+        gui_has_aspect_lock: cb_gui_has_aspect_lock::<P>,
     }));
 
     let param_descs = param_descs.leak();
