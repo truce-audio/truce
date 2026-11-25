@@ -428,13 +428,13 @@ fn aggregate(
             // Each element walks the child type at `base + i *
             // element_count`, the count discovered by how many params the
             // walk added.
-            let array_len = entry
+            let array = entry
                 .get("array_len")
                 .and_then(toml::Value::as_integer)
-                .and_then(|n| usize::try_from(n).ok())
-                .unwrap_or(1);
+                .and_then(|n| usize::try_from(n).ok());
+            let array_len = array.unwrap_or(1);
             let mut elem_base = base;
-            for _ in 0..array_len {
+            for i in 0..array_len {
                 let before = params.len();
                 aggregate(
                     sidecar_dir,
@@ -445,6 +445,16 @@ fn aggregate(
                     fields,
                     ancestors,
                 )?;
+                // Match the runtime's `param_infos()`: an array element's
+                // params (inner arrays already suffixed) get a 1-based index
+                // suffix, `Level` -> `Level 1`. The port name - and the
+                // `lv2:symbol` derived from it - must agree, and symbols are
+                // persisted in host sessions, so they can't change later.
+                if array.is_some() {
+                    for p in &mut params[before..] {
+                        p.name = format!("{} {}", p.name, i + 1);
+                    }
+                }
                 let added = u32::try_from(params.len() - before).unwrap_or(0);
                 elem_base = elem_base.wrapping_add(added);
                 // Runtime `offset_ids` packs each auto group at `own_count +
@@ -784,8 +794,66 @@ fn sidecar_dir_for(pkg_name: &str, truce_toml: &std::path::Path) -> Option<PathB
 
 #[cfg(test)]
 mod tests {
-    use super::parse_range_value;
+    use super::{aggregate, parse_range_value};
     use truce_build::lv2::Lv2Range;
+
+    /// `#[nested]` array elements must carry the same index suffix in the
+    /// TTL as at runtime (`Level 1` .. `Level N`, nested arrays suffixed
+    /// innermost first), so each port gets a distinct, name-derived
+    /// `lv2:symbol` instead of `Level`, `p_<id>`, ... A single nested
+    /// group stays unsuffixed.
+    #[test]
+    fn nested_array_ports_get_index_suffixes() {
+        let dir = std::env::temp_dir().join(format!("truce-lv2-nested-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, body: &str| {
+            std::fs::write(dir.join(format!("{name}.params.toml")), body).unwrap();
+        };
+        write(
+            "Root",
+            "scheme = \"ordinal\"\n\
+             [[nested]]\ntype = \"Bank\"\nfield = \"bank\"\narray_len = 2\n\
+             [[nested]]\ntype = \"Step\"\nfield = \"solo\"\n",
+        );
+        write(
+            "Bank",
+            "scheme = \"ordinal\"\n\
+             [[nested]]\ntype = \"Step\"\nfield = \"step\"\narray_len = 2\n",
+        );
+        write(
+            "Step",
+            "scheme = \"ordinal\"\n\
+             [[param]]\nid = 0\nname = \"Level\"\nkind = \"Float\"\n\
+             range = \"linear(0, 1)\"\ndefault = 1\n",
+        );
+
+        let mut params = Vec::new();
+        aggregate(
+            &dir,
+            "Root",
+            0,
+            &mut params,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut std::collections::HashSet::new(),
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["Level 1 1", "Level 2 1", "Level 1 2", "Level 2 2", "Level"]
+        );
+        let symbols: Vec<String> = truce_build::lv2::resolved_param_symbols(&params)
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect();
+        assert_eq!(
+            symbols,
+            ["Level_1_1", "Level_2_1", "Level_1_2", "Level_2_2", "Level"]
+        );
+    }
 
     /// `truce::plugin!` expands the LV2 emitter unconditionally (no `lv2`
     /// feature gate), so every range shape the runtime `#[param]` parser

@@ -80,7 +80,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 
 #### Parameters
 
-- `#[nested]` accepts a fixed-size array (`[T; N]`, any `N`) with contiguous id ranges and a `<field>_id(i, sub)` resolver. Each element's parameter names get an index suffix (`Level 1` … `Level N`) so hosts and the GUI can tell them apart.
+- `#[nested]` accepts a fixed-size array (`[T; N]`, any `N`) with contiguous id ranges and a `<field>_id(i, sub)` resolver. Each element's parameter names get an index suffix (`Level 1` … `Level N`) so hosts and the GUI can tell them apart; LV2 port names and `lv2:symbol`s carry the same suffix (`Level_1` …).
 - `range` / `smooth` / `default` accept an `f64` const. A const in `range` / `default` is a build error under `lv2`. A const `default` on an Int, Enum or Bool param is now range-checked at compile time like a float's: Int / Enum defaults must be whole numbers, and a Bool default must be 0 or 1.
 
 #### Formats
