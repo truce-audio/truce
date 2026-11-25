@@ -493,13 +493,13 @@ fn run<T: Send>(
             apply_limit_buckets: false,
         }))
         .ok()?;
-        let (product, device, config) = init(&instance, &adapter, &surface)?;
+        let (product, device, queue, config) = init(&instance, &adapter, &surface)?;
         surface.configure(&device, &config);
-        Some((product, device, config, surface))
+        Some((product, device, queue, config, surface))
     }))
     .ok()
     .flatten();
-    let Some((product, device, mut config, surface)) = built else {
+    let Some((product, device, queue, mut config, surface)) = built else {
         shared.state.store(STATE_FAILED, Ordering::Release);
         log::error!("surface pump: gpu init failed; editor stays blank");
         mark_exited(shared);
@@ -537,7 +537,7 @@ fn run<T: Send>(
         // editor rebuilds with a fresh pump.
         let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some(frame) = present {
-                frame.present();
+                queue.present(frame);
             }
             if let Some((w, h)) = resize {
                 // A frame acquired under the old configuration can't
@@ -550,7 +550,7 @@ fn run<T: Send>(
                 // stall). Its recycled old-frame content matches the
                 // stretched frame the compositor is showing anyway.
                 if let Some(stale) = lock(&shared.slot).held.take() {
-                    stale.present();
+                    queue.present(stale);
                 }
                 config.width = w.max(1);
                 config.height = h.max(1);
@@ -591,7 +591,7 @@ fn run<T: Send>(
                         slot.held = Some(frame);
                     } else {
                         drop(slot);
-                        frame.present();
+                        queue.present(frame);
                     }
                 }
             }
