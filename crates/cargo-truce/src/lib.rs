@@ -77,10 +77,9 @@ pub(crate) use util::tmp_lv2;
 // three packagers, so it stays unconditional.
 pub(crate) use util::read_workspace_version;
 // `plugin_version` is a plug-in's bundle-metadata version, matching what
-// it reports at runtime. Only the macOS bundle / plist writers (and the
-// iOS / AAX staging they drive) consume it, so it's gated like
-// `plist_version_keys` below.
-#[cfg(target_os = "macos")]
+// it reports at runtime. Consumed by the macOS bundle / plist writers (and
+// the iOS / AAX staging they drive) and the Windows standalone manifest.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use util::plugin_version;
 // Bundle `Info.plist` version keys, used by every macOS bundle writer.
 #[cfg(target_os = "macos")]

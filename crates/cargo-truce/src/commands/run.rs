@@ -170,7 +170,8 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         // consistent with the eventual installed artefact.
         #[cfg(target_os = "windows")]
         {
-            crate::commands::package::windows_manifest::embed_dpi_manifest(&staged)?;
+            let version = crate::plugin_version(plugin, &project_root())?;
+            crate::commands::package::windows_manifest::embed_dpi_manifest(&staged, &version)?;
             let icon = plugin
                 .windows_icon
                 .as_ref()
