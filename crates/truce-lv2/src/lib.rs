@@ -38,7 +38,9 @@ use truce_core::bus::BusKind;
 use truce_core::cast::len_u32;
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
-use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{
+    Event, EventBody, EventList, TransportInfo, block_event_capacity, initial_event_capacity,
+};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::plugin::PluginRuntime;
@@ -376,6 +378,7 @@ pub unsafe fn instantiate<P: PluginExport>(
             let num_atom_in = layout.num_atom_in() as usize;
             let midi_out_count = layout.midi_out_ports as usize;
             let param_infos = plugin.params().param_infos();
+            let initial_event_cap = initial_event_capacity(param_infos.len());
             let params_arc = plugin.params_arc();
             let min_subblock_samples = info.automation.min_subblock_samples;
 
@@ -426,9 +429,9 @@ pub unsafe fn instantiate<P: PluginExport>(
 
                 last_control: vec![None; control_port_count],
 
-                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                event_list: EventList::with_capacity(initial_event_cap),
+                output_events: EventList::with_capacity(initial_event_cap),
+                sub_event_scratch: EventList::with_capacity(initial_event_cap),
                 params_arc,
                 min_subblock_samples,
 
@@ -514,6 +517,13 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
             inst.audio_outputs.len(),
             LV2_MAX_PREALLOC_BLOCK,
         );
+        // Grow the event rings off the audio thread, like the other
+        // wrappers do at activate. LV2 has no max-block contract, so size
+        // for the same ceiling the audio scratch uses.
+        let event_cap = block_event_capacity(LV2_MAX_PREALLOC_BLOCK, inst.param_infos.len());
+        inst.event_list.reserve_events(event_cap);
+        inst.output_events.reserve_events(event_cap);
+        inst.sub_event_scratch.reserve_events(event_cap);
         // LV2 freewheel is a per-block signal (read from the
         // `lv2:freeWheeling` port in `run`), not a re-activation, so
         // prepare always assumes realtime; `run` carries the live mode.

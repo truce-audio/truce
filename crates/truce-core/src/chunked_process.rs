@@ -358,9 +358,10 @@ fn rebase_events_into(
         let rebased_offset = (off - block_start) as u32;
         match ev.body {
             // Re-copy the payload so the scratch carries its own pool
-            // entry; a pool-full drop matches the documented `SysEx`
-            // overflow behaviour and can't occur in practice (the
-            // scratch pool matches the source pool's size).
+            // entry. A `PoolFull` / `QueueFull` drop matches the
+            // documented `SysEx` overflow behaviour and can't occur in
+            // practice: the scratch pool matches the source pool's size,
+            // and wrappers size the scratch ring like the input ring.
             EventBody::SysEx { .. } => {
                 let _ = scratch.push_sysex_on_port(
                     rebased_offset,
@@ -590,5 +591,32 @@ mod tests {
         // indices against an empty pool, so this access panicked
         // out-of-bounds. It now resolves against the scratch's own pool.
         assert_eq!(scratch.sysex_bytes(&ev.body), &[0x11, 0x22, 0x33, 0x44]);
+    }
+
+    /// A full-param sweep larger than the default ring (LV2's first
+    /// `run`, a CLAP flush) must reach the plugin intact through both the
+    /// input list and the rebased sub-block scratch: a dropped
+    /// `ParamChange` would leave that param stale until the host moved
+    /// it again.
+    #[test]
+    fn param_sweep_past_default_capacity_survives_rebase() {
+        let n = u32::try_from(EVENT_LIST_PREALLOC).unwrap() + 44;
+        let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        for id in 0..n {
+            events.push(Event::new(0, EventBody::ParamChange { id, value: 0.5 }));
+        }
+        let mut scratch = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        rebase_events_into(&events, &mut scratch, 0, 64);
+
+        for list in [&events, &scratch] {
+            let ids: Vec<u32> = list
+                .iter()
+                .filter_map(|e| match e.body {
+                    EventBody::ParamChange { id, .. } => Some(id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(ids, (0..n).collect::<Vec<_>>());
+        }
     }
 }

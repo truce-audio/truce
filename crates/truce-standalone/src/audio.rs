@@ -26,7 +26,7 @@ use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::{sample_count_usize, sample_rate_u32};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
-use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList};
+use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, block_event_capacity};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_params::{ParamInfo, Params};
@@ -1366,6 +1366,12 @@ fn open_output_stream<P: PluginExport>(
         .default_output_config()
         .map_err(|e| format!("could not query the output config for the scratch bound: {e}"))?;
     let frame_bound = config.buffer_size_max_frames(&supported);
+    // Size the event rings for this stream's worst-case block (every
+    // param plus a dense MIDI stream) here, before the callback runs.
+    let event_cap = block_event_capacity(frame_bound, param_infos.len());
+    event_list.reserve_events(event_cap);
+    output_events.reserve_events(event_cap);
+    sub_event_scratch.reserve_events(event_cap);
     // The plugin sized its DSP for the bound it was last `reset()`
     // with; a device whose maximum exceeds it could deliver blocks
     // past that promise. Renew it before the stream opens (no

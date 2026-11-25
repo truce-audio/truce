@@ -311,6 +311,28 @@ impl TransportInfo {
 /// wrappers don't each pick their own magic number.
 pub const EVENT_LIST_PREALLOC: usize = 256;
 
+/// Event-ring capacity for a wrapper's per-instance lists before the
+/// host has declared a max block size: one `ParamChange` per parameter
+/// (a full sweep - LV2's first `run`, a CLAP `params_flush` before
+/// `activate`, a state recall) plus [`EVENT_LIST_PREALLOC`] headroom for
+/// MIDI. Pass it to [`EventList::with_capacity`] at construction.
+#[must_use]
+pub fn initial_event_capacity(param_count: usize) -> usize {
+    param_count + EVENT_LIST_PREALLOC
+}
+
+/// Worst-case event-ring capacity for one process block of
+/// `max_block_size` samples: a dense per-sample MIDI / automation
+/// stream, a change to every one of `param_count` parameters, and
+/// [`EVENT_LIST_PREALLOC`] headroom. A wrapper passes this to
+/// [`EventList::reserve_events`] at activate - once the host has
+/// declared its max block size - so a realistic block fits without
+/// reallocating on the audio thread.
+#[must_use]
+pub fn block_event_capacity(max_block_size: usize, param_count: usize) -> usize {
+    max_block_size + initial_event_capacity(param_count)
+}
+
 /// Default reserved capacity for the `SysEx` byte pool on
 /// per-instance `EventList`s. 128 KiB ≈ 2× the worst-case single
 /// payload (one 64 KiB firmware-update-shaped message) with
@@ -329,23 +351,28 @@ pub const EVENT_LIST_PREALLOC: usize = 256;
 /// match.
 pub const SYSEX_POOL_PREALLOC: usize = 128 * 1024;
 
-/// Why a push into the [`EventList`] failed. Today only `SysEx`
-/// payloads can fail to land (the channel-voice [`EventList::push`]
-/// path grows the backing `Vec` instead, since the audio-thread
-/// contract there is "stay under [`EVENT_LIST_PREALLOC`]" rather
-/// than "fail closed").
+/// Why a push into the [`EventList`] failed. Only `SysEx` payloads
+/// report a failure this way: a channel-voice [`EventList::push`] that
+/// overflows a fail-closed ring just drops the event (it is one of
+/// many), whereas a dropped `SysEx` must be surfaced to the caller
+/// because a truncated or split message is invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PushError {
     /// The `SysEx` byte pool is full. The message wasn't appended.
     /// Callers either drop it, surface it via a meter, or bump the
     /// pool size via [`EventList::with_capacity`] at construction.
     PoolFull,
+    /// The event ring of a fail-closed list is full. The message wasn't
+    /// appended and the pool is unchanged. Size the ring at activate
+    /// with [`EventList::reserve_events`].
+    QueueFull,
 }
 
 impl core::fmt::Display for PushError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::PoolFull => f.write_str("SysEx byte pool is full"),
+            Self::QueueFull => f.write_str("event list is full"),
         }
     }
 }
@@ -363,6 +390,12 @@ impl std::error::Error for PushError {}
 pub struct EventList {
     events: Vec<Event>,
     sysex_pool: Vec<u8>,
+    /// Set by [`EventList::with_capacity`]. When `true`, `push` is
+    /// fail-closed: once the preallocated ring is full it drops the
+    /// overflow rather than reallocating on the audio thread. A
+    /// default-constructed list leaves this `false` and grows normally
+    /// - it is a non-RT context (the offline driver, tests).
+    fail_closed: bool,
 }
 
 impl EventList {
@@ -378,11 +411,46 @@ impl EventList {
     /// The `SysEx` byte pool is sized to [`SYSEX_POOL_PREALLOC`]
     /// regardless of `capacity` - `capacity` controls the event ring
     /// only.
+    ///
+    /// Lists built this way are **fail-closed**: once the ring is full,
+    /// `push` drops non-parameter overflow instead of reallocating on
+    /// the audio thread (a `ParamChange` is never dropped - see
+    /// [`Self::push`]). Size the ring at construction with
+    /// [`initial_event_capacity`] and grow it off-thread at activate
+    /// with [`Self::reserve_events`] (sized via [`block_event_capacity`])
+    /// so a realistic block never reaches the cap. Non-RT callers that
+    /// want the `SysEx` pool without a cap use
+    /// [`Self::growable_with_capacity`].
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             events: Vec::with_capacity(capacity),
             sysex_pool: Vec::with_capacity(SYSEX_POOL_PREALLOC),
+            fail_closed: true,
+        }
+    }
+
+    /// Like [`Self::with_capacity`] (event ring and `SysEx` pool both
+    /// reserved) but the event ring grows instead of dropping when full.
+    /// For non-RT contexts - the offline driver, tests - where a
+    /// reallocation is harmless and a dropped event is not. The `SysEx`
+    /// pool keeps its fixed size either way.
+    #[must_use]
+    pub fn growable_with_capacity(capacity: usize) -> Self {
+        Self {
+            fail_closed: false,
+            ..Self::with_capacity(capacity)
+        }
+    }
+
+    /// Grow the event-ring capacity to at least `capacity`, off the
+    /// audio thread (call from a wrapper's `activate` / `reset`). A
+    /// fail-closed list sized this way won't drop until a single block
+    /// carries more than `capacity` events. No-op if the ring is
+    /// already that large; never shrinks.
+    pub fn reserve_events(&mut self, capacity: usize) {
+        if capacity > self.events.capacity() {
+            self.events.reserve(capacity - self.events.len());
         }
     }
 
@@ -391,22 +459,38 @@ impl EventList {
     /// block must validate `sample_offset < num_samples` themselves
     /// (the audio thread can't recover from an out-of-range offset, so
     /// we treat that as a contract violation rather than panicking).
+    ///
+    /// On a full fail-closed list, a non-parameter event is dropped
+    /// rather than reallocating on the audio thread. A
+    /// [`EventBody::ParamChange`] is never dropped: parameter values are
+    /// applied only from these events, so losing one would leave the
+    /// parameter at a stale value until the host moves it again. It is
+    /// instead folded into the latest queued change for the same id
+    /// (the final value survives; only an intermediate automation step
+    /// is lost), and if there is none the ring grows - a one-off
+    /// reallocation that a list sized via [`block_event_capacity`]
+    /// should never hit.
     pub fn push(&mut self, event: Event) {
-        // A never-allocated (default-constructed) list is a non-RT context -
-        // take a one-time reservation so those callers grow normally. The
-        // audio path uses `with_capacity`, so it never lands here.
-        if self.events.capacity() == 0 {
-            self.events.reserve(EVENT_LIST_PREALLOC);
+        if self.fail_closed && self.events.len() == self.events.capacity() {
+            let EventBody::ParamChange { id, value } = event.body else {
+                return;
+            };
+            // Keep the queued entry's offset: moving it later could break
+            // the order of an already-sorted list.
+            let queued = self
+                .events
+                .iter_mut()
+                .rev()
+                .find_map(|e| match &mut e.body {
+                    EventBody::ParamChange { id: qid, value: qv } if *qid == id => Some(qv),
+                    _ => None,
+                });
+            if let Some(qv) = queued {
+                *qv = value;
+                return;
+            }
         }
-        // Fail closed at capacity rather than reallocating on the audio
-        // thread. Wrappers prealloc to `EVENT_LIST_PREALLOC`; a dense MPE /
-        // CC block (VST3 emits two events per MIDI-mapped param change) that
-        // exceeds it drops the overflow instead of taking an RT-unsafe `Vec`
-        // growth mid-`process()` - the same fail-closed policy the `SysEx`
-        // pool uses. `len < capacity` guarantees `Vec::push` won't grow.
-        if self.events.len() < self.events.capacity() {
-            self.events.push(event);
-        }
+        self.events.push(event);
     }
 
     /// Sort the list by `sample_offset` if it isn't already, keeping
@@ -449,7 +533,8 @@ impl EventList {
     /// message and is never the right answer.
     ///
     /// # Errors
-    /// [`PushError::PoolFull`] when the pool is at capacity.
+    /// [`PushError::PoolFull`] when the pool is at capacity;
+    /// [`PushError::QueueFull`] when a fail-closed event ring is full.
     pub fn push_sysex(&mut self, sample_offset: u32, data: &[u8]) -> Result<(), PushError> {
         self.push_sysex_on_port(sample_offset, 0, data)
     }
@@ -460,13 +545,17 @@ impl EventList {
     /// arrived on.
     ///
     /// # Errors
-    /// [`PushError::PoolFull`] when the pool is at capacity.
+    /// [`PushError::PoolFull`] when the pool is at capacity;
+    /// [`PushError::QueueFull`] when a fail-closed event ring is full.
     pub fn push_sysex_on_port(
         &mut self,
         sample_offset: u32,
         port: u8,
         data: &[u8],
     ) -> Result<(), PushError> {
+        if self.fail_closed && self.events.len() == self.events.capacity() {
+            return Err(PushError::QueueFull);
+        }
         let pool_offset = self.sysex_pool.len();
         if pool_offset + data.len() > self.sysex_pool.capacity() {
             return Err(PushError::PoolFull);
@@ -604,6 +693,125 @@ mod tests {
         // length is unchanged.
         assert_eq!(list.len(), 1);
         assert_eq!(list.sysex_pool_used(), SYSEX_POOL_PREALLOC);
+    }
+
+    #[test]
+    fn fail_closed_caps_growable_grows_reserve_resizes() {
+        let ev = || {
+            Event::new(
+                0,
+                EventBody::ControlChange {
+                    group: 0,
+                    channel: 0,
+                    cc: 1,
+                    value: 0,
+                },
+            )
+        };
+
+        // `with_capacity` is fail-closed (the RT policy): it holds exactly
+        // `capacity` and drops non-parameter overflow rather than
+        // reallocating.
+        let mut rt = EventList::with_capacity(2);
+        for _ in 0..5 {
+            rt.push(ev());
+        }
+        assert_eq!(rt.len(), 2, "fail-closed list caps at its capacity");
+
+        // `reserve_events` grows the ring off-thread, so a later block
+        // carries the whole stream without dropping.
+        rt.clear();
+        rt.reserve_events(400);
+        for _ in 0..300 {
+            rt.push(ev());
+        }
+        assert_eq!(rt.len(), 300, "reserved ring holds the whole block");
+
+        // A default-constructed (non-RT) list grows normally, well past
+        // `EVENT_LIST_PREALLOC` - no silent cap.
+        let mut growable = EventList::default();
+        for _ in 0..(EVENT_LIST_PREALLOC + 50) {
+            growable.push(ev());
+        }
+        assert_eq!(growable.len(), EVENT_LIST_PREALLOC + 50);
+
+        // `growable_with_capacity` reserves like `with_capacity` but grows.
+        let mut offline = EventList::growable_with_capacity(2);
+        for _ in 0..5 {
+            offline.push(ev());
+        }
+        assert_eq!(offline.len(), 5);
+        assert_eq!(offline.sysex_pool_capacity(), SYSEX_POOL_PREALLOC);
+
+        assert_eq!(initial_event_capacity(10), 10 + EVENT_LIST_PREALLOC);
+        assert_eq!(block_event_capacity(16, 10), 16 + 10 + EVENT_LIST_PREALLOC);
+    }
+
+    fn param_values(list: &EventList) -> Vec<(u32, f64)> {
+        list.iter()
+            .filter_map(|e| match e.body {
+                EventBody::ParamChange { id, value } => Some((id, value)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn full_list_folds_same_param_into_latest_value() {
+        let mut list = EventList::with_capacity(4);
+        let cap = list.events.capacity();
+        for i in 0..10u32 {
+            list.push(Event::new(
+                i,
+                EventBody::ParamChange {
+                    id: 7,
+                    value: f64::from(i),
+                },
+            ));
+        }
+        // The first `cap` points queue; the rest fold into the newest one.
+        assert_eq!(list.len(), cap);
+        assert_eq!(list.events.capacity(), cap, "folding must not reallocate");
+        assert_eq!(param_values(&list).last(), Some(&(7, 9.0)));
+    }
+
+    #[test]
+    fn full_list_grows_for_unseen_param_instead_of_dropping() {
+        let mut list = EventList::with_capacity(4);
+        for id in 0..10u32 {
+            list.push(Event::new(0, EventBody::ParamChange { id, value: 1.0 }));
+        }
+        let ids: Vec<u32> = param_values(&list).iter().map(|&(id, _)| id).collect();
+        assert_eq!(
+            ids,
+            (0..10).collect::<Vec<_>>(),
+            "every param keeps its change"
+        );
+    }
+
+    #[test]
+    fn push_sysex_on_full_ring_is_queue_full() {
+        let mut list = EventList::with_capacity(1);
+        let cap = list.events.capacity();
+        for _ in 0..cap {
+            list.push(Event::new(
+                0,
+                EventBody::ControlChange {
+                    group: 0,
+                    channel: 0,
+                    cc: 1,
+                    value: 0,
+                },
+            ));
+        }
+        assert_eq!(list.push_sysex(0, b"\x01"), Err(PushError::QueueFull));
+        assert_eq!(list.len(), cap);
+        assert_eq!(
+            list.events.capacity(),
+            cap,
+            "sysex must not grow a fail-closed ring"
+        );
+        assert_eq!(list.sysex_pool_used(), 0, "pool untouched on QueueFull");
     }
 
     #[test]
