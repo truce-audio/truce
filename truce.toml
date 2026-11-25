@@ -356,7 +356,7 @@ category = "effect"
 fourcc = "TStt"
 au3_subtype = "TSt3"
 au_tag = "Effects"
-aax_category = "Other"
+aax_category = "Effect"
 vst3_subcategory = "Tools"
 au3_name = "Truce State (AUv3)"
 windows_icon = "static/truce-minimal.ico"
@@ -613,18 +613,19 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
-name = "Truce MultiGain"
-bundle_id = "multigain"
-crate = "truce-example-multigain"
+name = "Truce Step Gate"
+bundle_id = "stepgate"
+crate = "truce-example-stepgate"
 # Demonstrates nested-array params: a `#[nested]` field typed as
-# `[StageParams; N]` instantiates the same gain-stage group N times and
-# the DSP + editor loop over it.
+# `[StepParams; N]` instantiates the same step group (level + on/off) N
+# times, and the tempo-synced DSP + editor index into it.
 category = "effect"
-fourcc = "TMg3"
-au3_subtype = "TMg4"
+fourcc = "TStg"
+au3_subtype = "TSg3"
 au_tag = "Effects"
+aax_category = "Dynamics"
 vst3_subcategory = "Fx"
-au3_name = "Truce MultiGain (AUv3)"
+au3_name = "Truce Step Gate (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"

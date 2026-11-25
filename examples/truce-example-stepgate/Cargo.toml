@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-multigain"
+name = "truce-example-stepgate"
 # Internal-only - workspace demonstration, not for crates.io.
 publish = false
 version.workspace = true
@@ -13,7 +13,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "truce-example-multigain-standalone"
+name = "truce-example-stepgate-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 
