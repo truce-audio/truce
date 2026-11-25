@@ -56,6 +56,25 @@ pub(crate) fn try_resolve_plugin() -> Result<(Config, String, std::path::PathBuf
     Ok((config, pkg_name, canonical))
 }
 
+/// `aax_category` strings `truce.toml` may use. Must stay in sync with
+/// the `info.aax_category` match in `truce-aax`. Validated at macro
+/// expansion because the wrapper's runtime fallback for an unrecognized
+/// string is EQ (the always-visible category), which silently
+/// miscategorizes the plugin in Pro Tools.
+const AAX_CATEGORIES: &[&str] = &[
+    "EQ",
+    "Dynamics",
+    "PitchShift",
+    "Reverb",
+    "Delay",
+    "Modulation",
+    "Harmonic",
+    "NoiseReduction",
+    "Dither",
+    "SoundField",
+    "Effect",
+];
+
 fn find_plugin<'a>(config: &'a Config, pkg_name: &str) -> &'a PluginDef {
     // try_resolve_plugin already verified the entry exists.
     config
@@ -159,17 +178,30 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
     let version = truce_build::effective_plugin_version(plugin.version.as_deref(), &pkg_version);
 
-    // Category-string vocabulary parsed by every consumer that reads
-    // `truce.toml`. Note-effect plugins (`midi` / `note_effect`) must
-    // map to a distinct variant from `Effect` so the LV2 MIDI input
-    // decode path stays open; collapsing them silently drops every
-    // host MIDI event.
-    let category = match plugin.category.as_str() {
-        "instrument" => quote! { ::truce::core::PluginCategory::Instrument },
-        "midi" | "note_effect" => quote! { ::truce::core::PluginCategory::NoteEffect },
-        "analyzer" => quote! { ::truce::core::PluginCategory::Analyzer },
-        "tool" => quote! { ::truce::core::PluginCategory::Tool },
-        _ => quote! { ::truce::core::PluginCategory::Effect },
+    // One parser for the runtime category and the LV2 TTL's port set
+    // (`truce_build::parse_plugin_category`), so they can't disagree.
+    // Note-effect plugins (`midi` / `note_effect`) map to a distinct
+    // variant from `Effect` so the LV2 MIDI input decode path stays open.
+    // An unknown category is an error, not a silent `effect`.
+    let category = match truce_build::parse_plugin_category(&plugin.category) {
+        Ok(c) => {
+            use truce_build::lv2::Lv2Category as C;
+            match c {
+                C::Effect => quote! { ::truce::core::PluginCategory::Effect },
+                C::Instrument => quote! { ::truce::core::PluginCategory::Instrument },
+                C::NoteEffect => quote! { ::truce::core::PluginCategory::NoteEffect },
+                C::Analyzer => quote! { ::truce::core::PluginCategory::Analyzer },
+                C::Tool => quote! { ::truce::core::PluginCategory::Tool },
+            }
+        }
+        Err(e) => {
+            return syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!("truce.toml: [[plugin]] entry `{}`: {e}", plugin.crate_name),
+            )
+            .to_compile_error()
+            .into();
+        }
     };
     // MIDI wiring + dialects resolved together (capability is
     // `count > 0`; a port-less direction can't be 2.0) so every format
@@ -226,6 +258,19 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let au_manufacturer = &config.vendor.au_manufacturer;
 
     let aax_category = if let Some(cat) = &plugin.aax_category {
+        if !AAX_CATEGORIES.contains(&cat.as_str()) {
+            return syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "truce.toml: [[plugin]] entry `{}` has unknown aax_category `{cat}`; \
+                     expected one of {}",
+                    plugin.crate_name,
+                    AAX_CATEGORIES.join(", ")
+                ),
+            )
+            .to_compile_error()
+            .into();
+        }
         quote! { Some(#cat) }
     } else {
         quote! { None }
