@@ -1339,6 +1339,14 @@ fn run_pkgbuild_for_format(
     ];
     if fmt.is_native_bundle() {
         let plist_path = staging.join(format!("_component_plist_{}.plist", fmt.label()));
+        // `BundleIsVersionChecked` is off: Installer would compare our
+        // `CFBundleVersion` with the installed bundle's while planning the
+        // install and skip a payload it thinks is older - but the
+        // preinstall deletes that installed bundle regardless, leaving
+        // nothing behind while reporting success. A 0.x plug-in built by
+        // 6.x carried a hardcoded `CFBundleVersion` of `1`, above any real
+        // 0.x version, so its first upgrade would hit exactly that. It also
+        // lets a deliberate downgrade (a rollback pkg) install.
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1350,7 +1358,7 @@ fn run_pkgbuild_for_format(
         <key>BundleIsRelocatable</key>
         <false/>
         <key>BundleIsVersionChecked</key>
-        <true/>
+        <false/>
         <key>BundleHasStrictIdentifier</key>
         <true/>
         <key>BundleOverwriteAction</key>
