@@ -622,6 +622,12 @@ pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
         if let Err(msg) = truce_build::validate_bundle_id(&p.bundle_id) {
             return Err(format!("[[plugin]] `{}`: {msg}", p.crate_name).into());
         }
+        // Same parser as `plugin_info!` / the LV2 TTL: a misspelt category
+        // must fail here too, not fall back to an effect in `au_type` on a
+        // `--no-build` install.
+        if let Err(msg) = truce_build::parse_plugin_category(&p.category) {
+            return Err(format!("[[plugin]] `{}`: {msg}", p.crate_name).into());
+        }
         let check = truce_build::midi_wiring(
             &p.category,
             p.midi_input,
