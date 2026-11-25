@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor};
-use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
+use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent, WindowEventDispatchResult};
 use slint::{LogicalPosition, PhysicalSize};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle, ResizeCorrector};
@@ -928,18 +928,23 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     return EventStatus::Ignored;
                 };
                 let window = self.slint_window.window();
-                match kb.state {
+                let event = match kb.state {
                     keyboard_types::KeyState::Down if kb.repeat => {
-                        window.dispatch_event(WindowEvent::KeyPressRepeated { text });
+                        WindowEvent::KeyPressRepeated { text }
                     }
-                    keyboard_types::KeyState::Down => {
-                        window.dispatch_event(WindowEvent::KeyPressed { text });
-                    }
-                    keyboard_types::KeyState::Up => {
-                        window.dispatch_event(WindowEvent::KeyReleased { text });
-                    }
+                    keyboard_types::KeyState::Down => WindowEvent::KeyPressed { text },
+                    keyboard_types::KeyState::Up => WindowEvent::KeyReleased { text },
+                };
+                // Report whether a focused slint item consumed the key. An
+                // unconsumed key (no focus item, or a handler that returned
+                // `reject`) is returned to the host, which baseview forwards
+                // on `Ignored`, so Space and transport shortcuts keep working
+                // while the editor is focused. A dispatch error forwards too
+                // rather than panicking the audio host.
+                match window.dispatch_event_with_result(event) {
+                    Ok(WindowEventDispatchResult::Accepted) => EventStatus::Captured,
+                    _ => EventStatus::Ignored,
                 }
-                EventStatus::Captured
             }
         }
     }
