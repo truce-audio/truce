@@ -21,7 +21,9 @@ use truce_core::editor::{
     ClosureBridge, Editor, IdleClock, PluginContext, RawWindowHandle, SendPtr, clamp_logical_size,
     fit_logical_size,
 };
-use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{
+    Event, EventBody, EventList, TransportInfo, block_event_capacity, initial_event_capacity,
+};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo, resolve_name_override};
 use truce_core::meters::MeterStore;
@@ -330,6 +332,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
             plugin.init();
             let info = P::info();
             let param_infos: Vec<ParamInfo> = plugin.params().param_infos();
+            let initial_event_cap = initial_event_capacity(param_infos.len());
             let mut param_ranges: Vec<(u32, ParamRange)> =
                 param_infos.iter().map(|i| (i.id, i.range)).collect();
             // Sort by id so `binary_search_by_key` works in the hot lookups.
@@ -376,10 +379,10 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 host_scale: AtomicU64::new(1.0f64.to_bits()),
                 pending_resize: AtomicU64::new(0),
                 audio: PluginCell::new(Vst3Scratch {
-                    event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    event_list: EventList::with_capacity(initial_event_cap),
                     sysex_inputs_pending: false,
-                    output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-                    sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                    output_events: EventList::with_capacity(initial_event_cap),
+                    sub_event_scratch: EventList::with_capacity(initial_event_cap),
                     sample_rate: 44100.0,
                     // 8192 covers the largest block sizes mainstream DAWs /
                     // validators use (Reaper / pluginval <= 4096); a non-zero
@@ -444,6 +447,14 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let max_frames = (max_frames as usize).max(1024);
         audio.sample_rate = sample_rate;
         audio.max_block_size = max_frames;
+        // Grow the event rings to the block's worst case here, off the
+        // audio thread, so a dense input block (host automation + MIDI,
+        // two events per MIDI-mapped param change) never overflows a
+        // fail-closed `push` during processing.
+        let event_cap = block_event_capacity(max_frames, inst.param_infos.len());
+        audio.event_list.reserve_events(event_cap);
+        audio.output_events.reserve_events(event_cap);
+        audio.sub_event_scratch.reserve_events(event_cap);
         // Grow per-block scratch to cover the *widest* declared layout and
         // this block size before the first process() call so the audio
         // thread stays alloc-free. VST3 negotiates layouts at runtime

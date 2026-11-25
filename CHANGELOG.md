@@ -16,6 +16,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 - **An unknown `aax_category` is now a compile error.** `truce.toml` categories are validated against the recognized set at macro-expansion time instead of being silently accepted; only an AAX build that named an out-of-set category is affected. **Migration:** set `aax_category` to a recognized value.
 - **`Editor::idle` gained a `dt` parameter.** `fn idle(&mut self)` is now `fn idle(&mut self, dt: std::time::Duration)` — `dt` is the wall-clock time since the previous call, so animation can be driven frame-rate-independently across hosts that tick at different rates. A custom `Editor` that overrides `idle` no longer compiles. **Migration:** add the parameter (`fn idle(&mut self, _dt: std::time::Duration)` if you don't use it). A plug-in on a built-in editor is unaffected.
 - **`truce-egui` editors receive a key only when they claim it or a text field is focused.** So a DAW's shortcuts keep working while a plug-in window is focused, an unclaimed key now returns to the host instead of reaching the editor — a plug-in that reads keys directly (custom shortcuts, Tab / Enter navigation) stops seeing them until it opts in. **Migration:** call `truce_egui::claim_keys(ui.ctx(), &[…])` each frame with the keys you handle (or `egui::Key::ALL` for all of them, as `gui-zoo-egui` now does). A focused text field still keeps every key; an unclaimed Cmd / Ctrl / Alt chord routes to the host, and you can claim specific chords with `truce_egui::claim_shortcuts(ui.ctx(), &[egui::KeyboardShortcut::new(…)])`.
+- **`EventList::with_capacity` lists are now capped at their capacity.** They used to grow on demand; now a full list drops non-parameter events, and `push_sysex` returns the new `PushError::QueueFull`. Code that builds its own list with a small capacity (tests, a custom host) and pushes more than that loses the overflow. `PushError` is matched exhaustively, so a `match` on it needs the new arm. **Migration:** size the list for the block (`block_event_capacity(max_block, param_count)`), or use `EventList::growable_with_capacity` outside the audio thread.
 
 ### Migrating from 6.x
 
@@ -100,7 +101,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 
 #### Real-time safety and hardening
 
-- Event lists are pre-sized at activate to the host's worst-case block, off the audio thread, and `EventList::push` fails closed at capacity instead of reallocating on the audio thread. A dense block of automation plus MIDI no longer drops events.
+- Event lists no longer reallocate on the audio thread in practice. Every wrapper (now including LV2 and the standalone host) sizes them off the audio thread for its worst-case block: one change per parameter plus a dense MIDI stream. A full list drops non-parameter events instead of growing. A parameter change is never dropped: it folds into the queued change for the same parameter, keeping the latest value, or the list grows as a last resort. The offline driver's lists always grow.
 - Parameter get / set callbacks are panic-firewalled across the C ABI (AU / VST2 / VST3).
 - CLAP / VST2 validate host-declared event and chunk sizes before reading them, closing out-of-bounds reads.
 - AAX's save-blob cache no longer serves stale state after a GUI-driven state change.

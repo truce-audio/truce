@@ -110,7 +110,10 @@ use truce_core::editor::{
     ClosureBridge, Editor, EditorBuilder, IdleClock, PluginContext, RawWindowHandle, SendPtr,
     fit_logical_size,
 };
-use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{
+    EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo, block_event_capacity,
+    initial_event_capacity,
+};
 use truce_core::export::PluginExport;
 use truce_core::info::{MidiDialect, PluginCategory, PluginInfo, resolve_name_override};
 use truce_core::meters::MeterStore;
@@ -630,6 +633,16 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
             instance.init();
             data.param_infos = instance.params().param_infos();
         }
+        // The lists are built before `init` knows the param count; grow
+        // them now so a full-param `params_flush` before `activate` (a
+        // state recall, clap-validator's flush checks) fits.
+        {
+            let initial_event_cap = initial_event_capacity(data.param_infos.len());
+            let mut audio = data.audio.enter();
+            audio.event_list.reserve_events(initial_event_cap);
+            audio.output_events.reserve_events(initial_event_cap);
+            audio.sub_event_scratch.reserve_events(initial_event_cap);
+        }
         // Query host params extension for request_flush support
         if !data.host.is_null()
             && let Some(get_ext) = (*data.host).get_extension
@@ -691,6 +704,13 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         audio.sample_rate = sample_rate;
         let max_block = max_frames_count as usize;
         audio.max_block_size = max_block;
+        // Grow the event rings to the block's worst case here, off the
+        // audio thread, so a dense input block (host automation + MIDI)
+        // never overflows a fail-closed `push` during processing.
+        let event_cap = block_event_capacity(max_block, data.param_infos.len());
+        audio.event_list.reserve_events(event_cap);
+        audio.output_events.reserve_events(event_cap);
+        audio.sub_event_scratch.reserve_events(event_cap);
         let mode = ProcessMode::from_u8(data.render_mode.load(Ordering::Relaxed));
         {
             let mut instance = enter_plugin(&data.plugin);
