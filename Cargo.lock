@@ -3946,6 +3946,7 @@ dependencies = [
  "pollster",
  "raw-window-handle 0.5.2",
  "truce-core",
+ "truce-font",
  "truce-gui",
  "truce-params",
  "wgpu 30.0.2",
