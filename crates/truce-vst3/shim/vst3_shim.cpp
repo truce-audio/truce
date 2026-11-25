@@ -620,7 +620,13 @@ struct TrucePlugView;     // forward decl - full def lives below in the
                           // pointer to it for the `plugView` field.
 
 // Global ctx→component mapping for extern "C" host-notification callbacks
-static constexpr int kMaxInstances = 64;
+// Live-instance map capacity. The timer handlers (macOS idle source,
+// Windows TIMERPROC) resolve their component through this table, so an
+// instance that can't claim a slot gets no idle / restart drain. Sized
+// generously - a single plug-in rarely exceeds a few dozen instances in
+// one session; a dynamic table would remove the ceiling entirely but
+// needs lock-free growth against the UI-thread handlers.
+static constexpr int kMaxInstances = 1024;
 static void* g_ctx_map_key[kMaxInstances] = {};
 static TruceComponent* g_ctx_map_comp[kMaxInstances] = {};
 
@@ -670,12 +676,19 @@ static constexpr int32_t kRunLoopRegisterTimerIndex = 5;
 static constexpr int32_t kRunLoopUnregisterTimerIndex = 6;
 #endif
 
-#if defined(__linux__) || defined(_WIN32)
-// Poll interval for the per-instance UI-thread timer (Linux run-loop
-// timer, Windows thread timer). It drains any pending restart *and* ticks
-// the editor's `idle`, so it runs at ~60fps for smooth animation; the
-// restart drain (an atomic exchange) stays negligible at that rate.
-static constexpr uint64_t kRestartTimerIntervalMs = 16;
+// Editor idle tick interval: while an editor is open, the per-instance
+// UI-thread timer ticks `idle` at ~60fps for smooth animation (macOS idle
+// source, Linux run-loop timer, Windows thread timer) and drains any
+// pending restart (a negligible atomic exchange) at the same cadence.
+static constexpr uint64_t kIdleTimerIntervalMs = 16;
+
+#if defined(_WIN32)
+// With no editor open, the always-on Windows thread timer still polls for
+// a pending restart (a rare latency change) - but slowly, since there is
+// nothing to repaint. macOS drains restarts through an event-driven
+// dispatch source and Linux through the param-poll flush, so neither keeps
+// a timer running once the editor is closed.
+static constexpr uint64_t kRestartTimerIntervalMs = 30;
 #endif
 
 #if defined(_WIN32)
@@ -780,8 +793,9 @@ public:
     dispatch_source_t restartSource = nullptr;
     // Periodic main-queue timer driving the editor's `idle` at ~60fps.
     // macOS has no run-loop/thread timer like Linux/Windows, so idle needs
-    // its own source. Fires for the component's whole life; the Rust side
-    // no-ops when no editor is open. Null if creation failed.
+    // its own source. Created only while an editor is attached (see
+    // `setEditorActive`), so a component with no editor open never arms it.
+    // Null when no editor is open or if creation failed.
     dispatch_source_t idleSource = nullptr;
 #endif
 #if defined(__linux__)
@@ -800,8 +814,11 @@ public:
     // instantiating (host UI) thread's message pump and drains
     // pendingRestart there - the editor-closed / no-param-poll path the
     // callback hooks below can't cover. 0 if creation failed (fall back
-    // to the param-poll / edit-gesture flush).
+    // to the param-poll / edit-gesture flush). `editorOpen` tracks whether
+    // the timer runs at the fast idle rate (editor attached) or the slow
+    // restart-drain rate; the TIMERPROC ticks `idle` only when it is set.
     UINT_PTR restartTimerId = 0;
+    bool editorOpen = false;
 #endif
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
     bool stateLoaded;         // true after setState() has run (or on first process if no state chunk)
@@ -841,19 +858,11 @@ public:
                         restartSource, truce_vst3_restart_source_event);
                     dispatch_resume(restartSource);
                 }
-                // ~60fps editor idle tick. Same ctx-key context so the
-                // handler resolves the component safely during teardown.
-                idleSource = dispatch_source_create(
-                    DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-                if (idleSource) {
-                    dispatch_set_context(idleSource, ctx);
-                    dispatch_source_set_timer(
-                        idleSource, dispatch_time(DISPATCH_TIME_NOW, 0),
-                        16 * NSEC_PER_MSEC, 4 * NSEC_PER_MSEC);
-                    dispatch_source_set_event_handler_f(
-                        idleSource, truce_vst3_idle_source_event);
-                    dispatch_resume(idleSource);
-                }
+                // The ~60fps editor idle timer is created on demand when an
+                // editor attaches (`setEditorActive`), not here, so a
+                // component with no editor open does no periodic main-queue
+                // work. The restart source above is event-driven, so it
+                // stays armed for the whole life at no idle cost.
 #endif
 #if defined(__linux__)
                 // No syscall here - just wire the timer handler's
@@ -1985,6 +1994,49 @@ public:
         restart(componentHandler, flags);
     }
 
+    // Editor attached (`active`) or detached. Gates the per-instance idle
+    // timer so it only wakes the UI thread while an editor is open - no
+    // 60fps churn for a component with no visible editor. macOS: create /
+    // tear down the idle dispatch source (the restart source is event-
+    // driven and untouched). Windows: re-arm the always-on thread timer
+    // between its slow restart-drain rate and the fast idle rate, and gate
+    // the idle tick via `editorOpen`. Linux is handled by
+    // `updateRunLoopRegistration` (its run-loop timer is only registered
+    // while a frame is attached). Runs on the host UI thread.
+    void setEditorActive(bool active) {
+#if __APPLE__
+        if (active && !idleSource) {
+            idleSource = dispatch_source_create(
+                DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+            if (idleSource) {
+                dispatch_set_context(idleSource, ctx);
+                dispatch_source_set_timer(
+                    idleSource, dispatch_time(DISPATCH_TIME_NOW, 0),
+                    kIdleTimerIntervalMs * NSEC_PER_MSEC, 4 * NSEC_PER_MSEC);
+                dispatch_source_set_event_handler_f(
+                    idleSource, truce_vst3_idle_source_event);
+                dispatch_resume(idleSource);
+            }
+        } else if (!active && idleSource) {
+            dispatch_source_cancel(idleSource);
+            dispatch_release(idleSource);
+            idleSource = nullptr;
+        }
+#endif
+#if defined(_WIN32)
+        if (active == editorOpen) return;
+        editorOpen = active;
+        // Re-arm the thread timer at the new rate on the UI thread that
+        // owns it, so Kill/SetTimer are valid here.
+        if (restartTimerId) KillTimer(nullptr, restartTimerId);
+        restartTimerId = SetTimer(
+            nullptr, 0,
+            (UINT)(active ? kIdleTimerIntervalMs : kRestartTimerIntervalMs),
+            truce_vst3_restart_timer_proc);
+#endif
+        (void)active;
+    }
+
 #if defined(__linux__)
     // (Re)bind the restart timer to the host's run loop for the given
     // plug frame. Called from pv_setFrame / view release (frame or
@@ -2013,7 +2065,7 @@ public:
         if (qi(frame, IRunLoop_iid, &rl) != kResultOk || !rl) return;
         auto reg = (tresult (*)(void*, void*, uint64_t))
             (*(void***)rl)[kRunLoopRegisterTimerIndex];
-        if (reg(rl, &restartTimer, kRestartTimerIntervalMs) == kResultOk) {
+        if (reg(rl, &restartTimer, kIdleTimerIntervalMs) == kResultOk) {
             runLoop = rl;
         } else {
             auto rel = (uint32 (*)(void*))(*(void***)rl)[2];
@@ -2069,9 +2121,11 @@ static void CALLBACK truce_vst3_restart_timer_proc(
         TruceComponent* comp = g_ctx_map_comp[i];
         if (comp && comp->restartTimerId == id) {
             comp->flushPendingRestart();
-            // Same UI thread, same cadence: tick the editor. The Rust side
-            // no-ops when no editor is open.
-            if (g_cb && g_cb->gui_idle && comp->rawCtx()) g_cb->gui_idle(comp->rawCtx());
+            // While an editor is attached the timer runs at the fast idle
+            // rate, so tick the editor; with no editor it runs slowly, only
+            // to drain restarts, so skip the idle call.
+            if (comp->editorOpen && g_cb && g_cb->gui_idle && comp->rawCtx())
+                g_cb->gui_idle(comp->rawCtx());
             return;
         }
     }
@@ -2155,12 +2209,14 @@ static uint32 pv_release(void* s) {
     if (--pv->refCount <= 0) {
         if (pv->comp) {
             pv->comp->deferredParent = nullptr;
+            // The frame goes away with the view: stop the idle timer so the
+            // host doesn't keep a handler tied to a freed view. A spec-
+            // compliant host already called setFrame(nullptr); this covers
+            // those that don't.
 #if defined(__linux__)
-            // The frame goes away with the view: drop the run-loop
-            // registration so the host doesn't hold a handler tied to a
-            // freed view. A spec-compliant host already called
-            // setFrame(nullptr); this covers those that don't.
             pv->comp->updateRunLoopRegistration(nullptr);
+#else
+            pv->comp->setEditorActive(false);
 #endif
             // Null the component's pointer to this view so
             // `truce_vst3_request_resize` doesn't dereference a
@@ -2263,12 +2319,18 @@ static tresult pv_onSize(void* s, void* rect) {
 static tresult pv_setFrame(void* s, void* frame) {
     auto* pv = (TrucePlugView*)s;
     pv->frame = frame;
+    // Editor attached (non-null frame) or detached (null): gate the idle
+    // timer so it only runs while an editor is open.
+    if (pv->comp) {
 #if defined(__linux__)
-    // Bind (or, on a null frame, unbind) the restart timer to the frame's
-    // run loop so a latency change flagged by the audio thread reaches the
-    // host UI thread even without param polling.
-    if (pv->comp) pv->comp->updateRunLoopRegistration(frame);
+        // Bind (or, on a null frame, unbind) the restart timer to the
+        // frame's run loop so a latency change reaches the host UI thread
+        // even without param polling.
+        pv->comp->updateRunLoopRegistration(frame);
+#else
+        pv->comp->setEditorActive(frame != nullptr);
 #endif
+    }
     return kResultOk;
 }
 

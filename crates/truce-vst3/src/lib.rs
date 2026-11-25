@@ -2244,6 +2244,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     run_extern_callback_with::<P, ()>("vst3", "gui_open", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let mut gui = inst.gui.enter();
+        // Reset the idle clock on open: it persists across close/open on the
+        // per-instance gui cell, so the first `dt` after reopening would
+        // otherwise be the whole closed interval and jump animations.
+        gui.idle_clock.reset();
         if let Some(ref mut editor) = gui.editor {
             // Re-sync the editor's content scale to the host's current
             // value right before opening. `host_scale` lives on the

@@ -19,19 +19,36 @@ pub struct IdleClock {
 }
 
 impl IdleClock {
+    /// Longest `dt` [`Self::tick`] reports. A GUI-thread stall, or an editor
+    /// reopened without [`Self::reset`], could otherwise hand animation a
+    /// multi-second (or longer) `dt` and make it jump. 100 ms is far longer
+    /// than any real frame interval, so it only caps the pathological case.
+    pub const MAX_DT: Duration = Duration::from_millis(100);
+
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Clear the clock so the next [`Self::tick`] reports [`Duration::ZERO`].
+    /// Call when an editor opens: the per-instance clock still holds the
+    /// timestamp from before the editor was closed, so without this the
+    /// first `dt` after reopening would be the whole closed interval.
+    pub fn reset(&mut self) {
+        self.last = None;
+    }
+
     /// Elapsed time since the previous `tick`. Returns [`Duration::ZERO`]
-    /// on the first call (no prior sample) and is saturating, so a
-    /// non-monotonic clock read can never yield a negative/huge jump.
+    /// on the first call (no prior sample), is saturating (a non-monotonic
+    /// read never yields a negative jump), and is clamped to [`Self::MAX_DT`]
+    /// so a long gap can't jump animation.
     pub fn tick(&mut self) -> Duration {
         let now = Instant::now();
-        self.last
+        let dt = self
+            .last
             .replace(now)
-            .map_or(Duration::ZERO, |prev| now.saturating_duration_since(prev))
+            .map_or(Duration::ZERO, |prev| now.saturating_duration_since(prev));
+        dt.min(Self::MAX_DT)
     }
 }
 
@@ -883,6 +900,28 @@ fn derive_width(h: u32, min_w: u32, max_w: u32, num64: u64, denom64: u64) -> (u3
     let on_ratio = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX)) as u32;
     let clamped = on_ratio.clamp(min_w.max(1), max_w);
     (clamped, clamped != on_ratio)
+}
+
+#[cfg(test)]
+mod idle_clock_tests {
+    use super::IdleClock;
+    use std::time::Duration;
+
+    #[test]
+    fn reset_clears_baseline_and_tick_is_clamped() {
+        let mut clock = IdleClock::new();
+        // No prior sample on the first tick.
+        assert_eq!(clock.tick(), Duration::ZERO);
+        // Establish a baseline, then reset: the next tick must read ZERO
+        // again rather than the gap since the last tick - this is what keeps
+        // the first frame after reopening an editor from jumping.
+        let _ = clock.tick();
+        clock.reset();
+        assert_eq!(clock.tick(), Duration::ZERO);
+        // Every reported dt is clamped, so a long stall - or a reopen that
+        // somehow missed the reset - can never hand animation a huge jump.
+        assert!(clock.tick() <= IdleClock::MAX_DT);
+    }
 }
 
 #[cfg(test)]
