@@ -254,7 +254,6 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
     /// the loader (the audio thread only `try_lock`s it, so this never
     /// stalls audio), and returns `None` during an in-flight reload -
     /// the host retries editor creation on a later idle tick.
-    #[must_use]
     pub fn editor_builder(&self) -> truce_core::editor::EditorBuilder<P> {
         let loader = Arc::clone(&self.loader);
         Box::new(move |params: Arc<P>| {

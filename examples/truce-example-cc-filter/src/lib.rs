@@ -101,6 +101,9 @@ impl PluginLogic for CcFilter {
         }
 
         let a = one_pole_a(state.cutoff_hz, state.sample_rate);
+        // `ch` indexes the per-channel filter state and `buffer.io(ch)` in
+        // lockstep; the channels aren't a single iterable slice.
+        #[allow(clippy::needless_range_loop)]
         for ch in 0..buffer.channels().min(2) {
             let mut z = state.z1[ch];
             let (inp, out) = buffer.io(ch);

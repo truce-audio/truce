@@ -701,8 +701,7 @@ fn read_features_table(manifest: &Path) -> BTreeMap<String, Vec<String>> {
 fn read_default_features(manifest: &Path) -> HashSet<String> {
     read_features_table(manifest)
         .get("default")
-        .map(|d| d.iter().cloned().collect())
-        .unwrap_or_default()
+        .map_or_default(|d| d.iter().cloned().collect())
 }
 
 /// One plugin crate's declared default features (its `[features].default`).
@@ -710,9 +709,7 @@ fn read_default_features(manifest: &Path) -> HashSet<String> {
 /// Resolves the crate's own manifest, so it works in both the single-crate
 /// and workspace layouts.
 pub(crate) fn plugin_default_features(root: &Path, crate_name: &str) -> HashSet<String> {
-    locate_plugin_manifest(root, crate_name)
-        .map(|m| read_default_features(&m))
-        .unwrap_or_default()
+    locate_plugin_manifest(root, crate_name).map_or_default(|m| read_default_features(&m))
 }
 
 /// Cargo `--features` tokens (`crate/feature`) for every non-format
@@ -890,8 +887,7 @@ pub(crate) fn log_output(line: String) {
 pub(crate) fn take_outputs() -> Vec<String> {
     OUTPUTS
         .lock()
-        .map(|mut v| std::mem::take(&mut *v))
-        .unwrap_or_default()
+        .map_or_default(|mut v| std::mem::take(&mut *v))
 }
 
 /// Per-process collector of soft-skipped install reasons (e.g. AAX with
@@ -915,8 +911,7 @@ pub(crate) fn log_skip(line: String) {
 pub(crate) fn take_skipped() -> Vec<String> {
     SKIPPED
         .lock()
-        .map(|mut v| std::mem::take(&mut *v))
-        .unwrap_or_default()
+        .map_or_default(|mut v| std::mem::take(&mut *v))
 }
 
 /// Run `codesign` with the given args. Prints a one-line success or
@@ -1200,7 +1195,10 @@ mod tests {
             parse_extra_features("a, b c").unwrap(),
             vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
-        assert!(parse_extra_features("").unwrap().is_empty());
+        assert_eq!(
+            parse_extra_features("").unwrap(),
+            [] as [std::string::String; 0]
+        );
         assert_eq!(
             parse_extra_features(" fancy-dsp ").unwrap(),
             vec!["fancy-dsp".to_string()]
@@ -1258,9 +1256,15 @@ mod tests {
         );
         // Only formats → nothing to re-add.
         let only_formats = feature_graph(&[("default", &["clap", "vst3", "standalone"])]);
-        assert!(nonformat_default_features(&only_formats).is_empty());
+        assert_eq!(
+            nonformat_default_features(&only_formats),
+            [] as [std::string::String; 0]
+        );
         // No `default` key at all → empty.
-        assert!(nonformat_default_features(&BTreeMap::new()).is_empty());
+        assert_eq!(
+            nonformat_default_features(&BTreeMap::new()),
+            [] as [std::string::String; 0]
+        );
     }
 
     #[test]

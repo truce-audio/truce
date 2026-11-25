@@ -77,6 +77,9 @@ impl PluginLogic for Bitcrusher {
         let channels = buffer.channels().min(2);
         for i in 0..buffer.num_samples() {
             let refresh = state.hold_counter.is_multiple_of(hold);
+            // `ch` indexes the per-channel hold state and `buffer.io(ch)` in
+            // lockstep; the channels aren't a single iterable slice.
+            #[allow(clippy::needless_range_loop)]
             for ch in 0..channels {
                 let (inp, out) = buffer.io(ch);
                 let dry = inp[i];

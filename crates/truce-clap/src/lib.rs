@@ -3269,6 +3269,10 @@ use clap_sys::ext::gui::{
     CLAP_EXT_GUI, clap_gui_resize_hints, clap_host_gui, clap_plugin_gui, clap_window,
 };
 
+// The `if api == X { return true }` branches are per-platform `#[cfg]`s,
+// so they can't collapse into one boolean expression (an attribute on an
+// expression isn't allowed).
+#[allow(clippy::needless_bool)]
 unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
     _plugin: *const clap_plugin,
     api: *const c_char,
@@ -4596,7 +4600,7 @@ mod sounding_notes_tests {
         // Drained notes are cleared - a second wildcard finds nothing.
         hits.clear();
         s.drain_matching(0, Some(3), None, |ch, k| hits.push((ch, k)));
-        assert!(hits.is_empty());
+        assert_eq!(hits, [] as [(u8, u8); 0]);
 
         // Channel wildcard, concrete key.
         s.set(0, 5, 60);
@@ -4623,7 +4627,7 @@ mod sounding_notes_tests {
         s.clear(0, 0, 60);
         let mut hits = Vec::new();
         s.drain_matching(0, None, None, |ch, k| hits.push((ch, k)));
-        assert!(hits.is_empty());
+        assert_eq!(hits, [] as [(u8, u8); 0]);
     }
 
     #[test]
@@ -4698,7 +4702,10 @@ mod remote_controls_tests {
     #[test]
     fn ungrouped_params_produce_no_page() {
         let infos = vec![info(0, ""), info(1, "")];
-        assert!(remote_control_pages(&infos).is_empty());
+        assert_eq!(
+            remote_control_pages(&infos),
+            [] as [(&str, std::vec::Vec<u32>); 0]
+        );
     }
 
     #[test]

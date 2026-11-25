@@ -363,8 +363,8 @@ mod tests {
     #[test]
     fn migrated_state_default_has_empty_persist() {
         let restored: DeserializedState = MigratedState::default().into();
-        assert!(restored.persist.is_empty());
+        assert_eq!(restored.persist, [] as [u8; 0]);
         assert!(restored.extra.is_none());
-        assert!(restored.params.is_empty());
+        assert_eq!(restored.params, [] as [(u32, f64); 0]);
     }
 }

@@ -670,6 +670,9 @@ impl<S: Sample> RawBufferScratch<S> {
         }
         unsafe {
             let nf = num_frames as usize;
+            // `ch` indexes the raw host pointer array and `output_buffers`
+            // in lockstep; neither is a single iterable slice here.
+            #[allow(clippy::needless_range_loop)]
             for ch in 0..(num_out as usize) {
                 let ptr = *outputs.add(ch);
                 if ptr.is_null() {

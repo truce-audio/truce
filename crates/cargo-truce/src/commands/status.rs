@@ -193,10 +193,9 @@ fn scan_au_v3_apps(app_dir: &std::path::Path, expected: &std::collections::HashS
         let Ok(plugins) = fs::read_dir(&plugins_dir) else {
             continue;
         };
-        let has_appex = plugins.into_iter().any(|p| {
-            p.ok()
-                .is_some_and(|p| p.file_name().to_string_lossy().ends_with(".appex"))
-        });
+        let has_appex = plugins
+            .into_iter()
+            .any(|p| p.is_ok_and(|p| p.file_name().to_string_lossy().ends_with(".appex")));
         if has_appex {
             eprintln!("  {name}");
         }

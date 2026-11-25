@@ -20,6 +20,14 @@ pub use truce_clap as clap_wrapper;
 #[cfg(feature = "vst3")]
 pub use truce_vst3 as vst3_wrapper;
 
+// Referenced only inside the `plugin!` macro body (`::truce_vst2::export_vst2!`
+// / `::truce_lv2::export_lv2!`), which cargo's unused-dependency check can't
+// see; these keep the deps from being flagged as unused.
+#[cfg(feature = "lv2")]
+use truce_lv2 as _;
+#[cfg(feature = "vst2")]
+use truce_vst2 as _;
+
 mod plugin_macro;
 
 /// Re-exports used by the plugin! macro internals.

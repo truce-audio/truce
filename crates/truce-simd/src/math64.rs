@@ -29,16 +29,16 @@ pub fn db_to_linear_block(out: &mut [f64], src: &[f64]) {
     {
         use wide::f64x4;
         let n = out.len().min(src.len());
-        let n4 = n / 4 * 4;
         // 10^(db/20) = exp(db * ln(10) / 20). One fma + one exp
         // per chunk.
         let scale = f64x4::splat(core::f64::consts::LN_10 / 20.0);
-        let (head_out, tail_out) = out[..n].split_at_mut(n4);
-        for (out_chunk, src_chunk) in head_out.chunks_exact_mut(4).zip(src[..n4].chunks_exact(4)) {
-            let v = f64x4::from(<[f64; 4]>::try_from(src_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice((v * scale).exp().as_array_ref());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (src_chunks, src_tail) = src[..n].as_chunks::<4>();
+        for (out_chunk, src_chunk) in out_chunks.iter_mut().zip(src_chunks) {
+            let v = f64x4::from(*src_chunk);
+            *out_chunk = (v * scale).exp().to_array();
         }
-        db_to_linear_block_scalar(tail_out, &src[n4..n]);
+        db_to_linear_block_scalar(out_tail, src_tail);
     }
     #[cfg(not(feature = "wide-backend"))]
     db_to_linear_block_scalar(out, src);
@@ -61,14 +61,14 @@ pub fn linear_to_db_block(out: &mut [f64], src: &[f64]) {
     {
         use wide::f64x4;
         let n = out.len().min(src.len());
-        let n4 = n / 4 * 4;
         let scale = f64x4::splat(TWENTY_OVER_LOG2_10);
-        let (head_out, tail_out) = out[..n].split_at_mut(n4);
-        for (out_chunk, src_chunk) in head_out.chunks_exact_mut(4).zip(src[..n4].chunks_exact(4)) {
-            let v = f64x4::from(<[f64; 4]>::try_from(src_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice((v.log2() * scale).as_array_ref());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (src_chunks, src_tail) = src[..n].as_chunks::<4>();
+        for (out_chunk, src_chunk) in out_chunks.iter_mut().zip(src_chunks) {
+            let v = f64x4::from(*src_chunk);
+            *out_chunk = (v.log2() * scale).to_array();
         }
-        linear_to_db_block_scalar(tail_out, &src[n4..n]);
+        linear_to_db_block_scalar(out_tail, src_tail);
     }
     #[cfg(not(feature = "wide-backend"))]
     linear_to_db_block_scalar(out, src);
@@ -91,16 +91,16 @@ pub fn exp2_block(out: &mut [f64], src: &[f64]) {
     {
         use wide::f64x4;
         let n = out.len().min(src.len());
-        let n4 = n / 4 * 4;
         let ln2 = f64x4::splat(core::f64::consts::LN_2);
-        let (head_out, tail_out) = out[..n].split_at_mut(n4);
-        for (out_chunk, src_chunk) in head_out.chunks_exact_mut(4).zip(src[..n4].chunks_exact(4)) {
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (src_chunks, src_tail) = src[..n].as_chunks::<4>();
+        for (out_chunk, src_chunk) in out_chunks.iter_mut().zip(src_chunks) {
             // exp2(x) = exp(x * ln(2)); `wide` has `exp` but no
             // direct `exp2`, same as the f32 path.
-            let v = f64x4::from(<[f64; 4]>::try_from(src_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice((v * ln2).exp().as_array_ref());
+            let v = f64x4::from(*src_chunk);
+            *out_chunk = (v * ln2).exp().to_array();
         }
-        exp2_block_scalar(tail_out, &src[n4..n]);
+        exp2_block_scalar(out_tail, src_tail);
     }
     #[cfg(not(feature = "wide-backend"))]
     exp2_block_scalar(out, src);
@@ -123,13 +123,13 @@ pub fn log2_block(out: &mut [f64], src: &[f64]) {
     {
         use wide::f64x4;
         let n = out.len().min(src.len());
-        let n4 = n / 4 * 4;
-        let (head_out, tail_out) = out[..n].split_at_mut(n4);
-        for (out_chunk, src_chunk) in head_out.chunks_exact_mut(4).zip(src[..n4].chunks_exact(4)) {
-            let v = f64x4::from(<[f64; 4]>::try_from(src_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice(v.log2().as_array_ref());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (src_chunks, src_tail) = src[..n].as_chunks::<4>();
+        for (out_chunk, src_chunk) in out_chunks.iter_mut().zip(src_chunks) {
+            let v = f64x4::from(*src_chunk);
+            *out_chunk = v.log2().to_array();
         }
-        log2_block_scalar(tail_out, &src[n4..n]);
+        log2_block_scalar(out_tail, src_tail);
     }
     #[cfg(not(feature = "wide-backend"))]
     log2_block_scalar(out, src);
@@ -156,20 +156,19 @@ pub fn tanh_block(out: &mut [f64], src: &[f64]) {
     {
         use wide::f64x4;
         let n = out.len().min(src.len());
-        let n4 = n / 4 * 4;
         let bound = f64x4::splat(20.0);
         let neg_bound = f64x4::splat(-20.0);
         let two = f64x4::splat(2.0);
         let one = f64x4::splat(1.0);
-        let (head_out, tail_out) = out[..n].split_at_mut(n4);
-        for (out_chunk, src_chunk) in head_out.chunks_exact_mut(4).zip(src[..n4].chunks_exact(4)) {
-            let x = f64x4::from(<[f64; 4]>::try_from(src_chunk).unwrap_or_default());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (src_chunks, src_tail) = src[..n].as_chunks::<4>();
+        for (out_chunk, src_chunk) in out_chunks.iter_mut().zip(src_chunks) {
+            let x = f64x4::from(*src_chunk);
             let x_clamped = x.fast_max(neg_bound).fast_min(bound);
             let e2x = (x_clamped * two).exp();
-            let result = (e2x - one) / (e2x + one);
-            out_chunk.copy_from_slice(result.as_array_ref());
+            *out_chunk = ((e2x - one) / (e2x + one)).to_array();
         }
-        tanh_block_scalar(tail_out, &src[n4..n]);
+        tanh_block_scalar(out_tail, src_tail);
     }
     #[cfg(not(feature = "wide-backend"))]
     tanh_block_scalar(out, src);

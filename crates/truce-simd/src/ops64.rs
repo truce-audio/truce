@@ -16,12 +16,10 @@ pub fn gain_block(buf: &mut [f64], gain: f64) {
     {
         use wide::f64x4;
         let g = f64x4::splat(gain);
-        let n = buf.len();
-        let n4 = n / 4 * 4;
-        let (head, tail) = buf.split_at_mut(n4);
-        for chunk in head.chunks_exact_mut(4) {
-            let v = f64x4::from(<[f64; 4]>::try_from(&chunk[..]).unwrap_or_default());
-            chunk.copy_from_slice((v * g).as_array_ref());
+        let (chunks, tail) = buf.as_chunks_mut::<4>();
+        for chunk in chunks {
+            let v = f64x4::from(*chunk);
+            *chunk = (v * g).to_array();
         }
         gain_block_scalar(tail, gain);
     }
@@ -43,14 +41,12 @@ pub fn scale_block(out: &mut [f64], src: &[f64], scale: f64) {
     {
         use wide::f64x4;
         let n = out.len().min(src.len());
-        let n4 = n / 4 * 4;
         let g = f64x4::splat(scale);
-        let (out_v, out_tail) = out[..n].split_at_mut(n4);
-        let src_v = &src[..n4];
-        let src_tail = &src[n4..n];
-        for (out_chunk, src_chunk) in out_v.chunks_exact_mut(4).zip(src_v.chunks_exact(4)) {
-            let v = f64x4::from(<[f64; 4]>::try_from(src_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice((v * g).as_array_ref());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (src_chunks, src_tail) = src[..n].as_chunks::<4>();
+        for (out_chunk, src_chunk) in out_chunks.iter_mut().zip(src_chunks) {
+            let v = f64x4::from(*src_chunk);
+            *out_chunk = (v * g).to_array();
         }
         scale_block_scalar(out_tail, src_tail, scale);
     }
@@ -72,20 +68,13 @@ pub fn mul_block(out: &mut [f64], a: &[f64], b: &[f64]) {
     {
         use wide::f64x4;
         let n = out.len().min(a.len()).min(b.len());
-        let n4 = n / 4 * 4;
-        let (out_v, out_tail) = out[..n].split_at_mut(n4);
-        let a_v = &a[..n4];
-        let b_v = &b[..n4];
-        let a_tail = &a[n4..n];
-        let b_tail = &b[n4..n];
-        for ((out_chunk, a_chunk), b_chunk) in out_v
-            .chunks_exact_mut(4)
-            .zip(a_v.chunks_exact(4))
-            .zip(b_v.chunks_exact(4))
-        {
-            let av = f64x4::from(<[f64; 4]>::try_from(a_chunk).unwrap_or_default());
-            let bv = f64x4::from(<[f64; 4]>::try_from(b_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice((av * bv).as_array_ref());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (a_chunks, a_tail) = a[..n].as_chunks::<4>();
+        let (b_chunks, b_tail) = b[..n].as_chunks::<4>();
+        for ((out_chunk, a_chunk), b_chunk) in out_chunks.iter_mut().zip(a_chunks).zip(b_chunks) {
+            let av = f64x4::from(*a_chunk);
+            let bv = f64x4::from(*b_chunk);
+            *out_chunk = (av * bv).to_array();
         }
         mul_block_scalar(out_tail, a_tail, b_tail);
     }
@@ -107,15 +96,13 @@ pub fn mac_block(out: &mut [f64], src: &[f64], scale: f64) {
     {
         use wide::f64x4;
         let n = out.len().min(src.len());
-        let n4 = n / 4 * 4;
-        let (out_v, out_tail) = out[..n].split_at_mut(n4);
-        let src_v = &src[..n4];
-        let src_tail = &src[n4..n];
         let s = f64x4::splat(scale);
-        for (out_chunk, src_chunk) in out_v.chunks_exact_mut(4).zip(src_v.chunks_exact(4)) {
-            let ov = f64x4::from(<[f64; 4]>::try_from(&out_chunk[..]).unwrap_or_default());
-            let sv = f64x4::from(<[f64; 4]>::try_from(src_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice((ov + sv * s).as_array_ref());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (src_chunks, src_tail) = src[..n].as_chunks::<4>();
+        for (out_chunk, src_chunk) in out_chunks.iter_mut().zip(src_chunks) {
+            let ov = f64x4::from(*out_chunk);
+            let sv = f64x4::from(*src_chunk);
+            *out_chunk = (ov + sv * s).to_array();
         }
         mac_block_scalar(out_tail, src_tail, scale);
     }
@@ -137,22 +124,15 @@ pub fn mix_block(out: &mut [f64], a: &[f64], gain_a: f64, b: &[f64], gain_b: f64
     {
         use wide::f64x4;
         let n = out.len().min(a.len()).min(b.len());
-        let n4 = n / 4 * 4;
-        let (out_v, out_tail) = out[..n].split_at_mut(n4);
-        let a_v = &a[..n4];
-        let b_v = &b[..n4];
-        let a_tail = &a[n4..n];
-        let b_tail = &b[n4..n];
         let ga = f64x4::splat(gain_a);
         let gb = f64x4::splat(gain_b);
-        for ((out_chunk, a_chunk), b_chunk) in out_v
-            .chunks_exact_mut(4)
-            .zip(a_v.chunks_exact(4))
-            .zip(b_v.chunks_exact(4))
-        {
-            let av = f64x4::from(<[f64; 4]>::try_from(a_chunk).unwrap_or_default());
-            let bv = f64x4::from(<[f64; 4]>::try_from(b_chunk).unwrap_or_default());
-            out_chunk.copy_from_slice((av * ga + bv * gb).as_array_ref());
+        let (out_chunks, out_tail) = out[..n].as_chunks_mut::<4>();
+        let (a_chunks, a_tail) = a[..n].as_chunks::<4>();
+        let (b_chunks, b_tail) = b[..n].as_chunks::<4>();
+        for ((out_chunk, a_chunk), b_chunk) in out_chunks.iter_mut().zip(a_chunks).zip(b_chunks) {
+            let av = f64x4::from(*a_chunk);
+            let bv = f64x4::from(*b_chunk);
+            *out_chunk = (av * ga + bv * gb).to_array();
         }
         mix_block_scalar(out_tail, a_tail, gain_a, b_tail, gain_b);
     }

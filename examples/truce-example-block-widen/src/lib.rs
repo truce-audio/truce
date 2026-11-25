@@ -88,7 +88,7 @@ impl PluginLogic for Widen {
             let in_l = buffer.input(0);
             let in_r = buffer.input(1);
             for i in 0..n {
-                state.mid[i] = 0.5 * (in_l[i] + in_r[i]);
+                state.mid[i] = f32::midpoint(in_l[i], in_r[i]);
                 state.side[i] = 0.5 * (in_l[i] - in_r[i]);
             }
         }

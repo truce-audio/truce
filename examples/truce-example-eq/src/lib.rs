@@ -222,8 +222,10 @@ impl PluginLogic for Eq {
             return None;
         }
         let mut values = payload
-            .chunks_exact(8)
-            .map(|chunk| f64::from_le_bytes(chunk.try_into().expect("chunks_exact(8)")));
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|chunk| f64::from_le_bytes(*chunk));
         let mut next = || values.next().expect("length checked above");
         let p = EqParams::new();
         let params = vec![

@@ -79,8 +79,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     let target_cpu = target_cpu_arg
         .as_deref()
-        .map(parse_target_cpu_arg)
-        .unwrap_or_default();
+        .map_or_default(parse_target_cpu_arg);
 
     // No format flags → enable every format in the project's default
     // features, mirroring `install`'s discovery rule.
