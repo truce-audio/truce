@@ -1390,7 +1390,9 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         component_subtype: info.fourcc,
         name: name.into_raw(),
         vendor: vendor.into_raw(),
-        version: 1,
+        // Host reads this back via `effGetVendorVersion`; derive it from the
+        // plugin version like the AU component word, not a hardcoded 1.
+        version: truce_core::version_word(info.version),
         num_inputs: layout.total_input_channels(),
         num_outputs: layout.total_output_channels(),
         bypass_param_id,

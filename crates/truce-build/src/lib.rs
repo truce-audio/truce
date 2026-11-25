@@ -32,6 +32,18 @@ pub fn plugin_id(vendor_id: &str, bundle_id: &str) -> String {
     format!("{}.{}", vendor_id, bundle_id.to_lowercase())
 }
 
+/// The version a plug-in reports at runtime, and the version its bundle
+/// metadata (plist / AU `AudioComponents` / Windows manifest) must carry
+/// so the two agree: the `[[plugin]]` entry's `version` if set, else the
+/// plug-in crate's own `CARGO_PKG_VERSION`. Both `truce-derive` (at
+/// compile time) and `cargo-truce` (when writing bundles) resolve the
+/// version through here so the compiled-in and on-disk versions can't
+/// drift.
+#[must_use]
+pub fn effective_plugin_version(plugin_version: Option<&str>, crate_version: &str) -> String {
+    plugin_version.unwrap_or(crate_version).to_string()
+}
+
 /// Validate a `bundle_id`'s shape. It is the stable identity key -
 /// [`plugin_id`] splices it into `clap_id` / `vst3_id` (reverse-DNS
 /// strings) and `cargo-truce` derives bundle filenames, framework
@@ -589,7 +601,10 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MidiWiring, extract_json_string, midi_wiring, midi2_dialects, validate_bundle_id};
+    use super::{
+        MidiWiring, effective_plugin_version, extract_json_string, midi_wiring, midi2_dialects,
+        validate_bundle_id,
+    };
 
     fn wiring(w: MidiWiring) -> (bool, bool, u8, u8) {
         (
@@ -609,6 +624,17 @@ mod tests {
         assert_eq!(resolve("instrument"), (true, false, 1, 0));
         assert_eq!(resolve("effect"), (false, false, 0, 0));
         assert_eq!(resolve("analyzer"), (false, false, 0, 0));
+    }
+
+    #[test]
+    fn effective_plugin_version_prefers_plugin_override() {
+        // `[[plugin]].version` wins; this is the precedence `truce-derive`
+        // bakes into `PluginInfo` and `cargo-truce` writes into bundle
+        // metadata, so the runtime and on-disk versions agree by
+        // construction.
+        assert_eq!(effective_plugin_version(Some("2.5.0"), "0.1.0"), "2.5.0");
+        // No override -> the plug-in crate's own resolved version.
+        assert_eq!(effective_plugin_version(None, "0.1.0"), "0.1.0");
     }
 
     #[test]

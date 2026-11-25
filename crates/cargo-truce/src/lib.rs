@@ -72,9 +72,19 @@ pub(crate) use util::tmp_manifests;
 #[cfg(target_os = "macos")]
 pub(crate) use util::tmp_lv2;
 
-// `read_workspace_version` is consumed by all three packagers
-// (macOS / Windows / Linux tarball), so it stays unconditional.
+// `read_workspace_version` is the release/installer version (package
+// naming, pkg / MSI version, suite-version fallback) - consumed by all
+// three packagers, so it stays unconditional.
 pub(crate) use util::read_workspace_version;
+// `plugin_version` is a plug-in's bundle-metadata version, matching what
+// it reports at runtime. Only the macOS bundle / plist writers (and the
+// iOS / AAX staging they drive) consume it, so it's gated like
+// `plist_version_keys` below.
+#[cfg(target_os = "macos")]
+pub(crate) use util::plugin_version;
+// Bundle `Info.plist` version keys, used by every macOS bundle writer.
+#[cfg(target_os = "macos")]
+pub(crate) use util::plist_version_keys;
 
 // `release_lib_for_target` resolves a per-triple build output path; it
 // powers macOS universal lipo, Windows x64+arm64, and Linux dual-arch
