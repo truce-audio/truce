@@ -5,19 +5,23 @@ repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
 # Plain Apache 2.0 - this crate is a small font crate (bundled bytes plus
-# an optional glyph rasterizer); no Framework License carve-out
-# applies. The bundled `JetBrainsMono-Regular.ttf` asset is governed
-# separately by the SIL Open Font License 1.1, included alongside
-# the font as `fonts/OFL.txt` per the OFL's distribution terms.
+# an optional glyph rasterizer); no Framework License carve-out applies.
+# The bundled font assets are governed separately by the SIL Open Font
+# License 1.1: `JetBrainsMono-Regular.ttf` (see `fonts/OFL.txt`) and
+# `NotoMusic-Regular.ttf` (Copyright 2018 Google Inc.; see
+# `fonts/NotoMusic-OFL.txt`), each shipped alongside its notice per the
+# OFL's distribution terms.
 license = "Apache-2.0"
 rust-version.workspace = true
-description = "Bundled fonts for the truce audio plugin framework. JetBrains Mono is bundled under the SIL Open Font License 1.1."
+description = "Bundled fonts for the truce audio plugin framework (JetBrains Mono, Noto Music), under the SIL Open Font License 1.1."
 
 # The font binary is the whole point of this crate; ship it.
 include = [
     "src/**",
     "fonts/JetBrainsMono-Regular.ttf",
     "fonts/OFL.txt",
+    "fonts/NotoMusic-Regular.ttf",
+    "fonts/NotoMusic-OFL.txt",
     "README.md",
 ]
 
