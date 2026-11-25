@@ -26,6 +26,16 @@
 /// `include` list).
 pub static JETBRAINS_MONO: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
 
+/// Noto Music Regular as raw TTF bytes - a small (~80 KB) symbol fallback
+/// covering musical and miscellaneous-symbol glyphs (e.g. `♩` U+2669) that
+/// a plug-in UI may use but that `JetBrains` Mono lacks. egui's own bundled
+/// symbol fonts became opt-in (and their crate is not reliably published)
+/// in 0.37, so truce ships this as the fallback for GUI backends.
+///
+/// Noto Music is licensed under the SIL Open Font License v1.1 (the same
+/// license as `JetBrains` Mono); the text is at `fonts/OFL.txt`.
+pub static NOTO_MUSIC: &[u8] = include_bytes!("../fonts/NotoMusic-Regular.ttf");
+
 /// Glyph rasterization over the bundled font. Behind the `raster`
 /// feature so byte-only consumers don't pull skrifa / tiny-skia.
 #[cfg(feature = "raster")]
