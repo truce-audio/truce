@@ -60,9 +60,6 @@ crate-type = ["rlib"]
 [dependencies]
 truce-core = { version = "6.3.0", path = "../truce-core" }
 truce-params = { version = "6.3.0", path = "../truce-params" }
-# Pulled in only for `reanchor_all_children_to_top` (macOS NSView
-# anchoring helper). Doesn't drag in any renderer.
-truce-gui-utils = { version = "6.3.0", path = "../truce-gui-utils" }
 
 # vizia 0.4.0 on crates.io ships the winit backend only; the
 # `baseview` feature (and the vizia_baseview crate) live in vizia's
@@ -82,6 +79,14 @@ log = "0.4"
 # `clang -bundle`'s duplicate-symbol detector on every harfbuzz /
 # OpenType object (`hb_parse_double`, `_hb_ot_var_normalize_coords`,
 # ...). The screenshot path consumes the re-export.
+
+# Platform GL / NSView helpers only: Windows WGL-extension probing
+# (`wgl_extensions_available`) and the macOS NSView re-anchor
+# (`reanchor_all_children_to_top`). Neither is referenced on Linux, so
+# scoping the dep to the platforms that use it keeps cargo's
+# `unused_dependencies` lint quiet there. Doesn't drag in any renderer.
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+truce-gui-utils = { version = "6.3.0", path = "../truce-gui-utils" }
 
 [lints]
 workspace = true

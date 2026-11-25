@@ -84,6 +84,25 @@ pub enum Lv2Category {
     Tool,
 }
 
+impl Lv2Category {
+    /// The `(audio_in, audio_out)` port counts the TTL declares for this
+    /// category. The TTL is generated without the plugin's runtime
+    /// `bus_layouts()`, so these fixed counts are the contract the host
+    /// binds against; the runtime port layout must match them exactly or a
+    /// port-index shift lets the host connect audio buffers where the
+    /// plugin expects atom sequences (heap corruption). Both the derive
+    /// macro (TTL emit) and the runtime (`derive_port_layout`) read this
+    /// one source.
+    #[must_use]
+    pub fn audio_io(self) -> (u32, u32) {
+        match self {
+            Lv2Category::Instrument => (0, 2),
+            Lv2Category::Effect | Lv2Category::Analyzer | Lv2Category::Tool => (2, 2),
+            Lv2Category::NoteEffect => (0, 0),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Lv2Param {
     pub id: u32,

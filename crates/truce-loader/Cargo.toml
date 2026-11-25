@@ -8,7 +8,9 @@ license.workspace = true
 description = "Hot-reloadable plugin logic for truce (native ABI, dylib loading)"
 
 [dependencies]
-log = "0.4"
+# Only the `shell`-gated loader/shell modules log; the default
+# (dylib-side) build is log-free.
+log = { version = "0.4", optional = true }
 # Already in the workspace dep graph via image / png; pulled as a
 # direct dep so the file-fingerprint path uses the SIMD-accelerated
 # implementation (~30× faster than a hand-rolled table-free CRC32).
@@ -42,7 +44,7 @@ optional = true
 
 [features]
 default = []
-shell = ["dep:libloading", "dep:parking_lot"]
+shell = ["dep:libloading", "dep:parking_lot", "dep:log"]
 hot-debug = []
 
 [lints]

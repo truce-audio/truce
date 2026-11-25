@@ -34,7 +34,6 @@ tinytemplate = "1.2"
 # its FFI-side encode path; keeping versions aligned avoids
 # transitive duplication when both are in a workspace build.
 png = "0.18"
-truce-shim-types = { workspace = true }
 truce-build = { workspace = true }
 truce-utils = { workspace = true }
 base64 = { workspace = true }
@@ -55,6 +54,10 @@ version = "0.9"
 # on macOS / Windows, so the dep is gated to those targets.
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 truce-aax-bridge = { workspace = true }
+
+# AU v3 shim header for the macOS-only `templates::au3` module.
+[target.'cfg(target_os = "macos")'.dependencies]
+truce-shim-types = { workspace = true }
 
 # Post-link icon embed for the standalone host .exe lives in
 # `windows_manifest::embed_icon` and calls `BeginUpdateResource` /

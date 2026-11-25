@@ -145,8 +145,7 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
             .param_infos()
             .iter()
             .find(|i| i.id == id)
-            .map(|i| i.name.to_string())
-            .unwrap_or_default()
+            .map_or_default(|i| i.name.to_string())
     });
     let widget_type: Box<dyn Fn(u32) -> WidgetType> = Box::new(move |id| {
         let info = p_wtype.param_infos().iter().find(|i| i.id == id).copied();

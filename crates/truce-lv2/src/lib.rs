@@ -40,7 +40,7 @@ use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::PluginInfo;
+use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::plugin::PluginRuntime;
 use truce_core::rt::{RtSection, audit};
 use truce_core::state::shared_plugin_state_hash;
@@ -295,15 +295,62 @@ pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> Option<PortLayout> {
     if dropped_sidechain > 0 {
         warn_lv2_sidechain_dropped_once(dropped_sidechain);
     }
+    let num_audio_out = default_layout.total_output_channels();
+
+    // The TTL declares the category's fixed audio-port counts (it can't see
+    // `bus_layouts()`), and the host binds ports against them. If the real
+    // main-bus layout differs, every port index past the audio block shifts
+    // and the host would connect audio buffers where the runtime expects
+    // atom sequences - reading float bits as an `AtomSequence*` and walking
+    // host memory. Refuse to instantiate instead (a clean load failure, not
+    // corruption). The sidechain case above is already reconciled to the
+    // main bus, so a sidechain-on-stereo effect still matches (2, 2).
+    let (decl_in, decl_out) = category_audio_io(info.category);
+    if (main_in, num_audio_out) != (decl_in, decl_out) {
+        warn_lv2_layout_mismatch_once(info.category, (main_in, num_audio_out), (decl_in, decl_out));
+        return None;
+    }
 
     Some(PortLayout {
         num_audio_in: main_in,
-        num_audio_out: default_layout.total_output_channels(),
+        num_audio_out,
         num_params: param_count,
         num_meters: meter_count,
         midi_in_ports: u32::from(info.midi_input_ports),
         midi_out_ports: u32::from(info.midi_output_ports),
     })
+}
+
+/// The category's declared `(audio_in, audio_out)` TTL port counts. Maps
+/// the runtime [`PluginCategory`] onto the same [`truce_build::lv2::Lv2Category`]
+/// contract the derive macro emits the TTL from, so the two never drift.
+fn category_audio_io(category: PluginCategory) -> (u32, u32) {
+    use truce_build::lv2::Lv2Category;
+    let lv2 = match category {
+        PluginCategory::Instrument => Lv2Category::Instrument,
+        PluginCategory::Effect => Lv2Category::Effect,
+        PluginCategory::NoteEffect => Lv2Category::NoteEffect,
+        PluginCategory::Analyzer => Lv2Category::Analyzer,
+        PluginCategory::Tool => Lv2Category::Tool,
+    };
+    lv2.audio_io()
+}
+
+/// One-shot warning that a plugin's real audio layout doesn't match the
+/// TTL's category-default ports, so LV2 instantiation is refused (rather
+/// than laying out shifted ports over host buffers).
+fn warn_lv2_layout_mismatch_once(category: PluginCategory, got: (u32, u32), declared: (u32, u32)) {
+    use std::sync::Once;
+    static WARNED: Once = Once::new();
+    WARNED.call_once(|| {
+        eprintln!(
+            "[truce LV2] refusing to instantiate: the plug-in's audio layout \
+             {got:?} (in, out) doesn't match the {category:?} category's LV2 TTL \
+             ports {declared:?}. The LV2 TTL is generated from the category and \
+             can't declare a non-default channel count yet; use the category's \
+             default layout for LV2, or the plug-in loads only in non-LV2 formats."
+        );
+    });
 }
 
 /// # Safety

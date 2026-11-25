@@ -423,6 +423,12 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
 
         case effSetChunk: {
             if (!g_vst2_callbacks || !inst->rust_ctx || !ptr) return 0;
+            /* `value` is the host-supplied chunk length (signed VstIntPtr).
+             * A negative or absurd length casts to a ~4 GiB uint32_t, and
+             * the Rust side would build a slice over memory the host never
+             * allocated - an OOB read during session load. Accept only a
+             * sane positive length. */
+            if (value <= 0 || value > INT32_MAX) return 0;
             /* 1 when the blob was accepted (truce envelope, or the
              * plugin's migrate_state translated it), 0 otherwise. */
             VstIntPtr ok = g_vst2_callbacks->state_load(

@@ -62,6 +62,38 @@ pub fn map_source_to_param(infos: &[ParamInfo], channel: u8, source: MidiSource)
         .map(|p| p.id)
 }
 
+/// Intern a 1-based index-suffixed copy of `base` as a `&'static str`.
+///
+/// Every element of a `#[nested]` array exposes the same leaf parameter
+/// names (eight `Level`s, eight `On`s), so hosts and the GUI can't tell
+/// element 3's `Level` from element 6's. `#[derive(Params)]` runs each
+/// array element's infos through this, turning `Level` into `Level 1` ..
+/// `Level 8`.
+///
+/// [`ParamInfo::name`] is `&'static str`, so a suffixed name must live for
+/// the program's lifetime. A plugin has a bounded, tiny set of
+/// `(base, index)` pairs, so results are memoized and the backing string
+/// is leaked at most once per distinct pair rather than on every
+/// `param_infos()` call.
+#[must_use]
+pub fn indexed_name(base: &'static str, index: u32) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<(&'static str, u32), &'static str>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(&name) = cache.get(&(base, index)) {
+        return name;
+    }
+    let n = index + 1;
+    let name: &'static str = Box::leak(format!("{base} {n}").into_boxed_str());
+    cache.insert((base, index), name);
+    name
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
