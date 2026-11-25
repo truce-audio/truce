@@ -203,8 +203,18 @@ pub enum PluginCategory {
     Tool,
 }
 
-/// Convert a category string to [`PluginCategory`] at compile time.
-/// Used by the `plugin_info!()` macro.
+/// Map a `PluginCategory` variant name (`"Instrument"`, `"NoteEffect"`,
+/// ...) to the variant; anything else is `Effect`.
+///
+/// Not `truce.toml`'s vocabulary - `category = "instrument"` returns
+/// `Effect` here - and nothing in truce calls it: `plugin_info!` and the
+/// LV2 TTL parse the toml value with `truce_build::parse_plugin_category`,
+/// which rejects unknown values instead of falling back to `Effect`.
+#[deprecated(
+    since = "7.0.0",
+    note = "unused by truce and not truce.toml's vocabulary; parse a `[[plugin]] category` \
+            with `truce_build::parse_plugin_category`, or match `PluginCategory` directly"
+)]
 #[must_use]
 pub const fn category_from_str(s: &str) -> PluginCategory {
     match s.as_bytes() {

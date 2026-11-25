@@ -234,7 +234,13 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
         return quote! { compile_error!(#lit); }.into();
     }
 
-    let category = parse_category(&plugin.category);
+    let category = match truce_build::parse_plugin_category(&plugin.category) {
+        Ok(c) => c,
+        Err(e) => {
+            let lit = format!("truce.toml: [[plugin]] entry `{}`: {e}", plugin.crate_name);
+            return quote! { compile_error!(#lit); }.into();
+        }
+    };
     let (audio_in, audio_out) = audio_io_for(category);
     // Same MIDI wiring resolution baked onto `PluginInfo`, so the TTL
     // ports and the runtime `PortLayout` agree.
@@ -745,22 +751,6 @@ fn audio_io_for(c: truce_build::lv2::Lv2Category) -> (u32, u32) {
     // `Lv2Category::audio_io`); the runtime rejects a layout that doesn't
     // match, so keep both paths reading this.
     c.audio_io()
-}
-
-fn parse_category(s: &str) -> truce_build::lv2::Lv2Category {
-    use truce_build::lv2::Lv2Category;
-    // `truce.toml`'s `category = "midi"` resolves to
-    // `PluginCategory::NoteEffect` at runtime; the sidecar TTL has to
-    // agree with that mapping or the LV2 plugin ends up with the
-    // wrong port set (missing `midi_out` for note effects, no MIDI
-    // decode for instruments).
-    match s.to_ascii_lowercase().as_str() {
-        "instrument" => Lv2Category::Instrument,
-        "midi" | "noteeffect" | "note_effect" | "note-effect" => Lv2Category::NoteEffect,
-        "analyzer" | "analyser" => Lv2Category::Analyzer,
-        "tool" | "utility" => Lv2Category::Tool,
-        _ => Lv2Category::Effect,
-    }
 }
 
 fn param_kind_str(k: crate::ParamKind) -> &'static str {

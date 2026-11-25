@@ -97,6 +97,47 @@ pub struct MidiWiring {
     pub output_ports: u8,
 }
 
+/// The `[[plugin]] category` values `truce.toml` accepts, in the exact
+/// spelling the parser matches.
+pub const PLUGIN_CATEGORIES: &[&str] = &[
+    "effect",
+    "instrument",
+    "midi",
+    "note_effect",
+    "analyzer",
+    "tool",
+];
+
+/// Parse a `[[plugin]] category`: the one parser behind both the runtime
+/// `PluginCategory` (`plugin_info!`) and the LV2 TTL's port set, so the two
+/// can't disagree. They used to: the TTL side matched case-insensitively
+/// with extra aliases while the runtime matched lowercase only, so
+/// `category = "Instrument"` declared an instrument's 0-in / 2-out ports
+/// while every other consumer built an effect (no MIDI input, AU
+/// `aufx`). Returned as [`lv2::Lv2Category`], whose variants mirror
+/// `PluginCategory` one to one.
+///
+/// # Errors
+///
+/// Any value outside [`PLUGIN_CATEGORIES`] (exact, lowercase) - an
+/// unknown category used to fall back to `effect` silently.
+pub fn parse_plugin_category(category: &str) -> Result<lv2::Lv2Category, String> {
+    use lv2::Lv2Category;
+    Ok(match category {
+        "effect" => Lv2Category::Effect,
+        "instrument" => Lv2Category::Instrument,
+        "midi" | "note_effect" => Lv2Category::NoteEffect,
+        "analyzer" => Lv2Category::Analyzer,
+        "tool" => Lv2Category::Tool,
+        other => {
+            return Err(format!(
+                "unknown category `{other}`; expected one of {}",
+                PLUGIN_CATEGORIES.join(", ")
+            ));
+        }
+    })
+}
+
 /// Resolve a plugin's MIDI wiring from its category and the optional
 /// `midi_input` / `midi_output` / `midi_input_ports` /
 /// `midi_output_ports` truce.toml keys. Shared by `truce-derive`
@@ -613,6 +654,34 @@ mod tests {
             w.input_ports,
             w.output_ports,
         )
+    }
+
+    #[test]
+    fn plugin_category_parses_only_the_documented_names() {
+        use crate::lv2::Lv2Category as C;
+        let ok = |s| crate::parse_plugin_category(s).map(|c| format!("{c:?}"));
+        assert_eq!(ok("effect").unwrap(), format!("{:?}", C::Effect));
+        assert_eq!(ok("instrument").unwrap(), format!("{:?}", C::Instrument));
+        assert_eq!(ok("midi").unwrap(), format!("{:?}", C::NoteEffect));
+        assert_eq!(ok("note_effect").unwrap(), format!("{:?}", C::NoteEffect));
+        assert_eq!(ok("analyzer").unwrap(), format!("{:?}", C::Analyzer));
+        assert_eq!(ok("tool").unwrap(), format!("{:?}", C::Tool));
+        // The spellings the old LV2-only parser accepted, and which the
+        // runtime silently read as `effect`, are now errors everywhere.
+        for bad in [
+            "Instrument",
+            "utility",
+            "analyser",
+            "noteeffect",
+            "note-effect",
+            "fx",
+            "",
+        ] {
+            assert!(ok(bad).is_err(), "{bad:?} must be rejected");
+        }
+        for name in crate::PLUGIN_CATEGORIES {
+            assert!(ok(name).is_ok(), "{name} is documented but rejected");
+        }
     }
 
     #[test]
