@@ -2,12 +2,82 @@
 
 Notable changes per release.
 
-## Unreleased
+## 7.0.0
 
-- `truce-egui`: with the plug-in window focused, a key the editor is not using is returned as ignored, so the host can run it (Space, Return, and the arrange commands). A focused text field still takes the key. A key the UI has claimed, with no Ctrl, Alt, or Command held, stays in the editor. The host receives the key when `baseview-truce` forwards ignored keys.
-- `cargo truce package --arch x86_64|arm64` builds that one macOS slice even when it is not the host, so an Apple Silicon Mac can produce an Intel-only installer. The default stays universal, and `--host-only` stays the host slice. Passing `--arch` and `--host-only` together is an error.
-- cargo-truce writes the workspace version into macOS bundle Info.plists (`CFBundleShortVersionString`, `CFBundleVersion`, and the Audio Unit component version) instead of a placeholder 1.0. The macOS AU v3 appex build number stays a per-build timestamp so hosts reload a rebuilt extension.
-- AU v3 on macOS no longer accepts every host view configuration. Logic Pro was locking the editor to a 4:3 frame, leaving an empty band under a wide layout and ignoring the plugin's own size. iOS still accepts every configuration so GarageBand can resize. A plugin-requested resize updates `preferredContentSize`, so Logic's window follows the editor scale instead of clipping it.
+This release updates the GUI stack and raises the minimum Rust version: `truce-egui` moves to egui 0.37, `truce-slint` to slint 1.19, the workspace `wgpu` to 30, and the MSRV is now 1.98. A plug-in on a built-in editor needs only a rebuild; one with custom egui or slint UI updates its own GUI code to the new majors.
+
+### Breaking
+
+- **egui 0.34 → 0.37.** `truce-egui` moves to egui `0.37`. A plug-in whose `editor` writes `egui::` types must update to the new API (see migration below); a built-in-editor plug-in just rebuilds.
+- **slint 1.15 → 1.19.** `truce-slint` moves to slint `1.19`. A plug-in with custom `.slint` markup or a direct `slint` dependency bumps to `=1.19.1`.
+- **wgpu 29 → 30.** The workspace `wgpu` moves to `30` (egui-wgpu 0.37 and the slint software path both target wgpu 30, so they move as one). A plug-in that drives wgpu directly bumps to `30`.
+- **`truce-driver::set_param` normalizes its argument.** The script and builder paths now denormalize the value through the parameter's range, honoring the documented normalized `[0, 1]` contract; the script path previously applied the value as-is. **Migration:** pass a normalized position instead of the plain value in driver tests.
+- **Minimum supported Rust is now 1.98** (was 1.92). The build uses `Option` / `Result::map_or_default`, stabilized in 1.98, so a plug-in on an older toolchain no longer compiles. **Migration:** `rustup update`.
+- **An unknown `aax_category` is now a compile error.** `truce.toml` categories are validated against the recognized set at macro-expansion time instead of being silently accepted; only an AAX build that named an out-of-set category is affected. **Migration:** set `aax_category` to a recognized value.
+- **`Editor::idle` gained a `dt` parameter.** `fn idle(&mut self)` is now `fn idle(&mut self, dt: std::time::Duration)` — `dt` is the wall-clock time since the previous call, so animation can be driven frame-rate-independently across hosts that tick at different rates. A custom `Editor` that overrides `idle` no longer compiles. **Migration:** add the parameter (`fn idle(&mut self, _dt: std::time::Duration)` if you don't use it). A plug-in on a built-in editor is unaffected.
+
+### Migrating from 6.x
+
+1. **Update custom GUI code.** A plug-in on a built-in editor that never names egui / slint / wgpu skips this step. Otherwise, per framework (iced and vizia are unchanged this release):
+
+   **egui 0.34 → 0.37** — bump the dependency and apply the renamed APIs:
+
+   ```diff
+   -egui = "0.34"
+   +egui = "0.37"
+   ```
+
+   ```diff
+   -let id = egui::Id::new("my_widget");
+   +let id = egui::Id::unique("my_widget");
+   -egui::SidePanel::left("p").show_inside(ui, |ui| { /* ... */ });
+   +egui::SidePanel::left("p").show(ui, |ui| { /* ... */ });
+   ```
+
+   **slint 1.15 → 1.19** — bump `slint` and `slint-build` to `=1.19.1`. Image / SVG decoding is now feature-gated; a plug-in that decodes images through slint enables the `image-decoders` / `svg` features (`truce-slint` already does this internally):
+
+   ```diff
+   -slint = "=1.15.1"
+   +slint = "=1.19.1"
+   ```
+
+   **wgpu 29 → 30** — only if your editor drives wgpu directly:
+
+   ```diff
+   -wgpu = "29"
+   +wgpu = "30"
+   ```
+
+2. **Fix `set_param` calls in driver tests.** Pass the normalized `[0, 1]` position, not the plain value:
+
+   ```diff
+    // "gain" ranges 0..10; drive it to 8
+   -driver.set_param("gain", 8.0);
+   +driver.set_param("gain", 0.8);
+   ```
+
+3. **Rebuild all artifacts together.** The hot-reload canary and the AU v3 framework / appex handshake are version-checked, so a 7.0 shell refuses a 6.x logic dylib; rebuild and reinstall in one pass rather than mixing.
+
+### Other changes
+
+- Keyboard forwarding: with the editor focused, a key it does not use goes back to the host (Space, Return, arrange shortcuts); egui / iced / slint report unused keys, a focused text field keeps all, and `truce-egui` adds `claim_keys` to hold keys without a chord.
+- `truce-egui`: recovers from a failed surface acquire instead of staying black, fixing a freeze and a GPU / host memory leak (#248).
+- `truce-slint`: fixed content bleeding through popups and enabled image / SVG decoding on the software path (#241).
+- Built-in GUI: restyled toggle widget, picked up on rebuild with no code change.
+- `#[nested]` accepts a fixed-size array (`[T; N]`) with contiguous id ranges and a `<field>_id(i, sub)` resolver.
+- `range` / `smooth` / `default` accept an `f64` const (a const in `range` / `default` is a build error under `lv2`).
+- `cargo truce package --arch x86_64|arm64` builds a single non-host macOS slice; `--arch` with `--host-only` errors.
+- Version numbers propagate from the workspace version across Info.plists, the AU component version, VST2, and the LV2 TTL (was `1.0`; superset of #240); the AU v3 appex build number stays a per-build timestamp.
+- `cargo truce validate` fails on a missing validator instead of passing, and parses AAX validator status correctly (#245).
+- Packaging dedupes macOS archives safely and rejects an empty `[vendor].name` (previously deleted every file).
+- AU v3: no longer accepts every host view config — Logic sizes from `preferredContentSize`; iOS still accepts all so GarageBand can resize.
+- CLAP: parameter rescan after state / preset load (#232); main-thread drain requests a restart only while active (#238).
+- VST3: correct Steinberg interface IDs for `IUnitInfo` / `IEditControllerHostEditing`.
+- VST2: restored the legacy macOS entry alias and fixed the wrapper IID.
+- AAX: fewer host transport-API calls per block.
+- `idle()` is now driven on CLAP, VST3, VST2, AU v2, LV2, and the standalone host (#233); AAX already drove it, and the AU v3 app-extension view still does not. A side-effecting `idle()` now fires on the newly-covered formats.
+- New `stepgate` example (`#[nested]` array params, AAX category).
+- Hardening: param get / set callbacks panic-firewalled across the C ABI (AU / VST2 / VST3); AAX save-blob cache no longer serves stale state; LV2 refuses a layout mismatching the category's TTL ports; CLAP / VST2 validate host-declared event / chunk sizes; `EventList::push` fails closed at capacity; bumped `zip` for a `cargo audit` advisory.
 
 ## 6.3.0
 
