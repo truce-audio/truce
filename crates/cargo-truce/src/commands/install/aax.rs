@@ -470,6 +470,8 @@ pub(crate) fn emit_aax_bundle(
         // CFBundleExecutable must match the on-disk filename, so use
         // the sanitised stem there. CFBundleName is the user-visible
         // string and stays as the raw display name.
+        let version = crate::plugin_version(p, root)?;
+        let version_keys = crate::plist_version_keys(&version);
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -483,8 +485,7 @@ pub(crate) fn emit_aax_bundle(
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>TDMw</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
+{version_keys}
 </dict>
 </plist>"#,
             display_name = p.name,

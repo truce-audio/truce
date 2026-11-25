@@ -259,10 +259,20 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
     let uri = truce_build::lv2::plugin_uri(&url, &plugin.bundle_id);
     let ui_uri = truce_build::lv2::ui_uri(&url, &plugin.bundle_id);
 
+    // Same resolution `plugin_info!` uses for the runtime `info.version`:
+    // an explicit `truce.toml` plugin version, else the plugin crate's
+    // Cargo version. Keeps the LV2 TTL version in step with every other
+    // format's reported version.
+    let version = plugin
+        .version
+        .clone()
+        .unwrap_or_else(|| std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into()));
+
     let bundle = truce_build::lv2::Lv2Bundle {
         plugin_name: plugin.name.clone(),
         vendor: config.vendor.name.clone(),
         url,
+        version,
         uri,
         ui_uri,
         category,

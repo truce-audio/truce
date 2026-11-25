@@ -538,6 +538,22 @@ pub(crate) fn read_workspace_version(root: &Path) -> Result<String, crate::Cargo
     .into())
 }
 
+/// `CFBundleVersion` + `CFBundleShortVersionString` lines for a macOS
+/// bundle `Info.plist`, both normalized to Apple's dotted-integer form
+/// via [`truce_utils::version_triple`] (a pre-release suffix would make
+/// `CFBundleShortVersionString` non-conformant). Indented four spaces to
+/// match the inline plist writers. Pairs with [`truce_utils::version_word`]
+/// for the AU `AudioComponents` version, so a bundle's metadata matches the
+/// version the loaded plugin reports at runtime.
+#[cfg(target_os = "macos")]
+pub(crate) fn plist_version_keys(version: &str) -> String {
+    let v = crate::preset_codec::xml_escape(&truce_utils::version_triple(version));
+    format!(
+        "    <key>CFBundleVersion</key>\n    <string>{v}</string>\n    \
+         <key>CFBundleShortVersionString</key>\n    <string>{v}</string>"
+    )
+}
+
 /// Resolve a plugin crate's `Cargo.toml` path via `cargo metadata`.
 /// Used by `detect_default_features` to find the manifest in
 /// workspace layouts where plugins live in arbitrary subdirectories.
@@ -575,6 +591,75 @@ pub(crate) fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> O
     let rest = &after[mp_idx + mp_marker.len()..];
     let end = rest.find('"')?;
     Some(PathBuf::from(&rest[..end]))
+}
+
+/// The plug-in crate's *resolved* version via `cargo metadata`, so
+/// `version.workspace = true` and a crate-local `version` both work.
+/// `None` if metadata fails or the crate isn't found.
+///
+/// `cargo metadata` emits each package compactly as
+/// `{"name":"<crate>","version":"<v>",...}`; a *dependency* entry uses
+/// `"req"` (not `"version"`) right after its name, so matching the
+/// adjacent `,"version":"` lands on the package, never a dependency.
+#[cfg(target_os = "macos")]
+pub(crate) fn read_plugin_crate_version(project_root: &Path, crate_name: &str) -> Option<String> {
+    let out = Command::new("cargo")
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version=1",
+            "--manifest-path",
+        ])
+        .arg(project_root.join("Cargo.toml"))
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let needle = format!("\"name\":\"{crate_name}\",\"version\":\"");
+    let idx = text.find(&needle)?;
+    let rest = &text[idx + needle.len()..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// The version a plug-in's bundle metadata (plist / AU `AudioComponents`
+/// / Windows manifest) must carry so it matches the version the loaded
+/// plug-in reports at runtime. Mirrors `truce-derive`: the `[[plugin]]`
+/// entry's `version` if set, else the plug-in crate's own resolved
+/// version. Resolved through [`truce_build::effective_plugin_version`]
+/// so it can't drift from the compile-time value.
+///
+/// # Errors
+///
+/// Returns `Err` only when `[[plugin]].version` is absent *and* the
+/// crate's version can't be read from `cargo metadata` - unlike reading
+/// the workspace root, a plug-in crate always has a version, so a
+/// workspace without a root `[workspace.package] version` resolves fine.
+#[cfg(target_os = "macos")]
+pub(crate) fn plugin_version(
+    p: &crate::config::PluginDef,
+    root: &Path,
+) -> Result<String, crate::CargoTruceError> {
+    let crate_version = if p.version.is_some() {
+        // `[[plugin]].version` wins; skip the metadata shell-out.
+        String::new()
+    } else {
+        read_plugin_crate_version(root, &p.crate_name).ok_or_else(
+            || -> crate::CargoTruceError {
+                format!(
+                    "could not determine the version of plugin crate `{}` from cargo metadata",
+                    p.crate_name
+                )
+                .into()
+            },
+        )?
+    };
+    Ok(truce_build::effective_plugin_version(
+        p.version.as_deref(),
+        &crate_version,
+    ))
 }
 
 /// Resolve the Cargo *workspace* root for a manifest via `cargo

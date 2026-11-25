@@ -29,7 +29,7 @@ use crate::{Res, tmp_manifests};
 /// `supportedOS` Windows 10 GUID opts in to non-virtualized DPI APIs.
 const MANIFEST_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="truce.standalone" version="1.0.0.0"/>
+  <assemblyIdentity type="win32" name="truce.standalone" version="ASSEMBLYVER"/>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">True/PM</dpiAware>
@@ -49,7 +49,22 @@ const MANIFEST_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="y
 /// are printed but the function doesn't fail the build.
 pub(crate) fn embed_dpi_manifest(exe: &Path) -> Res {
     let manifest_path = tmp_manifests().join("truce-standalone.manifest");
-    fs_ctx::write(&manifest_path, MANIFEST_XML)?;
+    // A win32 assembly identity needs a 4-part `n.n.n.n` version; build it
+    // from the plugin version (`major.minor.patch.0`) so the standalone
+    // host's identity tracks releases instead of a fixed `1.0.0.0`.
+    let word = truce_utils::version_word(
+        &crate::read_workspace_version(&crate::project_root()).unwrap_or_else(|_| "0.0.0".into()),
+    );
+    let assembly_version = format!(
+        "{}.{}.{}.0",
+        (word >> 16) & 0xFFFF,
+        (word >> 8) & 0xFF,
+        word & 0xFF
+    );
+    fs_ctx::write(
+        &manifest_path,
+        MANIFEST_XML.replace("ASSEMBLYVER", &assembly_version),
+    )?;
 
     if let Some(mt) = locate_mt_exe() {
         // `;#1` → resource id 1, the slot Windows reads for an exe's

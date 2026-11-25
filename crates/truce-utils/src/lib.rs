@@ -63,6 +63,49 @@ pub fn slugify(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// Leading ASCII-decimal value of `part`, 0 when it has no leading
+/// digits. `"3-beta"` → 3, `"beta"` → 0.
+fn leading_u32(part: &str) -> u32 {
+    let len = part.bytes().take_while(u8::is_ascii_digit).count();
+    part[..len].parse().unwrap_or(0)
+}
+
+/// Pack a `"major.minor.patch"` string into the single version word
+/// Apple's `AudioComponents` `version` key and VST2's
+/// `effGetVendorVersion` both use: `(major << 16) | (minor << 8) | patch`.
+///
+/// Leading digits of each component are taken, so a pre-release suffix is
+/// ignored (`1.2.3-beta` → `1.2.3`). A component past its field saturates
+/// (major to `0xFFFF`, minor and patch to `0xFF`) instead of wrapping into
+/// an adjacent field. Missing components are 0, so `"0.2.0"` is `0x0000_0200`
+/// (512) and `"1.0.0"` is `0x0001_0000` (65536). One source for the runtime
+/// wrappers (`truce-au`, `truce-vst2`) and the install-time plist writers
+/// (`cargo-truce`), so the version a host reads at runtime matches the
+/// bundle metadata.
+#[must_use]
+pub fn version_word(version: &str) -> u32 {
+    let mut parts = [0u32; 3];
+    for (i, part) in version.split('.').take(3).enumerate() {
+        let n = leading_u32(part);
+        parts[i] = if i == 0 { n.min(0xFFFF) } else { n.min(0xFF) };
+    }
+    (parts[0] << 16) | (parts[1] << 8) | parts[2]
+}
+
+/// Normalize a version to the dotted-integer triple Apple requires for
+/// `CFBundleShortVersionString` (1-3 integers, no pre-release or build
+/// metadata): `"1.2.3-rc.1"` → `"1.2.3"`, `"0.2"` → `"0.2"`. A component
+/// with no leading digits becomes `0`.
+#[must_use]
+pub fn version_triple(version: &str) -> String {
+    let parts: Vec<String> = version
+        .split('.')
+        .take(3)
+        .map(|part| leading_u32(part).to_string())
+        .collect();
+    parts.join(".")
+}
+
 /// Sanitize a plugin's display name into a filesystem-safe form,
 /// preserving case and spaces. Use this whenever the name is going
 /// to land in a path component (`{name}.aaxplugin`, `{name}.vst3`,
@@ -112,6 +155,32 @@ mod slugify_tests {
         assert_eq!(slugify("--leading and trailing--"), "leading-and-trailing");
         assert_eq!(slugify("ABC123"), "abc123");
         assert_eq!(slugify(""), "");
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::{version_triple, version_word};
+
+    #[test]
+    fn version_word_packs_major_minor_patch() {
+        assert_eq!(version_word("1.0.0"), 0x0001_0000);
+        assert_eq!(version_word("0.2.0"), 0x0000_0200);
+        assert_eq!(version_word("6.3.0"), (6 << 16) | (3 << 8));
+        assert_eq!(version_word("1.2.3"), (1 << 16) | (2 << 8) | 3);
+        assert_eq!(version_word("0.2"), 0x0000_0200);
+        assert_eq!(version_word("1.2.3-beta"), (1 << 16) | (2 << 8) | 3);
+        // Out-of-range components saturate, never wrap into a neighbour.
+        assert_eq!(version_word("0.300.1"), (0xFF << 8) | 1);
+        assert_eq!(version_word(""), 0);
+    }
+
+    #[test]
+    fn version_triple_strips_suffix_to_integers() {
+        assert_eq!(version_triple("1.2.3"), "1.2.3");
+        assert_eq!(version_triple("7.0.0-rc.1"), "7.0.0");
+        assert_eq!(version_triple("0.2"), "0.2");
+        assert_eq!(version_triple("6"), "6");
     }
 }
 
