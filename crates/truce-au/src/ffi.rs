@@ -105,8 +105,8 @@ pub struct AuParamDescriptor {
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
 /// argument. v3: appended `latency_samples` / `tail_samples`. v4:
 /// appended `set_render_mode`. v5: appended `param_parse_value`. v6:
-/// appended `gui_idle`.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7506;
+/// appended `gui_idle`. v7: appended `gui_has_aspect_lock`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7507;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -305,6 +305,11 @@ pub struct AuCallbacks {
     /// ~60fps; the Rust side drives [`truce_core::editor::Editor::idle`]
     /// when an editor is open and no-ops otherwise.
     pub gui_idle: unsafe extern "C" fn(ctx: *mut c_void),
+    /// `1` if the editor locks its aspect ratio
+    /// ([`truce_core::editor::Editor::aspect_ratio`] is `Some`), `0` for
+    /// free aspect (v7). The AU v3 Swift shim only refuses an off-aspect
+    /// host resize for a locked editor.
+    pub gui_has_aspect_lock: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both
