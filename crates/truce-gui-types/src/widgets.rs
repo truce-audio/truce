@@ -210,6 +210,16 @@ pub fn draw_slider(
     );
 }
 
+/// Fill a horizontal capsule (rounded pill) centered vertically on `cy`.
+/// The backend has no rounded-rect primitive, so the shape is a middle
+/// rect plus a circular end-cap at each end.
+fn fill_capsule(ctx: &mut dyn RenderBackend, x: f32, cy: f32, w: f32, h: f32, color: Color) {
+    let r = h / 2.0;
+    ctx.fill_rect(x + r, cy - r, (w - 2.0 * r).max(0.0), h, color);
+    ctx.fill_circle(x + r, cy, r, color);
+    ctx.fill_circle(x + w - r, cy, r, color);
+}
+
 /// Draw a toggle button (on/off).
 ///
 /// `value` > 0.5 = on, <= 0.5 = off.
@@ -229,37 +239,30 @@ pub fn draw_toggle(
     let cx = x + width / 2.0;
     let cy = y + height / 2.0 - 5.0;
 
-    // Toggle track (pill shape)
-    let track_w = 20.0;
-    let track_h = 10.0;
+    // Rounded switch track, matching the egui `param_toggle` look.
+    let track_w = 32.0;
+    let track_h = 16.0;
     let track_x = cx - track_w / 2.0;
-    let track_y = cy - track_h / 2.0;
+    // On / off track colors already equal the egui `param_toggle`'s
+    // (`knob_fill` == PRIMARY, `knob_track` == KNOB_TRACK). Hovering an off
+    // switch lightens the track the way egui's `hovered.bg_fill` does,
+    // rather than drawing a separate halo.
     let bg = if is_on {
         theme.knob_fill
+    } else if highlighted {
+        theme.toggle_track_hover
     } else {
         theme.knob_track
     };
-    ctx.fill_rect(track_x, track_y, track_w, track_h, bg);
+    fill_capsule(ctx, track_x, cy, track_w, track_h, bg);
 
-    // Thumb circle
+    // Switch knob, seated inside the track at the on/off end.
     let thumb_x = if is_on {
         track_x + track_w - track_h / 2.0
     } else {
         track_x + track_h / 2.0
     };
-    ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 1.0, theme.knob_pointer);
-
-    if highlighted {
-        ctx.fill_rect(
-            track_x - 1.0,
-            track_y - 1.0,
-            track_w + 2.0,
-            track_h + 2.0,
-            theme.accent,
-        );
-        ctx.fill_rect(track_x, track_y, track_w, track_h, bg);
-        ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 1.0, theme.knob_pointer);
-    }
+    ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 2.0, theme.toggle_thumb);
 
     // Value text
     let val_size = 10.0;
