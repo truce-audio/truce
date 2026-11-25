@@ -59,7 +59,10 @@ pub(crate) fn cmd_reset_aax(args: &[String]) -> Res {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.contains(&config.vendor.name) {
+            // Guard the empty-vendor `contains("")`-matches-everything trap
+            // (load_config also rejects it): never let a blank vendor name
+            // turn this into "delete the whole cache".
+            if !config.vendor.name.is_empty() && name.contains(&config.vendor.name) {
                 let _ = fs::remove_file(entry.path());
                 eprintln!("  Removed AAX cache: {name}");
                 removed += 1;

@@ -247,6 +247,10 @@ pub struct TruceAaxTransportSnapshot {
 /// after the host already moved on.
 type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
+/// A cached save blob keyed on `(state_revision, snapshot generation)` -
+/// the two inputs that move when the serialized state changes.
+type StateCacheEntry = ((u64, u64), Arc<[u8]>);
+
 struct AaxInstance<P: PluginExport> {
     /// The plugin in the wrapper-standard ownership cell: the audio
     /// thread owns it per block, host lifecycle callbacks own it while
@@ -310,14 +314,17 @@ struct AaxInstance<P: PluginExport> {
     editor_host: Arc<HostGuiHandle>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<TransportSlot>,
-    /// Cached serialized state plus the `state_revision` value it was
-    /// captured at. Pro Tools calls `GetChunkSize` + `GetChunk` as a
-    /// pair, and for undo-checkpointing may call the pair repeatedly
-    /// without any intervening state change. Caching avoids re-running
-    /// `collect_values` + `serialize_state` on every call. The blob
-    /// is `Arc`-wrapped so cache hits hand back a refcount bump
-    /// instead of copying multi-KB Vec contents per call.
-    state_cache: Mutex<Option<(u64, Arc<[u8]>)>>,
+    /// Cached serialized state plus the `(state_revision, snapshot
+    /// generation)` key it was captured at. Pro Tools calls `GetChunkSize`
+    /// then `GetChunk` as a pair, and for undo-checkpointing may call the
+    /// pair repeatedly without any intervening state change. Caching avoids
+    /// re-running `collect_values` and `serialize_state` on every call. The
+    /// blob is `Arc`-wrapped so cache hits hand back a refcount bump instead
+    /// of copying multi-KB Vec contents per call. The snapshot generation is
+    /// part of the key because the off-thread snapshot lane (a GUI sample
+    /// load) changes the serialized `save_extra` bytes without moving
+    /// `state_revision`.
+    state_cache: Mutex<Option<StateCacheEntry>>,
     /// Monotonically-incrementing counter bumped by `_set_param` (audio
     /// thread) and `_load_state` (main thread). `_save_state` snapshots
     /// it before reading params and re-checks after serialization; if
@@ -1709,33 +1716,44 @@ unsafe fn save_state_body<P: PluginExport>(
             .state_cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let revision_before = inst.state_revision.load(Ordering::Acquire);
-        if let Some((rev, blob)) = guard.as_ref()
-            && *rev == revision_before
+        // Key on both the param/state-load revision and the off-thread
+        // snapshot generation, so a GUI sample load (which swaps snapshot
+        // bytes without touching `state_revision`) still invalidates the
+        // cache.
+        let key_before = (
+            inst.state_revision.load(Ordering::Acquire),
+            inst.snapshot.generation(),
+        );
+        if let Some((key, blob)) = guard.as_ref()
+            && *key == key_before
         {
             Arc::clone(blob)
         } else {
-            // Retry the param walk if the audio thread bumps the
-            // revision mid-serialize. `collect_values` walks parameter
-            // atomics individually with no whole-tree atomic snapshot,
-            // so a `_set_param` that lands between two reads produces
-            // a blob mixing pre- and post-update values for adjacent
-            // params. Re-serialize until we get a consistent revision
-            // (or exhaust the budget - see `SNAPSHOT_RETRIES`).
-            let mut rev_start = revision_before;
+            // Retry the param walk if the audio thread bumps the revision
+            // (or an off-thread snapshot publish lands) mid-serialize.
+            // `collect_values` walks parameter atomics individually with no
+            // whole-tree atomic snapshot, so a `_set_param` that lands
+            // between two reads produces a blob mixing pre- and post-update
+            // values for adjacent params. Re-serialize until the key is
+            // stable across the read (or exhaust the budget - see
+            // `SNAPSHOT_RETRIES`).
+            let mut key_start = key_before;
             let mut fresh: Arc<[u8]> = Arc::from(serialize_now(inst));
             let mut consistent = false;
             for _ in 0..SNAPSHOT_RETRIES {
-                let rev_end = inst.state_revision.load(Ordering::Acquire);
-                if rev_end == rev_start {
+                let key_end = (
+                    inst.state_revision.load(Ordering::Acquire),
+                    inst.snapshot.generation(),
+                );
+                if key_end == key_start {
                     consistent = true;
                     break;
                 }
-                rev_start = rev_end;
+                key_start = key_end;
                 fresh = Arc::from(serialize_now(inst));
             }
             if consistent {
-                *guard = Some((rev_start, Arc::clone(&fresh)));
+                *guard = Some((key_start, Arc::clone(&fresh)));
             }
             fresh
         }
@@ -1793,6 +1811,11 @@ fn republish_loaded_snapshot(slot: &SnapshotSlot, extra: Option<&[u8]>) {
         buf.extend_from_slice(bytes);
         true
     });
+    // Bump the snapshot generation so the save-blob cache (keyed on it)
+    // re-serializes the loaded bytes on the next `_save_state`, even before
+    // the audio thread drains the load queue and bumps `state_revision`
+    // (an inactive recall may never render).
+    slot.mark_published();
 }
 
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
@@ -1977,6 +2000,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let params_for_ctx = params.clone();
         let task_spawner_for_ctx = inst.task_spawner.clone();
         let pending_state_for_set = inst.pending_state.clone();
+        let snapshot_for_set = Arc::clone(&inst.snapshot);
         let transport_slot = inst.transport_slot.clone();
 
         let context = PluginContext::from_closures(
@@ -2016,9 +2040,15 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     // The editor sends RAW custom-state bytes - exactly
                     // what `save_state()` emits and `get_state` above
                     // returns - NOT a full `serialize_state` envelope.
-                    // Route them to the plugin's `load_state` on the
-                    // audio thread via the same handoff queue the host
-                    // load path uses (the queue is what avoids aliasing
+                    // Republish into the snapshot first (mirroring the host
+                    // `_load_state` path): a save before the next render then
+                    // returns the new state, and the generation bump
+                    // invalidates the save-blob cache even for an inactive
+                    // plugin whose render queue never drains.
+                    republish_loaded_snapshot(&snapshot_for_set, Some(&bytes));
+                    // Route the bytes to the plugin's `load_state` on the
+                    // audio thread via the same handoff queue the host load
+                    // path uses (the queue is what avoids aliasing
                     // `process()`'s `&mut plugin`). No params ride along:
                     // the editor mutates params through `set_param`.
                     let _ = pending_state_for_set.force_push(state::DeserializedState {

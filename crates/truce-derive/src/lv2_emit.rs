@@ -727,12 +727,10 @@ fn parse_flags_value(s: &str) -> truce_build::lv2::Lv2Flags {
 }
 
 fn audio_io_for(c: truce_build::lv2::Lv2Category) -> (u32, u32) {
-    use truce_build::lv2::Lv2Category;
-    match c {
-        Lv2Category::Instrument => (0, 2),
-        Lv2Category::Effect | Lv2Category::Analyzer | Lv2Category::Tool => (2, 2),
-        Lv2Category::NoteEffect => (0, 0),
-    }
+    // One source for the TTL/runtime port-count contract (see
+    // `Lv2Category::audio_io`); the runtime rejects a layout that doesn't
+    // match, so keep both paths reading this.
+    c.audio_io()
 }
 
 fn parse_category(s: &str) -> truce_build::lv2::Lv2Category {

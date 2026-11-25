@@ -89,9 +89,12 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
         && let Ok(content) = fs::read_to_string(&reaper_cache)
         && let Ok(config) = load_config()
     {
+        // Guard the empty-vendor trap: `!l.contains("")` is always false, so
+        // a blank vendor name would drop every line and wipe the cache.
+        // Keep all lines when the name is empty (load_config also rejects it).
         let filtered: String = content
             .lines()
-            .filter(|l| !l.contains(&config.vendor.name))
+            .filter(|l| config.vendor.name.is_empty() || !l.contains(&config.vendor.name))
             .collect::<Vec<_>>()
             .join("\n");
         let _ = fs::write(&reaper_cache, filtered);

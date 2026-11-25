@@ -311,7 +311,7 @@ pub fn read_single_preset(
     path: &Path,
     names: Option<&ParamNameMap>,
 ) -> Result<AuthoredPreset, String> {
-    let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let root = path.parent().map_or_default(Path::to_path_buf);
     // The parent dir doubles as the walk root so no directory-derived
     // category applies - explicit `category` still does.
     read_preset_file(&root, path, false, names)

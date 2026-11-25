@@ -606,6 +606,15 @@ pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
     if config.plugin.is_empty() {
         return Err("No [[plugin]] entries in truce.toml".into());
     }
+    // An empty / whitespace `[vendor].name` is dangerous, not just wrong:
+    // the vendor-scoped cleanup scans (`reset-aax`, `reset-au`,
+    // `uninstall --stale`) match cache/bundle names with
+    // `str::contains(&vendor.name)`, and `contains("")` is always true - so
+    // an empty name would delete every file in the AAX cache and every
+    // bundle in the plug-in dirs. Reject it up front.
+    if config.vendor.name.trim().is_empty() {
+        return Err("[vendor] `name` is empty in truce.toml - set a vendor name".into());
+    }
     // Reject contradictory MIDI keys here so every install/package/
     // validate path fails with the plugin named, mirroring the
     // compile error truce-derive raises for the same config.

@@ -222,8 +222,12 @@ impl PluginLogic for FundspReverbSimple {
         // or fractional sample rates, so pin it just under Nyquist.
         let nyquist = nyquist_hz(state.last_built_sr);
         buffer.for_each_stereo_frame(|frame_in, frame_out| {
-            state.low_cut_shared.set_value(params.low_cut.read().min(nyquist));
-            state.high_cut_shared.set_value(params.high_cut.read().min(nyquist));
+            state
+                .low_cut_shared
+                .set_value(params.low_cut.read().min(nyquist));
+            state
+                .high_cut_shared
+                .set_value(params.high_cut.read().min(nyquist));
             state.mix_shared.set_value(params.mix.read());
             state.graph.tick(frame_in, frame_out);
         });

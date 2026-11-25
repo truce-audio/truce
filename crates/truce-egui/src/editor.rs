@@ -740,6 +740,19 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             .or_default()
             .native_pixels_per_point = Some(ppp);
 
+        // Key claims last exactly one rendered frame. egui's temp store keeps
+        // an `insert_temp` value until it's overwritten, so a UI that claims
+        // arrows while its sequencer panel is open - then stops calling
+        // `claim_keys` when the panel closes - would go on swallowing arrows
+        // from the host forever. Clearing here, immediately before the UI
+        // runs, means the slots only ever hold what *this* frame declared.
+        //
+        // Deliberately tied to the frame actually running, not to every
+        // `on_frame` tick: the idle gate skips `run_frame` when nothing
+        // changed, and an idle editor must keep the claims from its last
+        // rendered frame rather than silently leaking those keys to the host.
+        clear_claims(&self.egui_ctx);
+
         let ui_arc = &self.ui;
         let context = &self.context;
         let output = self.egui_ctx.run_ui(raw_input, |ui| {
@@ -1165,6 +1178,15 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     EventStatus::Captured
                 }
                 Event::Window(win) => {
+                    // Focus loss strands held keys: the key-up for anything
+                    // down right now is delivered to whoever took focus, not
+                    // here, so the code would sit in `held_keys` forever and
+                    // keep `keep_key` returning true for it - permanently
+                    // swallowing that key from the host even after the claim
+                    // is gone. Drop the set; a re-focus starts clean.
+                    if matches!(win, baseview::WindowEvent::Unfocused) {
+                        self.held_keys.clear();
+                    }
                     if let baseview::WindowEvent::Resized(info) = win {
                         // In host-driven (plug-in) mode the host's reported
                         // scale is authoritative; baseview's echoed
@@ -1368,6 +1390,12 @@ struct ClaimedKeys(Vec<egui::Key>);
 /// focused text field keeps every key. Pass [`egui::Key::ALL`] to claim
 /// everything.
 ///
+/// A claim covers only the frame it was made in: stop calling this and the
+/// keys go back to the host on the next rendered frame. So claim
+/// unconditionally for keys you always handle, and conditionally (inside
+/// the `if` that draws the panel owning them) for keys you only sometimes
+/// handle - there's no "unclaim" to pair with it.
+///
 /// ```ignore
 /// truce_egui::claim_keys(ui.ctx(), &[egui::Key::ArrowLeft, egui::Key::ArrowRight]);
 /// ```
@@ -1378,8 +1406,7 @@ pub fn claim_keys(ctx: &egui::Context, keys: &[egui::Key]) {
 fn claimed_keys(ctx: &egui::Context) -> Vec<egui::Key> {
     ctx.data(|data| {
         data.get_temp::<ClaimedKeys>(egui::Id::NULL)
-            .map(|claimed| claimed.0)
-            .unwrap_or_default()
+            .map_or_default(|claimed| claimed.0)
     })
 }
 
@@ -1396,6 +1423,9 @@ struct ClaimedShortcuts(Vec<egui::KeyboardShortcut>);
 /// `Modifiers::COMMAND` is Cmd on macOS and Ctrl elsewhere, and `alt` /
 /// `shift` must match exactly.
 ///
+/// Per-frame like [`claim_keys`]: a chord stays claimed only while the UI
+/// keeps declaring it.
+///
 /// ```ignore
 /// use egui::{Key, KeyboardShortcut, Modifiers};
 /// truce_egui::claim_shortcuts(ui.ctx(), &[KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)]);
@@ -1409,6 +1439,16 @@ fn claimed_shortcuts(ctx: &egui::Context) -> Vec<egui::KeyboardShortcut> {
         data.get_temp::<ClaimedShortcuts>(egui::Id::NULL)
             .map_or_default(|claimed| claimed.0)
     })
+}
+
+/// Drop both claim slots. Called once per rendered frame, just before the
+/// UI runs, so a claim covers only the frame that declared it - see the
+/// call site in `run_frame`.
+fn clear_claims(ctx: &egui::Context) {
+    ctx.data_mut(|data| {
+        data.remove::<ClaimedKeys>(egui::Id::NULL);
+        data.remove::<ClaimedShortcuts>(egui::Id::NULL);
+    });
 }
 
 fn egui_key_of(key: &keyboard_types::Key) -> Option<egui::Key> {
@@ -1823,8 +1863,69 @@ impl<P: Params + ?Sized> Drop for EguiEditor<P> {
 
 #[cfg(test)]
 mod key_tests {
-    use super::{egui_key_of, keep_key};
+    use super::{
+        claim_keys, claim_shortcuts, claimed_keys, claimed_shortcuts, clear_claims, egui_key_of,
+        keep_key,
+    };
     use egui::{Key, KeyboardShortcut, Modifiers};
+
+    /// A claim must not outlive the frame that made it. egui's temp store
+    /// holds an `insert_temp` value until it is overwritten, so without the
+    /// per-frame `clear_claims` a UI that stops calling `claim_keys` (its
+    /// panel closed) would keep swallowing those keys from the host forever.
+    #[test]
+    fn claims_do_not_persist_past_the_frame_that_made_them() {
+        let ctx = egui::Context::default();
+        let chord = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
+
+        // Frame 1: the UI declares what it handles.
+        clear_claims(&ctx);
+        claim_keys(&ctx, &[Key::ArrowLeft]);
+        claim_shortcuts(&ctx, &[chord]);
+        assert_eq!(claimed_keys(&ctx), vec![Key::ArrowLeft]);
+        assert_eq!(claimed_shortcuts(&ctx), vec![chord]);
+
+        // Frame 2: the UI stops declaring them. Both slots must be empty, so
+        // the key and the chord go back to the host.
+        clear_claims(&ctx);
+        assert!(claimed_keys(&ctx).is_empty(), "plain claim persisted");
+        assert!(claimed_shortcuts(&ctx).is_empty(), "chord claim persisted");
+        assert!(!keep_key(
+            false,
+            Modifiers::NONE,
+            Some(Key::ArrowLeft),
+            &claimed_keys(&ctx),
+            &claimed_shortcuts(&ctx),
+            false
+        ));
+    }
+
+    /// `claim_keys` and `claim_shortcuts` share an id and are distinguished
+    /// only by type, so clearing one must not disturb a re-claim of the
+    /// other on the following frame.
+    #[test]
+    fn the_two_claim_slots_stay_independent() {
+        let ctx = egui::Context::default();
+        let chord = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
+
+        clear_claims(&ctx);
+        claim_shortcuts(&ctx, &[chord]);
+        // Only chords claimed this frame: the plain slot stays empty.
+        assert!(
+            claimed_keys(&ctx).is_empty(),
+            "claiming chords populated the plain-key slot"
+        );
+        assert_eq!(claimed_shortcuts(&ctx), vec![chord]);
+
+        clear_claims(&ctx);
+        claim_keys(&ctx, &[Key::ArrowLeft]);
+        // ...and now the reverse.
+        assert_eq!(claimed_keys(&ctx), vec![Key::ArrowLeft]);
+        assert!(
+            claimed_shortcuts(&ctx).is_empty(),
+            "claiming plain keys populated the chord slot"
+        );
+    }
 
     #[test]
     fn space_goes_to_host_unless_focused_or_claimed() {

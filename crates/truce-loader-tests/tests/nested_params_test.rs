@@ -612,6 +612,31 @@ fn ordinal_array_packs_each_element_contiguously() {
 }
 
 #[test]
+fn array_elements_get_disambiguated_names() {
+    // Every `Band` exposes leaf names `Gain` / `Q`; across a 3-element
+    // array that would be three identical pairs, so hosts (and the GUI)
+    // couldn't tell them apart. The derive suffixes each element with its
+    // 1-based index.
+    let names: Vec<&str> = BandArray::new()
+        .param_infos()
+        .iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["Master", "Gain 1", "Q 1", "Gain 2", "Q 2", "Gain 3", "Q 3"],
+    );
+
+    // The static table (what format wrappers register from) must match the
+    // live names exactly, or hosts and the running plugin would disagree.
+    let stat: Vec<&str> = BandArray::param_infos_static()
+        .iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(stat, names);
+}
+
+#[test]
 fn array_id_helper_matches_live_field() {
     let p = BandArray::new();
     // The shipped static helper resolves element ids without an instance.
@@ -622,6 +647,25 @@ fn array_id_helper_matches_live_field() {
         assert_eq!(BandArray::bands_id(i, BandParamId::Gain), band.gain.id());
         assert_eq!(BandArray::bands_id(i, BandParamId::Q), band.q.id());
     }
+}
+
+// A nested array longer than 32. `Default::default()` can't build
+// `[T; N]` for N > 32 (std's array `Default` impls stop at 32), so the
+// derive's `new()` constructs the array with `core::array::from_fn`.
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct BigArray {
+    #[nested]
+    bands: [Band; 40],
+}
+
+#[test]
+fn nested_array_longer_than_32_constructs() {
+    let p = BigArray::new();
+    assert_eq!(p.count(), 80); // 40 elements * 2 params
+    let names: Vec<&str> = p.param_infos().iter().map(|i| i.name).collect();
+    assert_eq!(names.first().copied(), Some("Gain 1"));
+    assert_eq!(names.last().copied(), Some("Q 40"));
 }
 
 // An auto-based array between two other groups: the ordinal packer must

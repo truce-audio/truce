@@ -12,7 +12,7 @@
 #![allow(clippy::float_cmp)]
 
 use truce_derive::Params;
-use truce_params::{FloatParam, Params};
+use truce_params::{BoolParam, FloatParam, IntParam, Params};
 
 const SMOOTH_MS: f64 = 12.0;
 const MIN_RATIO: f64 = 1.0;
@@ -93,4 +93,31 @@ fn bare_const_default_resolves() {
     let p = ConstDefaultParams::new();
     let id = p.param_infos()[0].id;
     assert_eq!(p.get_plain(id), Some(2000.0));
+}
+
+// A const `default` on an Int / Bool param. Unlike a literal default
+// (checked while the macro expands), a const default is only validated by
+// the generated `const` assertion - which previously fired for floats
+// only, silently skipping Int / Enum / Bool despite the derive comment
+// claiming otherwise. A valid in-range const default must still compile
+// (the assertion holds) and read back exactly.
+const BITS_DEFAULT: f64 = 12.0;
+const GATE_DEFAULT: f64 = 1.0;
+
+#[derive(Params)]
+struct IntBoolConstParams {
+    #[param(name = "Bits", range = "discrete(2, 16)", default = BITS_DEFAULT)]
+    bits: IntParam,
+    #[param(name = "Gate", default = GATE_DEFAULT)]
+    gate: BoolParam,
+}
+
+#[test]
+fn int_bool_const_defaults_resolve() {
+    let p = IntBoolConstParams::new();
+    let infos = p.param_infos();
+    assert_eq!(infos[0].default_plain, 12.0);
+    assert_eq!(infos[1].default_plain, 1.0);
+    assert_eq!(p.get_plain(infos[0].id), Some(12.0));
+    assert_eq!(p.get_plain(infos[1].id), Some(1.0));
 }

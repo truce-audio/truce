@@ -1187,6 +1187,28 @@ fn build_transport_info(t: &clap_event_transport, sample_rate: f64) -> Transport
 /// [`push_note_expressions`]) - the collapse to `0` here only feeds
 /// concrete-address routing, and the raw MIDI / `SysEx` events carry
 /// an unsigned `port_index` with no wildcard to lose.
+/// Minimum bytes a CLAP event of `type_` must declare in its `size`
+/// header for the whole typed struct to be in bounds before we cast and
+/// deref it. Returns `0` for event types the wrapper never casts (the
+/// match's `_` arm skips them), so those always pass. A host that
+/// miscomputes `size` on the last event of a pool page would otherwise
+/// let a cast-and-deref read past the allocation.
+fn clap_event_min_size(type_: u16) -> usize {
+    use std::mem::size_of;
+    match type_ {
+        CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF | CLAP_EVENT_NOTE_CHOKE => {
+            size_of::<clap_event_note>()
+        }
+        CLAP_EVENT_PARAM_VALUE | CLAP_EVENT_PARAM_MOD => size_of::<clap_event_param_value>(),
+        CLAP_EVENT_TRANSPORT => size_of::<clap_event_transport>(),
+        CLAP_EVENT_MIDI => size_of::<clap_event_midi>(),
+        CLAP_EVENT_MIDI_SYSEX => size_of::<clap_event_midi_sysex>(),
+        CLAP_EVENT_MIDI2 => size_of::<clap_event_midi2>(),
+        CLAP_EVENT_NOTE_EXPRESSION => size_of::<clap_event_note_expression>(),
+        _ => 0,
+    }
+}
+
 unsafe fn clap_input_port(header: *const clap_event_header, type_: u16) -> u8 {
     unsafe {
         let idx: i32 = match type_ {
@@ -1362,6 +1384,13 @@ unsafe fn convert_input_events<P: PluginExport>(
             }
 
             if (*header).space_id != CLAP_CORE_EVENT_SPACE_ID {
+                continue;
+            }
+
+            // Validate the host-declared event size covers the struct we're
+            // about to cast to (`clap_input_port` below and the match arms
+            // both deref typed views) before trusting it.
+            if ((*header).size as usize) < clap_event_min_size((*header).type_) {
                 continue;
             }
 
