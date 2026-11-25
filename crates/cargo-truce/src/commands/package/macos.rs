@@ -93,8 +93,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     let target_cpu = parsed
         .target_cpu_arg
         .as_deref()
-        .map(crate::util::parse_target_cpu_arg)
-        .unwrap_or_default();
+        .map_or_default(crate::util::parse_target_cpu_arg);
     crate::set_target_cpu(target_cpu);
 
     // Scope resolution: CLI > truce.toml [packaging] preferred_scope >

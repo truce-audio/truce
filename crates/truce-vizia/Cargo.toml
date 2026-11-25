@@ -52,7 +52,7 @@ license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
 description = "Vizia-based GUI backend for truce audio plugins."
 repository = "https://github.com/truce-audio/truce"
-homepage = "https://github.com/truce-audio/truce"
+homepage = "https://truce.audio"
 
 [lib]
 crate-type = ["rlib"]
@@ -60,7 +60,6 @@ crate-type = ["rlib"]
 [dependencies]
 truce-core = { version = "6.3.0", path = "../truce-core" }
 truce-params = { version = "6.3.0", path = "../truce-params" }
-truce-font = { version = "6.3.0", path = "../truce-font" }
 # Pulled in only for `reanchor_all_children_to_top` (macOS NSView
 # anchoring helper). Doesn't drag in any renderer.
 truce-gui-utils = { version = "6.3.0", path = "../truce-gui-utils" }

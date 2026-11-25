@@ -442,8 +442,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 let fname = t
                     .path
                     .file_stem()
-                    .map(|f| f.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
+                    .map_or_default(|f| f.to_string_lossy().to_lowercase());
                 // Strip AU v3 suffixes: legacy " v3" and the new " (auv3)".
                 let display = fname.trim_end_matches(" v3").trim_end_matches(" (auv3)");
                 display == filter_lower

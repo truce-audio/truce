@@ -994,8 +994,10 @@ fn diff_simctl_screenshot(render: &Path, baseline: &Path) -> Res {
     let pixel_count = (cw as usize) * (ch as usize);
     let diff_budget = pixel_count / SIMCTL_DIFF_BUDGET_DENOM;
     let diff_count = cur
-        .chunks_exact(4)
-        .zip(refp.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(refp.as_chunks::<4>().0)
         .filter(|(a, b)| {
             a.iter()
                 .zip(b.iter())

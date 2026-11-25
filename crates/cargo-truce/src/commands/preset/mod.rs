@@ -324,8 +324,7 @@ fn read_native(ctx: &PluginCtx<'_>, path: &Path) -> Result<PresetParts, crate::C
     if meta.name.is_empty() {
         meta.name = if decoded.name.is_empty() {
             path.file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default()
+                .map_or_default(|s| s.to_string_lossy().into_owned())
         } else {
             decoded.name
         };
@@ -768,8 +767,7 @@ fn pull_once(
         };
         let name = if decoded.name.is_empty() {
             path.file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default()
+                .map_or_default(|s| s.to_string_lossy().into_owned())
         } else {
             decoded.name.clone()
         };

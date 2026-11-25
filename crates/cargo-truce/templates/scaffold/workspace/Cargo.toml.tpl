@@ -30,7 +30,6 @@ truce-vst3 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 truce-standalone = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 {{ endif -}}
 {{- endif }}
-clap-sys = "0.5"
 
 # Uncomment to opt in. After uncommenting here, add the matching
 # feature + optional dep to each plugin's Cargo.toml.
