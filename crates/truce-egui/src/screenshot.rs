@@ -98,9 +98,21 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         .or_default()
         .native_pixels_per_point = Some(pixels_per_point);
 
+    // Catch inside `run_ui` so egui finishes the pass (see
+    // `catch_ui_panic`), own the deltas, then re-raise: the test fails on
+    // the UI's panic instead of the binary aborting in a drop assert.
+    let mut ui_panic = None;
     let mut output = ctx.run_ui(raw_input, |ui| {
-        ui_fn(ui, state);
+        if let Some(p) = crate::catch_ui_panic(|| ui_fn(ui, state)) {
+            ui_panic.get_or_insert(p);
+        }
     });
+    let mut textures_delta =
+        crate::renderer::OwnedTexturesDelta(std::mem::take(&mut output.textures_delta));
+    if let Some(payload) = ui_panic {
+        drop(textures_delta);
+        std::panic::resume_unwind(payload);
+    }
 
     let clipped_primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
 
@@ -137,7 +149,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
 
     // Update textures (egui 0.37 batches per-id deltas into a `SmallVec`).
-    for (id, deltas) in &output.textures_delta.set {
+    for (id, deltas) in &textures_delta.0.set {
         for delta in deltas {
             egui_renderer.update_texture(&device, &queue, *id, delta);
         }
@@ -246,12 +258,12 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     readback_buf.unmap();
 
     // Free textures
-    for id in &output.textures_delta.free {
+    for id in &textures_delta.0.free {
         egui_renderer.free_texture(id);
     }
     // egui 0.37's `TexturesDelta` panics on drop if it still holds
     // unapplied deltas; they're applied above, so clear it.
-    output.textures_delta.clear();
+    textures_delta.0.clear();
 
     Some((pixels, phys_w, phys_h))
 }

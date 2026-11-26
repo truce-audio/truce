@@ -3,6 +3,23 @@
 //! Manages the wgpu device, surface, and egui-wgpu `Renderer`. Each frame,
 //! takes egui's tessellated output and paints it onto the window surface.
 
+/// Owns one frame's [`egui::TexturesDelta`] from `run_ui` until it's
+/// rendered, clearing it on drop. epaint's `TexturesDelta::drop`
+/// debug-asserts the delta was applied, and a panic between `run_ui` and
+/// the end of [`EguiRenderer::render`] (in `tessellate`, or in `render`
+/// after its uploads) would otherwise drop it unapplied mid-unwind - an
+/// assert inside a `Drop` while panicking aborts the host instead of
+/// reaching the editor's panic firewall. On the normal path `render`
+/// already cleared it, so this is a no-op. The Windows `FramePacket`
+/// does the same for the render thread.
+pub(crate) struct OwnedTexturesDelta(pub(crate) egui::TexturesDelta);
+
+impl Drop for OwnedTexturesDelta {
+    fn drop(&mut self) {
+        self.0.clear();
+    }
+}
+
 /// Wraps wgpu + egui-wgpu for rendering egui output to a window surface.
 pub struct EguiRenderer {
     device: wgpu::Device,
@@ -453,5 +470,26 @@ impl EguiRenderer {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+    }
+}
+
+#[cfg(test)]
+mod owned_textures_delta_tests {
+    use super::OwnedTexturesDelta;
+
+    /// A panic between `run_ui` and the end of `render` unwinds through an
+    /// unapplied delta. epaint's drop assert firing mid-unwind would abort
+    /// this test binary; owned by the guard, it's cleared first and the
+    /// panic is caught normally.
+    #[test]
+    fn panic_with_unapplied_delta_unwinds_cleanly() {
+        let result = std::panic::catch_unwind(|| {
+            let mut delta = egui::TexturesDelta::default();
+            delta.free.insert(egui::TextureId::Managed(0));
+            assert!(!delta.is_empty(), "test needs a non-empty delta");
+            let _owned = OwnedTexturesDelta(delta);
+            panic!("render failed after its uploads");
+        });
+        assert!(result.is_err());
     }
 }

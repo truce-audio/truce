@@ -398,6 +398,10 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     #[cfg(target_os = "windows")]
     render_thread: Option<RenderThread>,
     pending_events: Vec<egui::Event>,
+    /// Message of the author-UI panic last logged, so a UI that panics
+    /// every frame logs once (per distinct message) instead of 60x a
+    /// second. Cleared by a frame that runs clean.
+    last_ui_panic: Option<String>,
     /// Physical keys whose key-down this editor kept, with the egui key
     /// that press was sent as. Every later event for the key - auto-repeat
     /// and key-up - follows the press, whatever the claims, text focus or
@@ -596,24 +600,25 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     #[cfg(not(target_os = "windows"))]
     fn painter_paint(
         &mut self,
-        mut textures_delta: egui::TexturesDelta,
+        mut textures_delta: crate::renderer::OwnedTexturesDelta,
         primitives: Vec<egui::ClippedPrimitive>,
         pixels_per_point: f32,
     ) -> bool {
         self.renderer.as_mut().is_none_or(|renderer| {
-            renderer.render(&mut textures_delta, &primitives, pixels_per_point)
+            renderer.render(&mut textures_delta.0, &primitives, pixels_per_point)
         })
     }
     #[cfg(target_os = "windows")]
     fn painter_paint(
         &mut self,
-        textures_delta: egui::TexturesDelta,
+        mut textures_delta: crate::renderer::OwnedTexturesDelta,
         primitives: Vec<egui::ClippedPrimitive>,
         pixels_per_point: f32,
     ) -> bool {
         if let Some(rt) = &self.render_thread {
+            // `FramePacket` takes over the clear-on-drop from here.
             rt.submit(FramePacket {
-                textures_delta,
+                textures_delta: std::mem::take(&mut textures_delta.0),
                 primitives,
                 pixels_per_point,
             });
@@ -774,31 +779,48 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
         let ui_arc = &self.ui;
         let context = &self.context;
-        let output = self.egui_ctx.run_ui(raw_input, |ui| {
-            // Recover a poisoned `ui` mutex (into_inner) rather than skip the
-            // frame forever: a panic in author `ui` code is caught by the
-            // baseview `on_frame` firewall, and the editor must keep rendering
-            // afterward - matching the built-in editor's `RefCell` recovery.
-            ui_arc
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .ui(ui, context);
+        let mut ui_panic = None;
+        let mut output = self.egui_ctx.run_ui(raw_input, |ui| {
+            // Caught here, not by the `on_frame` firewall: egui must finish
+            // the pass (see `catch_ui_panic`). The frame renders whatever the
+            // UI drew before panicking, and the editor keeps running. Recover
+            // the poisoned `ui` mutex (into_inner) for the next frame,
+            // matching the built-in editor's `RefCell` recovery.
+            if let Some(p) = crate::catch_ui_panic(|| {
+                ui_arc
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .ui(ui, context);
+            }) {
+                ui_panic.get_or_insert(p);
+            }
         });
+        match ui_panic {
+            Some(payload) => {
+                let msg = crate::panic_message(&*payload);
+                if self.last_ui_panic.as_deref() != Some(msg.as_str()) {
+                    log::error!("egui editor ui panicked (frame kept, editor still live): {msg}");
+                    self.last_ui_panic = Some(msg);
+                }
+            }
+            None => self.last_ui_panic = None,
+        }
 
         let repaint_delay = output
             .viewport_output
             .get(&egui::ViewportId::ROOT)
             .map(|v| v.repaint_delay);
 
+        // Owned before `tessellate` so a panic from here on can't drop it
+        // unapplied (see `OwnedTexturesDelta`).
+        let textures_delta =
+            crate::renderer::OwnedTexturesDelta(std::mem::take(&mut output.textures_delta));
         let clipped_primitives = self
             .egui_ctx
             .tessellate(output.shapes, output.pixels_per_point);
 
-        let painted = self.painter_paint(
-            output.textures_delta,
-            clipped_primitives,
-            output.pixels_per_point,
-        );
+        let painted =
+            self.painter_paint(textures_delta, clipped_primitives, output.pixels_per_point);
 
         (repaint_delay, painted)
     }
@@ -1050,11 +1072,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             }
         }));
         if let Err(e) = frame_result {
-            let msg = e
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_string())
-                .or_else(|| e.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown panic".to_string());
+            let msg = crate::panic_message(&*e);
             log::error!("egui on_frame panic swallowed: {msg}");
             // A render panic almost always means the device is dead (e.g.
             // egui-wgpu's staging-buffer alloc failing after a loss that
@@ -1616,6 +1634,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     #[cfg(target_os = "windows")]
                     render_thread,
                     pending_events: Vec::new(),
+                    last_ui_panic: None,
                     held_keys: HeldKeys::new(),
                     modifiers: egui::Modifiers::NONE,
                     start_time: std::time::Instant::now(),
