@@ -30,7 +30,7 @@
 //!   in the TTL until `audio_in` / `audio_out` are added to
 //!   `[[plugin]]` in `truce.toml`.
 
-use crate::{MeterField, ParamField, name_hash_id, nested_elem_hash_base};
+use crate::{MeterField, ParamField, name_hash_id, nested_elem_salt};
 use proc_macro::TokenStream;
 use quote::quote;
 use std::fmt::Write as _;
@@ -144,8 +144,8 @@ pub(crate) fn write_struct_sidecar(
                 let _ = writeln!(buf, "base = {b}");
             }
             // An array group is walked `array_len` times by the
-            // aggregator, each element at its own base (hashed, or packed
-            // after the one before it under ordinal).
+            // aggregator, each element salted (hash scheme) or packed
+            // after the one before it (ordinal).
             if let Some(n) = array_len {
                 let _ = writeln!(buf, "array_len = {n}");
             }
@@ -430,10 +430,14 @@ fn aggregate(
                 .unwrap_or(auto_base);
             // A single `#[nested]` writes no `array_len` and walks once;
             // an array writes its literal length (`0` walks zero times).
-            // Hash: each element walks the child type at its own hashed
-            // base (`nested_elem_hash_base`, the derive rejects a pinned
-            // base there). Ordinal: at `base + i * element_count`, the
-            // count discovered by how many params the walk added.
+            // Hash: each element's subtree is walked at base 0, then every
+            // id is mixed with the element's salt (`nested_elem_salt` /
+            // `mix_nested_id`) and only then offset by this struct's
+            // `id_base` - the runtime's order (the element's `remix_ids`,
+            // then any ancestor's additive `offset_ids`). The derive
+            // rejects a pinned base there. Ordinal: at `base + i *
+            // element_count`, the count discovered by how many params the
+            // walk added.
             let array = entry
                 .get("array_len")
                 .and_then(toml::Value::as_integer)
@@ -442,19 +446,34 @@ fn aggregate(
             let mut elem_base = base;
             for i in 0..array_len {
                 let before = params.len();
-                let this_base = match (hash_scheme, array.is_some(), slot_field) {
-                    (true, true, Some(f)) => nested_elem_hash_base(f, i),
-                    _ => elem_base,
+                let fields_before = fields.len();
+                let salt = match (hash_scheme, array.is_some(), slot_field) {
+                    (true, true, Some(f)) => Some(nested_elem_salt(f, i)),
+                    _ => None,
+                };
+                let walk_base = if salt.is_some() {
+                    0
+                } else {
+                    (id_base + elem_base) & mask
                 };
                 aggregate(
                     sidecar_dir,
                     t,
-                    (id_base + this_base) & mask,
+                    walk_base,
                     params,
                     meter_ids,
                     fields,
                     ancestors,
                 )?;
+                if let Some(salt) = salt {
+                    let remap = |id: u32| (truce_params::mix_nested_id(id, salt) + id_base) & mask;
+                    for p in &mut params[before..] {
+                        p.id = remap(p.id);
+                    }
+                    for (id, _) in &mut fields[fields_before..] {
+                        *id = remap(*id);
+                    }
+                }
                 // Match the runtime's `param_infos()`: an array element's
                 // params (inner arrays already suffixed) get a 1-based index
                 // suffix, `Level` -> `Level 1`. The port name - and the
@@ -849,9 +868,9 @@ mod tests {
         );
     }
 
-    /// Hash-scheme arrays: each element lands at its own hashed base
-    /// (`nested_elem_hash_base`), matching the runtime, not packed at
-    /// `base + i * element_count`.
+    /// Hash-scheme arrays: each element's ids are mixed with its own salt
+    /// (`nested_elem_salt` / `mix_nested_id`), matching the runtime, not
+    /// packed at `base + i * element_count`.
     #[test]
     fn hash_nested_array_uses_per_element_bases() {
         let dir = std::env::temp_dir().join(format!("truce-lv2-hash-array-{}", std::process::id()));
@@ -886,9 +905,7 @@ mod tests {
 
         let ids: Vec<u32> = params.iter().map(|p| p.id).collect();
         let want: Vec<u32> = (0..3)
-            .map(|i| {
-                (crate::nested_elem_hash_base("step", i) + 7) & (truce_params::METER_ID_BASE - 1)
-            })
+            .map(|i| truce_params::mix_nested_id(7, crate::nested_elem_salt("step", i)))
             .collect();
         assert_eq!(ids, want);
     }
