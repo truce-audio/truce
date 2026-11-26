@@ -32,9 +32,10 @@ use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// What the per-backend init closure returns: the GUI-side product
-/// (device handles, pipelines, ...) plus the device + configuration
-/// the pump needs for `surface.configure`.
-pub type PumpInit<T> = (T, wgpu::Device, wgpu::SurfaceConfiguration);
+/// (device handles, pipelines, ...) plus the device, queue, and
+/// configuration the pump needs for `surface.configure` and (wgpu 30+)
+/// `queue.present`.
+pub type PumpInit<T> = (T, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration);
 
 /// Per-backend GPU init, run once the instance / adapter / surface
 /// exist (on the pump thread on Windows, inline elsewhere). Returns
@@ -112,6 +113,7 @@ fn lock(slot: &Mutex<Slot>) -> std::sync::MutexGuard<'_, Slot> {
 struct InlineState {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
+    queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     last_acquire: std::time::Duration,
 }
@@ -234,7 +236,8 @@ impl PumpClient {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            frame.present();
+            // wgpu 30 presents through the queue, not the frame.
+            lock_inline(&self.state).queue.present(frame);
         }
     }
 
@@ -358,15 +361,17 @@ impl<T: Send + 'static> SurfacePump<T> {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                     force_fallback_adapter: false,
+                    apply_limit_buckets: false,
                 }))
                 .ok()?;
-            let (product, device, config) = init(&instance, &adapter, &surface)?;
+            let (product, device, queue, config) = init(&instance, &adapter, &surface)?;
             surface.configure(&device, &config);
             Some(Self {
                 client: PumpClient {
                     state: Arc::new(Mutex::new(InlineState {
                         surface,
                         device,
+                        queue,
                         config,
                         last_acquire: std::time::Duration::ZERO,
                     })),
@@ -485,6 +490,7 @@ fn run<T: Send>(
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .ok()?;
         let (product, device, config) = init(&instance, &adapter, &surface)?;
