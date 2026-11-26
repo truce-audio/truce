@@ -18,7 +18,12 @@ path = "src/main.rs"
 required-features = ["standalone"]
 
 [features]
-default = ["clap", "vst3", "lv2", "au", "aax"]
+# No LV2 by default: its TTL ports come from the plug-in category (an
+# effect declares 2 in / 2 out), so truce-lv2 refuses this 6-in / 6-out
+# layout at instantiate. Re-add `lv2` once the TTL follows the real layout.
+# (`cargo truce` picks formats from every plug-in's defaults combined, so a
+# workspace-wide build still makes this bundle; it just won't load.)
+default = ["clap", "vst3", "au", "aax"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
