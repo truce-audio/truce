@@ -161,3 +161,32 @@ fn plugin_without_custom_state_does_not_publish() {
     assert!(!published, "a stateless plugin must not publish a snapshot");
     assert!(buf.is_empty(), "nothing is written when there's no state");
 }
+
+/// #253: every format's save reads custom state from the snapshot slot,
+/// which `process` fills. A freshly built instance - saved before its
+/// first block, as `clap-validator`'s state-reproducibility test does -
+/// must already carry its state, or the save silently drops it.
+#[test]
+fn a_fresh_instance_publishes_its_state_before_any_block() {
+    let plugin = StaticShell::<StateParams, LegacyStatePlugin>::from_parts(
+        Arc::new(StateParams::new()),
+        None,
+    );
+    assert_eq!(
+        truce_core::wrapper::save_extra(&plugin.snapshot_slot()),
+        0u32.to_le_bytes(),
+        "a save before the first block must carry the initial custom state"
+    );
+}
+
+/// A plugin with no custom state still publishes nothing at construction,
+/// so its saves stay free of an `extra` block.
+#[test]
+fn a_fresh_stateless_instance_publishes_nothing() {
+    let plugin =
+        StaticShell::<StateParams, PlainPlugin>::from_parts(Arc::new(StateParams::new()), None);
+    assert_eq!(
+        truce_core::wrapper::save_extra(&plugin.snapshot_slot()),
+        Vec::<u8>::new()
+    );
+}
