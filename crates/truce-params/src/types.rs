@@ -658,6 +658,15 @@ impl<E: ParamEnum> EnumParam<E> {
 /// }
 /// ```
 ///
+/// Declare every `#[meter]` in the top-level `Params` struct. Meter IDs
+/// auto-assign per struct from a shared base, so a `#[meter]` inside a
+/// `#[nested]` struct - or inside a `#[nested]` array, whose elements are
+/// all the same type and so share the ID - aliases another meter's
+/// storage. The per-struct derive check can't see across nested types, so
+/// this surfaces as a `duplicate meter ID` panic in
+/// [`Params::assert_no_id_collisions`](crate::Params::assert_no_id_collisions)
+/// when the host instantiates the plug-in, not as a compile error.
+///
 /// `id` is `pub` so the `#[derive(Params)]` macro can construct a
 /// `MeterSlot { id: <auto-assigned> }` directly without going through
 /// a `pub fn new(id)` constructor that would let user code mint
