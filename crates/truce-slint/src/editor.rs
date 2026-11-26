@@ -16,7 +16,7 @@ use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgb
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent, WindowEventDispatchResult};
 use slint::{LogicalPosition, PhysicalSize};
 
-use truce_core::editor::{Editor, PluginContext, RawWindowHandle, ResizeCorrector};
+use truce_core::editor::{Editor, HeldKeys, PluginContext, RawWindowHandle, ResizeCorrector};
 use truce_gui::EditorScale;
 use truce_params::Params;
 
@@ -328,6 +328,17 @@ impl<P: Params + 'static> SlintEditor<P> {
 
 struct SlintWindowHandler<P: Params + ?Sized> {
     slint_window: Rc<MinimalSoftwareWindow>,
+    /// Physical keys whose key-down was kept from the host. Slint sees
+    /// every key event, but the host-facing status of a repeat or key-up
+    /// follows its key-down rather than slint's verdict on that event
+    /// alone, so the host never gets half a keystroke.
+    held_keys: HeldKeys<keyboard_types::Code>,
+    /// Last activation state sent to slint (`false` at creation, matching
+    /// slint's own). baseview can report one focus change twice (Windows:
+    /// click focus then the deferred `SetFocus`; macOS: resign-key then
+    /// resign-first-responder), and slint re-runs `FocusScope` callbacks
+    /// on every repeat, so only changes are forwarded.
+    slint_active: bool,
     sync_fn: SyncFn<P>,
     state: PluginContext<P>,
     blit: Option<BlitPipeline>,
@@ -817,6 +828,31 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 }
             }
             Event::Window(win) => {
+                // Mirror OS focus into slint. On deactivation slint clears
+                // its modifier state, which it otherwise tracks from the
+                // modifier keys' own press / release: a Shift or Cmd held
+                // when focus left (Cmd+Tab) has its release delivered to
+                // whoever took focus, so without this slint saw it held
+                // until it was pressed again. It also sends the focused
+                // item the `FocusOut` / `FocusIn` a window switch implies.
+                let active = match win {
+                    baseview::WindowEvent::Unfocused => {
+                        // Key-ups for anything held now go to whoever took
+                        // focus.
+                        self.held_keys.drain().for_each(drop);
+                        Some(false)
+                    }
+                    baseview::WindowEvent::Focused => Some(true),
+                    _ => None,
+                };
+                if let Some(active) = active
+                    && active != self.slint_active
+                {
+                    self.slint_active = active;
+                    self.slint_window
+                        .window()
+                        .dispatch_event(WindowEvent::WindowActiveChanged(active));
+                }
                 if let baseview::WindowEvent::Resized(info) = win {
                     let phys_w = info.physical_size().width;
                     let phys_h = info.physical_size().height;
@@ -924,26 +960,36 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 // focus, which varies by DAW. Slint tracks modifier state
                 // from the modifier keys' own press/release events, so we
                 // forward every key (including Shift/Ctrl/...) verbatim.
-                let Some(text) = slint_key_text(&kb.key) else {
-                    return EventStatus::Ignored;
-                };
                 let window = self.slint_window.window();
-                let event = match kb.state {
+                let event = slint_key_text(&kb.key).map(|text| match kb.state {
                     keyboard_types::KeyState::Down if kb.repeat => {
                         WindowEvent::KeyPressRepeated { text }
                     }
                     keyboard_types::KeyState::Down => WindowEvent::KeyPressed { text },
                     keyboard_types::KeyState::Up => WindowEvent::KeyReleased { text },
-                };
-                // Report whether a focused slint item consumed the key. An
-                // unconsumed key (no focus item, or a handler that returned
-                // `reject`) is returned to the host, which baseview forwards
-                // on `Ignored`, so Space and transport shortcuts keep working
-                // while the editor is focused. A dispatch error forwards too
-                // rather than panicking the audio host.
-                match window.dispatch_event_with_result(event) {
-                    Ok(WindowEventDispatchResult::Accepted) => EventStatus::Captured,
-                    _ => EventStatus::Ignored,
+                });
+                // Whether a focused slint item consumed the key. An unconsumed
+                // key (no focus item, a handler that returned `reject`, a key
+                // slint doesn't model) is returned to the host, which baseview
+                // forwards on `Ignored`, so Space and transport shortcuts keep
+                // working while the editor is focused. A dispatch error
+                // forwards too rather than panicking the audio host.
+                let kept = event.is_some_and(|event| {
+                    matches!(
+                        window.dispatch_event_with_result(event),
+                        Ok(WindowEventDispatchResult::Accepted)
+                    )
+                });
+                // Slint has seen the event either way; what the host sees
+                // follows the key-down (a release slint accepts for a press
+                // the host got must still reach the host, and vice versa).
+                let code = (kb.code != keyboard_types::Code::Unidentified).then_some(kb.code);
+                let down = kb.state == keyboard_types::KeyState::Down;
+                let routed = self.held_keys.route(code, down, kb.repeat, (), kept);
+                if routed.is_some() {
+                    EventStatus::Captured
+                } else {
+                    EventStatus::Ignored
                 }
             }
         }
@@ -1122,6 +1168,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 };
 
                 SlintHandler::Live(Box::new(SlintWindowHandler::<P> {
+                    held_keys: HeldKeys::new(),
+                    slint_active: false,
                     slint_window,
                     sync_fn,
                     state: typed_ctx,
