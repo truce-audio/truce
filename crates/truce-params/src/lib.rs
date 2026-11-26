@@ -36,35 +36,50 @@ const fn fmix64(mut h: u64) -> u64 {
 }
 
 /// Implementation detail of `#[derive(Params)]`: the salt for element
-/// `index` of a hash-scheme `#[nested] field: [T; N]` array, from the
-/// full 32-bit FNV-1a of the field name. `fmix64` is a bijection and its
-/// input is unique per index, so every element of an array gets a
-/// distinct salt by construction.
+/// `index` of a hash-scheme `#[nested] field: [T; N]` array - the full
+/// 32-bit FNV-1a of the field name and the index, packed for
+/// [`mix_nested_id`].
 #[doc(hidden)]
 #[must_use]
 pub const fn nested_elem_salt(field_hash: u32, index: u32) -> u64 {
-    fmix64(((field_hash as u64) << 32) | index as u64)
+    ((field_hash as u64) << 32) | index as u64
 }
+
+/// The odd multiplier every hash-scheme `#[nested]` array steps its
+/// elements by (golden-ratio bits, low 24): see [`mix_nested_id`].
+const ARRAY_STRIDE: u32 = 0x4A_7C15;
 
 /// Implementation detail of `#[derive(Params)]`: the id a hash-scheme
 /// `#[nested]` array element exposes for the child param whose id (after
-/// the element's own nested rebasing) is `id`. Mixes rather than adds:
-/// an additive `salt + id` fold over masked FNV ids collided on ordinary
-/// names (`step: [T; 32]` with children `max` / `mix`) because a
-/// difference between two salts often equals one between two child ids.
-/// Within one element `salt ^ id` is unique per id, and across elements
-/// two salts would have to agree in their high 40 bits (ids live in the
-/// low 24) to repeat an input - about 2^-40 per element pair; `fmix64`
-/// keeps inputs unique before the mask. So ids collide at the random
-/// 24-bit birthday rate, the same as a flat struct with as many params
-/// (unlike the additive layout, that includes two ids within one
-/// element), and any collision is caught at construction. Shared with the LV2 sidecar
+/// the element's own nested rebasing) is `id`.
+///
+/// Progression layout: each child gets a hashed 24-bit start from `(field,
+/// child id)`, and element `index` sits at `start + index * STRIDE`, one
+/// fixed odd stride for every array. An odd stride is invertible mod 2^24,
+/// so (multiplying through by its inverse) every child is an interval:
+/// - a child's elements never collide with each other, and growing the
+///   array or the element type moves no existing id, at any length;
+/// - two children of one array collide only if their spans overlap, about
+///   K^2 * L / 2^24 for K children over L elements, and two arrays about
+///   K_A * K_B * (L_A + L_B) / 2^24;
+/// - two copies of one array whose ids differ only by an additive base
+///   (the same group type in sibling slots, `osc1` / `osc2`, often a few
+///   hundred apart) are scattered by the stride: a plain `start + index`
+///   would overlap them whenever the array outgrew the gap, the stride
+///   turns that into an ordinary chance collision (a child's two copies
+///   can't overlap below ~47k elements when the slot names differ only in
+///   their last byte).
+///
+/// Any collision is caught at construction. Shared with the LV2 sidecar
 /// aggregator so the TTL matches the runtime.
 #[doc(hidden)]
 #[must_use]
-#[allow(clippy::cast_possible_truncation)] // the mask is the point
+#[allow(clippy::cast_possible_truncation)] // the masks are the point
 pub const fn mix_nested_id(id: u32, salt: u64) -> u32 {
-    (fmix64(salt ^ id as u64) as u32) & (METER_ID_BASE - 1)
+    let field_hash = salt >> 32;
+    let index = salt as u32;
+    let start = fmix64((field_hash << 32) | id as u64) as u32;
+    start.wrapping_add(index.wrapping_mul(ARRAY_STRIDE)) & (METER_ID_BASE - 1)
 }
 
 /// Sealing module: external crates cannot implement [`Params`] or
@@ -372,9 +387,22 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
             for (prev_id, prev_name) in &seen {
                 assert!(
                     *prev_id != info.id,
-                    "duplicate parameter ID {}: '{}' and '{}' (likely a \
-                     parent / nested-struct collision; the per-struct \
-                     compile-time check can't see across nested types)",
+                    "duplicate parameter ID {}: '{}' and '{}'. An explicit \
+                     id can clash with a nested group's (the per-struct \
+                     compile-time check can't see across nested types), and \
+                     under the default hash id scheme two 24-bit ids can \
+                     collide by chance - likelier with many params, or large \
+                     #[nested] arrays. Fix whatever you just added. Hash scheme: pin a \
+                     new param with #[param(id = N)] (in an array element \
+                     type N is element-local, spread per element - pick any other \
+                     unused N), rename a new #[nested] field, or, if you grew \
+                     an array, put the extra elements in a new #[nested] \
+                     field instead; before shipping, \
+                     #[params(id_scheme = \"ordinal\")] also works. Ordinal \
+                     scheme: move the new explicit id, or give a new group \
+                     #[nested(base = N)]. Pinning, rebasing or renaming \
+                     something already shipped moves its ids and breaks \
+                     saved state.",
                     info.id,
                     prev_name,
                     info.name,

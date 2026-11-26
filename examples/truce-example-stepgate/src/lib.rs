@@ -3,10 +3,12 @@
 //! The pattern is one `#[nested]` field typed as a fixed-size array
 //! (`[StepParams; NUM_STEPS]`), so the same two-param group (level +
 //! on/off) is instantiated `NUM_STEPS` times and the DSP + editor just
-//! index into it. Under the default hash id scheme each element's ids
-//! are mixed with its own salt (`step[0]`, `step[1]`, ...), so adding a param to
-//! `StepParams` later leaves every existing step's ids - and the host's
-//! saved automation - where they were.
+//! index into it. Under the default hash id scheme each child's ids run
+//! from a hashed start, each element one fixed stride further on (`step[0]`,
+//! `step[1]`, ...),
+//! so adding a param to `StepParams` - or growing the array - later leaves
+//! every existing step's ids, and the host's saved automation, where they
+//! were.
 //!
 //! `derive(Params)` also ships a static id resolver per array field -
 //! `GateParams::step_id(i, StepParamsParamId::Level)` - for code that
