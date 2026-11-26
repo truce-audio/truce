@@ -20,7 +20,7 @@ use syn::{Data, DeriveInput, Expr, Fields, Lit, Type, TypePath, UnOp};
 use truce_build::{Config, PluginDef};
 use truce_params::METER_ID_BASE;
 
-mod lv2_emit;
+mod meta_sidecar;
 
 /// Resolve `truce.toml` and pull out the `[[plugin]]` entry for the
 /// current crate. Routes every failure mode through `Result<…, String>`
@@ -178,14 +178,14 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
     let version = truce_build::effective_plugin_version(plugin.version.as_deref(), &pkg_version);
 
-    // One parser for the runtime category and the LV2 TTL's port set
+    // One parser for the runtime category and every format's port set
     // (`truce_build::parse_plugin_category`), so they can't disagree.
     // Note-effect plugins (`midi` / `note_effect`) map to a distinct
     // variant from `Effect` so the LV2 MIDI input decode path stays open.
     // An unknown category is an error, not a silent `effect`.
     let category = match truce_build::parse_plugin_category(&plugin.category) {
         Ok(c) => {
-            use truce_build::lv2::Lv2Category as C;
+            use truce_build::Category as C;
             match c {
                 C::Effect => quote! { ::truce::core::PluginCategory::Effect },
                 C::Instrument => quote! { ::truce::core::PluginCategory::Instrument },
@@ -375,16 +375,17 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// Emit `manifest.ttl` + `plugin.ttl` for the plugin whose root params
-/// type is `<input>`. Invoked by `truce::plugin!`'s expansion. See
-/// [`lv2_emit::emit_root_impl`] for the gory details.
+/// Record `<input>` as the plugin's root params type in the metadata
+/// tree's `root.toml`, so `cargo truce` knows where to start resolving
+/// parameters at package time. Invoked by `truce::plugin!`'s expansion;
+/// expands to nothing. See [`meta_sidecar`] for the tree's shape.
 ///
 /// Doc-hidden because plugin authors never call it directly - it's
 /// part of the `truce::plugin!` machinery.
 #[doc(hidden)]
 #[proc_macro]
-pub fn __truce_lv2_emit_root(input: TokenStream) -> TokenStream {
-    lv2_emit::emit_root_impl(input)
+pub fn __truce_meta_root(input: TokenStream) -> TokenStream {
+    meta_sidecar::write_root(input)
 }
 
 /// Recognized parameter field types.
@@ -965,28 +966,22 @@ fn parse_id_scheme(attrs: &[syn::Attribute]) -> Result<IdScheme, syn::Error> {
 }
 
 /// Deterministic FNV-1a hash of a field name, masked into the
-/// parameter id space (`0..METER_ID_BASE`). Pure integer arithmetic
-/// over the name bytes, so the value is identical across toolchains,
-/// targets, and runs - the property a persisted parameter id needs.
-/// `pub(crate)` so the LV2 sidecar aggregator (`lv2_emit`) flattens
-/// nested hash ids with the exact same arithmetic the runtime uses.
+/// parameter id space (`0..METER_ID_BASE`). Thin alias for
+/// [`truce_params::param_id_hash`] - the one definition the derive,
+/// `truce-build`'s metadata aggregator, and the runtime all read, so a
+/// persisted parameter id can't drift between them.
 pub(crate) fn name_hash_id(name: &str) -> u32 {
-    const FNV_OFFSET: u32 = 0x811c_9dc5;
-    const FNV_PRIME: u32 = 0x0100_0193;
-    let mut h = FNV_OFFSET;
-    for b in name.bytes() {
-        h ^= u32::from(b);
-        h = h.wrapping_mul(FNV_PRIME);
-    }
-    h & (METER_ID_BASE - 1)
+    truce_params::param_id_hash(name)
 }
 
 /// Hash-scheme salt of element `index` in a `#[nested] field: [T; N]`
 /// array ([`truce_params::nested_elem_salt`] over the field name's full
 /// FNV-1a). Each element's ids go through [`truce_params::mix_nested_id`]
-/// (a hashed start per child, plus the index times a fixed odd stride) rather
-/// than packed at `base + index * element_count`, so growing the array or
-/// `T` moves no element. Shared with `lv2_emit`.
+/// (a hashed start per child, plus the index times a fixed odd stride)
+/// rather than packed at `base + index * element_count` or offset by a
+/// per-element hash, so growing the array or `T` moves no element and a
+/// child's elements never collide. `truce_build::meta`'s walk places
+/// them the same way, off the sidecar tree.
 pub(crate) fn nested_elem_salt(field: &str, index: usize) -> u64 {
     truce_params::nested_elem_salt(
         state_field_hash(field),
@@ -995,8 +990,8 @@ pub(crate) fn nested_elem_salt(field: &str, index: usize) -> u64 {
 }
 
 /// How a `#[nested]` array lays out its elements' ids, for every site that
-/// must agree (static table, runtime rebase, `<field>_id` helper; the LV2
-/// aggregator mirrors it). `prelude` binds what the other parts read, with
+/// must agree (static table, runtime rebase, `<field>_id` helper;
+/// `truce_build::meta`'s walk mirrors it). `prelude` binds what the other parts read, with
 /// `__i: u32` the element index in scope.
 pub(crate) struct ArrayLayout {
     prelude: proc_macro2::TokenStream,
@@ -1024,18 +1019,12 @@ impl ArrayLayout {
 }
 
 /// Full 32-bit FNV-1a of a field name - the keyed `#[derive(State)]`
-/// codec's per-field key. Unmasked (unlike [`name_hash_id`], which folds
-/// into the param-id space) to minimize collisions; the derive rejects a
-/// same-hash pair at compile time.
+/// codec's per-field key. Thin alias for [`truce_params::field_hash`];
+/// unmasked (unlike [`name_hash_id`], which folds into the param-id
+/// space) to minimize collisions; the derive rejects a same-hash pair
+/// at compile time.
 fn state_field_hash(name: &str) -> u32 {
-    const FNV_OFFSET: u32 = 0x811c_9dc5;
-    const FNV_PRIME: u32 = 0x0100_0193;
-    let mut h = FNV_OFFSET;
-    for b in name.bytes() {
-        h ^= u32::from(b);
-        h = h.wrapping_mul(FNV_PRIME);
-    }
-    h
+    truce_params::field_hash(name)
 }
 
 /// Coerce a `default = ...` attribute expression into an `f64`.
@@ -1284,20 +1273,11 @@ fn nested_field_label(ident: &syn::Ident) -> String {
     field_label(&ident.to_string())
 }
 
-/// [`nested_field_label`] from the field's name as written (the LV2
-/// aggregator reads it back from the sidecar).
+/// [`nested_field_label`] from the field's name as written. Thin alias
+/// for [`truce_utils::field_label`], which `truce-build`'s aggregator
+/// reads the recorded label back through.
 pub(crate) fn field_label(raw: &str) -> String {
-    raw.trim_start_matches("r#")
-        .split('_')
-        .filter(|w| !w.is_empty())
-        .map(|w| {
-            let mut c = w.chars();
-            c.next()
-                .map(|f| f.to_uppercase().chain(c).collect::<String>())
-                .unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    truce_utils::field_label(raw)
 }
 
 /// A range / smoothing slot as a float literal, if it is one. Finite only:
@@ -2479,19 +2459,17 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     }
 
-    // --- Compile-time LV2 metadata sidecar ---
+    // --- Compile-time metadata sidecar ---
     //
     // Each Params struct (root or nested, plugin crate or helper)
-    // writes `<target>/lv2-meta/<crate>/<struct>.params.toml` with its
-    // own params, meters, and #[nested] child type names. The final
-    // TTL render happens later via `__truce_lv2_emit_root!`, which
-    // `truce::plugin!` invokes with the root params type and which
-    // walks the sidecar tree to aggregate. Failures here are silent -
-    // they surface at TTL-emit time when the aggregator can't find
-    // the data it needs.
-    let nested_for_sidecar: Vec<lv2_emit::SidecarNested> = nested_fields
+    // writes `<target>/truce-meta/<crate>/<struct>.params.toml` with
+    // its own params, meters, and #[nested] child type names. Nothing
+    // is rendered here: `cargo truce` walks the tree at package time,
+    // when it knows which formats it is building. Failures are silent -
+    // they surface there, where the reader can name what's missing.
+    let nested_for_sidecar: Vec<meta_sidecar::SidecarNested> = nested_fields
         .iter()
-        .map(|n| lv2_emit::SidecarNested {
+        .map(|n| meta_sidecar::SidecarNested {
             field: n.ident.clone(),
             ty: n.ty.clone(),
             base: n.base,
@@ -2499,7 +2477,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             label: n.label.clone(),
         })
         .collect();
-    lv2_emit::write_struct_sidecar(
+    meta_sidecar::write_struct_sidecar(
         struct_name,
         scheme == IdScheme::Hash,
         &param_fields,
@@ -3954,12 +3932,12 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    // Record the variant count + display names so the LV2 aggregator can
-    // resolve `EnumParam<#enum_name>` ports that carry no explicit
-    // `#[param(range = "enum(N)")]` and render each value's scale-point
-    // label. Only knowable here, at the enum's own derive; the params
-    // sidecar references it by name.
-    lv2_emit::write_enum_sidecar(enum_name, &variant_names);
+    // Record the variant count + display names so the package-time walk
+    // can resolve `EnumParam<#enum_name>` params that carry no explicit
+    // `#[param(range = "enum(N)")]`, and a format can label each value.
+    // Only knowable here, at the enum's own derive; the params sidecar
+    // references it by name.
+    meta_sidecar::write_enum_sidecar(enum_name, &variant_names);
 
     // from_index match arms
     let from_index_arms: Vec<_> = variant_idents

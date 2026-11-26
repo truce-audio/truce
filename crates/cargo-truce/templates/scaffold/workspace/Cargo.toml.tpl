@@ -34,17 +34,27 @@ truce-standalone = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}
 # Uncomment to opt in. After uncommenting here, add the matching
 # feature + optional dep to each plugin's Cargo.toml.
 {{ if use_registry -}}
-# truce-lv2 = \{ version = "{version}" }
 # truce-au  = \{ version = "{version}" }
 # truce-aax = \{ version = "{version}" }
 # truce-vst2 = \{ version = "{version}" }
 {{- else -}}
-# truce-lv2 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 # truce-au  = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 # truce-aax = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 # truce-vst2 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 {{- endif }}
-
+#
+# LV2 ships from truce-extensions
+# (https://github.com/truce-audio/truce-extensions), through crates.io
+# only; building LV2 bundles also needs `cargo install truce-format-lv2`.
+# truce-lv2 = \{ version = "{extensions_req}" }
+{{ if use_registry }}{{ else -}}
+# truce-lv2 takes truce-core and truce-params from crates.io, but this
+# workspace takes truce from git. Uncomment this patch along with it so
+# both resolve to the same truce:
+# [patch.crates-io]
+# truce-core = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
+# truce-params = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
+{{ endif }}
 # Custom profile for `cargo truce install --shell`. The shell-mode
 # build lands at `target/shell/lib<crate>.dylib`, independent of
 # `target/release/` and `target/debug/`. Cargo profiles are workspace-

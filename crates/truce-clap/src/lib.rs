@@ -3797,11 +3797,12 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
 /// of the child). The child stays at its built size; `AppKit` just
 /// repositions it as the parent resizes.
 ///
-/// Mirrors `truce-lv2`'s `anchor_child_to_top` (the non-resizable
-/// arm of `anchor_child_for_resize`). No `objc` dep needed in
-/// truce-clap until the autoresize-mask install path comes back -
-/// we use a local `class!`-free `msg_send!` via `objc2_app_kit`
-/// types instead.
+/// Mirrors `anchor_child_to_top` in truce-extensions' `truce-lv2`
+/// (the non-resizable arm of `anchor_child_for_resize`) - two copies
+/// because the two live in different repos now, and the `AppKit`
+/// sequence is six lines. No `objc` dep needed in truce-clap until
+/// the autoresize-mask install path comes back - we use a local
+/// `class!`-free `msg_send!` via `objc2_app_kit` types instead.
 #[cfg(target_os = "macos")]
 unsafe fn anchor_child_to_top(parent: *mut c_void) {
     use objc::runtime::Object;

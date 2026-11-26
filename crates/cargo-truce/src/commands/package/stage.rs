@@ -17,114 +17,114 @@ use crate::{MacosPackagingConfig, copy_dir_recursive};
 #[cfg(target_os = "macos")]
 use std::fmt::Write;
 use std::fs;
-use std::path::Path;
-#[cfg(target_os = "macos")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
-/// Slug a plugin's display name into a lowercase, hyphenated, ASCII-safe
-/// identifier suitable for LV2 bundle / file / IRI use. Thin re-export
-/// of [`truce_utils::slugify`]; kept under the `package::stage` module
-/// path because every cargo-truce caller already imports from here.
-pub(crate) fn lv2_slug(name: &str) -> String {
-    truce_utils::slugify(name)
-}
-
-/// Stage an LV2 bundle into `staging/{slug}.lv2/`. Copies the built
-/// shared library plus the proc-macro-emitted `manifest.ttl` /
-/// `plugin.ttl` sidecars (written by truce-derive's `derive(Params)`
-/// during the cdylib's compile). No dlopen - the binary doesn't have
-/// to load on this host, so cross-arch builds Just Work.
+/// Stage the bundle for a format described by a
+/// `truce-format-<name>` helper, into `staging/<bundle name>/`.
 ///
-/// On macOS, the inner `.so` is a Mach-O and gets signed with the
-/// caller's identity via `codesign_bundle` - same Developer-ID +
-/// hardened-runtime + secure-timestamp treatment as CLAP / VST3.
-/// Without that step, Apple's notarization-readiness check flags the
-/// LV2 binary as ad-hoc-signed and refuses to submit.
+/// Everything specific to the format happens inside the helper: this
+/// resolves the built cdylib, writes the helper's filtered view of
+/// `truce.toml`, hands over an empty bundle directory, and signs
+/// whatever Mach-Os the helper reports back as `signable`.
 ///
-/// `target` selects which `target/<triple>/release/` directory to
-/// read the built dylib from. `None` reads from the default
-/// `target/release/` (host build). On non-macOS hosts `identity` is
-/// unused (`codesign_bundle` is a no-op there).
-pub(crate) fn stage_lv2(
-    root: &Path,
-    p: &PluginDef,
-    staging: &Path,
-    identity: &str,
-    target: Option<&str>,
-) -> Res {
-    let built = crate::release_lib_for_target(root, &format!("{}_lv2", p.dylib_stem()), target);
-    if !built.exists() {
-        return Err(format!("Missing: {}", built.display()).into());
-    }
-
-    let target_dir = truce_build::target_dir(root);
-    let sidecar_dir = target_dir.join("lv2-meta").join(&p.crate_name);
-    let manifest_ttl = sidecar_dir.join("manifest.ttl");
-    let plugin_ttl = sidecar_dir.join("plugin.ttl");
-    if !manifest_ttl.exists() || !plugin_ttl.exists() {
-        return Err(format!(
-            "no LV2 metadata sidecar at {} for {}. \
-             `derive(Params)` writes this during the cdylib's compile; \
-             missing it means either the params struct uses `#[nested]` \
-             (unsupported for the compile-time TTL path) or the plugin \
-             crate isn't listed under `[[plugin]]` in truce.toml.",
-            sidecar_dir.display(),
-            p.name,
-        )
-        .into());
-    }
-
-    let slug = lv2_slug(&p.name);
-    let bundle = staging.join(format!("{slug}.lv2"));
-    let _ = fs::remove_dir_all(&bundle);
-    fs::create_dir_all(&bundle)?;
-
-    let bin_ext = if cfg!(target_os = "windows") {
-        "dll"
-    } else {
-        "so"
-    };
-    let bin_name = format!("{slug}.{bin_ext}");
-    let bin_path = bundle.join(&bin_name);
-    fs::copy(&built, &bin_path)?;
-    fs::copy(&manifest_ttl, bundle.join("manifest.ttl"))?;
-    fs::copy(&plugin_ttl, bundle.join("plugin.ttl"))?;
-
-    // Sign the inner Mach-O directly rather than passing the bundle
-    // dir. An LV2 "bundle" is just a directory of files, not a real
-    // macOS bundle (no `Contents/Info.plist`) - codesign refuses to
-    // seal directories it doesn't recognise, but the Mach-O itself
-    // signs fine and that's the only file Apple's notary actually
-    // inspects.
-    codesign_bundle(&bin_path.to_string_lossy(), identity, false)?;
-    Ok(())
-}
-
-/// Package wrapper: stage the LV2 bundle, then append its factory
-/// preset TTLs + `manifest.ttl` entries. `stage_lv2` itself stays
-/// preset-free because `install` emits LV2 presets onto its own copy
-/// (a double-emit would duplicate manifest entries); only packaging
-/// layers them in here. The TTLs sit outside the signed inner Mach-O,
-/// so emitting after staging is safe.
-#[cfg(target_os = "macos")]
-pub(crate) fn stage_lv2_packaged(
+/// The helper reads the format-neutral metadata tree
+/// `#[derive(Params)]` wrote while the cdylib compiled (see
+/// `truce_build::meta`), so rendering happens at package time rather
+/// than at proc-macro expansion. That is what keeps a plugin compiling
+/// when a parameter uses something the format can't encode - only the
+/// build that actually asks for that bundle fails. No dlopen either
+/// way: the binary doesn't have to load on this host, so cross-arch
+/// builds Just Work.
+///
+/// `target` selects which `target/<triple>/release/` directory to read
+/// the built cdylib from; `None` reads the default `target/release/`
+/// (host build). `presets` is the format-neutral factory payload,
+/// empty for a plugin with no library or a helper that declares no
+/// [`Capability::Presets`](crate::external::Capability).
+///
+/// Returns the absolute paths of the signable binaries inside the
+/// bundle. They are already codesigned on macOS; off it `identity` is
+/// unused (`codesign_bundle` is a no-op there) and the paths are what
+/// a caller driving another signer - the Windows packager's batched
+/// `signtool` pass - needs to hand it.
+// One argument more than clippy's taste, in the same shape as the
+// compiled-in `stage_*` functions below - a parameter struct here would
+// be a struct used once and read apart immediately.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage_external(
+    fmt: &crate::external::ExternalFormat,
     root: &Path,
     p: &PluginDef,
     config: &Config,
     staging: &Path,
     identity: &str,
     target: Option<&str>,
-) -> Res {
-    stage_lv2(root, p, staging, identity, target)?;
-    if let Some(fp) = presets::load_factory_presets(root, p, config)? {
-        let bundle = staging.join(format!("{}.lv2", lv2_slug(&p.name)));
-        let uri =
-            truce_build::lv2::plugin_uri(config.vendor.url.as_deref().unwrap_or(""), &p.bundle_id);
-        presets::emit_lv2_presets(&fp, &bundle, &uri)?;
+    presets: &[crate::external::Preset],
+) -> std::result::Result<Vec<PathBuf>, crate::CargoTruceError> {
+    let stem = format!("{}{}", p.dylib_stem(), fmt.dylib_suffix());
+    let built = crate::release_lib_for_target(root, &stem, target);
+    if !built.exists() {
+        return Err(format!("Missing: {}", built.display()).into());
     }
-    Ok(())
+
+    let bundle = staging.join(fmt.bundle_name_for(p));
+    let _ = fs::remove_dir_all(&bundle);
+    fs::create_dir_all(&bundle)?;
+
+    let meta_dir = crate::plugin_meta_dir(root, p);
+    let version = crate::plugin_version(p, root)?;
+    let config_view = crate::external::write_config_view(fmt, &meta_dir, config, p, &version)?;
+
+    // The bundle is laid out for where it will *load*, not for the host
+    // doing the laying out, so a cross build gets the target's shape.
+    let triple = target.unwrap_or_else(|| truce_build::host_triple());
+    let staged = crate::external::stage(
+        fmt,
+        &meta_dir,
+        &config_view,
+        &built,
+        &bundle,
+        crate::target_os_of(triple),
+        presets,
+    )?;
+
+    // Only the helper knows which files inside the bundle it made are
+    // Mach-Os, so it reports them and we sign exactly those. Signing
+    // the bundle directory wouldn't work for a format whose "bundle" is
+    // a plain directory of files rather than a macOS bundle with a
+    // `Contents/Info.plist` - codesign refuses to seal those - and the
+    // inner binary is the only file Apple's notary inspects anyway.
+    let signable: Vec<PathBuf> = staged.signable.iter().map(|r| bundle.join(r)).collect();
+    for path in &signable {
+        codesign_bundle(&path.to_string_lossy(), identity, false)?;
+    }
+    Ok(signable)
+}
+
+/// Package wrapper around [`stage_external`] that loads the plugin's
+/// factory presets first, so a packaged bundle ships them.
+///
+/// `install` goes through `stage_external` directly with its own
+/// payload, which is why the preset load lives out here rather than
+/// inside.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn stage_external_packaged(
+    fmt: &crate::external::ExternalFormat,
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    staging: &Path,
+    identity: &str,
+    target: Option<&str>,
+) -> std::result::Result<Vec<PathBuf>, crate::CargoTruceError> {
+    let payload = if fmt.has(crate::external::Capability::Presets) {
+        presets::external_payload_for(root, p, config)?
+    } else {
+        Vec::new()
+    };
+    stage_external(fmt, root, p, config, staging, identity, target, &payload)
 }
 
 /// Build a standalone pkg component for an out-of-bundle preset

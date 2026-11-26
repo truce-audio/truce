@@ -26,10 +26,12 @@ required-features = ["standalone"]
 # Scaffolded default: {default_label}. To add LV2 / AU / AAX / VST2,
 # add the matching feature + optional dep below (e.g.
 # `lv2 = ["dep:truce-lv2"]` +
-{{ if use_registry -}}
-# `truce-lv2 = \{ version = "{version}", optional = true }`).
-{{- else -}}
-# `truce-lv2 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}", optional = true }`).
+# `truce-lv2 = \{ version = "{extensions_req}", optional = true }`).
+# LV2 ships from truce-extensions, through crates.io only; building LV2
+# bundles also needs `cargo install truce-format-lv2`.
+{{- if use_registry }}{{ else }}
+# This crate takes truce from git, so LV2 also needs the commented
+# `[patch.crates-io]` block at the end of this file.
 {{- endif }}
 {{- endif }}
 # Each format feature gates the matching wrapper crate as an optional
@@ -69,4 +71,11 @@ clap-sys = \{ version = "0.5", optional = true }
 # DSP perf parity.
 [profile.shell]
 inherits = "release"
-{{ endif }}
+{{ if use_registry }}{{ else }}
+# Uncomment with a truce-lv2 dependency. truce-lv2 takes truce-core and
+# truce-params from crates.io, but this crate takes truce from git; the
+# patch makes both resolve to the same truce.
+# [patch.crates-io]
+# truce-core = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
+# truce-params = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
+{{ endif }}{{ endif }}

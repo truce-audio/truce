@@ -3,6 +3,7 @@
 
 #[cfg(target_os = "macos")]
 use crate::Config;
+use crate::external::ExternalFormat;
 use crate::install_scope::{InstallScope, note_once, set_cli_install_scope};
 use crate::{PluginDef, Res, confirm_prompt, dirs, load_config};
 // `run_sudo` is macOS-only (Linux is always per-user, Windows uses
@@ -74,6 +75,48 @@ fn clear_au_caches() {
         .output();
 }
 
+/// The distinct install roots an external format occupies across
+/// `scopes`, each paired with whether writing there needs `sudo`.
+///
+/// Deduped by path on purpose: a helper that declares no system
+/// directory gets its user root back for *both* scopes, so scanning
+/// per-scope would visit the same directory twice and report every
+/// bundle in it as two targets. Deduping here is also what lets the
+/// external paths stay free of the per-OS `cfg` branching the
+/// compiled-in formats need - on Linux "system" simply isn't a
+/// distinct place, and that falls out of the helper's own table.
+fn external_roots(e: &ExternalFormat, scopes: &[InstallScope]) -> Vec<(PathBuf, bool)> {
+    let mut roots: Vec<(PathBuf, bool)> = Vec::new();
+    for &s in scopes {
+        let Some(dir) = e.dir(s) else { continue };
+        if !roots.iter().any(|(d, _)| *d == dir) {
+            roots.push((dir, s.needs_sudo()));
+        }
+    }
+    roots
+}
+
+/// Whether `file_name`, found in one format's install directory, is a
+/// `--stale` candidate: a `.<ext>` bundle whose name contains
+/// `vendor_token` and whose stem names none of the project's plugins.
+///
+/// An empty `vendor_token` matches nothing. `contains("")` is true of
+/// every name, and a slug-cased format turns a vendor name with no ASCII
+/// letters or digits into exactly that - which would queue every bundle
+/// in the directory, other vendors' included.
+fn is_stale_bundle(file_name: &str, ext: &str, vendor_token: &str, known_stems: &[&str]) -> bool {
+    if vendor_token.is_empty() || !file_name.contains(vendor_token) {
+        return false;
+    }
+    let Some(stem) = file_name
+        .strip_suffix(ext)
+        .and_then(|rest| rest.strip_suffix('.'))
+    else {
+        return false;
+    };
+    !known_stems.contains(&stem)
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     let config = load_config()?;
@@ -81,7 +124,9 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     let mut clap = false;
     let mut vst3 = false;
     let mut vst2 = false;
-    let mut lv2 = false;
+    // Formats selected by a `--<name>` flag that names an installed
+    // `truce-format-<name>` helper rather than a compiled-in format.
+    let mut externals: Vec<&'static crate::external::ExternalFormat> = Vec::new();
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
@@ -99,7 +144,6 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             "--clap" => clap = true,
             "--vst3" => vst3 = true,
             "--vst2" => vst2 = true,
-            "--lv2" => lv2 = true,
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
@@ -126,7 +170,11 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 print_help();
                 return Ok(());
             }
-            other => return Err(format!("Unknown flag: {other}").into()),
+            // An unrecognised `--<name>` is a format flag before it is
+            // a mistake: `--lv2` reaches this arm now and resolves to
+            // the `truce-format-lv2` helper. `external::select` reports
+            // the unknown-flag error when it isn't one.
+            other => crate::external::select(other, &mut externals)?,
         }
         i += 1;
     }
@@ -160,7 +208,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     // everything for these plugins" apart from "user picked specific
     // formats → leave shell sidecars alone for the others".
     let all_formats_default =
-        !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax && !standalone;
+        !clap && !vst3 && !vst2 && externals.is_empty() && !au2 && !au3 && !aax && !standalone;
 
     // Default: all formats if none specified.
     // `au3 = true` lands in a flag that's read only inside macOS-gated
@@ -172,7 +220,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         clap = true;
         vst3 = true;
         vst2 = true;
-        lv2 = true;
+        externals = crate::external::for_uninstall()?;
         au2 = true;
         au3 = true;
         aax = true;
@@ -201,14 +249,12 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                     targets: &mut Vec<RemoveTarget>| {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
-                    let name = entry.file_name();
-                    let name = name.to_string_lossy();
-                    if !name.contains(match_token) {
-                        continue;
-                    }
-                    // Strip extension to get the stem
-                    let stem = name.trim_end_matches(&format!(".{ext}"));
-                    if known_stems.contains(&stem) {
+                    if !is_stale_bundle(
+                        &entry.file_name().to_string_lossy(),
+                        ext,
+                        match_token,
+                        known_stems,
+                    ) {
                         continue;
                     }
                     targets.push(RemoveTarget {
@@ -219,19 +265,6 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 }
             }
         };
-
-        // LV2 bundles are slug-cased (`Truce Analyzer` ->
-        // `truce-analyzer.lv2`), so the vendor display name won't
-        // substring-match and the trimmed stem won't equal any raw
-        // display name in `known_names`. Pre-compute slug forms so
-        // LV2's stale scan actually catches orphans.
-        let vendor_lv2_slug = truce_utils::slugify(vendor);
-        let known_lv2_slugs: Vec<String> = config
-            .plugin
-            .iter()
-            .map(|p| crate::commands::package::stage::lv2_slug(&p.name))
-            .collect();
-        let known_lv2_slug_refs: Vec<&str> = known_lv2_slugs.iter().map(String::as_str).collect();
 
         let scan_system = scopes_to_scan.contains(&InstallScope::System);
         if clap {
@@ -285,35 +318,32 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 &mut targets,
             );
         }
-        if lv2 {
-            #[cfg(target_os = "linux")]
-            {
-                // Linux LV2 lives at `~/.lv2/`; scope is irrelevant
-                // (`lv2_dir` returns the same path for User and System).
-                let s = InstallScope::User;
+        for e in &externals {
+            // Spell the needles the way this format spells its own
+            // bundle names - LV2's are slug-cased (`Truce Analyzer` ->
+            // `truce-analyzer.lv2`), so neither the raw vendor name nor
+            // a raw display name would match on disk.
+            let vendor_spelled = e.spell(vendor);
+            if vendor_spelled.is_empty() {
+                note_once(&format!(
+                    "{}: vendor name {vendor:?} has no ASCII letters or digits, so it can't \
+                     identify {} bundles by name; skipping {} for --stale",
+                    e.label, e.label, e.label
+                ));
+                continue;
+            }
+            let known: Vec<String> = config.plugin.iter().map(|p| e.spell(&p.name)).collect();
+            let known_refs: Vec<&str> = known.iter().map(String::as_str).collect();
+            for (dir, needs_sudo) in external_roots(e, &scopes_to_scan) {
                 scan(
-                    &s.lv2_dir(),
-                    "lv2",
-                    "LV2",
-                    &vendor_lv2_slug,
-                    &known_lv2_slug_refs,
-                    s.needs_sudo(),
+                    &dir,
+                    e.bundle_extension(),
+                    &e.label,
+                    &vendor_spelled,
+                    &known_refs,
+                    needs_sudo,
                     &mut targets,
                 );
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                for s in &scopes_to_scan {
-                    scan(
-                        &s.lv2_dir(),
-                        "lv2",
-                        "LV2",
-                        &vendor_lv2_slug,
-                        &known_lv2_slug_refs,
-                        s.needs_sudo(),
-                        &mut targets,
-                    );
-                }
             }
         }
         #[cfg(target_os = "macos")]
@@ -552,24 +582,10 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                     push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                 }
             }
-            if lv2 {
-                // LV2 bundle name uses the slugged display name to
-                // match what `install_lv2` writes via
-                // `package::stage::lv2_slug(&p.name)`.
-                let slug = crate::commands::package::stage::lv2_slug(&p.name);
-                #[cfg(target_os = "linux")]
-                {
-                    // Linux LV2 lives at `~/.lv2/`; scope is irrelevant.
-                    let s = InstallScope::User;
-                    let path = s.lv2_dir().join(format!("{slug}.lv2"));
-                    push_if_exists("LV2", path, s.needs_sudo(), &mut targets);
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    for s in &scopes_to_scan {
-                        let path = s.lv2_dir().join(format!("{slug}.lv2"));
-                        push_if_exists("LV2", path, s.needs_sudo(), &mut targets);
-                    }
+            for e in &externals {
+                let bundle = e.bundle_name_for(p);
+                for (dir, needs_sudo) in external_roots(e, &scopes_to_scan) {
+                    push_if_exists(&e.label, dir.join(&bundle), needs_sudo, &mut targets);
                 }
             }
             #[cfg(target_os = "macos")]
@@ -753,7 +769,8 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce uninstall [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
+Usage: cargo truce uninstall [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
+                             [--<helper format>]
                              [--standalone] [--user|--system] [-p <crate>] [-n <name>]
                              [--stale] [--dry-run] [--yes]
 
@@ -765,7 +782,9 @@ Options:
   --clap           CLAP only
   --vst3           VST3 only
   --vst2           VST2 only
-  --lv2            LV2 only
+  --lv2            LV2 only (needs the `truce-format-lv2` helper on PATH;
+                   any other installed `truce-format-<name>` helper takes
+                   a `--<name>` flag the same way)
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.app, macOS only)
   --aax            AAX only
@@ -779,4 +798,52 @@ Options:
   --yes, -y        Skip confirmation prompt.
   -h, --help       Show this message"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_stale_bundle;
+
+    #[test]
+    fn a_vendor_bundle_not_in_the_project_is_stale() {
+        assert!(is_stale_bundle(
+            "truce-old.lv2",
+            "lv2",
+            "truce",
+            &["truce-gain"]
+        ));
+    }
+
+    #[test]
+    fn a_project_plugin_is_not_stale() {
+        assert!(!is_stale_bundle(
+            "truce-gain.lv2",
+            "lv2",
+            "truce",
+            &["truce-gain"]
+        ));
+    }
+
+    #[test]
+    fn another_vendors_bundle_is_not_stale() {
+        assert!(!is_stale_bundle("acme-verb.lv2", "lv2", "truce", &[]));
+    }
+
+    /// The trap: a vendor name with no ASCII letters or digits slugs to
+    /// "", and `contains("")` would make every bundle on disk stale.
+    #[test]
+    fn an_empty_vendor_token_matches_nothing() {
+        assert!(!is_stale_bundle("acme-verb.lv2", "lv2", "", &[]));
+        assert!(!is_stale_bundle("anything", "lv2", "", &[]));
+    }
+
+    /// The scan walks a whole install directory, which can hold more
+    /// than bundles of the format it's looking for.
+    #[test]
+    fn a_file_without_the_format_extension_is_not_stale() {
+        assert!(!is_stale_bundle("truce-old.lv2.bak", "lv2", "truce", &[]));
+        assert!(!is_stale_bundle("truce-notes.txt", "lv2", "truce", &[]));
+        // The extension is matched whole, not as a bare suffix.
+        assert!(!is_stale_bundle("truce-oldlv2", "lv2", "truce", &[]));
+    }
 }

@@ -1,5 +1,5 @@
 //! `cargo truce doctor` - environment diagnostics: Rust toolchain, code
-//! signing tools, AAX SDK, installed plugins.
+//! signing tools, AAX SDK, format helpers, installed plugins.
 
 #[cfg(target_os = "windows")]
 use crate::commands::package::windows;
@@ -31,9 +31,10 @@ fn print_help() {
 Usage: cargo truce doctor
 
 Run environment diagnostics: Rust toolchain, code-signing identities,
-AAX SDK detection, installed-plugin scan. Prints a summary report and
-exits 0; investigates rather than fixes. Run when something feels
-broken about your machine setup before reaching for a build.
+AAX SDK detection, `truce-format-*` helpers, installed-plugin scan.
+Prints a summary report and exits 0; investigates rather than fixes.
+Run when something feels broken about your machine setup before
+reaching for a build.
 
 Options:
   -h, --help       Show this message."
@@ -261,6 +262,11 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
         );
     }
 
+    // Format helpers
+    eprintln!();
+    eprintln!("  Format helpers");
+    show_format_helpers();
+
     // Plugin install paths - both scopes side-by-side per format.
     // Helps a user who's confused about why a host is finding the
     // wrong copy of their plugin: when the same name appears under
@@ -297,10 +303,6 @@ const PATH_FORMATS_MACOS: &[PathFormat] = &[
         ext: "vst",
     },
     PathFormat {
-        format: Format::Lv2,
-        ext: "lv2",
-    },
-    PathFormat {
         format: Format::Au2,
         ext: "component",
     },
@@ -319,10 +321,6 @@ const PATH_FORMATS_WINDOWS: &[PathFormat] = &[
         format: Format::Vst2,
         ext: "dll",
     },
-    PathFormat {
-        format: Format::Lv2,
-        ext: "lv2",
-    },
 ];
 
 const PATH_FORMATS_LINUX: &[PathFormat] = &[
@@ -338,22 +336,76 @@ const PATH_FORMATS_LINUX: &[PathFormat] = &[
         format: Format::Vst2,
         ext: "so",
     },
-    PathFormat {
-        format: Format::Lv2,
-        ext: "lv2",
-    },
 ];
 
-fn show_scope_paths() {
-    let formats: &[PathFormat] = if cfg!(target_os = "macos") {
+/// The built-in rows for this host, plus one per installed format
+/// helper. The externals are appended rather than interleaved so the
+/// compiled-in formats keep a stable order in the output; a helper that
+/// isn't installed contributes no row, which is the same thing the
+/// built-in tables do for a format that doesn't exist on this OS.
+fn path_formats() -> Vec<PathFormat> {
+    let builtin: &[PathFormat] = if cfg!(target_os = "macos") {
         PATH_FORMATS_MACOS
     } else if cfg!(target_os = "windows") {
         PATH_FORMATS_WINDOWS
     } else {
         PATH_FORMATS_LINUX
     };
+    let mut out = builtin.to_vec();
+    // A broken helper shouldn't take down `doctor` - it's the command
+    // you run *because* something is wrong. The format is omitted and
+    // the reason is reported above by `show_format_helpers`.
+    for e in crate::external::installed().unwrap_or_default() {
+        out.push(PathFormat {
+            format: Format::External(e),
+            ext: e.bundle_extension(),
+        });
+    }
+    out
+}
 
-    for f in formats {
+/// One line per format truce names but doesn't implement, saying
+/// whether its `truce-format-<name>` helper answered.
+///
+/// Printed just before the install-path matrix because that matrix
+/// omits a format whose helper is absent or broken, and this is where
+/// the reason for the gap shows up. The three outcomes are genuinely
+/// different: not installed is a choice, installed-but-unreadable is a
+/// bug to report, and installed-but-short-on-capabilities explains a
+/// command that runs yet does less than expected.
+fn show_format_helpers() {
+    for &name in crate::external::KNOWN {
+        match crate::external::describe(name) {
+            Ok(Some(e)) => {
+                let caps = e
+                    .capabilities
+                    .iter()
+                    .map(|c| c.label())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let caps = if caps.is_empty() {
+                    "no capabilities declared".to_string()
+                } else {
+                    caps
+                };
+                eprintln!(
+                    "    {} {} helper at {} ({caps})",
+                    tag_ok(),
+                    e.label,
+                    e.helper().display(),
+                );
+            }
+            // Not an error: a format you never asked for is one you
+            // don't have to install. The hint names the crate anyway,
+            // since `doctor` is where someone looks for it.
+            Ok(None) => eprintln!("    {} {}", tag_warn(), crate::external::missing(name)),
+            Err(e) => eprintln!("    {} {}: {e}", tag_fail(), name.to_uppercase()),
+        }
+    }
+}
+
+fn show_scope_paths() {
+    for f in &path_formats() {
         let Some(user_path) = f.format.dir(InstallScope::User) else {
             continue;
         };

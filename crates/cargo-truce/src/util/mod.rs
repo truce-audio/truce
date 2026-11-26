@@ -334,27 +334,42 @@ pub(crate) fn keep_default_features() -> bool {
 /// through `--features` would cross-contaminate other formats' builds
 /// (a `--clap` build also lighting up VST3), so they are rejected with a
 /// pointer to the format flag.
-const RESERVED_FORMAT_FEATURES: &[&str] = &[
-    "clap",
-    "vst3",
-    "vst2",
-    "lv2",
-    "au",
-    "aax",
-    "standalone",
-    "shell",
-];
+const RESERVED_FORMAT_FEATURES: &[&str] =
+    &["clap", "vst3", "vst2", "au", "aax", "standalone", "shell"];
+
+/// Every feature truce drives itself: the compiled-in formats above,
+/// plus the `cargo_feature` each installed helper declares.
+///
+/// The externals have to be asked rather than listed, since the feature
+/// name is the helper's to choose - and a helper that isn't installed
+/// reserves nothing, because then no `--<name>` flag exists to point
+/// the user at. A broken helper is ignored here for the same reason:
+/// refusing a `--features` value is not where that should surface.
+fn reserved_format_features() -> Vec<String> {
+    let mut out: Vec<String> = RESERVED_FORMAT_FEATURES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    out.extend(
+        crate::external::installed()
+            .unwrap_or_default()
+            .iter()
+            .map(|e| e.cargo_feature.clone()),
+    );
+    out
+}
 
 /// Split a `--features` value (`"a, b c"`) into individual feature
 /// names, rejecting the format features truce drives via its own flags.
 pub(crate) fn parse_extra_features(value: &str) -> Result<Vec<String>, CargoTruceError> {
+    let reserved = reserved_format_features();
     let mut out = Vec::new();
     for f in value
         .split([',', ' '])
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if RESERVED_FORMAT_FEATURES.contains(&f) {
+        if reserved.iter().any(|r| r == f) {
             return Err(format!(
                 "`{f}` is a format feature truce enables itself; select it with the \
                  matching format flag (--clap / --vst3 / --au2 / ...), not --features."
@@ -427,6 +442,13 @@ pub(crate) fn is_debug_profile() -> bool {
 
 fn profile_subdir() -> String {
     build_profile_name()
+}
+
+/// `<target>/truce-meta/<crate>` - the format-neutral metadata tree
+/// `truce::plugin!` / `#[derive(Params)]` filled while the plugin
+/// compiled. Every format renders from this.
+pub(crate) fn plugin_meta_dir(root: &Path, p: &crate::PluginDef) -> PathBuf {
+    truce_build::meta::meta_dir(&truce_build::target_dir(root), &p.crate_name)
 }
 
 /// Return `<target>/<profile>/{shared_lib_name}` for a plugin.
@@ -601,7 +623,6 @@ pub(crate) fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> O
 /// not by substring, so it doesn't depend on cargo's key order. `--no-deps`
 /// means `packages` holds only workspace members, so find-by-name is
 /// unambiguous.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn read_plugin_crate_version(project_root: &Path, crate_name: &str) -> Option<String> {
     let text = cargo_metadata_text(project_root)?;
     // Parse by key, not by substring: `cargo metadata`'s JSON key order
@@ -623,7 +644,6 @@ pub(crate) fn read_plugin_crate_version(project_root: &Path, crate_name: &str) -
 /// shell-out; the output is identical across those calls (one workspace),
 /// so cache it per root. A failure is cached as `None` too - it's
 /// deterministic within a run and re-shelling wouldn't change it.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn cargo_metadata_text(project_root: &Path) -> Option<String> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -674,7 +694,6 @@ fn cargo_metadata_text(project_root: &Path) -> Option<String> {
 /// crate's version can't be read from `cargo metadata` - unlike reading
 /// the workspace root, a plug-in crate always has a version, so a
 /// workspace without a root `[workspace.package] version` resolves fine.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn plugin_version(
     p: &crate::config::PluginDef,
     root: &Path,
@@ -1129,7 +1148,7 @@ pub(crate) fn run_silent(cmd: &str, args: &[&OsStr]) {
 /// Return the project-local temp directory (`<target>/tmp/`), creating it if needed.
 ///
 /// Every consumer (the macOS / Windows-only `tmp_manifests`,
-/// `tmp_scripts`, `tmp_aax_template`, `tmp_au_v3`, `tmp_lv2`, plus
+/// `tmp_scripts`, `tmp_aax_template`, `tmp_au_v3`, `tmp_format`, plus
 /// the macOS-only `reset_au`) is platform-gated, so the function is
 /// dead on Linux - gate it to keep the Linux build warning-free.
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
@@ -1190,15 +1209,16 @@ pub(crate) fn tmp_au_v3(bundle_id: &str) -> PathBuf {
     dir
 }
 
-/// `tmp/lv2/<bundle_id>/` - LV2 bundle staging directory.
+/// `tmp/<format>/<bundle_id>/` - staging directory for one external
+/// format's bundle.
 ///
-/// macOS-only: the staging detour exists so `stage_lv2` can write into
-/// a user-owned scratch dir before `run_sudo` copies the finished
-/// bundle into the root-owned system LV2 path. Windows and Linux
-/// installers write straight into the destination.
+/// macOS-only: the staging detour exists so a `truce-format-<name>`
+/// helper can write into a user-owned scratch dir before `run_sudo`
+/// copies the finished bundle into the root-owned system plug-in path.
+/// Windows and Linux installers write straight into the destination.
 #[cfg(target_os = "macos")]
-pub(crate) fn tmp_lv2(bundle_id: &str) -> PathBuf {
-    let dir = tmp_dir().join("lv2").join(bundle_id);
+pub(crate) fn tmp_format(format: &str, bundle_id: &str) -> PathBuf {
+    let dir = tmp_dir().join(format).join(bundle_id);
     let _ = fs::create_dir_all(&dir);
     dir
 }

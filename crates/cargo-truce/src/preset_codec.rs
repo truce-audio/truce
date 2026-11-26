@@ -26,22 +26,37 @@ pub(crate) enum PresetFormat {
     Vst3,
     /// `.aupreset` - Apple plist, `truce_state` data = envelope.
     Au,
-    /// `.ttl` - LV2 preset, `state:state` base64 literal = envelope.
-    Lv2,
+    /// A container only its `truce-format-<name>` helper can read;
+    /// [`decode`] shells out to it.
+    External(&'static crate::external::ExternalFormat),
     /// `.preset` - the authored TOML source format.
     AuthoredToml,
 }
 
 impl PresetFormat {
-    pub(crate) fn from_path(path: &Path) -> Option<Self> {
-        match path.extension()?.to_str()? {
+    /// Detect a container from its file extension.
+    ///
+    /// The compiled-in extensions are matched first, then the
+    /// installed helpers are asked - so a helper can't shadow a
+    /// container this tool reads itself, and an extension no one
+    /// claims is `None` (routine: `preset pull` sweeps shared
+    /// directories full of unrelated files).
+    ///
+    /// # Errors
+    ///
+    /// A helper on `PATH` answered `describe` with something
+    /// unreadable.
+    pub(crate) fn from_path(path: &Path) -> Result<Option<Self>, crate::CargoTruceError> {
+        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+            return Ok(None);
+        };
+        Ok(match ext {
             "trucepreset" => Some(Self::TrucePreset),
             "vstpreset" => Some(Self::Vst3),
             "aupreset" => Some(Self::Au),
-            "ttl" => Some(Self::Lv2),
             "preset" => Some(Self::AuthoredToml),
-            _ => None,
-        }
+            other => crate::external::by_preset_extension(other)?.map(Self::External),
+        })
     }
 }
 
@@ -57,13 +72,21 @@ pub(crate) struct DecodedPreset {
     pub(crate) blob: Vec<u8>,
 }
 
-/// Decode a native preset file's bytes by format. Returns `None`
-/// when the container doesn't parse or carries no envelope.
-pub(crate) fn decode(format: PresetFormat, bytes: &[u8]) -> Option<DecodedPreset> {
-    match format {
+/// Decode a native preset file's bytes by format. `Ok(None)` when the
+/// container doesn't parse or carries no envelope - routine, not an
+/// error, since callers sweep directories of unrelated files.
+///
+/// # Errors
+///
+/// An [`External`](PresetFormat::External) container's helper could
+/// not be run, or answered with something unreadable.
+pub(crate) fn decode(
+    format: PresetFormat,
+    bytes: &[u8],
+) -> Result<Option<DecodedPreset>, crate::CargoTruceError> {
+    Ok(match format {
         PresetFormat::TrucePreset => {
-            let (meta, blob) = truce_utils::preset::parse_preset_file(bytes)?;
-            Some(DecodedPreset {
+            truce_utils::preset::parse_preset_file(bytes).map(|(meta, blob)| DecodedPreset {
                 name: meta.name.clone(),
                 meta: Some(meta),
                 blob,
@@ -75,9 +98,15 @@ pub(crate) fn decode(format: PresetFormat, bytes: &[u8]) -> Option<DecodedPreset
             blob,
         }),
         PresetFormat::Au => parse_aupreset(bytes),
-        PresetFormat::Lv2 => parse_lv2_preset_ttl(std::str::from_utf8(bytes).ok()?),
+        PresetFormat::External(e) => {
+            crate::external::preset_decode(e, bytes)?.map(|d| DecodedPreset {
+                name: d.name,
+                meta: None,
+                blob: d.blob,
+            })
+        }
         PresetFormat::AuthoredToml => None, // parsed via truce_build::presets instead
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -258,43 +287,6 @@ fn parse_aupreset(bytes: &[u8]) -> Option<DecodedPreset> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// LV2 preset TTL
-// ---------------------------------------------------------------------------
-
-/// Extract name + envelope from an LV2 preset TTL: the
-/// `<urn:truce:state-blob>` property's base64 literal (the State
-/// extension key the runtime stores under), plus `rdfs:label` when
-/// present. Tolerant line-oriented scan rather than a Turtle parser:
-/// both our emitter and lilv (which writes host-saved user presets)
-/// keep the property and its literal on one statement.
-fn parse_lv2_preset_ttl(text: &str) -> Option<DecodedPreset> {
-    let after_key = text.split("<urn:truce:state-blob>").nth(1)?;
-    let b64 = extract_quoted(after_key)?;
-    let compact: String = b64.split_whitespace().collect();
-    let blob = base64::engine::general_purpose::STANDARD
-        .decode(compact)
-        .ok()?;
-
-    let name = text
-        .split("rdfs:label")
-        .nth(1)
-        .and_then(extract_quoted)
-        .unwrap_or_default()
-        .to_string();
-    Some(DecodedPreset {
-        name,
-        meta: None,
-        blob,
-    })
-}
-
-fn extract_quoted(s: &str) -> Option<&str> {
-    let start = s.find('"')? + 1;
-    let end = start + s.get(start..)?.find('"')?;
-    s.get(start..end)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,25 +364,8 @@ mod tests {
             &blob,
         );
         assert!(xml.contains("<integer>1635083896</integer>")); // 'aufx'
-        let decoded = decode(PresetFormat::Au, xml.as_bytes()).unwrap();
+        let decoded = decode(PresetFormat::Au, xml.as_bytes()).unwrap().unwrap();
         assert_eq!(decoded.name, "Bright & <Saw>");
-        assert_eq!(decoded.blob, blob);
-    }
-
-    #[test]
-    fn lv2_ttl_round_trips() {
-        let blob = sample_blob();
-        let ttl = truce_build::lv2::render_preset_ttl(
-            "https://example.com/lv2/x",
-            "u-1",
-            "pad/Glass",
-            &blob,
-            &[("cutoff".to_string(), 8000.0), ("reso".to_string(), 0.5)],
-        );
-        let decoded = decode(PresetFormat::Lv2, ttl.as_bytes()).unwrap();
-        assert_eq!(decoded.name, "pad/Glass");
-        // The `state:state` blob still round-trips even with port
-        // values present (the decoder reads the chunk, ignoring ports).
         assert_eq!(decoded.blob, blob);
     }
 
@@ -403,19 +378,21 @@ mod tests {
             ..truce_utils::preset::PresetMeta::default()
         };
         let bytes = truce_utils::preset::write_preset_file(&meta, &blob);
-        let decoded = decode(PresetFormat::TrucePreset, &bytes).unwrap();
+        let decoded = decode(PresetFormat::TrucePreset, &bytes).unwrap().unwrap();
         assert_eq!(decoded.name, "Native");
         assert_eq!(decoded.meta.unwrap().uuid, "u-tp");
         assert_eq!(decoded.blob, blob);
     }
 
+    /// The compiled-in extensions resolve without consulting `PATH`;
+    /// `.ttl` and friends now depend on which helpers are installed,
+    /// so they aren't asserted here.
     #[test]
     fn format_detection() {
-        let f = |p: &str| PresetFormat::from_path(Path::new(p));
+        let f = |p: &str| PresetFormat::from_path(Path::new(p)).unwrap();
         assert_eq!(f("a.vstpreset"), Some(PresetFormat::Vst3));
         assert_eq!(f("a.aupreset"), Some(PresetFormat::Au));
         assert_eq!(f("a.trucepreset"), Some(PresetFormat::TrucePreset));
-        assert_eq!(f("a.ttl"), Some(PresetFormat::Lv2));
         assert_eq!(f("a.preset"), Some(PresetFormat::AuthoredToml));
         assert_eq!(f("a.wav"), None);
     }
