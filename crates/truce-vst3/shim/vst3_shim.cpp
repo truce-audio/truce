@@ -2835,6 +2835,17 @@ static tresult ui_getUnitInfo(void*, int32 idx, UnitInfo* out) {
     return kResultOk;
 }
 static int32 ui_getProgramListCount(void*) { return 0; }
+// No bus or channel belongs to a unit: truce's units are parameter
+// groups under the root. Answer "no unambiguous relation" the way the
+// SDK's own EditControllerEx1 does (kResultFalse), and still write the
+// root unit - which contains everything - so a host that reads `unitId`
+// whatever the result never sees an uninitialised value.
+static tresult ui_getUnitByBus(void*, int32 /*type*/, int32 /*dir*/, int32 /*busIndex*/,
+                               int32 /*channel*/, int32* unitId) {
+    if (!unitId) return kInvalidArgument;
+    *unitId = g_units[0].id; // kRootUnitId
+    return kResultFalse;
+}
 // Typed `kNotImplemented` stubs for each of the IUnitInfo vtable
 // slots we don't care about. One stub per unique signature keeps
 // modern clang's `-Wcast-function-type-mismatch` happy - casting a
@@ -2845,7 +2856,6 @@ static tresult ui_ni_iiw(void*, int32, int32, char16*)               { return kN
 static tresult ui_ni_iisw(void*, int32, int32, const char*, char16*) { return kNotImplemented; }
 static tresult ui_ni_ii(void*, int32, int32)                         { return kNotImplemented; }
 static tresult ui_ni_iihw(void*, int32, int32, int16_t, char16*)     { return kNotImplemented; }
-static tresult ui_ni_iiiii_ip(void*, int32, int32, int32, int32, int32*) { return kNotImplemented; }
 static tresult ui_ni_iiiv(void*, int32, int32, void*)                { return kNotImplemented; }
 
 static IUnitInfoVtbl g_unitinfo_vtbl = {
@@ -2858,7 +2868,7 @@ static IUnitInfoVtbl g_unitinfo_vtbl = {
     ui_ni_iihw,
     [](void*) -> int32 { return 0; },
     [](void*, int32) -> tresult { return kResultOk; },
-    ui_ni_iiiii_ip,
+    ui_getUnitByBus,
     ui_ni_iiiv,
 };
 

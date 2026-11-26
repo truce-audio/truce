@@ -238,9 +238,12 @@ fn clang_bundle_single(
     Ok(())
 }
 
-/// Self-cleaning wrapper around the deduplicated archive. Holds the
-/// temp dir we extracted into so the cleanup happens after clang
-/// finishes consuming the archive.
+/// Self-cleaning wrapper around the deduplicated archive: the recomposed
+/// `.a` and the directory its members were written to. Both are removed
+/// on drop, so the cleanup happens after clang finishes consuming the
+/// archive - and on every error path in between, since the guard exists
+/// from the moment the temp directory does. The archive is as large as
+/// the staticlib it replaces, so leaking one per link fills `target/`.
 struct DedupedArchive {
     archive_path: PathBuf,
     temp_dir: PathBuf,
@@ -254,6 +257,7 @@ impl DedupedArchive {
 
 impl Drop for DedupedArchive {
     fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.archive_path);
         let _ = std::fs::remove_dir_all(&self.temp_dir);
     }
 }
@@ -290,11 +294,15 @@ fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::Car
     // Append PID so concurrent installs (rare but possible: `cargo
     // truce install -p A -p B` against the same workspace) don't
     // collide on the same temp dir.
-    let temp_dir = parent.join(format!("{stem}.dedup-{}", std::process::id()));
-    if temp_dir.exists() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-    std::fs::create_dir_all(&temp_dir)?;
+    let guard = DedupedArchive {
+        archive_path: parent.join(format!("{stem}.dedup-{}.a", std::process::id())),
+        temp_dir: parent.join(format!("{stem}.dedup-{}", std::process::id())),
+    };
+    // A same-PID leftover from a run that was killed before its guard
+    // dropped; clear both so `ar -r` starts from an empty archive.
+    let _ = std::fs::remove_file(&guard.archive_path);
+    let _ = std::fs::remove_dir_all(&guard.temp_dir);
+    std::fs::create_dir_all(&guard.temp_dir)?;
 
     // Read the archive once; members borrow slices out of this buffer, so
     // dedupe never copies payloads (peak memory stays ~one archive, not two
@@ -314,7 +322,7 @@ fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::Car
     // overwrite distinct objects that share an archive member name.
     let mut members: Vec<PathBuf> = Vec::with_capacity(kept.len());
     for (idx, member) in kept.iter().enumerate() {
-        let unique = temp_dir.join(format!(
+        let unique = guard.temp_dir.join(format!(
             "{idx:06}_{}",
             archive_member_filename(&member.name)
         ));
@@ -322,14 +330,10 @@ fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::Car
         members.push(unique);
     }
 
-    let archive_path = parent.join(format!("{stem}.dedup-{}.a", std::process::id()));
-    if archive_path.exists() {
-        let _ = std::fs::remove_file(&archive_path);
-    }
     // `-rcs`: replace (`-r`) + create-if-missing (`-c`) + write symbol
     // table (`-s`). One pass; no separate `ranlib` step.
     let mut compose = Command::new("ar");
-    compose.arg("-rcs").arg(&archive_path);
+    compose.arg("-rcs").arg(&guard.archive_path);
     for m in &members {
         compose.arg(m);
     }
@@ -339,16 +343,13 @@ fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::Car
     if !composed.status.success() {
         return Err(format!(
             "ar -rcs failed for {}:\n{}",
-            archive_path.display(),
+            guard.archive_path.display(),
             String::from_utf8_lossy(&composed.stderr),
         )
         .into());
     }
 
-    Ok(DedupedArchive {
-        archive_path,
-        temp_dir,
-    })
+    Ok(guard)
 }
 
 /// Choose which parsed members to carry into the recomposed archive.
@@ -506,7 +507,31 @@ fn archive_member_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ArchiveMember, archive_members, dedupe_members};
+    use super::{ArchiveMember, DedupedArchive, archive_members, dedupe_members};
+
+    /// The recomposed archive is staticlib-sized; dropping the guard has
+    /// to take it with the temp directory, or every link leaves one behind.
+    #[test]
+    fn dropping_the_deduped_archive_removes_the_archive_and_its_temp_dir() {
+        let root = std::env::temp_dir().join(format!("truce-dedup-drop-{}", std::process::id()));
+        let guard = DedupedArchive {
+            archive_path: root.join("libx.dedup-1.a"),
+            temp_dir: root.join("libx.dedup-1"),
+        };
+        std::fs::create_dir_all(&guard.temp_dir).unwrap();
+        std::fs::write(guard.temp_dir.join("000000_a.o"), b"obj").unwrap();
+        std::fs::write(&guard.archive_path, b"!<arch>\n").unwrap();
+        let (archive, temp_dir) = (guard.archive_path.clone(), guard.temp_dir.clone());
+
+        drop(guard);
+
+        assert!(
+            !archive.exists(),
+            "the recomposed archive outlived its guard"
+        );
+        assert!(!temp_dir.exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     /// Build one ar member: a 60-byte header (name field + decimal size)
     /// then the payload, padded to an even length with `\n`.
