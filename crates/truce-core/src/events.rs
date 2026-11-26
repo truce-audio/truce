@@ -321,16 +321,26 @@ pub fn initial_event_capacity(param_count: usize) -> usize {
     param_count + EVENT_LIST_PREALLOC
 }
 
+/// Most frames [`block_event_capacity`] reserves a per-sample event for.
+/// Each frame costs one ~72 B [`Event`] in each of a wrapper's three
+/// lists, so an unclamped host-declared max block (CLAP passes
+/// `max_frames_count` straight through; some hosts declare 2^20) would
+/// reserve hundreds of MiB per instance and could fail the allocation.
+/// 8192 frames is ~1.75 MiB; a denser block past it degrades gracefully
+/// (see [`EventList::push`]: droppable events drop, param changes / mods /
+/// note-offs fold or grow).
+pub const MAX_BLOCK_EVENT_FRAMES: usize = 8192;
+
 /// Worst-case event-ring capacity for one process block of
 /// `max_block_size` samples: a dense per-sample MIDI / automation
-/// stream, a change to every one of `param_count` parameters, and
-/// [`EVENT_LIST_PREALLOC`] headroom. A wrapper passes this to
-/// [`EventList::reserve_events`] at activate - once the host has
-/// declared its max block size - so a realistic block fits without
-/// reallocating on the audio thread.
+/// stream (capped at [`MAX_BLOCK_EVENT_FRAMES`]), a change to every one
+/// of `param_count` parameters, and [`EVENT_LIST_PREALLOC`] headroom. A
+/// wrapper passes this to [`EventList::reserve_events`] at activate -
+/// once the host has declared its max block size - so a realistic block
+/// fits without reallocating on the audio thread.
 #[must_use]
 pub fn block_event_capacity(max_block_size: usize, param_count: usize) -> usize {
-    max_block_size + initial_event_capacity(param_count)
+    max_block_size.min(MAX_BLOCK_EVENT_FRAMES) + initial_event_capacity(param_count)
 }
 
 /// Default reserved capacity for the `SysEx` byte pool on
@@ -386,16 +396,44 @@ impl std::error::Error for PushError {}
 /// Both are pre-allocated by [`EventList::with_capacity`] and reset
 /// (length only - backing memory preserved) by [`Self::clear`], so
 /// steady-state operation is allocation-free.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct EventList {
     events: Vec<Event>,
     sysex_pool: Vec<u8>,
-    /// Set by [`EventList::with_capacity`]. When `true`, `push` is
-    /// fail-closed: once the preallocated ring is full it drops the
-    /// overflow rather than reallocating on the audio thread. A
-    /// default-constructed list leaves this `false` and grows normally
-    /// - it is a non-RT context (the offline driver, tests).
-    fail_closed: bool,
+    /// `Some(n)` (set by [`EventList::with_capacity`], raised by
+    /// [`EventList::reserve_events`]) makes `push` fail-closed at `n`
+    /// events: past it, droppable overflow is dropped rather than
+    /// reallocating on the audio thread. An explicit limit, not
+    /// `events.capacity()`: an essential event that grows the ring (a
+    /// note-off, an unseen param) must not raise the cap for every later
+    /// block, and a clone (which copies that possibly-grown capacity)
+    /// must keep its owner's cap. `None` - a default-constructed or growable list, a non-RT
+    /// context (the offline driver, tests) - grows normally.
+    event_limit: Option<usize>,
+    /// Bytes the `SysEx` pool may hold: [`SYSEX_POOL_PREALLOC`] for a
+    /// list built with a capacity, `0` for a default one. Explicit for
+    /// the same reason as `event_limit` - the pool never reallocates on
+    /// the audio thread, and a clone keeps its owner's budget.
+    sysex_limit: usize,
+}
+
+/// A clone gets its own reservation, not a length-sized copy: the limits
+/// are copied, so a derived `Clone` (Vec capacity == length) would
+/// reallocate on every push below the cap - on the audio thread, if a
+/// plugin pushes into the copy there.
+impl Clone for EventList {
+    fn clone(&self) -> Self {
+        let mut events = Vec::with_capacity(self.events.capacity());
+        events.extend_from_slice(&self.events);
+        let mut sysex_pool = Vec::with_capacity(self.sysex_pool.capacity());
+        sysex_pool.extend_from_slice(&self.sysex_pool);
+        Self {
+            events,
+            sysex_pool,
+            event_limit: self.event_limit,
+            sysex_limit: self.sysex_limit,
+        }
+    }
 }
 
 impl EventList {
@@ -418,7 +456,9 @@ impl EventList {
     /// [`Self::push`]). Size the ring at construction with
     /// [`initial_event_capacity`] and grow it off-thread at activate
     /// with [`Self::reserve_events`] (sized via [`block_event_capacity`])
-    /// so a realistic block never reaches the cap. Non-RT callers that
+    /// so a realistic block - up to about one event per sample, capped
+    /// at [`MAX_BLOCK_EVENT_FRAMES`] - never reaches the cap. Non-RT
+    /// callers that
     /// want the `SysEx` pool without a cap use
     /// [`Self::growable_with_capacity`].
     #[must_use]
@@ -426,7 +466,8 @@ impl EventList {
         Self {
             events: Vec::with_capacity(capacity),
             sysex_pool: Vec::with_capacity(SYSEX_POOL_PREALLOC),
-            fail_closed: true,
+            event_limit: Some(capacity),
+            sysex_limit: SYSEX_POOL_PREALLOC,
         }
     }
 
@@ -438,20 +479,28 @@ impl EventList {
     #[must_use]
     pub fn growable_with_capacity(capacity: usize) -> Self {
         Self {
-            fail_closed: false,
+            event_limit: None,
             ..Self::with_capacity(capacity)
         }
     }
 
-    /// Grow the event-ring capacity to at least `capacity`, off the
+    /// Grow the event ring to hold at least `capacity` events, off the
     /// audio thread (call from a wrapper's `activate` / `reset`). A
-    /// fail-closed list sized this way won't drop until a single block
-    /// carries more than `capacity` events. No-op if the ring is
-    /// already that large; never shrinks.
+    /// fail-closed list's cap rises to match, so it won't drop until a
+    /// single block carries more than `capacity` events. Never shrinks.
     pub fn reserve_events(&mut self, capacity: usize) {
         if capacity > self.events.capacity() {
             self.events.reserve(capacity - self.events.len());
         }
+        if let Some(limit) = &mut self.event_limit {
+            *limit = (*limit).max(capacity);
+        }
+    }
+
+    /// Whether a fail-closed list has reached its event cap.
+    fn at_event_limit(&self) -> bool {
+        self.event_limit
+            .is_some_and(|limit| self.events.len() >= limit)
     }
 
     /// Append an event. Note: `sample_offset` is **not** bounds-checked
@@ -478,8 +527,11 @@ impl EventList {
     ///   leaves a voice stuck sounding forever. A note-off can't be folded
     ///   like a param change, so the ring grows to take it.
     ///
-    /// Any grow is a one-off reallocation that a list sized via
-    /// [`block_event_capacity`] should never hit.
+    /// Any grow is a one-off reallocation. A list sized via
+    /// [`block_event_capacity`] hits it only in a block carrying more
+    /// events than its reservation: `min(max block, MAX_BLOCK_EVENT_FRAMES)`
+    /// plus a full param sweep plus [`EVENT_LIST_PREALLOC`] - so more
+    /// than about one event per sample, or a huge host max block.
     ///
     /// Channel-mode "All Notes Off" / "All Sound Off" (CC 123 / 120) are
     /// *not* exempt: they ride as [`EventBody::ControlChange`], and this
@@ -488,7 +540,7 @@ impl EventList {
     /// layer that deliberately has none. They remain droppable on a full
     /// list - a deliberate scope choice, not an oversight.
     pub fn push(&mut self, event: Event) {
-        if self.fail_closed && self.events.len() == self.events.capacity() {
+        if self.at_event_limit() {
             match &event.body {
                 EventBody::ParamChange { id, value } => {
                     let (id, value) = (*id, *value);
@@ -599,11 +651,11 @@ impl EventList {
         port: u8,
         data: &[u8],
     ) -> Result<(), PushError> {
-        if self.fail_closed && self.events.len() == self.events.capacity() {
+        if self.at_event_limit() {
             return Err(PushError::QueueFull);
         }
         let pool_offset = self.sysex_pool.len();
-        if pool_offset + data.len() > self.sysex_pool.capacity() {
+        if pool_offset + data.len() > self.sysex_limit {
             return Err(PushError::PoolFull);
         }
         self.sysex_pool.extend_from_slice(data);
@@ -684,11 +736,12 @@ impl EventList {
         self.sysex_pool.len()
     }
 
-    /// Total `SysEx` pool capacity in bytes. Stable for the life of
-    /// the `EventList` (no audio-thread reallocation).
+    /// Total `SysEx` pool capacity in bytes - the most
+    /// [`Self::push_sysex`] accepts per block. Stable for the life of the
+    /// `EventList` (no audio-thread reallocation), clones included.
     #[must_use]
     pub fn sysex_pool_capacity(&self) -> usize {
-        self.sysex_pool.capacity()
+        self.sysex_limit
     }
 }
 
@@ -742,6 +795,66 @@ mod tests {
     }
 
     #[test]
+    fn fail_closed_cap_is_explicit_not_vec_capacity() {
+        let cc = || {
+            Event::new(
+                0,
+                EventBody::ControlChange {
+                    group: 0,
+                    channel: 0,
+                    cc: 1,
+                    value: 0,
+                },
+            )
+        };
+        let mut list = EventList::with_capacity(4);
+        for _ in 0..4 {
+            list.push(cc());
+        }
+        // A note-off on the full list grows the ring (doubling the Vec's
+        // capacity)...
+        list.push(Event::new(
+            0,
+            EventBody::NoteOff {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 0,
+            },
+        ));
+        assert_eq!(list.len(), 5);
+        // ...but the cap stays at 4 for every later block.
+        list.clear();
+        for _ in 0..10 {
+            list.push(cc());
+        }
+        assert_eq!(list.len(), 4, "a grow must not raise the cap");
+
+        // A clone keeps its owner's cap and pool budget, and its own reservation.
+        list.clear();
+        list.push(cc());
+        let mut clone = list.clone();
+        let (ev_cap, pool_cap) = (clone.events.capacity(), clone.sysex_pool.capacity());
+        assert!(
+            ev_cap >= 4 && pool_cap >= SYSEX_POOL_PREALLOC,
+            "clone reserves its budget"
+        );
+        for _ in 0..10 {
+            clone.push(cc());
+        }
+        assert_eq!(clone.len(), 4, "clone keeps the cap, not its capacity");
+        assert_eq!(
+            clone.events.capacity(),
+            ev_cap,
+            "pushing into a clone must not realloc"
+        );
+        assert_eq!(clone.sysex_pool_capacity(), SYSEX_POOL_PREALLOC);
+        let mut clone = list.clone();
+        clone.clear();
+        assert_eq!(clone.push_sysex(0, &[1, 2, 3]), Ok(()));
+    }
+
+    #[test]
     fn fail_closed_caps_growable_grows_reserve_resizes() {
         let ev = || {
             Event::new(
@@ -791,6 +904,11 @@ mod tests {
 
         assert_eq!(initial_event_capacity(10), 10 + EVENT_LIST_PREALLOC);
         assert_eq!(block_event_capacity(16, 10), 16 + 10 + EVENT_LIST_PREALLOC);
+        // A huge host-declared max block is clamped, not reserved per frame.
+        assert_eq!(
+            block_event_capacity(1 << 20, 10),
+            MAX_BLOCK_EVENT_FRAMES + 10 + EVENT_LIST_PREALLOC
+        );
     }
 
     fn param_values(list: &EventList) -> Vec<(u32, f64)> {
@@ -978,8 +1096,11 @@ mod tests {
         list.clear();
         assert!(list.is_empty());
         assert_eq!(list.sysex_pool_used(), 0);
-        // The whole point of pre-allocation: clearing must not free.
+        // The whole point of pre-allocation: clearing must not free. The
+        // backing Vec, not `sysex_pool_capacity()` (the fixed budget).
         assert_eq!(list.sysex_pool_capacity(), cap_before);
+        assert!(list.sysex_pool.capacity() >= SYSEX_POOL_PREALLOC);
+        assert!(list.events.capacity() >= 8);
     }
 
     #[test]
