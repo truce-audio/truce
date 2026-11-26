@@ -477,7 +477,7 @@ pub fn render_preset_toml(
     let mut out = String::new();
     let mut field = |key: &str, value: &str| {
         if !value.is_empty() {
-            let _ = writeln!(out, "{key} = \"{}\"", toml_escape(value));
+            let _ = writeln!(out, "{key} = \"{}\"", crate::toml_escape(value));
         }
     };
     field("uuid", &meta.uuid);
@@ -489,7 +489,7 @@ pub fn render_preset_toml(
         let tags = meta
             .tags
             .iter()
-            .map(|t| format!("\"{}\"", toml_escape(t)))
+            .map(|t| format!("\"{}\"", crate::toml_escape(t)))
             .collect::<Vec<_>>()
             .join(", ");
         let _ = writeln!(out, "tags = [{tags}]");
@@ -528,10 +528,6 @@ pub fn render_preset_toml(
         }
     }
     out
-}
-
-fn toml_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(test)]

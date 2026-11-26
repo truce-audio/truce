@@ -639,7 +639,7 @@ pub(crate) fn write_config_view(
         ("version", version),
         ("category", p.category.as_str()),
     ] {
-        let _ = writeln!(out, "{key} = \"{}\"", toml_escape(value));
+        let _ = writeln!(out, "{key} = \"{}\"", truce_build::toml_escape(value));
     }
     // Omitted when unset, matching `truce.toml`: `midi_wiring` reads
     // "absent" as "derive from the category" and `false` as "suppress
@@ -659,12 +659,20 @@ pub(crate) fn write_config_view(
     }
 
     let _ = writeln!(out, "\n[vendor]");
-    let _ = writeln!(out, "name = \"{}\"", toml_escape(&config.vendor.name));
-    let _ = writeln!(out, "id = \"{}\"", toml_escape(&config.vendor.id));
+    let _ = writeln!(
+        out,
+        "name = \"{}\"",
+        truce_build::toml_escape(&config.vendor.name)
+    );
+    let _ = writeln!(
+        out,
+        "id = \"{}\"",
+        truce_build::toml_escape(&config.vendor.id)
+    );
     let _ = writeln!(
         out,
         "url = \"{}\"",
-        toml_escape(config.vendor.url.as_deref().unwrap_or(""))
+        truce_build::toml_escape(config.vendor.url.as_deref().unwrap_or(""))
     );
 
     if !fmt.config_keys.is_empty() {
@@ -721,7 +729,7 @@ fn declared_key(key: &str, p: &crate::PluginDef) -> DeclaredValue {
         "lv2_name" => known(
             p.lv2_name
                 .as_deref()
-                .map(|v| format!("\"{}\"", toml_escape(v))),
+                .map(|v| format!("\"{}\"", truce_build::toml_escape(v))),
         ),
         "legacy_state.lv2_uris" => {
             let uris = p
@@ -732,7 +740,7 @@ fn declared_key(key: &str, p: &crate::PluginDef) -> DeclaredValue {
             known((!uris.is_empty()).then(|| {
                 let joined = uris
                     .iter()
-                    .map(|u| format!("\"{}\"", toml_escape(u)))
+                    .map(|u| format!("\"{}\"", truce_build::toml_escape(u)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("[{joined}]")
@@ -740,10 +748,6 @@ fn declared_key(key: &str, p: &crate::PluginDef) -> DeclaredValue {
         }
         _ => DeclaredValue::Unknown,
     }
-}
-
-fn toml_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 // ---------------------------------------------------------------------------
