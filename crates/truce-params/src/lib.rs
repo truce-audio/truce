@@ -7,7 +7,8 @@ mod smooth;
 mod types;
 
 pub use info::{
-    MidiSource, ParamFlags, ParamInfo, ParamUnit, ParamValueKind, indexed_name, map_source_to_param,
+    MidiSource, ParamFlags, ParamInfo, ParamUnit, ParamValueKind, indexed_name,
+    map_source_to_param, prefixed_name,
 };
 pub use range::ParamRange;
 pub use sample::{Float, Sample};
@@ -183,6 +184,15 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
         into.extend(self.param_infos());
     }
 
+    /// [`Self::append_param_infos`] as seen from inside a `#[nested]` array
+    /// element: single nested groups prefix their field label onto their
+    /// params' names too, so they can't collide with the element's own
+    /// params. Derive-generated; the default is the unqualified form.
+    #[doc(hidden)]
+    fn append_param_infos_qualified(&self, into: &mut Vec<ParamInfo>) {
+        self.append_param_infos(into);
+    }
+
     /// Static parameter metadata, available without an instance.
     ///
     /// Format wrappers' `register_*` paths call this to learn the
@@ -206,6 +216,40 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
         Self: Sized,
     {
         Vec::new()
+    }
+
+    /// [`Self::param_infos_static`], qualified as in
+    /// [`Self::append_param_infos_qualified`]. Derive-generated.
+    #[doc(hidden)]
+    #[must_use]
+    fn param_infos_static_qualified() -> Vec<ParamInfo>
+    where
+        Self: Sized,
+    {
+        Self::param_infos_static()
+    }
+
+    /// Per [`Self::param_infos_static`] entry, whether it sits under a
+    /// `#[nested]` array (its name is array-qualified), so a parent single
+    /// group can prefix its label onto exactly those. Derive-generated.
+    #[doc(hidden)]
+    #[must_use]
+    fn param_infos_under_array() -> Vec<bool>
+    where
+        Self: Sized,
+    {
+        vec![false; Self::param_infos_static().len()]
+    }
+
+    /// Whether any [`Self::param_infos_under_array`] entry is `true`, so
+    /// the common no-arrays case skips building the flags. Derive-generated.
+    #[doc(hidden)]
+    #[must_use]
+    fn param_infos_any_under_array() -> bool
+    where
+        Self: Sized,
+    {
+        false
     }
 
     /// Number of parameters.

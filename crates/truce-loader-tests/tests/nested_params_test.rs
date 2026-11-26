@@ -582,7 +582,7 @@ fn nested_param_ids_are_stable_across_reorder_and_insert() {
 struct BandArray {
     #[param(id = 0, name = "Master", range = "linear(0, 1)", default = 0.5)]
     master: FloatParam,
-    #[nested(base = 1)]
+    #[nested(base = 1, label = "Band")]
     bands: [Band; 3],
 }
 
@@ -615,8 +615,8 @@ fn ordinal_array_packs_each_element_contiguously() {
 fn array_elements_get_disambiguated_names() {
     // Every `Band` exposes leaf names `Gain` / `Q`; across a 3-element
     // array that would be three identical pairs, so hosts (and the GUI)
-    // couldn't tell them apart. The derive suffixes each element with its
-    // 1-based index.
+    // couldn't tell them apart. The derive prefixes each element with the
+    // array's label (`label = "Band"` here) and 1-based index.
     let names: Vec<&str> = BandArray::new()
         .param_infos()
         .iter()
@@ -624,17 +624,28 @@ fn array_elements_get_disambiguated_names() {
         .collect();
     assert_eq!(
         names,
-        vec!["Master", "Gain 1", "Q 1", "Gain 2", "Q 2", "Gain 3", "Q 3"],
+        vec![
+            "Master",
+            "Band 1 Gain",
+            "Band 1 Q",
+            "Band 2 Gain",
+            "Band 2 Q",
+            "Band 3 Gain",
+            "Band 3 Q",
+        ],
     );
 
-    // `short_name` gets the same index suffix - otherwise a host that shows
-    // short names (limited-width strips) still sees identical labels.
+    // `short_name` gets a bare index suffix - distinct, but kept short for
+    // hosts that show short names in limited-width strips.
     let short: Vec<&str> = BandArray::new()
         .param_infos()
         .iter()
         .map(|i| i.short_name)
         .collect();
-    assert_eq!(short, names);
+    assert_eq!(
+        short,
+        vec!["Master", "Gain 1", "Q 1", "Gain 2", "Q 2", "Gain 3", "Q 3"],
+    );
 
     // The static table (what format wrappers register from) must match the
     // live table exactly - name and short_name both - or hosts and the
@@ -679,8 +690,133 @@ fn nested_array_longer_than_32_constructs() {
     let p = BigArray::new();
     assert_eq!(p.count(), 80); // 40 elements * 2 params
     let names: Vec<&str> = p.param_infos().iter().map(|i| i.name).collect();
-    assert_eq!(names.first().copied(), Some("Gain 1"));
-    assert_eq!(names.last().copied(), Some("Q 40"));
+    // No `label`: the field name, title-cased.
+    assert_eq!(names.first().copied(), Some("Bands 1 Gain"));
+    assert_eq!(names.last().copied(), Some("Bands 40 Q"));
+}
+
+// Two arrays of one element type, whose element has a param and a single
+// nested group sharing a leaf name: every flattened name must still be
+// unique (it used to give three different `Level 1`s).
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct NameEnv {
+    #[param(name = "Level", range = "linear(0, 1)", default = 0.5)]
+    level: FloatParam,
+}
+
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct NameVoice {
+    #[param(name = "Level", range = "linear(0, 1)", default = 0.5)]
+    level: FloatParam,
+    #[nested]
+    env: NameEnv,
+}
+
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct NameProbe {
+    #[param(name = "Level", range = "linear(0, 1)", default = 0.5)]
+    level: FloatParam,
+    #[nested(label = "Osc")]
+    osc: [NameVoice; 2],
+    #[nested]
+    sub_voices: [NameVoice; 2],
+}
+
+#[test]
+fn nested_names_are_unique_across_arrays_and_inner_groups() {
+    let names: Vec<&str> = NameProbe::new()
+        .param_infos()
+        .iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "Level",
+            "Osc 1 Level",
+            "Osc 1 Env Level",
+            "Osc 2 Level",
+            "Osc 2 Env Level",
+            "Sub Voices 1 Level",
+            "Sub Voices 1 Env Level",
+            "Sub Voices 2 Level",
+            "Sub Voices 2 Env Level",
+        ],
+    );
+    let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
+    assert_eq!(unique.len(), names.len());
+    // The static table registers the same names.
+    let stat: Vec<&str> = NameProbe::param_infos_static()
+        .iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(stat, names);
+    // A root-level single group keeps its raw names (6.x compatible): the
+    // voice itself, used alone, isn't qualified.
+    let voice: Vec<&str> = NameVoice::new()
+        .param_infos()
+        .iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(voice, vec!["Level", "Level"]);
+}
+
+// One group type with an array inside, used in two root slots: the
+// group's own params stay raw (6.x), but names from its array take the
+// group's label too, or both slots would expose `Harm 1 Level`.
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct NameHolder {
+    #[param(name = "Gain", range = "linear(0, 1)", default = 0.5)]
+    gain: FloatParam,
+    #[nested]
+    harm: [NameEnv; 2],
+}
+
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct NameTwoHolders {
+    #[nested]
+    osc_a: NameHolder,
+    #[nested]
+    osc_b: NameHolder,
+    // A raw-identifier array field still derives its `_id` helper.
+    #[nested]
+    r#type: [NameEnv; 2],
+}
+
+#[test]
+fn arrays_under_a_reused_root_group_take_its_label() {
+    let names: Vec<&str> = NameTwoHolders::new()
+        .param_infos()
+        .iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "Gain",
+            "Osc A Harm 1 Level",
+            "Osc A Harm 2 Level",
+            "Gain",
+            "Osc B Harm 1 Level",
+            "Osc B Harm 2 Level",
+            "Type 1 Level",
+            "Type 2 Level",
+        ],
+    );
+    let stat: Vec<&str> = NameTwoHolders::param_infos_static()
+        .iter()
+        .map(|i| i.name)
+        .collect();
+    assert_eq!(stat, names);
+    assert_eq!(
+        NameTwoHolders::type_id(1, NameEnvParamId::Level),
+        NameTwoHolders::new().r#type[1].level.id()
+    );
 }
 
 // An auto-based array between two other groups: the ordinal packer must

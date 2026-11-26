@@ -64,15 +64,11 @@ pub fn map_source_to_param(infos: &[ParamInfo], channel: u8, source: MidiSource)
 
 /// Intern a 1-based index-suffixed copy of `base` as a `&'static str`.
 ///
-/// Every element of a `#[nested]` array exposes the same leaf parameter
-/// names (eight `Level`s, eight `On`s), so hosts and the GUI can't tell
-/// element 3's `Level` from element 6's. `#[derive(Params)]` runs each
-/// array element's infos through this, turning `Level` into `Level 1` ..
-/// `Level 8`.
-///
-/// Arrays nested in arrays suffix innermost first: the inner array names
-/// its elements, then each outer element appends its own index, so
-/// `Level 2 1` is outer element 1's inner element 2 (both 1-based).
+/// `#[derive(Params)]` runs each `#[nested]` array element's *short*
+/// names through this (`Lv` -> `Lv 1` .. `Lv 8`); full names get the
+/// array's label too, through [`prefixed_name`]. Arrays nested in arrays
+/// suffix short names innermost first: `Lv 2 1` is outer element 1's
+/// inner element 2 (both 1-based).
 ///
 /// [`ParamInfo::name`] is `&'static str`, so a suffixed name must live for
 /// the program's lifetime. A plugin has a bounded, tiny set of
@@ -95,6 +91,43 @@ pub fn indexed_name(base: &'static str, index: u32) -> &'static str {
     let n = index + 1;
     let name: &'static str = Box::leak(format!("{base} {n}").into_boxed_str());
     cache.insert((base, index), name);
+    name
+}
+
+/// Intern `"{label} {index+1} {base}"` (or `"{label} {base}"` with no
+/// index) as a `&'static str`.
+///
+/// Every element of a `#[nested]` array exposes the same leaf names (eight
+/// `Level`s), and two arrays of one element type - or a group inside an
+/// element - would repeat them again, so hosts would show identical
+/// automation names. `#[derive(Params)]` prefixes each array element's
+/// names with the array field's label and 1-based index (`Step 3 Level`),
+/// and, inside an element, each single nested group's names with its field
+/// label (`Step 3 Env Level`); a single group outside any array prefixes
+/// its label onto the names that come from an array below it (`Osc A Harm
+/// 1 Level`). Nested arrays read outermost first: `Bank 1
+/// Step 2 Level`. Memoized like [`indexed_name`].
+#[doc(hidden)]
+#[must_use]
+pub fn prefixed_name(label: &'static str, index: Option<u32>, base: &'static str) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    type Key = (&'static str, Option<u32>, &'static str);
+    static CACHE: OnceLock<Mutex<HashMap<Key, &'static str>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(&name) = cache.get(&(label, index, base)) {
+        return name;
+    }
+    let name = match index {
+        Some(i) => format!("{label} {} {base}", u64::from(i) + 1),
+        None => format!("{label} {base}"),
+    };
+    let name: &'static str = Box::leak(name.into_boxed_str());
+    cache.insert((label, index, base), name);
     name
 }
 
