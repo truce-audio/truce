@@ -214,6 +214,11 @@ struct ClapPluginData<P: PluginExport> {
     /// `latency_get` / `tail_get` read the value without touching
     /// `data.plugin`.
     latency_cache: AtomicU32,
+    /// The latency value last signalled to the host via `latency.changed`
+    /// at activation. `activate` only calls `changed` when `latency_cache`
+    /// differs from this, so a host that reacts to `changed` by
+    /// reactivating can't loop (activate -> changed -> reactivate -> …).
+    latency_reported: AtomicU32,
     tail_cache: AtomicU32,
     /// Index into `P::bus_layouts()` of the port config the host last
     /// selected through `clap.audio-ports-config` (0 = the default first
@@ -248,9 +253,6 @@ struct ClapPluginData<P: PluginExport> {
     host: *const clap_host,
     /// Host params extension (for `request_flush`).
     host_params: *const clap_host_params,
-    /// Host latency extension (for `changed`). Null if the host doesn't
-    /// expose `clap.latency`.
-    host_latency: *const clap_host_latency,
     /// Host tail extension (for `changed`). Null if the host doesn't
     /// expose `clap.tail`.
     host_tail: *const clap_host_tail,
@@ -651,10 +653,6 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
             if !ext.is_null() {
                 data.host_params = ext.cast::<clap_host_params>();
             }
-            let lat_ext = get_ext(data.host, CLAP_EXT_LATENCY.as_ptr());
-            if !lat_ext.is_null() {
-                data.host_latency = lat_ext.cast::<clap_host_latency>();
-            }
             let tail_ext = get_ext(data.host, CLAP_EXT_TAIL.as_ptr());
             if !tail_ext.is_null() {
                 data.host_tail = tail_ext.cast::<clap_host_tail>();
@@ -717,9 +715,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
             instance.reset(&AudioConfig::new(sample_rate, max_block).with_process_mode(mode));
             // Refresh the caches from the freshly-reset instance so the
             // host reads the real latency/tail before the first block -
-            // not the placeholder-rate value from create. No dirty flag:
-            // this is the baseline the host reads at activate, not a
-            // mid-session change needing changed() / request_restart.
+            // not the placeholder-rate value from create.
             data.latency_cache
                 .store(instance.latency(), Ordering::Relaxed);
             data.tail_cache.store(instance.tail(), Ordering::Relaxed);
@@ -765,6 +761,40 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
             }
         }
         drop(audio);
+
+        // Signal the latency to the host - after the audio cell is released:
+        // `changed()` is a host callback, and a host that answers it by
+        // re-entering the plug-in (`params.flush` is legal while not yet
+        // active) must not find the cell held. Still before `active` is
+        // set, i.e. within activation.
+        //
+        // `clap/ext/latency.h` makes `changed()` the
+        // `[main-thread & being-activated]` path: a
+        // mid-session change asks for `request_restart` (see
+        // `on_main_thread`) and the host applies it during the reactivation
+        // here. A host that re-reads `latency.get` after `request_restart`
+        // would pick up the new value anyway; calling `changed()` here also
+        // covers hosts that only re-read when told, so their delay
+        // compensation can't go stale.
+        //
+        // Only when it actually changed since the last activation, though:
+        // a host that answers `changed()` by reactivating would otherwise
+        // loop (activate -> changed -> reactivate -> activate). The host
+        // still reads the current value through `latency.get` during this
+        // activation regardless of whether we call `changed()`.
+        if !data.host.is_null()
+            && let Some(get_ext) = (*data.host).get_extension
+        {
+            let host_lat =
+                get_ext(data.host, CLAP_EXT_LATENCY.as_ptr()).cast::<clap_host_latency>();
+            let current = data.latency_cache.load(Ordering::Relaxed);
+            if !host_lat.is_null()
+                && data.latency_reported.swap(current, Ordering::Relaxed) != current
+                && let Some(changed) = (*host_lat).changed
+            {
+                changed(data.host);
+            }
+        }
 
         data.active.store(true, Ordering::Relaxed);
         true
@@ -834,21 +864,19 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
         }
 
-        // Latency changed on the audio thread: tell the host here, off
-        // the audio thread. `changed()` re-reads our reported latency;
-        // an active plugin additionally needs `request_restart` to apply
-        // the new delay compensation.
-        if data.latency_dirty.swap(false, Ordering::Relaxed) && !data.host.is_null() {
-            if !data.host_latency.is_null()
-                && let Some(changed) = (*data.host_latency).changed
-            {
-                changed(data.host);
-            }
-            if data.active.load(Ordering::Relaxed)
-                && let Some(req_restart) = (*data.host).request_restart
-            {
-                req_restart(data.host);
-            }
+        // Latency changed on the audio thread. Per `clap/ext/latency.h`,
+        // the host's `changed()` is `[main-thread & being-activated]`, so it
+        // belongs in `activate` (which calls it), not here. An active plugin
+        // asks for `request_restart`; the reactivation then signals
+        // `changed()` and the host re-reads the cached value. An inactive
+        // plugin needs nothing - the host reads `latency.get` when it
+        // activates.
+        if data.latency_dirty.swap(false, Ordering::Relaxed)
+            && !data.host.is_null()
+            && data.active.load(Ordering::Relaxed)
+            && let Some(req_restart) = (*data.host).request_restart
+        {
+            req_restart(data.host);
         }
     }
 }
@@ -4261,6 +4289,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         let task_spawner = instance.task_spawner();
         let editor_builder = instance.editor_builder();
         let latency_cache = AtomicU32::new(instance.latency());
+        let latency_reported = AtomicU32::new(instance.latency());
         let tail_cache = AtomicU32::new(instance.tail());
 
         // Pre-size the per-block channel-slice scratch from the worst-case
@@ -4290,6 +4319,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             task_spawner,
             editor_builder,
             latency_cache,
+            latency_reported,
             tail_cache,
             selected_config: AtomicU32::new(0),
             param_infos,
@@ -4297,7 +4327,6 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
             plugin_id_hash,
             host,
             host_params: ptr::null(),
-            host_latency: ptr::null(),
             host_tail: ptr::null(),
             host_timer: ptr::null(),
             latency_dirty: AtomicBool::new(false),
