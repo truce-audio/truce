@@ -2165,13 +2165,13 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         unsafe {
             let inst = &*ctx.cast::<AuInstance<P>>();
             let mut gui = gui_enter(inst);
+            // Shut the gate for the open itself: a re-open without a close
+            // (AU v2 never reports one) would otherwise keep ticking an editor
+            // whose new `open` panicked. Reopened below once `open` returns.
+            gui.idle_clock.close();
             // A close left pending by a previous view belongs to that view;
             // drop it so it can't close the editor we're about to open.
             inst.pending_close.store(false, Ordering::Relaxed);
-            // Reset the idle clock on open: it persists across close/open on
-            // the per-instance gui cell, so the first `dt` after reopening
-            // would otherwise be the whole closed interval and jump animations.
-            gui.idle_clock.reset();
             if let Some(ref mut editor) = gui.editor {
                 let params = Arc::clone(&inst.params_arc);
                 let meter_store = Arc::clone(&inst.meter_store);
@@ -2322,6 +2322,11 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                 let handle = RawWindowHandle::UiKit(parent);
                 editor.open(handle, context);
             }
+            // Open the idle gate only now that `editor.open` has returned: a
+            // panic in it (caught by the firewall) or an early return above
+            // leaves the editor windowless, and `idle` must not reach it. Also
+            // clears the baseline so the first `dt` after a reopen reads zero.
+            gui.idle_clock.open();
         }
     });
 }
@@ -2332,6 +2337,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 /// kept, not dropped - only its window / GPU resources are released, and the
 /// next `gui_open` reopens it in place (see `cb_gui_close`).
 unsafe fn au_close_editor(gui: &mut AuGui) {
+    // Shut the idle gate first: the kept editor must not see the view's
+    // `NSTimer` (or a re-entrant tick) after its window is gone.
+    gui.idle_clock.close();
     if let Some(editor) = gui.editor.as_mut() {
         let editor_ptr: *mut dyn Editor = editor.as_mut();
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
@@ -2379,14 +2387,17 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 /// `editor.idle` is author code reachable across the `ObjC` boundary, so
 /// firewall it. `try_enter`, not `enter`: the timer can fire during an
 /// outer editor callback (the `viewDidLayoutSubviews` re-entry chain) - skip
-/// that frame rather than alias. No editor open -> no-op.
+/// that frame rather than alias. No editor open -> no-op (`idle_clock`
+/// gates it; the editor object survives close).
 unsafe extern "C" fn cb_gui_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     run_extern_callback_with::<P, ()>("au", "gui_idle", (), || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         let Some(mut gui) = gui_try_enter(inst) else {
             return;
         };
-        let dt = gui.idle_clock.tick();
+        let Some(dt) = gui.idle_clock.tick() else {
+            return;
+        };
         if let Some(editor) = gui.editor.as_mut() {
             editor.idle(dt);
         }

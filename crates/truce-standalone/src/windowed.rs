@@ -422,7 +422,8 @@ where
 
         StandaloneHandler {
             editor,
-            idle_clock: IdleClock::new(),
+            // The editor's window is open for the handler's whole life.
+            idle_clock: IdleClock::opened(),
             pending_resize,
             current_size: (lw, lh),
             #[cfg(target_os = "macos")]
@@ -561,8 +562,9 @@ where
         // and deferred setup. baseview-backed editors also repaint via their
         // own child loop; a raw-window-handle editor with no loop of its own
         // relies solely on this call.
-        let dt = self.idle_clock.tick();
-        self.editor.idle(dt);
+        if let Some(dt) = self.idle_clock.tick() {
+            self.editor.idle(dt);
+        }
         // The standalone outer handler also does two things here:
         //  (1) honour pending resize requests posted by the editor
         //      through the `request_resize` closure;

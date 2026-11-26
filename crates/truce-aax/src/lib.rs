@@ -1978,10 +1978,10 @@ pub unsafe fn _editor_open<P: PluginExport>(
         }
         let inst = &*ctx.cast::<AaxInstance<P>>();
         let mut gui = inst.gui.enter();
-        // Reset the idle clock on open: it persists across close/open on the
-        // per-instance gui cell, so the first `dt` after reopening would
-        // otherwise be the whole closed interval and jump animations.
-        gui.idle_clock.reset();
+        // Shut the gate for the open itself: a re-open without a close
+        // (AU v2 never reports one) would otherwise keep ticking an editor
+        // whose new `open` panicked. Reopened below once `open` returns.
+        gui.idle_clock.close();
         let Some(editor) = gui.editor.as_mut() else {
             return;
         };
@@ -2080,6 +2080,11 @@ pub unsafe fn _editor_open<P: PluginExport>(
         };
 
         editor.open(handle, context);
+        // Open the idle gate only now that `editor.open` has returned: a
+        // panic in it (caught by the firewall) or an early return above
+        // leaves the editor windowless, and `idle` must not reach it. Also
+        // clears the baseline so the first `dt` after a reopen reads zero.
+        gui.idle_clock.open();
     });
 }
 
@@ -2092,7 +2097,10 @@ pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
         // sees a dead handle and skips the call instead of dereferencing
         // freed memory. Blocks until any in-flight callback finishes.
         inst.editor_host.invalidate();
-        if let Some(ref mut editor) = inst.gui.enter().editor {
+        let mut gui = inst.gui.enter();
+        // Shut the idle gate first: the editor object outlives close.
+        gui.idle_clock.close();
+        if let Some(ref mut editor) = gui.editor {
             editor.close();
         }
     });
@@ -2100,10 +2108,20 @@ pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
 
 pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
     // `editor.idle` runs author code that can panic; firewall it.
+    // `try_enter`, not `enter`, like the other wrappers: if the host pumps
+    // its run loop inside a call made while the cell is held - a
+    // `request_resize` -> `SetViewSize` from `load_state`'s `state_changed`
+    // or from a previous `idle` - a nested timer tick lands here. Skip it
+    // rather than form a second `&mut` (an assert in debug). The template
+    // already keeps idle off during open (`mViewOpen`).
     run_extern_callback_with::<P, ()>("aax", "editor_idle", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
-        let mut gui = inst.gui.enter();
-        let dt = gui.idle_clock.tick();
+        let Some(mut gui) = inst.gui.try_enter() else {
+            return;
+        };
+        let Some(dt) = gui.idle_clock.tick() else {
+            return;
+        };
         if let Some(ref mut editor) = gui.editor {
             editor.idle(dt);
         }
@@ -2116,8 +2134,10 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
         let inst = &*ctx.cast::<AaxInstance<P>>();
         // `try_enter`, not `enter`: an AAX host that services `SetViewSize` by
         // synchronously calling `GetViewSize` back here would re-enter the cell
-        // an outer editor callback (open / idle, where a `request_resize`
-        // forwards to the host) still holds. Report "size unavailable" (0)
+        // an outer callback still holds - `idle`, or `state_changed` from
+        // `load_state` / `load_state_foreign`, where a `request_resize`
+        // forwards to the host (the template blocks it during open via
+        // `mViewOpen`). Report "size unavailable" (0)
         // instead of forming a second `&mut`; the host keeps its current size.
         let Some(gui) = inst.gui.try_enter() else {
             return 0;

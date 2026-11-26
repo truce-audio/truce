@@ -15,42 +15,80 @@ use crate::tasks::{AnyTaskSpawner, TaskSpawner};
 /// than a per-tick assumption. Hosts tick `idle` at different (often
 /// sub-60fps, uneven) rates, so advancing animation by `dt` is the only
 /// way to run at a fixed speed everywhere.
+///
+/// Also the wrapper's "is the editor open" gate. The editor object can
+/// exist with no window (VST3 / VST2 / AU / AAX reopen it in place, CLAP
+/// builds it at `gui_create` before `set_parent`), and host timers fire
+/// outside the open window (VST3's Linux run-loop timer armed at
+/// `setFrame`, CLAP's at `gui_create`, a VST2 host's `effEditIdle` with
+/// the editor closed). An `idle` on an unopened editor is never wanted -
+/// the CPU `BuiltinEditor` falls back to a full offscreen render with no
+/// window - so [`Self::tick`] only yields a `dt` between [`Self::open`]
+/// (called once `Editor::open` has returned) and [`Self::close`].
 #[derive(Default)]
 pub struct IdleClock {
     last: Option<Instant>,
+    open: bool,
 }
 
 impl IdleClock {
-    /// Longest `dt` [`Self::tick`] reports. A GUI-thread stall, or an editor
-    /// reopened without [`Self::reset`], could otherwise hand animation a
-    /// multi-second (or longer) `dt` and make it jump. 100 ms is far longer
-    /// than any real frame interval, so it only caps the pathological case.
+    /// Longest `dt` [`Self::tick`] reports. A GUI-thread stall could
+    /// otherwise hand animation a multi-second (or longer) `dt` and make
+    /// it jump. 100 ms is far longer than any real frame interval, so it
+    /// only caps the pathological case.
     pub const MAX_DT: Duration = Duration::from_millis(100);
 
+    /// A closed clock: [`Self::tick`] yields `None` until [`Self::open`].
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Clear the clock so the next [`Self::tick`] reports [`Duration::ZERO`].
-    /// Call when an editor opens: the per-instance clock still holds the
-    /// timestamp from before the editor was closed, so without this the
-    /// first `dt` after reopening would be the whole closed interval.
-    pub fn reset(&mut self) {
+    /// An already-open clock, for a wrapper that builds it at the moment
+    /// the editor opens (LV2 UI instantiation, the standalone window).
+    #[must_use]
+    pub fn opened() -> Self {
+        Self {
+            last: None,
+            open: true,
+        }
+    }
+
+    /// Mark the editor open (call once its window exists) and clear the
+    /// baseline, so the first [`Self::tick`] reports [`Duration::ZERO`]
+    /// rather than the whole interval since the editor last closed.
+    pub fn open(&mut self) {
+        self.open = true;
         self.last = None;
     }
 
-    /// Elapsed time since the previous `tick`. Returns [`Duration::ZERO`]
-    /// on the first call (no prior sample), is saturating (a non-monotonic
-    /// read never yields a negative jump), and is clamped to [`Self::MAX_DT`]
-    /// so a long gap can't jump animation.
-    pub fn tick(&mut self) -> Duration {
+    /// Mark the editor closed: [`Self::tick`] yields `None` until the
+    /// next [`Self::open`].
+    pub fn close(&mut self) {
+        self.open = false;
+    }
+
+    /// Whether the clock is between [`Self::open`] and [`Self::close`].
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// `None` while closed - the wrapper skips `Editor::idle`. Otherwise
+    /// the elapsed time since the previous `tick`: [`Duration::ZERO`] on
+    /// the first call after [`Self::open`], saturating (a non-monotonic
+    /// read never yields a negative jump), and clamped to
+    /// [`Self::MAX_DT`] so a long gap can't jump animation.
+    pub fn tick(&mut self) -> Option<Duration> {
+        if !self.open {
+            return None;
+        }
         let now = Instant::now();
         let dt = self
             .last
             .replace(now)
             .map_or(Duration::ZERO, |prev| now.saturating_duration_since(prev));
-        dt.min(Self::MAX_DT)
+        Some(dt.min(Self::MAX_DT))
     }
 }
 
@@ -234,16 +272,19 @@ pub trait Editor: Send {
     fn close(&mut self);
 
     /// Called ~60fps on the host's UI thread for repaint / animation and
-    /// deferred setup.
+    /// deferred setup, only after [`Self::open`] has returned and before
+    /// [`Self::close`]: the wrappers gate it, so an implementation can
+    /// assume a live window. (AU v2's view never reports close; its idle
+    /// `NSTimer` runs only while the view is in a window, which bounds it.)
     ///
     /// `dt` is the real wall-clock time since the previous `idle` (zero on
-    /// the first call). Drive animation by `dt` - hosts tick at different,
+    /// the first call after each `open`). Drive animation by `dt` - hosts tick at different,
     /// uneven rates, so a fixed per-call step runs at the wrong speed.
     ///
     /// Driven by the standalone host (baseview's frame loop), CLAP
     /// (`clap.timer-support`), VST3 (a per-instance UI-thread timer), AU v2
-    /// / VST2 (the Cocoa view's `NSTimer` / `effEditIdle`), and LV2
-    /// (`ui:idleInterface`). The AU v3 app-extension view does **not** drive
+    /// / VST2 (the Cocoa view's `NSTimer` / `effEditIdle`), AAX (the GUI's
+    /// timer wakeup), and LV2 (`ui:idleInterface`). The AU v3 app-extension view does **not** drive
     /// it yet: a baseview-backed editor (the built-in editor, or the egui /
     /// iced / vizia / slint backends) repaints through its own frame loop
     /// regardless, but a raw-window-handle editor under AU v3 must run its
@@ -990,19 +1031,32 @@ mod idle_clock_tests {
     use std::time::Duration;
 
     #[test]
-    fn reset_clears_baseline_and_tick_is_clamped() {
+    fn closed_clock_yields_no_tick() {
         let mut clock = IdleClock::new();
+        // Never opened: no `dt`, so the wrapper skips `Editor::idle`.
+        assert_eq!(clock.tick(), None);
+        clock.open();
+        assert!(clock.tick().is_some());
+        clock.close();
+        assert_eq!(clock.tick(), None);
+    }
+
+    #[test]
+    fn open_clears_baseline_and_tick_is_clamped() {
+        let mut clock = IdleClock::new();
+        clock.open();
         // No prior sample on the first tick.
-        assert_eq!(clock.tick(), Duration::ZERO);
-        // Establish a baseline, then reset: the next tick must read ZERO
+        assert_eq!(clock.tick(), Some(Duration::ZERO));
+        // Establish a baseline, close, reopen: the next tick must read ZERO
         // again rather than the gap since the last tick - this is what keeps
         // the first frame after reopening an editor from jumping.
         let _ = clock.tick();
-        clock.reset();
-        assert_eq!(clock.tick(), Duration::ZERO);
-        // Every reported dt is clamped, so a long stall - or a reopen that
-        // somehow missed the reset - can never hand animation a huge jump.
-        assert!(clock.tick() <= IdleClock::MAX_DT);
+        clock.close();
+        clock.open();
+        assert_eq!(clock.tick(), Some(Duration::ZERO));
+        // Every reported dt is clamped, so a long stall can never hand
+        // animation a huge jump.
+        assert!(clock.tick().is_some_and(|dt| dt <= IdleClock::MAX_DT));
     }
 }
 

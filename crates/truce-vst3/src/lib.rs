@@ -2262,10 +2262,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     run_extern_callback_with::<P, ()>("vst3", "gui_open", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let mut gui = inst.gui.enter();
-        // Reset the idle clock on open: it persists across close/open on the
-        // per-instance gui cell, so the first `dt` after reopening would
-        // otherwise be the whole closed interval and jump animations.
-        gui.idle_clock.reset();
+        // Shut the gate for the open itself: a re-open without a close
+        // (AU v2 never reports one) would otherwise keep ticking an editor
+        // whose new `open` panicked. Reopened below once `open` returns.
+        gui.idle_clock.close();
         if let Some(ref mut editor) = gui.editor {
             // Re-sync the editor's content scale to the host's current
             // value right before opening. `host_scale` lives on the
@@ -2385,13 +2385,22 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let handle = RawWindowHandle::X11(parent as u64);
 
             editor.open(handle, context);
-            // Re-sync the scale after `open`: on Windows `open` pumps
-            // messages, so a re-entrant `setContentScaleFactor` may have
-            // updated `host_scale` while `cb_gui_set_content_scale` had to skip
-            // the editor (the cell was held here). Apply the authoritative
-            // value now that the editor exists. macOS drives Retina through
-            // AppKit, so `host_scale` stays 1.0 and pinning would force 1x.
-            #[cfg(not(target_os = "macos"))]
+        }
+        // Open the idle gate only now that `editor.open` has returned: a
+        // panic in it (caught by the firewall) or an early return above
+        // leaves the editor windowless, and `idle` must not reach it. Also
+        // clears the baseline so the first `dt` after a reopen reads zero.
+        // Before the rescale below, which is author code too: a panic there
+        // leaves a live window that must keep ticking.
+        gui.idle_clock.open();
+        // Re-sync the scale after `open`: on Windows `open` pumps messages,
+        // so a re-entrant `setContentScaleFactor` may have updated
+        // `host_scale` while `cb_gui_set_content_scale` had to skip the
+        // editor (the cell was held here). Apply the authoritative value now
+        // that the editor exists. macOS drives Retina through AppKit, so
+        // `host_scale` stays 1.0 and pinning would force 1x.
+        #[cfg(not(target_os = "macos"))]
+        if let Some(ref mut editor) = gui.editor {
             editor.set_scale_factor(inst.host_scale());
         }
     });
@@ -2401,7 +2410,11 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     // `editor.close` runs author teardown code that can panic; firewall it.
     run_extern_callback_with::<P, ()>("vst3", "gui_close", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        if let Some(ref mut editor) = inst.gui.enter().editor {
+        let mut gui = inst.gui.enter();
+        // Shut the idle gate first: the editor object outlives close (it's
+        // reopened in place), and the host's tick keeps arriving.
+        gui.idle_clock.close();
+        if let Some(ref mut editor) = gui.editor {
             editor.close();
         }
     });
@@ -2410,15 +2423,20 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 /// Editor idle tick, driven by the shim's per-instance UI-thread timer.
 /// `editor.idle` is author code; firewall it. `try_enter`, not `enter`: the
 /// timer can fire while an outer editor callback still holds the cell - skip
-/// that frame rather than alias. With no editor open it's a no-op (the timer
-/// runs for the component's whole life).
+/// that frame rather than alias. A no-op unless the editor is open, gated by
+/// `idle_clock` rather than the shim's timer: the Linux run-loop timer is
+/// armed at `setFrame` (so it fires before a deferred open and after
+/// `removed`), and Windows keeps a slow poll alive for the instance's life
+/// to drain a pending restart.
 unsafe extern "C" fn cb_gui_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     run_extern_callback_with::<P, ()>("vst3", "gui_idle", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let Some(mut gui) = inst.gui.try_enter() else {
             return;
         };
-        let dt = gui.idle_clock.tick();
+        let Some(dt) = gui.idle_clock.tick() else {
+            return;
+        };
         if let Some(editor) = gui.editor.as_mut() {
             editor.idle(dt);
         }
