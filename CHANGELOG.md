@@ -11,7 +11,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 - **egui 0.34 → 0.37.** `truce-egui` moves to egui `0.37`. A plug-in whose `editor` writes `egui::` types must update to the new API (see migration below); a built-in-editor plug-in just rebuilds.
 - **slint 1.15 → 1.19.** `truce-slint` moves to slint `1.19`. A plug-in with custom `.slint` markup or a direct `slint` dependency bumps to `=1.19.1`.
 - **wgpu 29 → 30.** The workspace `wgpu` moves to `30` (egui-wgpu 0.37 and the slint software path both target wgpu 30, so they move as one). A plug-in that drives wgpu directly bumps to `30`.
-- **`truce-driver::set_param` normalizes its argument.** The script and builder paths now denormalize the value through the parameter's range, honoring the documented normalized `[0, 1]` contract; the script path previously applied the value as-is. **Migration:** pass a normalized position instead of the plain value in driver tests.
+- **`truce-driver`'s `Script::set_param` normalizes its argument.** Inside `.script(|s| ...)`, `s.set_param(id, v)` now denormalizes `v` through the parameter's range, honoring the documented normalized `[0, 1]` contract; until 7.0 it pushed `v` as the plain value. (The builder `.set_param` was normalized already.) Both now reject an out-of-range value loudly - a panic in debug builds, a one-time stderr warning in release - rather than silently clamping it to the range end, so an un-migrated plain value fails the test. **Migration:** pass a normalized position instead of the plain value in script `set_param` calls.
 - **Minimum supported Rust is now 1.98** (was 1.92). The build uses `Option` / `Result::map_or_default`, stabilized in 1.98, so a plug-in on an older toolchain no longer compiles. **Migration:** `rustup update`.
 - **An unknown `aax_category` is now a compile error.** `truce.toml` categories are validated against the recognized set at macro-expansion time instead of being silently accepted; only an AAX build that named an out-of-set category is affected. **Migration:** set `aax_category` to a recognized value.
 - **`Editor::idle` gained a `dt` parameter.** `fn idle(&mut self)` is now `fn idle(&mut self, dt: std::time::Duration)` — `dt` is the wall-clock time since the previous call, so animation can be driven frame-rate-independently across hosts that tick at different rates. A custom `Editor` that overrides `idle` no longer compiles. **Migration:** add the parameter (`fn idle(&mut self, _dt: std::time::Duration)` if you don't use it). A plug-in on a built-in editor is unaffected.
@@ -69,12 +69,12 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
    +wgpu = "30"
    ```
 
-2. **Fix `set_param` calls in driver tests.** Pass the normalized `[0, 1]` position, not the plain value:
+2. **Fix script `set_param` calls in driver tests.** Pass the normalized `[0, 1]` position, not the plain value (a leftover plain value now panics in a debug test run):
 
    ```diff
     // "gain" ranges 0..10; drive it to 8
-   -driver.set_param("gain", 8.0);
-   +driver.set_param("gain", 0.8);
+   -.script(|s| s.set_param(P::Gain, 8.0))
+   +.script(|s| s.set_param(P::Gain, 0.8))
    ```
 
 3. **Rebuild all artifacts together.** The hot-reload canary and the AU v3 framework / appex handshake are version-checked, so a 7.0 shell refuses a 6.x logic dylib; rebuild and reinstall in one pass rather than mixing.

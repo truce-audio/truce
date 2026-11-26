@@ -57,7 +57,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::plugin::PluginRuntime;
 use truce_core::state::restore_plugin;
-use truce_params::Params;
+use truce_params::{ParamInfo, Params};
 
 /// Sidechain (non-main) input width for the declared layout whose main
 /// input width equals `main_channels`. Reading this from the layout the
@@ -194,6 +194,11 @@ pub struct Script {
     sysex: Vec<(usize, Vec<u8>)>,
     cursor_samples: usize,
     sample_rate: f64,
+    /// Param metadata, populated by the builder's `.script` so
+    /// `set_param` can denormalize its argument through each
+    /// parameter's range. Empty on a bare `Script`, in which case
+    /// `set_param` leaves the value untouched.
+    param_infos: Vec<ParamInfo>,
 }
 
 impl Script {
@@ -252,11 +257,27 @@ impl Script {
     /// accurate at the cursor's offset. The plugin sees a
     /// `ParamChange` event in its event list - same delivery path
     /// CLAP / VST3 / AU automation lanes use.
+    ///
+    /// The `ParamChange` event carries a plain value, so the argument
+    /// is denormalized through the parameter's range before it is
+    /// pushed. An unknown id leaves the value untouched.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, if `normalized` is outside `[0, 1]` (or NaN) -
+    /// almost certainly a plain value from a pre-7.0 script, which would
+    /// otherwise be silently clamped to the range end. Release builds warn
+    /// once on stderr and carry on (clamped for a known id; an unknown id
+    /// passes the value through untouched, as always).
     pub fn set_param(&mut self, id: impl Into<u32>, normalized: f64) {
-        self.push(EventBody::ParamChange {
-            id: id.into(),
-            value: normalized,
-        });
+        let id = id.into();
+        check_normalized(id, normalized, true);
+        let plain = self
+            .param_infos
+            .iter()
+            .find(|pi| pi.id == id)
+            .map_or(normalized, |pi| pi.range.denormalize(normalized));
+        self.push(EventBody::ParamChange { id, value: plain });
     }
 
     /// Push an arbitrary `EventBody` at the current cursor - escape
@@ -617,6 +638,9 @@ impl<P: PluginExport> PluginDriver<P> {
             }
         }
         self.script.sample_rate = new_sr;
+        // Hand the script the param ranges so `set_param` can
+        // denormalize its argument.
+        self.script.param_infos = P::param_infos_static();
         f(&mut self.script);
         self
     }
@@ -630,9 +654,17 @@ impl<P: PluginExport> PluginDriver<P> {
     /// For automation *during* a run, use `.script(|s| s.set_param(...))`,
     /// which emits a sample-accurate `ParamChange` event the plugin
     /// processes inline.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, if `normalized` is outside `[0, 1]` (or NaN),
+    /// which would otherwise be silently clamped to the range end.
+    /// Release builds warn once on stderr and clamp.
     #[must_use]
     pub fn set_param(mut self, id: impl Into<u32>, normalized: f64) -> Self {
-        self.param_overrides.push((id.into(), normalized));
+        let id = id.into();
+        check_normalized(id, normalized, false);
+        self.param_overrides.push((id, normalized));
         self
     }
 
@@ -1247,10 +1279,93 @@ fn fill_input_block(
     }
 }
 
+/// Make an out-of-range `set_param` loud instead of a silent clamp. Both
+/// `set_param`s take a normalized `[0, 1]` value and clamp it before
+/// denormalizing, so `set_param("gain", 8.0)` would quietly become the
+/// range maximum. That's the likely shape of an un-migrated 6.x script:
+/// `Script::set_param` pushed its value as the plain value until 7.0 (the
+/// builder `set_param` was normalized already). Out of range (or NaN):
+/// debug builds assert, release builds warn once per process on stderr
+/// and carry on with the clamped value.
+fn check_normalized(id: u32, normalized: f64, from_script: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if (0.0..=1.0).contains(&normalized) {
+        return;
+    }
+    let migration = if from_script {
+        " Script::set_param took a plain value until 7.0; pass the normalized one."
+    } else {
+        ""
+    };
+    let msg = format!(
+        "truce-driver: set_param({id}, {normalized}) is outside [0, 1]. set_param takes a \
+         normalized value and would clamp this to the range end.{migration}"
+    );
+    debug_assert!(false, "{msg}");
+    if !WARNED.swap(true, Ordering::Relaxed) {
+        eprintln!("{msg} (further out-of-range set_param calls are not reported)");
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::default_sidechain_channels;
+    use super::{Script, default_sidechain_channels};
     use truce_core::bus::{BusLayout, ChannelConfig};
+    use truce_core::events::EventBody;
+    use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, ParamValueKind};
+
+    fn linear_info(id: u32, min: f64, max: f64) -> ParamInfo {
+        ParamInfo {
+            id,
+            name: "p",
+            short_name: "p",
+            group: "",
+            range: ParamRange::Linear { min, max },
+            default_plain: min,
+            flags: ParamFlags::AUTOMATABLE,
+            unit: ParamUnit::None,
+            kind: ParamValueKind::Float,
+            midi_map: None,
+            midi_channel: None,
+        }
+    }
+
+    /// An un-migrated 6.x script call passes a plain value; it must not
+    /// be silently clamped to the range end.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "outside [0, 1]")]
+    fn set_param_rejects_a_plain_value_loudly() {
+        let mut script = Script {
+            param_infos: vec![linear_info(7, 0.0, 10.0)],
+            ..Script::default()
+        };
+        script.set_param(7u32, 8.0);
+    }
+
+    /// `set_param` takes a normalized argument but the `ParamChange`
+    /// event carries a plain value, so a `linear(0, 10)` param set to
+    /// normalized 1.0 must land as plain 10.0. An unknown id passes
+    /// through untouched.
+    #[test]
+    fn set_param_denormalizes_through_range() {
+        let mut script = Script {
+            param_infos: vec![linear_info(7, 0.0, 10.0)],
+            ..Script::default()
+        };
+        script.set_param(7u32, 1.0);
+        script.set_param(99u32, 0.25);
+        let values: Vec<f64> = script
+            .events
+            .iter()
+            .map(|(_, body)| match body {
+                EventBody::ParamChange { value, .. } => *value,
+                other => panic!("expected ParamChange, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(values, vec![10.0, 0.25]);
+    }
 
     /// A multi-layout plugin driven at a non-default main width must take
     /// its sidechain width from the layout that width belongs to, not

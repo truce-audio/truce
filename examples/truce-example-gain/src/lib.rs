@@ -329,18 +329,15 @@ mod tests {
             .input(InputSource::Constant(1.0))
             // Pre-load +6 dB so the run starts already snapped to the
             // max of the gain range (avoids the first-block ramp from
-            // the default into the test's starting target). The
-            // `PluginDriver::set_param` setter goes through
-            // `Params::set_normalized` (normalized [0, 1]); the
-            // script-side `Script::set_param` below pushes a
-            // `ParamChange` event whose value the chunker delivers
-            // to `Params::set_plain` (plain units - matches the CLAP
-            // / VST3 wire convention).
+            // the default into the test's starting target). Both
+            // setters take a normalized [0, 1] argument: 1.0 is the
+            // top of the range (+6 dB).
             .set_param(P::Gain, 1.0)
-            // Schedule a step to -60 dB at sample 4800.
+            // Schedule a step to the bottom of the range (-60 dB) at
+            // sample 4800.
             .script(|s| {
                 s.wait_samples(4800);
-                s.set_param(P::Gain, -60.0);
+                s.set_param(P::Gain, 0.0);
             })
             .run();
 
