@@ -93,6 +93,44 @@ impl PluginLogic for PlainPlugin {
     }
 }
 
+/// Overrides only `save_state`, and its custom state starts empty: a
+/// sampler with no sample loaded yet. Empty at construction must not be
+/// read as "this plugin has no custom state".
+#[derive(Default)]
+struct Sample {
+    path: Option<Vec<u8>>,
+}
+
+struct OptionalPathPlugin;
+
+impl PluginLogic for OptionalPathPlugin {
+    type Params = StateParams;
+    type DspState = Sample;
+
+    fn process(
+        _state: &mut Sample,
+        _params: &StateParams,
+        _buffer: &mut AudioBuffer,
+        _events: &EventList,
+        _ctx: &mut ProcessContext,
+    ) -> ProcessStatus {
+        ProcessStatus::Normal
+    }
+
+    fn save_state(state: &Sample) -> Vec<u8> {
+        state.path.clone().unwrap_or_default()
+    }
+
+    fn load_state(state: &mut Sample, data: &[u8]) -> Result<(), StateLoadError> {
+        state.path = (!data.is_empty()).then(|| data.to_vec());
+        Ok(())
+    }
+
+    fn editor(_params: Arc<StateParams>) -> Box<dyn Editor> {
+        Box::new(NoEditor)
+    }
+}
+
 struct NoEditor;
 impl Editor for NoEditor {
     fn size(&self) -> (u32, u32) {
@@ -150,16 +188,19 @@ fn snapshot_into_round_trips_legacy_state() {
     assert_eq!(round_tripped, saved, "state survives snapshot -> restore");
 }
 
-/// A plugin with no custom state keeps `snapshot_into` returning false,
-/// so the shell's publish path stays latched off (no wasted work).
+/// A plugin with no custom state publishes an empty blob: the default
+/// can't tell "none" from "empty right now", so it never opts out, and an
+/// empty blob saves exactly like no custom state.
 #[test]
-fn plugin_without_custom_state_does_not_publish() {
+fn plugin_without_custom_state_publishes_an_empty_blob() {
     let plugin = shell::<PlainPlugin>();
     let mut buf = Vec::new();
-    let published = plugin.snapshot_into(&mut buf);
-
-    assert!(!published, "a stateless plugin must not publish a snapshot");
-    assert!(buf.is_empty(), "nothing is written when there's no state");
+    assert!(plugin.snapshot_into(&mut buf), "the default never opts out");
+    assert_eq!(buf, Vec::<u8>::new());
+    assert_eq!(
+        truce_core::wrapper::save_extra(&plugin.snapshot_slot()),
+        Vec::<u8>::new()
+    );
 }
 
 /// #253: every format's save reads custom state from the snapshot slot,
@@ -188,5 +229,53 @@ fn a_fresh_stateless_instance_publishes_nothing() {
     assert_eq!(
         truce_core::wrapper::save_extra(&plugin.snapshot_slot()),
         Vec::<u8>::new()
+    );
+}
+
+fn fresh<L>() -> StaticShell<StateParams, L>
+where
+    L: PluginLogic<Params = StateParams>,
+{
+    StaticShell::<StateParams, L>::from_parts(Arc::new(StateParams::new()), None)
+}
+
+/// A session restore into a plugin whose state starts empty: the save
+/// after it must carry the restored state. The construction-time publish
+/// used to latch publishing off before the restore ever arrived.
+#[test]
+fn a_save_after_restoring_into_empty_state_carries_it() {
+    let mut plugin = fresh::<OptionalPathPlugin>();
+    plugin.load_state(b"/samples/kick.wav").expect("loads");
+    plugin.republish_snapshot();
+    assert_eq!(
+        truce_core::wrapper::save_extra(&plugin.snapshot_slot()),
+        b"/samples/kick.wav"
+    );
+}
+
+/// A queued load published before the drain, then a later change: saves
+/// must follow the plugin, not stay on the first loaded bytes.
+#[test]
+fn saves_follow_the_plugin_after_a_queued_load() {
+    let mut plugin = fresh::<OptionalPathPlugin>();
+    let slot = plugin.snapshot_slot();
+    truce_core::wrapper::publish_loaded_extra(&slot, Some(b"A"));
+    plugin.load_state(b"A").expect("loads A");
+    plugin.load_state(b"B").expect("loads B");
+    plugin.republish_snapshot();
+    assert_eq!(truce_core::wrapper::save_extra(&slot), b"B");
+}
+
+/// State that first becomes non-empty during processing (a sample a
+/// background task delivers), with no load to re-arm anything: the next
+/// block's publish must still pick it up.
+#[test]
+fn state_that_fills_after_construction_is_published() {
+    let mut plugin = fresh::<OptionalPathPlugin>();
+    plugin.state_ref_mut().path = Some(b"/samples/snare.wav".to_vec());
+    plugin.republish_snapshot();
+    assert_eq!(
+        truce_core::wrapper::save_extra(&plugin.snapshot_slot()),
+        b"/samples/snare.wav"
     );
 }

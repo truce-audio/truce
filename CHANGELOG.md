@@ -126,6 +126,7 @@ truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce
 #### Formats
 
 - State: a save before the plug-in's first audio block now carries its custom state, on every format (#253). CLAP and VST3 also republish it on each save while deactivated.
+- State: a plug-in that overrides only `save_state`, and whose custom state starts empty (no sample loaded yet), is saved once that state fills. The default `snapshot_into` took "empty right now" to mean "no custom state" and stopped publishing for good, so a session restore or a state the plug-in filled later was never saved.
 - State: the new `PluginLogic::default_extra` names the custom state to load when a restored state carries none (a parameter-only preset, or custom state that serialized to nothing), so a plug-in can drop the previous preset's state (#251). The default, `None`, keeps the current state.
 - State: AU, VST2, and CLAP / VST3 while active publish a queued load's custom state at once, as AAX already did, so a save before the block that applies the load no longer pairs the restored params with the pre-load custom state.
 - CLAP: requests a parameter rescan after state and preset loads (#232) and a restart only while active (#238). `activate` notifies the host's `latency.changed()`, after releasing the plug-in so a re-entrant host can't alias it.

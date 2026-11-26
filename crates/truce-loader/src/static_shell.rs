@@ -258,6 +258,11 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         // after this - must re-serialize rather than skip on a stale
         // version and leave pre-load bytes in the slot.
         self.last_snapshot_version = None;
+        // Re-arm publishing: a plugin that reported no snapshot before the
+        // load (empty custom state at construction) may have some now, and
+        // a latch left off would keep every later save on the bytes the
+        // load published, or on nothing.
+        self.try_snapshot = true;
         result
     }
 
