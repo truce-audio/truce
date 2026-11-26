@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::iced::event::Status;
 use crate::iced::{Event, Size};
-use truce_core::editor::{Editor, PluginContext, ResizeCorrector};
+use truce_core::editor::{Editor, HeldKeys, PluginContext, ResizeCorrector};
 use truce_gui::EditorScale;
 use truce_gui::layout::GridLayout;
 use truce_params::Params;
@@ -287,6 +287,11 @@ struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
     /// can run, and drops it (including the wgpu surface) on this
     /// handler's own thread when the window is destroyed.
     runtime: IcedRuntime<P, M>,
+    /// Physical keys whose key-down was kept from the host. iced sees
+    /// every key event, but the host-facing status of a repeat or key-up
+    /// follows its key-down rather than iced's verdict on that event
+    /// alone, so the host never gets half a keystroke.
+    held_keys: HeldKeys<keyboard_types::Code>,
     /// Clone of the editor's pending-size cell; `Editor::set_size`
     /// writes it, `on_frame` applies it.
     pending_size: Arc<std::sync::atomic::AtomicU64>,
@@ -656,14 +661,34 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     // keep working while the editor is focused. Keys only arrive
                     // when the host grants the editor OS focus, which varies by
                     // DAW.
+                    let key_event = crate::keyboard::to_iced_event(&kb);
                     let mut batch = std::mem::take(&mut runtime.pending_events);
-                    batch.push(Event::Keyboard(crate::keyboard::to_iced_event(&kb)));
-                    match runtime.apply_events(batch).last() {
+                    batch.push(Event::Keyboard(key_event.clone()));
+                    let kept = match runtime.apply_events(batch).last() {
                         // Consumed by a widget, or the renderer is not ready yet
                         // (empty: the key was re-queued) - keep it either way.
-                        Some(Status::Captured) | None => baseview::EventStatus::Captured,
-                        Some(_) => baseview::EventStatus::Ignored,
+                        Some(Status::Captured) | None => true,
+                        // Unconsumed by widgets, but a subscription may have
+                        // handled it: keep it if the plugin claims it, so the
+                        // host doesn't act on the same key.
+                        Some(_) => runtime.plugin_keeps_key(&key_event),
+                    };
+                    // iced has seen the event either way; what the host sees
+                    // follows the key-down (a release iced captures for a press
+                    // the host got must still reach the host, and vice versa).
+                    let code = (kb.code != keyboard_types::Code::Unidentified).then_some(kb.code);
+                    let down = kb.state == keyboard_types::KeyState::Down;
+                    let routed = self.held_keys.route(code, down, kb.repeat, (), kept);
+                    if routed.is_some() {
+                        baseview::EventStatus::Captured
+                    } else {
+                        baseview::EventStatus::Ignored
                     }
+                }
+                baseview::Event::Window(baseview::WindowEvent::Unfocused) => {
+                    // Key-ups for anything held now go to whoever took focus.
+                    self.held_keys.drain().for_each(drop);
+                    baseview::EventStatus::Ignored
                 }
                 baseview::Event::Window(_) => baseview::EventStatus::Ignored,
             }
@@ -771,6 +796,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
 
                 IcedBaseviewHandler::<P, M> {
                     runtime,
+                    held_keys: HeldKeys::new(),
                     pending_size,
                     scale,
                     host_driven_scale,

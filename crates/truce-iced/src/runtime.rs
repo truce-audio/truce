@@ -109,6 +109,22 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
     fn needs_redraw(&self) -> bool {
         false
     }
+
+    /// Whether the editor keeps a key that no widget consumed. Such a key
+    /// is returned to the host by default, so a DAW's shortcuts (Space,
+    /// Return, arrange commands) keep working while the plug-in window is
+    /// focused - but a key you handle in [`Self::subscription`] (e.g.
+    /// `keyboard::listen`, `event::listen_with`) also arrives there as
+    /// unconsumed, so without this both the plug-in and the host act on
+    /// it. Return `true` for the keys you handle; answer from your own
+    /// state for keys you only sometimes use (arrows while a sequencer
+    /// panel is open). Asked for presses and releases alike, after the key
+    /// has reached `update`. A focused `text_input` consumes keys itself,
+    /// so it needs no claim here. Default: keep nothing.
+    fn keeps_key(&self, event: &crate::iced::keyboard::Event) -> bool {
+        let _ = event;
+        false
+    }
 }
 
 // AutoPlugin - built-in plugin for GridLayout auto mode
@@ -1097,6 +1113,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             .push(Event::Mouse(crate::iced::mouse::Event::CursorMoved {
                 position: self.cursor_position,
             }));
+    }
+
+    /// Whether the plugin claims a key no widget consumed (see
+    /// [`IcedPlugin::keeps_key`]). `false` before the first frame.
+    #[cfg_attr(target_os = "ios", allow(dead_code))]
+    pub(crate) fn plugin_keeps_key(&self, event: &crate::iced::keyboard::Event) -> bool {
+        self.render
+            .as_ref()
+            .is_some_and(|r| r.program.plugin.keeps_key(event))
     }
 
     /// Whether the UI's last frame had a focused widget wanting keyboard

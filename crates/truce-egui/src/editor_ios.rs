@@ -245,7 +245,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             return;
         };
 
-        let egui_ctx = egui::Context::default();
+        let egui_ctx = crate::new_egui_context();
         // Pin egui's logical→physical scale to the device backing
         // scale (3x on Retina iPhones). Without this, egui paints
         // at 1x pixels-per-point into a 3x-sized wgpu surface and

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -49,6 +51,86 @@ impl IdleClock {
             .replace(now)
             .map_or(Duration::ZERO, |prev| now.saturating_duration_since(prev));
         dt.min(Self::MAX_DT)
+    }
+}
+
+/// Keeps a GUI backend's key routing consistent with the host. A backend
+/// decides per key event whether to keep it (`EventStatus::Captured`) or
+/// return it to the host, and a per-event verdict lets the two disagree
+/// across one keystroke: a claim, text focus or modifier that changes
+/// between press and release can hand the host a key-down whose key-up it
+/// never gets - a stuck note in its musical typing - or a release it never
+/// saw pressed. Record each kept key-down here by physical key; that key's
+/// later repeats and key-up follow it.
+///
+/// Best effort, not a guarantee: after a focus loss ([`Self::drain`]) a
+/// key still held reaches the host as repeats / key-up without its press,
+/// and a key the platform can't identify is judged per event (see
+/// [`Self::route`]).
+///
+/// `V` is per-key data recorded at the press (egui: the key it was sent
+/// to egui as, so the release matches even after Shift lifts).
+pub struct HeldKeys<K, V = ()> {
+    held: HashMap<K, V>,
+}
+
+impl<K, V> Default for HeldKeys<K, V> {
+    fn default() -> Self {
+        Self {
+            held: HashMap::new(),
+        }
+    }
+}
+
+impl<K: Eq + Hash, V: Copy> HeldKeys<K, V> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Route one key event: `Some(value)` keeps it (the value recorded at
+    /// its press), `None` returns it to the host. `kept` is the backend's
+    /// verdict on this event alone.
+    ///
+    /// - Key-down of a held key (a repeat): kept, whatever `kept` says.
+    /// - Repeat of a key that isn't held: its press went to the host (or
+    ///   predates a focus loss), so it goes to the host.
+    /// - Fresh key-down: `kept`; a kept press records `value`.
+    /// - Key-up: kept iff held, which it then stops being.
+    ///
+    /// `code: None` is a key the platform couldn't identify (baseview's
+    /// `Code::Unidentified`): it can't be told apart from another such
+    /// key, so tracking it would let one steal the other's release. It is
+    /// judged per event by `kept` and never recorded.
+    pub fn route(
+        &mut self,
+        code: Option<K>,
+        down: bool,
+        repeat: bool,
+        value: V,
+        kept: bool,
+    ) -> Option<V> {
+        let Some(code) = code else {
+            return kept.then_some(value);
+        };
+        if !down {
+            return self.held.remove(&code);
+        }
+        if let Some(v) = self.held.get(&code) {
+            return Some(*v);
+        }
+        if repeat || !kept {
+            return None;
+        }
+        self.held.insert(code, value);
+        Some(value)
+    }
+
+    /// Forget every held key: on focus loss their key-ups go to whoever
+    /// took focus. Yields the recorded values in case the backend wants
+    /// to release them in its toolkit.
+    pub fn drain(&mut self) -> impl Iterator<Item = V> + '_ {
+        self.held.drain().map(|(_, v)| v)
     }
 }
 
@@ -921,6 +1003,44 @@ mod idle_clock_tests {
         // Every reported dt is clamped, so a long stall - or a reopen that
         // somehow missed the reset - can never hand animation a huge jump.
         assert!(clock.tick() <= IdleClock::MAX_DT);
+    }
+}
+
+#[cfg(test)]
+mod held_keys_tests {
+    use super::HeldKeys;
+
+    #[test]
+    fn every_event_follows_its_key_down() {
+        let mut keys = HeldKeys::<u32, char>::new();
+        let (down, up) = (true, false);
+        // Host-routed press: its repeat and release go to the host even if
+        // the backend would keep them now (a claim appeared mid-hold).
+        assert_eq!(keys.route(Some(1), down, false, 'a', false), None);
+        assert_eq!(keys.route(Some(1), down, true, 'a', true), None);
+        assert_eq!(keys.route(Some(1), up, false, 'a', true), None);
+        // Kept press: repeat and release stay with the editor even if the
+        // claim went away, and report the value recorded at the press.
+        assert_eq!(keys.route(Some(2), down, false, '!', true), Some('!'));
+        assert_eq!(keys.route(Some(2), down, true, '1', false), Some('!'));
+        assert_eq!(keys.route(Some(2), up, false, '1', false), Some('!'));
+        assert_eq!(keys.route(Some(2), up, false, '1', true), None);
+        // Focus loss forgets held keys.
+        assert_eq!(keys.route(Some(3), down, false, 'x', true), Some('x'));
+        assert_eq!(keys.drain().collect::<Vec<_>>(), vec!['x']);
+        assert_eq!(keys.route(Some(3), up, false, 'x', true), None);
+    }
+
+    #[test]
+    fn unidentified_keys_are_judged_per_event() {
+        let mut keys = HeldKeys::<u32, ()>::new();
+        // Two unidentifiable keys: one kept, one not. Neither is recorded,
+        // so neither can claim the other's release.
+        assert_eq!(keys.route(None, true, false, (), true), Some(()));
+        assert_eq!(keys.route(None, true, false, (), false), None);
+        assert_eq!(keys.route(None, false, false, (), false), None);
+        assert_eq!(keys.route(None, false, false, (), true), Some(()));
+        assert_eq!(keys.drain().count(), 0);
     }
 }
 

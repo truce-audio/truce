@@ -3,7 +3,6 @@
 //! On `open()`, creates a baseview child window and a wgpu surface.
 //! Each `on_frame()` tick, runs the egui frame, tessellates, and renders.
 
-use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,10 +10,11 @@ use std::sync::{Arc, Mutex};
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
 use truce_core::editor::{
-    Editor, PluginContext, PluginContextReadF64, RawWindowHandle, ResizeCorrector,
+    Editor, HeldKeys, PluginContext, PluginContextReadF64, RawWindowHandle, ResizeCorrector,
 };
 use truce_params::Params;
 
+use crate::claims::{claimed_keys, claimed_shortcuts, clear_claims};
 use crate::platform::ParentWindow;
 #[cfg(target_os = "windows")]
 use crate::render_thread::{FramePacket, RenderThread};
@@ -386,10 +386,14 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     #[cfg(target_os = "windows")]
     render_thread: Option<RenderThread>,
     pending_events: Vec<egui::Event>,
-    /// Physical keys whose key-down this editor kept. The matching key-up
-    /// stays here even if a modifier landed in between, so a held note
-    /// still releases and the host does not see a key-up it never got.
-    held_keys: HashSet<keyboard_types::Code>,
+    /// Physical keys whose key-down this editor kept, with the egui key
+    /// that press was sent as. Every later event for the key - auto-repeat
+    /// and key-up - follows the press, whatever the claims, text focus or
+    /// modifiers say by then (see `HeldKeys` for the limits). The
+    /// release goes to egui as the *recorded* key: Shift+1 presses
+    /// `Exclamationmark`, and releasing Shift first makes the key-up read
+    /// `1`, which would strand `Exclamationmark` in egui's `keys_down`.
+    held_keys: HeldKeys<keyboard_types::Code, Option<egui::Key>>,
     modifiers: egui::Modifiers,
     start_time: std::time::Instant,
     size: (u32, u32),
@@ -516,7 +520,7 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             self.render_thread = crate::render_thread::hwnd_for(window)
                 .and_then(|hwnd| RenderThread::spawn(hwnd, phys_w, phys_h, device_lost.clone()));
         }
-        let egui_ctx = egui::Context::default();
+        let egui_ctx = crate::new_egui_context();
         egui_ctx.set_visuals(self.visuals.clone());
         if let Some(font_data) = self.font {
             crate::font::apply_font(&egui_ctx, font_data);
@@ -725,10 +729,14 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             // drain keeps `self.modifiers` current but never enqueues one, so
             // seed every frame with it - otherwise `ui.input(|i| i.modifiers)`
             // is always empty and shift fine-drag / cmd-alt-click logic breaks.
+            // Seeded *after* the drained events: egui keeps the last
+            // modifiers it sees, and a `WindowFocused(false)` in the batch
+            // resets them, which would otherwise wipe a modifier set by a
+            // later event in the same frame.
             events: {
                 let mut events = Vec::with_capacity(self.pending_events.len() + 1);
-                events.push(egui::Event::ModifiersChanged(self.modifiers));
                 events.append(&mut self.pending_events);
+                events.push(egui::Event::ModifiersChanged(self.modifiers));
                 events
             },
             focused: true,
@@ -1129,25 +1137,21 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     let text_focused = self.egui_ctx.text_edit_focused();
                     let claimed = claimed_keys(&self.egui_ctx);
                     let shortcuts = claimed_shortcuts(&self.egui_ctx);
-                    let key = egui_key_of(&kb.key);
-                    let was_held = self.held_keys.contains(&kb.code);
-                    if kb.state == KeyState::Up {
-                        self.held_keys.remove(&kb.code);
-                    }
-                    let keep = keep_key(
-                        text_focused,
-                        self.modifiers,
+                    let key = egui_key_of(&kb.key, kb.code);
+                    let kept = keep_key(text_focused, self.modifiers, key, &claimed, &shortcuts);
+                    let code = (kb.code != keyboard_types::Code::Unidentified).then_some(kb.code);
+                    let routed = self.held_keys.route(
+                        code,
+                        kb.state == KeyState::Down,
+                        kb.repeat,
                         key,
-                        &claimed,
-                        &shortcuts,
-                        was_held,
+                        kept,
                     );
-                    if keep && kb.state == KeyState::Down {
-                        self.held_keys.insert(kb.code);
-                    }
-                    if !keep {
+                    let Some(pressed) = routed else {
                         return EventStatus::Ignored;
-                    }
+                    };
+                    // Repeat / release as the key it was pressed as.
+                    let key = pressed.or(key);
 
                     // Text input. Suppress Text events when Ctrl/Cmd is
                     // held - otherwise Ctrl+A/Ctrl+C/etc. would also insert
@@ -1181,11 +1185,18 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     // Focus loss strands held keys: the key-up for anything
                     // down right now is delivered to whoever took focus, not
                     // here, so the code would sit in `held_keys` forever and
-                    // keep `keep_key` returning true for it - permanently
+                    // keep auto-repeat / key-up routing to us - permanently
                     // swallowing that key from the host even after the claim
-                    // is gone. Drop the set; a re-focus starts clean.
+                    // is gone. Drop the set and tell egui; a re-focus starts
+                    // clean.
                     if matches!(win, baseview::WindowEvent::Unfocused) {
-                        self.held_keys.clear();
+                        self.held_keys.drain().for_each(drop);
+                        // egui then clears its `keys_down` and modifiers. Reset
+                        // ours too: each frame re-seeds egui with them, so a
+                        // Cmd held across Cmd+Tab would read as down until the
+                        // next key event.
+                        self.modifiers = egui::Modifiers::NONE;
+                        self.pending_events.push(egui::Event::WindowFocused(false));
                     }
                     if let baseview::WindowEvent::Resized(info) = win {
                         // In host-driven (plug-in) mode the host's reported
@@ -1374,104 +1385,33 @@ fn convert_kb_modifiers(mods: keyboard_types::Modifiers) -> egui::Modifiers {
     }
 }
 
-/// The keys the editor's UI handles on the next key event. Keyed in
-/// egui's temp store by this private type (not a string), so only
-/// [`claim_keys`] can write the slot and no foreign value can collide.
-#[derive(Clone, Default)]
-struct ClaimedKeys(Vec<egui::Key>);
-
-/// Declare the keys this editor handles this frame. Call once per frame
-/// from your egui UI with the keys you use (a step sequencer's arrows,
-/// preset number keys, `egui::Key::Space` for a transport toggle, ...).
-/// Every *unclaimed* key is returned to the host so its own commands keep
-/// running while the plug-in window is focused. Two cases bypass this
-/// list: a key held with a Cmd / Ctrl / Alt modifier always goes to the
-/// host unless you claim it via [`claim_shortcuts`]), and a
-/// focused text field keeps every key. Pass [`egui::Key::ALL`] to claim
-/// everything.
-///
-/// A claim covers only the frame it was made in: stop calling this and the
-/// keys go back to the host on the next rendered frame. So claim
-/// unconditionally for keys you always handle, and conditionally (inside
-/// the `if` that draws the panel owning them) for keys you only sometimes
-/// handle - there's no "unclaim" to pair with it.
-///
-/// ```ignore
-/// truce_egui::claim_keys(ui.ctx(), &[egui::Key::ArrowLeft, egui::Key::ArrowRight]);
-/// ```
-pub fn claim_keys(ctx: &egui::Context, keys: &[egui::Key]) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::NULL, ClaimedKeys(keys.to_vec())));
+/// The egui key for a baseview key event, or `None` for a key egui has no
+/// variant for (`Unidentified`, exotic system keys). egui's own name table
+/// (`Key::from_name`) takes both symbols and the DOM names
+/// `keyboard-types` displays (`-`, `F5`, `BracketLeft`, `Insert`), so
+/// every key in `egui::Key::ALL` converts and `claim_keys(Key::ALL)`
+/// really claims everything. The physical `code` is the fallback for a
+/// logical key egui can't name - a shifted symbol like `_`, or a non-US
+/// layout's character - the same physical-key fallback egui-winit uses.
+fn egui_key_of(key: &keyboard_types::Key, code: keyboard_types::Code) -> Option<egui::Key> {
+    let logical = match key {
+        keyboard_types::Key::Character(s) => egui::Key::from_name(s),
+        named => egui::Key::from_name(&named.to_string()),
+    };
+    logical.or_else(|| egui::Key::from_name(&code.to_string()))
 }
 
-fn claimed_keys(ctx: &egui::Context) -> Vec<egui::Key> {
-    ctx.data(|data| {
-        data.get_temp::<ClaimedKeys>(egui::Id::NULL)
-            .map_or_default(|claimed| claimed.0)
-    })
-}
-
-/// The modifier chords the editor's UI handles on the next key event.
-/// A separate temp slot from [`ClaimedKeys`] (distinct type at the same
-/// id), so [`claim_keys`] and [`claim_shortcuts`] don't clobber each other.
-#[derive(Clone, Default)]
-struct ClaimedShortcuts(Vec<egui::KeyboardShortcut>);
-
-/// Like [`claim_keys`], but for modifier chords (Cmd+Z, Ctrl+Shift+A, ...).
-/// Call once per frame with the chords your editor handles; an unclaimed
-/// chord returns to the host so its own shortcuts keep working. Modifier
-/// matching is egui's [`egui::Modifiers::matches_exact`], so
-/// `Modifiers::COMMAND` is Cmd on macOS and Ctrl elsewhere, and `alt` /
-/// `shift` must match exactly.
-///
-/// Per-frame like [`claim_keys`]: a chord stays claimed only while the UI
-/// keeps declaring it.
-///
-/// ```ignore
-/// use egui::{Key, KeyboardShortcut, Modifiers};
-/// truce_egui::claim_shortcuts(ui.ctx(), &[KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)]);
-/// ```
-pub fn claim_shortcuts(ctx: &egui::Context, shortcuts: &[egui::KeyboardShortcut]) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::NULL, ClaimedShortcuts(shortcuts.to_vec())));
-}
-
-fn claimed_shortcuts(ctx: &egui::Context) -> Vec<egui::KeyboardShortcut> {
-    ctx.data(|data| {
-        data.get_temp::<ClaimedShortcuts>(egui::Id::NULL)
-            .map_or_default(|claimed| claimed.0)
-    })
-}
-
-/// Drop both claim slots. Called once per rendered frame, just before the
-/// UI runs, so a claim covers only the frame that declared it - see the
-/// call site in `run_frame`.
-fn clear_claims(ctx: &egui::Context) {
-    ctx.data_mut(|data| {
-        data.remove::<ClaimedKeys>(egui::Id::NULL);
-        data.remove::<ClaimedShortcuts>(egui::Id::NULL);
-    });
-}
-
-fn egui_key_of(key: &keyboard_types::Key) -> Option<egui::Key> {
-    if let keyboard_types::Key::Character(text) = key {
-        match text.as_str() {
-            "," => return Some(egui::Key::Comma),
-            "." => return Some(egui::Key::Period),
-            _ => {}
-        }
-    }
-    convert_key(key)
-}
-
-/// `held` is a key-up for a key-down this editor already kept.
+/// This key event's own verdict: whether it stays with the editor.
+/// `held_keys` overrides it for a held key's repeats and key-up, which
+/// follow their key-down.
 fn keep_key(
     text_focused: bool,
     modifiers: egui::Modifiers,
     key: Option<egui::Key>,
     claimed: &[egui::Key],
     shortcuts: &[egui::KeyboardShortcut],
-    held: bool,
 ) -> bool {
-    if text_focused || held {
+    if text_focused {
         return true;
     }
     let Some(key) = key else {
@@ -1489,69 +1429,6 @@ fn keep_key(
         .any(|s| s.logical_key == key && modifiers.matches_exact(s.modifiers))
 }
 
-fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
-    use keyboard_types::Key::{
-        ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Character, Delete, End, Enter,
-        Escape, Home, PageDown, PageUp, Tab,
-    };
-    Some(match key {
-        Character(s) => match s.as_str() {
-            "a" | "A" => egui::Key::A,
-            "b" | "B" => egui::Key::B,
-            "c" | "C" => egui::Key::C,
-            "d" | "D" => egui::Key::D,
-            "e" | "E" => egui::Key::E,
-            "f" | "F" => egui::Key::F,
-            "g" | "G" => egui::Key::G,
-            "h" | "H" => egui::Key::H,
-            "i" | "I" => egui::Key::I,
-            "j" | "J" => egui::Key::J,
-            "k" | "K" => egui::Key::K,
-            "l" | "L" => egui::Key::L,
-            "m" | "M" => egui::Key::M,
-            "n" | "N" => egui::Key::N,
-            "o" | "O" => egui::Key::O,
-            "p" | "P" => egui::Key::P,
-            "q" | "Q" => egui::Key::Q,
-            "r" | "R" => egui::Key::R,
-            "s" | "S" => egui::Key::S,
-            "t" | "T" => egui::Key::T,
-            "u" | "U" => egui::Key::U,
-            "v" | "V" => egui::Key::V,
-            "w" | "W" => egui::Key::W,
-            "x" | "X" => egui::Key::X,
-            "y" | "Y" => egui::Key::Y,
-            "z" | "Z" => egui::Key::Z,
-            "0" => egui::Key::Num0,
-            "1" => egui::Key::Num1,
-            "2" => egui::Key::Num2,
-            "3" => egui::Key::Num3,
-            "4" => egui::Key::Num4,
-            "5" => egui::Key::Num5,
-            "6" => egui::Key::Num6,
-            "7" => egui::Key::Num7,
-            "8" => egui::Key::Num8,
-            "9" => egui::Key::Num9,
-            " " => egui::Key::Space,
-            _ => return None,
-        },
-        Enter => egui::Key::Enter,
-        Tab => egui::Key::Tab,
-        Backspace => egui::Key::Backspace,
-        Escape => egui::Key::Escape,
-        Delete => egui::Key::Delete,
-        ArrowLeft => egui::Key::ArrowLeft,
-        ArrowRight => egui::Key::ArrowRight,
-        ArrowUp => egui::Key::ArrowUp,
-        ArrowDown => egui::Key::ArrowDown,
-        Home => egui::Key::Home,
-        End => egui::Key::End,
-        PageUp => egui::Key::PageUp,
-        PageDown => egui::Key::PageDown,
-        _ => return None,
-    })
-}
-
 // Editor trait implementation
 
 impl<P: Params + 'static> Editor for EguiEditor<P> {
@@ -1564,7 +1441,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // the Arc<P> we stored at construction.
         let typed_ctx = context.with_params(self.params.clone());
         self.context = Some(typed_ctx.clone());
-        let egui_ctx = egui::Context::default();
+        let egui_ctx = crate::new_egui_context();
         let visuals = self.visuals.clone().unwrap_or_else(crate::theme::dark);
         egui_ctx.set_visuals(visuals.clone());
         let font = self.font;
@@ -1704,7 +1581,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     #[cfg(target_os = "windows")]
                     render_thread,
                     pending_events: Vec::new(),
-                    held_keys: HashSet::new(),
+                    held_keys: HeldKeys::new(),
                     modifiers: egui::Modifiers::NONE,
                     start_time: std::time::Instant::now(),
                     size,
@@ -1863,11 +1740,12 @@ impl<P: Params + ?Sized> Drop for EguiEditor<P> {
 
 #[cfg(test)]
 mod key_tests {
-    use super::{
-        claim_keys, claim_shortcuts, claimed_keys, claimed_shortcuts, clear_claims, egui_key_of,
-        keep_key,
+    use super::{egui_key_of, keep_key};
+    use crate::claims::{
+        claim_keys, claim_shortcuts, claimed_keys, claimed_shortcuts, clear_claims,
     };
     use egui::{Key, KeyboardShortcut, Modifiers};
+    use keyboard_types::Code;
 
     /// A claim must not outlive the frame that made it. egui's temp store
     /// holds an `insert_temp` value until it is overwritten, so without the
@@ -1895,14 +1773,35 @@ mod key_tests {
             Modifiers::NONE,
             Some(Key::ArrowLeft),
             &claimed_keys(&ctx),
-            &claimed_shortcuts(&ctx),
-            false
+            &claimed_shortcuts(&ctx)
         ));
     }
 
     /// `claim_keys` and `claim_shortcuts` share an id and are distinguished
     /// only by type, so clearing one must not disturb a re-claim of the
     /// other on the following frame.
+    /// The docs tell each panel to claim its own keys, so two calls in one
+    /// frame must add up rather than the later one replacing the earlier.
+    #[test]
+    fn claims_accumulate_within_a_frame() {
+        let ctx = egui::Context::default();
+        let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
+        let redo = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+
+        clear_claims(&ctx);
+        claim_keys(&ctx, &[Key::ArrowLeft, Key::ArrowRight]);
+        claim_keys(&ctx, &[Key::Space, Key::ArrowLeft]);
+        claim_shortcuts(&ctx, &[undo]);
+        claim_shortcuts(&ctx, &[redo, undo]);
+
+        assert_eq!(
+            claimed_keys(&ctx),
+            vec![Key::ArrowLeft, Key::ArrowRight, Key::Space],
+            "both panels' keys claimed, no duplicates"
+        );
+        assert_eq!(claimed_shortcuts(&ctx), vec![undo, redo]);
+    }
+
     #[test]
     fn the_two_claim_slots_stay_independent() {
         let ctx = egui::Context::default();
@@ -1929,85 +1828,92 @@ mod key_tests {
 
     #[test]
     fn space_goes_to_host_unless_focused_or_claimed() {
-        let space = egui_key_of(&keyboard_types::Key::Character(" ".into()));
+        let space = egui_key_of(&keyboard_types::Key::Character(" ".into()), Code::Space);
         // Space maps to a key so an editor can opt into it via `claim_keys`.
         assert_eq!(space, Some(Key::Space));
         // Unclaimed, no text field: Space returns to the host (play/pause).
-        assert!(!keep_key(false, Modifiers::NONE, space, &[], &[], false));
+        assert!(!keep_key(false, Modifiers::NONE, space, &[], &[]));
         // A focused text field keeps every key, including Space.
-        assert!(keep_key(true, Modifiers::NONE, space, &[], &[], false));
+        assert!(keep_key(true, Modifiers::NONE, space, &[], &[]));
         // Claimed as a plain key: kept.
-        assert!(keep_key(
-            false,
-            Modifiers::NONE,
-            space,
-            &[Key::Space],
-            &[],
-            false
-        ));
+        assert!(keep_key(false, Modifiers::NONE, space, &[Key::Space], &[]));
         // A Cmd chord over a plain claim still routes to the host.
         assert!(!keep_key(
             false,
             Modifiers::COMMAND,
             space,
             &[Key::Space],
-            &[],
-            false
+            &[]
         ));
     }
 
     #[test]
     fn claimed_plain_keys_stay_and_chords_go_to_host() {
         let claimed = [Key::Num1, Key::M, Key::Comma];
-        let one = egui_key_of(&keyboard_types::Key::Character("1".into()));
-        let comma = egui_key_of(&keyboard_types::Key::Character(",".into()));
-        assert!(keep_key(false, Modifiers::NONE, one, &claimed, &[], false));
-        assert!(keep_key(
-            false,
-            Modifiers::NONE,
-            comma,
-            &claimed,
-            &[],
-            false
-        ));
-        // A Cmd chord over a plainly-claimed key goes to the host...
-        assert!(!keep_key(
-            false,
-            Modifiers::COMMAND,
-            one,
-            &claimed,
-            &[],
-            false
-        ));
-        // ...unless it's the key-up for a key-down already kept.
-        assert!(keep_key(
-            false,
-            Modifiers::COMMAND,
-            one,
-            &claimed,
-            &[],
-            true
-        ));
+        let one = egui_key_of(&keyboard_types::Key::Character("1".into()), Code::Digit1);
+        let comma = egui_key_of(&keyboard_types::Key::Character(",".into()), Code::Comma);
+        assert!(keep_key(false, Modifiers::NONE, one, &claimed, &[]));
+        assert!(keep_key(false, Modifiers::NONE, comma, &claimed, &[]));
+        // A Cmd chord over a plainly-claimed key goes to the host (a
+        // repeat of a kept press stays kept, via `HeldKeys`, not here).
+        assert!(!keep_key(false, Modifiers::COMMAND, one, &claimed, &[]));
     }
 
     #[test]
     fn claimed_shortcuts_capture_chords_by_exact_modifiers() {
-        let z = egui_key_of(&keyboard_types::Key::Character("z".into()));
+        let z = egui_key_of(&keyboard_types::Key::Character("z".into()), Code::KeyZ);
         let shortcuts = [KeyboardShortcut::new(Modifiers::COMMAND, Key::Z)];
         // Cmd+Z is kept because it's claimed as a shortcut.
-        assert!(keep_key(
-            false,
-            Modifiers::COMMAND,
-            z,
-            &[],
-            &shortcuts,
-            false
-        ));
+        assert!(keep_key(false, Modifiers::COMMAND, z, &[], &shortcuts));
         // Plain Z (no modifier) does not match the Cmd+Z claim.
-        assert!(!keep_key(false, Modifiers::NONE, z, &[], &shortcuts, false));
+        assert!(!keep_key(false, Modifiers::NONE, z, &[], &shortcuts));
         // A different chord must match alt / shift exactly: Cmd+Shift+Z
         // does not satisfy a Cmd+Z claim.
         let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-        assert!(!keep_key(false, cmd_shift, z, &[], &shortcuts, false));
+        assert!(!keep_key(false, cmd_shift, z, &[], &shortcuts));
+    }
+
+    /// `claim_keys(Key::ALL)` is documented to claim everything, so every
+    /// key egui can name must convert - not just letters, digits and
+    /// navigation. F-keys, punctuation and brackets used to fall through to
+    /// the host regardless of claims.
+    #[test]
+    fn keys_beyond_letters_and_arrows_convert_and_claim() {
+        use keyboard_types::Key as K;
+        let ch = |s: &str| K::Character(s.into());
+        let cases = [
+            (K::F5, Code::F5, Key::F5),
+            (K::F12, Code::F12, Key::F12),
+            (K::Insert, Code::Insert, Key::Insert),
+            (ch("-"), Code::Minus, Key::Minus),
+            (ch("="), Code::Equal, Key::Equals),
+            (ch("["), Code::BracketLeft, Key::OpenBracket),
+            (ch("]"), Code::BracketRight, Key::CloseBracket),
+            (ch("/"), Code::Slash, Key::Slash),
+            (ch(";"), Code::Semicolon, Key::Semicolon),
+            (ch("`"), Code::Backquote, Key::Backtick),
+            // Shifted symbol egui has no variant for: physical fallback.
+            (ch("_"), Code::Minus, Key::Minus),
+        ];
+        for (logical, code, want) in cases {
+            let got = egui_key_of(&logical, code);
+            assert_eq!(got, Some(want), "{logical:?} / {code:?}");
+            assert!(
+                keep_key(false, Modifiers::NONE, got, Key::ALL, &[]),
+                "{want:?} not claimed by Key::ALL"
+            );
+        }
+        // egui 0.37 names the physical L/R modifiers and media keys too,
+        // and lists them in `Key::ALL`, so they're claimable as well.
+        assert_eq!(
+            egui_key_of(&K::Shift, Code::ShiftLeft),
+            Some(Key::ShiftLeft)
+        );
+        assert_eq!(
+            egui_key_of(&K::MediaPlayPause, Code::MediaPlayPause),
+            Some(Key::MediaPlayPause)
+        );
+        // No egui variant: stays with the host whatever is claimed.
+        assert_eq!(egui_key_of(&K::Unidentified, Code::Unidentified), None);
     }
 }
