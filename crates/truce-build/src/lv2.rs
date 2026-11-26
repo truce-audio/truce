@@ -45,9 +45,9 @@ pub struct Lv2Bundle {
     pub plugin_name: String,
     pub vendor: String,
     pub url: String,
-    /// Plugin version (`"major.minor.patch"`). LV2 has no major component
-    /// (incompatible changes belong in the plugin URI), so the TTL maps
-    /// minor/patch onto `lv2:minorVersion` / `lv2:microVersion`.
+    /// Plugin version (`"major.minor.patch"`). LV2 has only a minor and a
+    /// micro component; see [`lv2_version`] for how the triple maps onto
+    /// them.
     pub version: String,
     /// Plugin URI. Caller computes (typically `<vendor.url>/lv2/<bundle_id>`
     /// or `urn:truce:<bundle_id>` when `url` is empty) - kept explicit so
@@ -298,7 +298,10 @@ fn render_manifest(b: &Lv2Bundle, layout: &Layout, ttl_basename: &str, so_name: 
         let _ = writeln!(f, "    ui:binary <{so_name}> ;");
         // Advertise the idle interface so hosts tick the UI on their
         // main loop; `ui_extension_data` returns an `LV2UI_Idle_Interface`
-        // that drives the editor's `idle` (repaint / animation).
+        // that drives the editor's `idle` (repaint / animation). The UI
+        // spec asks for it as both a feature and extension data, and hosts
+        // that check the feature list skip idle without the former.
+        let _ = writeln!(f, "    lv2:optionalFeature ui:idleInterface ;");
         let _ = writeln!(f, "    lv2:extensionData ui:idleInterface ;");
 
         // Subscribe the UI to the DSP's notify-out port.
@@ -366,14 +369,9 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
         let _ = writeln!(f, "    a lv2:Plugin, {category} ;");
     }
     let _ = writeln!(f, "    doap:name \"{}\" ;", escape_turtle(&b.plugin_name));
-    // LV2 versioning is minor/micro only; derive both from the plugin
-    // version via the shared packer (major is dropped - it belongs in the
-    // URI). Hosts pick the highest version among bundles sharing a URI. The
-    // LV2 convention that odd = development is not enforced; the real
-    // components ship as-is.
-    let version_word = truce_utils::version_word(&b.version);
-    let _ = writeln!(f, "    lv2:minorVersion {} ;", (version_word >> 8) & 0xFF);
-    let _ = writeln!(f, "    lv2:microVersion {} ;", version_word & 0xFF);
+    let (minor, micro) = lv2_version(&b.version);
+    let _ = writeln!(f, "    lv2:minorVersion {minor} ;");
+    let _ = writeln!(f, "    lv2:microVersion {micro} ;");
     let _ = writeln!(f, "    doap:maintainer [");
     let _ = writeln!(
         f,
@@ -831,9 +829,41 @@ fn fmt_pset_value(v: f64) -> String {
     }
 }
 
+/// `(lv2:minorVersion, lv2:microVersion)` for a plug-in version. LV2 has
+/// no major, hosts keep the highest version among bundles sharing a URI,
+/// and an odd minor or micro - or minor 0 - marks a development release.
+/// So the major and minor both go into the LV2 minor, doubled to stay even
+/// and offset past 0 (`2 * (major * 256 + minor) + 2`), and the patch into
+/// the micro, doubled (`2 * patch`): 1.5.3 → 524.6, 2.0.0 → 1026.0. Every
+/// release orders above the last across a major bump and reads as stable.
+#[must_use]
+pub fn lv2_version(version: &str) -> (u32, u32) {
+    let word = truce_utils::version_word(version);
+    let (major, minor, patch) = (word >> 16, (word >> 8) & 0xFF, word & 0xFF);
+    (2 * ((major << 8) | minor) + 2, 2 * patch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lv2_version_orders_across_majors_and_reads_as_a_release() {
+        let v = |s| lv2_version(s);
+        assert_eq!(v("1.5.3"), (524, 6));
+        assert_eq!(v("2.0.0"), (1026, 0));
+        // A major bump orders above the previous major's last minor.
+        assert!(v("2.0.0") > v("1.5.0"));
+        assert!(v("1.0.1") > v("0.255.255"));
+        assert!(v("1.2.4") > v("1.2.3"));
+        for s in ["0.0.0", "1.0.0", "2.0.1", "0.1.3", "65535.255.255"] {
+            let (minor, micro) = v(s);
+            assert!(
+                minor > 0 && minor % 2 == 0 && micro % 2 == 0,
+                "{s} reads as a dev release"
+            );
+        }
+    }
 
     #[test]
     fn plugin_uri_empty_url_falls_back_to_urn() {
@@ -906,6 +936,18 @@ mod tests {
                 .map(|s| (*s).to_string())
                 .collect(),
         }
+    }
+
+    /// The UI lists the idle interface as an optional feature as well as
+    /// extension data, as the UI spec asks - hosts that read only the
+    /// feature list would never call idle otherwise.
+    #[test]
+    fn ui_declares_idle_interface_as_feature_and_extension_data() {
+        let mut b = bundle(Lv2Category::Effect, false, vec![]);
+        b.has_ui = true;
+        let (manifest, _ttl) = render_ttls(&b, "x.so");
+        assert!(manifest.contains("lv2:optionalFeature ui:idleInterface ;"));
+        assert!(manifest.contains("lv2:extensionData ui:idleInterface ;"));
     }
 
     /// The atom input port is the control/event input for EVERY plugin
