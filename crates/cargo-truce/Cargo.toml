@@ -26,6 +26,10 @@ path = "src/main.rs"
 thiserror = { workspace = true }
 toml = { workspace = true }
 serde = { version = "1", features = ["derive"] }
+# Parse `cargo metadata` output (reading a plugin crate's resolved
+# version) by key rather than by brittle substring match. Already in the
+# workspace lock via other crates, so it adds no new build.
+serde_json = "1"
 # Substitution engine for `cargo truce new` scaffolds. Single dep on
 # top of the existing serde - the only transitive that lands.
 tinytemplate = "1.2"
