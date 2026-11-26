@@ -990,7 +990,19 @@ fn call(fmt: &ExternalFormat, verb: &str, stdin: &[u8]) -> Result<Vec<u8>, Cargo
             &format!("failed ({}); its own output is above", out.status),
         ));
     }
-    sent.map_err(|e| describe_err(fmt, verb, &format!("could not send it the request: {e}")))?;
+    // A helper may answer from part of its request and exit - `preset-decode`
+    // saying "not mine" after the header - which closes the pipe under the
+    // writer. Once it has exited successfully, that broken pipe is just the
+    // rest of the request going unread, not a failure.
+    if let Err(e) = sent
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(describe_err(
+            fmt,
+            verb,
+            &format!("could not send it the request: {e}"),
+        ));
+    }
     Ok(out.stdout)
 }
 
@@ -1091,6 +1103,29 @@ mod tests {
                 .map(|os| os.as_ref().map(|r| (r.user.clone(), r.system.clone())))
         };
         assert_eq!(roots(&legacy.install_dir), roots(&helper.install_dir));
+    }
+
+    /// A helper may answer without reading its whole request (`preset-decode`
+    /// declining a file after its header). Its exit status decides the
+    /// call; the broken pipe the unread rest causes doesn't.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_that_exits_without_reading_its_request_succeeds() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = std::env::temp_dir().join(format!("truce-call-unread-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("truce-format-unread");
+        std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut fmt = lv2();
+        fmt.helper = script;
+        // Well past any pipe buffer, so the writer is still mid-request
+        // when the helper exits.
+        let answer = call(&fmt, "preset-decode", &vec![b'x'; 1 << 20]);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(answer.unwrap(), Vec::<u8>::new());
     }
 
     /// A `stage` request inlines every factory preset, so it can be far
