@@ -597,31 +597,68 @@ pub(crate) fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> O
 /// `version.workspace = true` and a crate-local `version` both work.
 /// `None` if metadata fails or the crate isn't found.
 ///
-/// `cargo metadata` emits each package compactly as
-/// `{"name":"<crate>","version":"<v>",...}`; a *dependency* entry uses
-/// `"req"` (not `"version"`) right after its name, so matching the
-/// adjacent `,"version":"` lands on the package, never a dependency.
+/// Looks the package up by key in the parsed JSON (`packages[].name`),
+/// not by substring, so it doesn't depend on cargo's key order. `--no-deps`
+/// means `packages` holds only workspace members, so find-by-name is
+/// unambiguous.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn read_plugin_crate_version(project_root: &Path, crate_name: &str) -> Option<String> {
-    let out = Command::new("cargo")
-        .args([
-            "metadata",
-            "--no-deps",
-            "--format-version=1",
-            "--manifest-path",
-        ])
-        .arg(project_root.join("Cargo.toml"))
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    let text = cargo_metadata_text(project_root)?;
+    // Parse by key, not by substring: `cargo metadata`'s JSON key order
+    // isn't contractual, so a `"name":"…","version":"…"` match would be
+    // fragile across cargo versions.
+    let meta: serde_json::Value = serde_json::from_str(&text).ok()?;
+    meta.get("packages")?
+        .as_array()?
+        .iter()
+        .find(|pkg| pkg.get("name").and_then(serde_json::Value::as_str) == Some(crate_name))?
+        .get("version")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// `cargo metadata --no-deps` stdout for a workspace root, memoized for
+/// the process. Packaging a plug-in calls [`read_plugin_crate_version`]
+/// once per output format, and `cargo metadata` is a multi-hundred-ms
+/// shell-out; the output is identical across those calls (one workspace),
+/// so cache it per root. A failure is cached as `None` too - it's
+/// deterministic within a run and re-shelling wouldn't change it.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn cargo_metadata_text(project_root: &Path) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(project_root)
+    {
+        return cached.clone();
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let needle = format!("\"name\":\"{crate_name}\",\"version\":\"");
-    let idx = text.find(&needle)?;
-    let rest = &text[idx + needle.len()..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
+
+    let text = (|| {
+        let out = Command::new("cargo")
+            .args([
+                "metadata",
+                "--no-deps",
+                "--format-version=1",
+                "--manifest-path",
+            ])
+            .arg(project_root.join("Cargo.toml"))
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    })();
+
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(project_root.to_path_buf(), text.clone());
+    text
 }
 
 /// The version a plug-in's bundle metadata (plist / AU `AudioComponents`
