@@ -130,7 +130,10 @@ impl<L: PluginLogicCore<S>, S: Sample> BlockRunner<L, S> {
         // both outlive the `AudioBuffer`, which never escapes this call.
         let mut buffer = unsafe { AudioBuffer::from_slices(inputs, &mut out_refs, frames) };
 
-        let mut out_events = EventList::with_capacity(self.out_event_capacity);
+        // Growable, like the offline driver's lists: this is a test
+        // harness with no RT constraint, so a reallocation is harmless but a
+        // dropped plugin-emitted event would be a wrong test result.
+        let mut out_events = EventList::growable_with_capacity(self.out_event_capacity);
         let mut context =
             ProcessContext::new(&self.transport, self.sample_rate, frames, &mut out_events);
         let status = L::process(&mut self.state, params, &mut buffer, events, &mut context);

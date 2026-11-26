@@ -460,34 +460,80 @@ impl EventList {
     /// (the audio thread can't recover from an out-of-range offset, so
     /// we treat that as a contract violation rather than panicking).
     ///
-    /// On a full fail-closed list, a non-parameter event is dropped
-    /// rather than reallocating on the audio thread. A
-    /// [`EventBody::ParamChange`] is never dropped: parameter values are
-    /// applied only from these events, so losing one would leave the
-    /// parameter at a stale value until the host moves it again. It is
-    /// instead folded into the latest queued change for the same id
-    /// (the final value survives; only an intermediate automation step
-    /// is lost), and if there is none the ring grows - a one-off
-    /// reallocation that a list sized via [`block_event_capacity`]
-    /// should never hit.
+    /// On a full fail-closed list, a non-essential event is dropped rather
+    /// than reallocating on the audio thread. These are never dropped:
+    ///
+    /// - [`EventBody::ParamChange`]: parameter values are applied only from
+    ///   these events, so losing one would leave the parameter at a stale
+    ///   value until the host moves it again. It is folded into the latest
+    ///   queued change for the same id (the final value survives; only an
+    ///   intermediate automation step is lost), and if there is none the
+    ///   ring grows.
+    /// - [`EventBody::ParamMod`]: the same reasoning - a modulation offset
+    ///   is a level, not a delta, held until the host sends the next one,
+    ///   so a dropped one leaves CLAP modulation stale. Folded into the
+    ///   latest queued mod for the same `(id, note_id)`, else the ring
+    ///   grows.
+    /// - [`EventBody::NoteOff`] / [`EventBody::NoteOff2`]: a dropped release
+    ///   leaves a voice stuck sounding forever. A note-off can't be folded
+    ///   like a param change, so the ring grows to take it.
+    ///
+    /// Either grow is a one-off reallocation that a list sized via
+    /// [`block_event_capacity`] should never hit.
+    ///
+    /// Channel-mode "All Notes Off" / "All Sound Off" (CC 123 / 120) are
+    /// *not* exempt: they ride as [`EventBody::ControlChange`], and this
+    /// layer carries events wire-native without interpreting CC numbers, so
+    /// honoring them here would push MIDI channel-mode semantics into a
+    /// layer that deliberately has none. They remain droppable on a full
+    /// list - a deliberate scope choice, not an oversight.
     pub fn push(&mut self, event: Event) {
         if self.fail_closed && self.events.len() == self.events.capacity() {
-            let EventBody::ParamChange { id, value } = event.body else {
-                return;
-            };
-            // Keep the queued entry's offset: moving it later could break
-            // the order of an already-sorted list.
-            let queued = self
-                .events
-                .iter_mut()
-                .rev()
-                .find_map(|e| match &mut e.body {
-                    EventBody::ParamChange { id: qid, value: qv } if *qid == id => Some(qv),
-                    _ => None,
-                });
-            if let Some(qv) = queued {
-                *qv = value;
-                return;
+            match &event.body {
+                EventBody::ParamChange { id, value } => {
+                    let (id, value) = (*id, *value);
+                    // Keep the queued entry's offset: moving it later could
+                    // break the order of an already-sorted list.
+                    let queued = self
+                        .events
+                        .iter_mut()
+                        .rev()
+                        .find_map(|e| match &mut e.body {
+                            EventBody::ParamChange { id: qid, value: qv } if *qid == id => Some(qv),
+                            _ => None,
+                        });
+                    if let Some(qv) = queued {
+                        *qv = value;
+                        return;
+                    }
+                    // No prior change to fold into: fall through and grow.
+                }
+                EventBody::ParamMod { id, note_id, value } => {
+                    let (id, note_id, value) = (*id, *note_id, *value);
+                    // Same fold as `ParamChange`, keyed by voice too: a
+                    // per-note mod mustn't overwrite another note's.
+                    let queued = self
+                        .events
+                        .iter_mut()
+                        .rev()
+                        .find_map(|e| match &mut e.body {
+                            EventBody::ParamMod {
+                                id: qid,
+                                note_id: qn,
+                                value: qv,
+                            } if *qid == id && *qn == note_id => Some(qv),
+                            _ => None,
+                        });
+                    if let Some(qv) = queued {
+                        *qv = value;
+                        return;
+                    }
+                    // No prior mod to fold into: fall through and grow.
+                }
+                // Never drop a release; fall through and grow the ring.
+                EventBody::NoteOff { .. } | EventBody::NoteOff2 { .. } => {}
+                // Any other event on a full list is dropped.
+                _ => return,
             }
         }
         self.events.push(event);
@@ -787,6 +833,116 @@ mod tests {
             (0..10).collect::<Vec<_>>(),
             "every param keeps its change"
         );
+    }
+
+    #[test]
+    fn full_list_folds_or_grows_param_mods_instead_of_dropping() {
+        let mods = |list: &EventList| -> Vec<(u32, i32, f64)> {
+            list.iter()
+                .filter_map(|e| match e.body {
+                    EventBody::ParamMod { id, note_id, value } => Some((id, note_id, value)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut list = EventList::with_capacity(4);
+        let cap = list.events.capacity();
+        for i in 0..10u32 {
+            list.push(Event::new(
+                i,
+                EventBody::ParamMod {
+                    id: 3,
+                    note_id: -1,
+                    value: f64::from(i),
+                },
+            ));
+        }
+        // Same (id, note_id): the overflow folds into the newest, no realloc.
+        assert_eq!(list.len(), cap);
+        assert_eq!(list.events.capacity(), cap, "folding must not reallocate");
+        assert_eq!(mods(&list).last(), Some(&(3, -1, 9.0)));
+        // Another voice's mod of the same param doesn't fold into it: grows.
+        list.push(Event::new(
+            9,
+            EventBody::ParamMod {
+                id: 3,
+                note_id: 5,
+                value: 0.5,
+            },
+        ));
+        assert_eq!(list.len(), cap + 1);
+        assert_eq!(mods(&list).last(), Some(&(3, 5, 0.5)));
+        assert_eq!(
+            mods(&list).iter().rfind(|m| m.1 == -1),
+            Some(&(3, -1, 9.0)),
+            "the global mod kept its value"
+        );
+    }
+
+    #[test]
+    fn full_list_never_drops_note_offs() {
+        // A fail-closed ring filled to exactly capacity, so the *next* push
+        // hits the full branch. Each case below pushes a single event onto
+        // its own full ring, so the drop-vs-grow decision is tested directly
+        // on the event under test (not whichever one happens to land on the
+        // capacity boundary).
+        let full = || {
+            let mut list = EventList::with_capacity(4);
+            let cc = EventBody::ControlChange {
+                group: 0,
+                channel: 0,
+                cc: 7,
+                value: 0,
+            };
+            for _ in 0..4 {
+                list.push(Event::new(0, cc));
+            }
+            assert_eq!(list.events.len(), 4);
+            assert_eq!(list.events.capacity(), 4, "ring is full at capacity");
+            list
+        };
+
+        // A plain CC on a full ring is dropped (non-essential).
+        let mut list = full();
+        list.push(Event::new(
+            0,
+            EventBody::ControlChange {
+                group: 0,
+                channel: 0,
+                cc: 9,
+                value: 0,
+            },
+        ));
+        assert_eq!(list.events.len(), 4, "overflow CC dropped, not grown");
+
+        // A MIDI 1.0 release on a full ring grows instead of dropping - a
+        // lost note-off sticks a note.
+        let mut list = full();
+        list.push(Event::new(
+            0,
+            EventBody::NoteOff {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 0,
+            },
+        ));
+        assert_eq!(list.events.len(), 5, "NoteOff grew the full ring");
+
+        // A MIDI 2.0 release likewise.
+        let mut list = full();
+        list.push(Event::new(
+            0,
+            EventBody::NoteOff2 {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 0,
+                attribute_type: 0,
+                attribute: 0,
+            },
+        ));
+        assert_eq!(list.events.len(), 5, "NoteOff2 grew the full ring");
     }
 
     #[test]
