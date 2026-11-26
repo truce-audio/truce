@@ -249,10 +249,12 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut run_pluginval = false;
     let mut run_clap = false;
     let mut run_aax = false;
-    // Track explicit per-format flags so a missing validator counts as a
-    // failure for CI (`--clap`, `--pluginval`, …) but stays a warning for
-    // a casual `cargo truce validate` run on a host that's missing some
-    // tools. `--all` keeps the casual semantics.
+    // Track explicit per-format flags. A missing validator for an
+    // explicitly requested format (`--clap`, `--pluginval`, `--auval`, ...)
+    // fails the run. Without the flag (no flags, or `--all`), auval / AAX
+    // only warn, while a missing pluginval / clap-validator still counts
+    // (as skipped) when a VST3 / CLAP bundle is installed - there was
+    // something to validate.
     let mut auval_explicit = false;
     let mut auval_v3_explicit = false;
     let mut pluginval_explicit = false;
@@ -719,7 +721,9 @@ Options:
                    `fast`/`full`/`required`/`info` use Avid's AAX
                    Plug-In Validator (AAX_VALIDATOR); without it they
                    fall back to `load`.
-  --all            Run every available validator (default).
+  --all            Run every available validator (default). A missing
+                   pluginval / clap-validator still fails the run when
+                   a VST3 / CLAP bundle is installed.
   --skip-gui-tests Forwarded to pluginval as `--skip-gui-tests`. Use
                    on headless Linux CI without a GPU: the editor
                    probe needs FBConfigs the software-only GL stack
