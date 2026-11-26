@@ -71,9 +71,27 @@ pub struct RootInfo {
 pub fn render_root(root_struct: &str, crate_name: &str) -> String {
     let mut buf = String::new();
     let _ = writeln!(buf, "schema = {SCHEMA}");
-    let _ = writeln!(buf, "root = \"{}\"", toml_escape(root_struct));
-    let _ = writeln!(buf, "crate = \"{}\"", toml_escape(crate_name));
+    let _ = writeln!(buf, "root = \"{}\"", crate::toml_escape(root_struct));
+    let _ = writeln!(buf, "crate = \"{}\"", crate::toml_escape(crate_name));
     buf
+}
+
+/// The remedy for a tree missing a file its plugin's build should have
+/// written. Cargo doesn't track the files a proc macro writes, so once
+/// `target/truce-meta` is cleared (or a schema bump empties it), a cached
+/// build never reruns the derives that would refill it - the build
+/// "succeeds" and the tree stays empty until the crate recompiles.
+fn rebuild_hint(meta_dir: &Path) -> String {
+    let krate = meta_dir.file_name().map_or_else(
+        || "<crate>".to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    format!(
+        "If the plugin built fine, `{DIR}` was likely cleared while its \
+         build stayed cached - cargo doesn't rerun a derive it has \
+         cached, so nothing rewrites it. Run `cargo clean -p {krate}`, \
+         then build again."
+    )
 }
 
 /// Read `root.toml` back.
@@ -87,10 +105,10 @@ pub fn read_root(meta_dir: &Path) -> Result<RootInfo, String> {
     let content = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "no plugin metadata at {}: {e}. `truce::plugin!` writes it \
-             while the plugin crate compiles, so build the plugin \
-             first; if the build succeeded, check the crate is listed \
-             under `[[plugin]]` in truce.toml.",
-            path.display()
+             while the plugin crate compiles, so build the plugin first. \
+             {}",
+            path.display(),
+            rebuild_hint(meta_dir)
         )
     })?;
     let doc: toml::Table = content
@@ -219,13 +237,11 @@ fn walk(
     let content = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "no metadata sidecar at {}: {e}. derive(Params) writes one \
-             for each Params struct during compile. Two common causes: \
-             the type lives in another crate (cross-crate #[nested] is \
-             unsupported), or the `truce::plugin!` invocation sits \
-             lexically *above* the `{struct_name}` struct - the derive \
-             hasn't written the sidecar yet when the walk reads it. \
-             Move `plugin!` below the struct.",
-            path.display()
+             for each Params struct while the crate compiles. If \
+             `{struct_name}` lives in another crate, that's the cause: \
+             cross-crate #[nested] is unsupported. {}",
+            path.display(),
+            rebuild_hint(meta_dir)
         )
     })?;
     let doc: toml::Table = content
@@ -464,10 +480,6 @@ fn toml_f64(v: &toml::Value) -> Option<f64> {
         toml::Value::Integer(i) => Some(*i as f64),
         _ => None,
     }
-}
-
-fn toml_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(test)]

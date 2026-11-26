@@ -25,10 +25,18 @@
 //! package time, where [`truce_build::meta::read_root`] can say what is
 //! missing and why.
 //!
-//! Known limit: cross-crate `#[nested]` is unsupported. The walk looks
-//! for sidecars in the plugin's own `<target>/truce-meta/<crate>/`
-//! directory, so a nested `Params` type from another crate has none
-//! there.
+//! Known limits:
+//!
+//! - Cross-crate `#[nested]` is unsupported. The walk looks for sidecars
+//!   in the plugin's own `<target>/truce-meta/<crate>/` directory, so a
+//!   nested `Params` type from another crate has none there.
+//! - `Params` and `ParamEnum` type names must be unique within a crate.
+//!   Sidecars are keyed by the bare type name, because a derive can't
+//!   see its type's module path at expansion time - so `osc::Settings`
+//!   and `filter::Settings` share one `Settings.params.toml`, the last
+//!   derive to run wins, and both nested slots resolve to it. Nothing
+//!   fails: the walk just produces the wrong ports and names, which
+//!   for LV2 are persisted in host sessions. Rename one of the types.
 
 use crate::{MeterField, ParamField};
 use proc_macro::TokenStream;
@@ -71,12 +79,16 @@ pub(crate) fn write_struct_sidecar(
         let _ = writeln!(buf, "id = {}", p.id());
         // The Rust field identifier: the stable, bare-TOML-safe key
         // `.preset` files resolve param names through.
-        let _ = writeln!(buf, "field = \"{}\"", toml_escape(&p.ident.to_string()));
+        let _ = writeln!(
+            buf,
+            "field = \"{}\"",
+            truce_build::toml_escape(&p.ident.to_string())
+        );
         let name = p.attrs.name.clone().unwrap_or_else(|| p.ident.to_string());
-        let _ = writeln!(buf, "name = \"{}\"", toml_escape(&name));
+        let _ = writeln!(buf, "name = \"{}\"", truce_build::toml_escape(&name));
         let _ = writeln!(buf, "kind = \"{}\"", param_kind_str(p.kind));
         if let Some(r) = &p.attrs.range {
-            let _ = writeln!(buf, "range = \"{}\"", toml_escape(r));
+            let _ = writeln!(buf, "range = \"{}\"", truce_build::toml_escape(r));
             // A const bound has no value at expansion time. Record that
             // as a fact; whether it is fatal is the reading format's
             // call (LV2 can't encode one, so it refuses).
@@ -90,7 +102,7 @@ pub(crate) fn write_struct_sidecar(
             // No explicit `enum(N)`: record the enum's bare type name so
             // the walk can resolve its variant count from the
             // `<Enum>.enum.toml` sidecar `derive(ParamEnum)` wrote.
-            let _ = writeln!(buf, "enum_type = \"{}\"", toml_escape(&seg));
+            let _ = writeln!(buf, "enum_type = \"{}\"", truce_build::toml_escape(&seg));
         }
         // Always emit `default` so a rendered port matches the runtime
         // `ParamInfo::default_plain`. The runtime falls back to `0.0`
@@ -109,10 +121,10 @@ pub(crate) fn write_struct_sidecar(
             }
         }
         if let Some(u) = &p.attrs.unit {
-            let _ = writeln!(buf, "unit = \"{}\"", toml_escape(u));
+            let _ = writeln!(buf, "unit = \"{}\"", truce_build::toml_escape(u));
         }
         if let Some(f) = &p.attrs.flags {
-            let _ = writeln!(buf, "flags = \"{}\"", toml_escape(f));
+            let _ = writeln!(buf, "flags = \"{}\"", truce_build::toml_escape(f));
         }
         if let Some(k) = p.attrs.midi_map {
             let binding = match k {
@@ -148,8 +160,12 @@ pub(crate) fn write_struct_sidecar(
             // The field identifier preserves declaration order and lets
             // the walk base and name auto-packed groups
             // deterministically.
-            let _ = writeln!(buf, "field = \"{}\"", toml_escape(&field.to_string()));
-            let _ = writeln!(buf, "label = \"{}\"", toml_escape(label));
+            let _ = writeln!(
+                buf,
+                "field = \"{}\"",
+                truce_build::toml_escape(&field.to_string())
+            );
+            let _ = writeln!(buf, "label = \"{}\"", truce_build::toml_escape(label));
             if let Some(b) = base {
                 let _ = writeln!(buf, "base = {b}");
             }
@@ -162,7 +178,7 @@ pub(crate) fn write_struct_sidecar(
             buf.push('\n');
         }
     }
-    let _ = std::fs::write(out_dir.join(format!("{struct_name}.params.toml")), buf);
+    write_whole(&out_dir.join(format!("{struct_name}.params.toml")), &buf);
 }
 
 /// Write `<enum_name>.enum.toml` - a `ParamEnum`'s variant count and
@@ -184,10 +200,10 @@ pub(crate) fn write_enum_sidecar(enum_name: &syn::Ident, variant_names: &[String
         if i > 0 {
             buf.push_str(", ");
         }
-        let _ = write!(buf, "\"{}\"", toml_escape(name));
+        let _ = write!(buf, "\"{}\"", truce_build::toml_escape(name));
     }
     buf.push_str("]\n");
-    let _ = std::fs::write(out_dir.join(format!("{enum_name}.enum.toml")), buf);
+    write_whole(&out_dir.join(format!("{enum_name}.enum.toml")), &buf);
 }
 
 /// Implementation of `__truce_meta_root!(<params_type>)`: record the
@@ -205,9 +221,9 @@ pub(crate) fn write_root(input: TokenStream) -> TokenStream {
         return quote::quote! { compile_error!("__truce_meta_root!: empty params path"); }.into();
     };
     if let (Some(out_dir), Ok(pkg_name)) = (meta_dir(), std::env::var("CARGO_PKG_NAME")) {
-        let _ = std::fs::write(
-            out_dir.join("root.toml"),
-            truce_build::meta::render_root(&seg.ident.to_string(), &pkg_name),
+        write_whole(
+            &out_dir.join("root.toml"),
+            &truce_build::meta::render_root(&seg.ident.to_string(), &pkg_name),
         );
     }
     TokenStream::new()
@@ -225,8 +241,28 @@ fn meta_dir() -> Option<PathBuf> {
     // Stamp the layout version alongside the data it describes, so a
     // reader can refuse a tree it doesn't understand instead of
     // misparsing one.
-    let _ = std::fs::write(dir.join("schema"), truce_build::meta::SCHEMA.to_string());
+    write_whole(&dir.join("schema"), &truce_build::meta::SCHEMA.to_string());
     Some(dir)
+}
+
+/// Replace `path` with `contents` in one step: write a sibling temp file,
+/// then rename it over the target. Two builds expand these derives into
+/// the same directory - rust-analyzer's `cargo check` alongside a
+/// `cargo truce` build, say - and a plain `fs::write` truncates in place,
+/// so a reader could see a half-written sidecar. A rename is atomic on
+/// one filesystem, so a reader sees the old file or the new one. The temp
+/// name carries the process id so concurrent builds don't share it.
+/// Best-effort like every write here: on failure the temp is removed.
+fn write_whole(path: &std::path::Path, contents: &str) {
+    let Some(name) = path.file_name() else {
+        return;
+    };
+    let mut tmp_name = name.to_os_string();
+    tmp_name.push(format!(".tmp-{}", std::process::id()));
+    let tmp = path.with_file_name(tmp_name);
+    if std::fs::write(&tmp, contents).is_err() || std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 fn param_kind_str(k: crate::ParamKind) -> &'static str {
@@ -243,8 +279,4 @@ fn type_last_segment(ty: &Type) -> Option<String> {
         return path.segments.last().map(|s| s.ident.to_string());
     }
     None
-}
-
-fn toml_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
 }

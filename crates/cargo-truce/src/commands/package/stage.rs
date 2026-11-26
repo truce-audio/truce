@@ -96,11 +96,42 @@ pub(crate) fn stage_external(
     // a plain directory of files rather than a macOS bundle with a
     // `Contents/Info.plist` - codesign refuses to seal those - and the
     // inner binary is the only file Apple's notary inspects anyway.
-    let signable: Vec<PathBuf> = staged.signable.iter().map(|r| bundle.join(r)).collect();
+    let signable = signable_paths(&fmt.label, &bundle, &staged.signable)?;
     for path in &signable {
         codesign_bundle(&path.to_string_lossy(), identity, false)?;
     }
     Ok(signable)
+}
+
+/// Resolve a helper's `signable` list against the bundle it staged.
+///
+/// Each entry must be relative and stay inside the bundle. `join` would
+/// let an absolute path replace the bundle root outright, and a `..`
+/// would climb out of it - either way a buggy helper could have us
+/// codesign a file it doesn't own.
+fn signable_paths(
+    label: &str,
+    bundle: &Path,
+    reported: &[PathBuf],
+) -> std::result::Result<Vec<PathBuf>, crate::CargoTruceError> {
+    use std::path::Component;
+    reported
+        .iter()
+        .map(|rel| {
+            let inside = rel
+                .components()
+                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+            if inside && !rel.as_os_str().is_empty() {
+                Ok(bundle.join(rel))
+            } else {
+                Err(format!(
+                    "{label} `stage` reported a signable path outside its bundle: {}",
+                    rel.display()
+                )
+                .into())
+            }
+        })
+        .collect()
 }
 
 /// Package wrapper around [`stage_external`] that loads the plugin's
@@ -1167,4 +1198,29 @@ pub(crate) fn write_format_scripts(
     }
 
     Ok(scripts_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::signable_paths;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_relative_signable_path_resolves_inside_the_bundle() {
+        let got =
+            signable_paths("LV2", Path::new("/b/x.lv2"), &[PathBuf::from("x.dylib")]).unwrap();
+        assert_eq!(got, vec![PathBuf::from("/b/x.lv2/x.dylib")]);
+    }
+
+    /// `join` would let either of these escape the bundle, and we'd sign
+    /// whatever they named.
+    #[test]
+    fn a_signable_path_outside_the_bundle_is_refused() {
+        for bad in ["/usr/lib/libfoo.dylib", "../other.dylib", "a/../../b", ""] {
+            assert!(
+                signable_paths("LV2", Path::new("/b/x.lv2"), &[PathBuf::from(bad)]).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+    }
 }
