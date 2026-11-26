@@ -85,7 +85,7 @@ pub(crate) struct PluginScaffoldingContext {
     /// pure plugin.
     pub dsp_state_type: String,
     pub process_body: String,
-    pub bus_layouts_method: &'static str,
+    pub bus_layouts_const: &'static str,
     pub layout_knob: &'static str,
     pub plugin_macro: String,
 }
@@ -123,7 +123,7 @@ impl PluginScaffoldingContext {
             struct_decl: statefulness.struct_decl(&struct_name),
             dsp_state_type: statefulness.dsp_state_type(),
             process_body: statefulness.wrap_process(kind.process_body()),
-            bus_layouts_method: kind.bus_layouts_method(),
+            bus_layouts_const: kind.bus_layouts_const(),
             layout_knob: kind.layout_knob(),
             plugin_macro: kind.plugin_macro(&struct_name),
             struct_name,

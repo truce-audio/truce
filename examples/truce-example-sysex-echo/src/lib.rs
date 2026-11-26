@@ -24,10 +24,8 @@ pub struct SysexEcho;
 impl PurePluginLogic for SysexEcho {
     type Params = SysexEchoParams;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        // MIDI effect: no audio I/O.
-        vec![BusLayout::new()]
-    }
+    // MIDI effect: no audio I/O.
+    const BUS_LAYOUTS: &'static [BusLayout] = &[BusLayout::new()];
 
     fn process(
         params: &SysexEchoParams,

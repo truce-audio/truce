@@ -1396,7 +1396,7 @@ pub fn register_vst2<P: PluginExport>() {
             log_missing_bus_layout::<P>("VST2");
             return;
         };
-        register_vst2_inner::<P>(&layout);
+        register_vst2_inner::<P>(layout);
     });
 }
 

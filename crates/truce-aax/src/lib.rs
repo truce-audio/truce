@@ -494,7 +494,7 @@ pub fn register_aax<P: PluginExport>() {
             log_missing_bus_layout::<P>("AAX");
             return;
         };
-        register_aax_inner::<P>(&layout);
+        register_aax_inner::<P>(layout);
     });
 }
 
@@ -546,7 +546,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         // Other wrappers (AU v2/v3, CLAP, VST3, LV2) accept
         // audio-less plugins natively - AAX is the outlier.
         // Synthesize dummy channels here so plugin authors can
-        // declare truthful `bus_layouts: [BusLayout::new()]` for
+        // declare truthful `BUS_LAYOUTS = &[BusLayout::new()]` for
         // MIDI effects without AAX-specific workarounds polluting
         // the plugin code.
         // AAX registers the main input stem; a sidechain is a separate

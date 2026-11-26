@@ -46,7 +46,7 @@ pub struct Options {
     pub qwerty_midi: bool,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
-    /// `--bus-layout <index>`: which `bus_layouts()` entry to run in.
+    /// `--bus-layout <index>`: which `BUS_LAYOUTS` entry to run in.
     /// Its channel count is requested from the audio device (a plugin
     /// declaring multiple layouts otherwise runs in the device-default
     /// one). `None` keeps the device's channel count. `--list-bus-layouts`
@@ -133,7 +133,7 @@ OPTIONS:
                             or the Settings menu's Computer Keyboard item.
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
-  --bus-layout <index>      Run in this bus_layouts() entry (its channel
+  --bus-layout <index>      Run in this BUS_LAYOUTS entry (its channel
                             count is requested from the device)
   --list-bus-layouts        List the plugin's bus layouts and exit
   --midi-input <name>       MIDI input device (substring match).

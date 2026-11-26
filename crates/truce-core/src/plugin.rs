@@ -82,14 +82,15 @@ pub trait PluginRuntime: Send + 'static {
     where
         Self: Sized;
 
-    /// Supported bus layouts. The host picks one. Default: the standard
+    /// The bus layouts the plugin offers; the host picks one. Forwards
+    /// `truce_plugin::PluginLogic::BUS_LAYOUTS`. Default: the standard
     /// audio effect - stereo and mono.
     #[must_use]
-    fn bus_layouts() -> Vec<BusLayout>
+    fn bus_layouts() -> &'static [BusLayout]
     where
         Self: Sized,
     {
-        BusLayout::stereo_and_mono()
+        BusLayout::STEREO_AND_MONO
     }
 
     /// Called once after construction. Not real-time safe.

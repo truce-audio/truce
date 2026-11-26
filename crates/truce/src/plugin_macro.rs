@@ -123,6 +123,13 @@ macro_rules! __plugin_impl {
             // failing the compile of every plugin with the feature on.
             $crate::__reexport::__truce_meta_root!($params);
 
+            // Embed `BUS_LAYOUTS` in the built binary as an exported static,
+            // so a package-time tool (the LV2 helper rendering its ports)
+            // reads the real layouts without running plugin code - which
+            // also works for a cross build it couldn't run. Un-gated, like
+            // the metadata above: which formats get packaged isn't known yet.
+            $crate::__reexport::__truce_bus_table!($crate, $logic);
+
             // --- Static mode (default, and always under `cfg(test)`) ---
             // Embed the logic directly. Zero overhead.
             //
@@ -374,7 +381,7 @@ macro_rules! __plugin_hot_reload {
                 $crate::prelude::plugin_info!()
             }
 
-            fn bus_layouts() -> Vec<$crate::core::bus::BusLayout>
+            fn bus_layouts() -> &'static [$crate::core::bus::BusLayout]
             where
                 Self: Sized,
             {
@@ -386,7 +393,7 @@ macro_rules! __plugin_hot_reload {
                 // re-discovery anyway. Reloading the logic dylib
                 // can iterate DSP and GUI freely; bus layouts
                 // changes warrant a shell rebuild + DAW rescan.
-                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::bus_layouts()
+                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::BUS_LAYOUTS
             }
 
             fn init(&mut self) {

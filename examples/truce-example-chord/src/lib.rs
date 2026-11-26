@@ -125,9 +125,7 @@ impl PluginLogic for Chord {
     type Params = ChordParams;
     type DspState = ChordDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        BusLayout::stereo_and_mono_output()
-    }
+    const BUS_LAYOUTS: &'static [BusLayout] = BusLayout::STEREO_AND_MONO_OUTPUT;
 
     fn reset(state: &mut ChordDspState, _params: &ChordParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;

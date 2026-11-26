@@ -2474,7 +2474,7 @@ pub fn register_au<P: PluginExport>() {
             log_missing_bus_layout::<P>("AU");
             return;
         };
-        if au_max_aux_input_buses(&P::bus_layouts()) > 1 {
+        if au_max_aux_input_buses(P::bus_layouts()) > 1 {
             eprintln!(
                 "[truce AU] {}: declares more than one auxiliary input bus. AU exposes a single \
                  sidechain input element, so multiple aux buses can't be routed independently. \
@@ -2616,7 +2616,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let main_in_of = |l: &BusLayout| l.inputs.first().map_or(0, |b| b.channels.channel_count());
     // Only layouts sharing the first layout's sidechain width are
     // negotiable on AU (element 1's width is fixed for the instance).
-    let (ins, outs, sidechain_in, dropped) = au_negotiable_layouts(&layouts);
+    let (ins, outs, sidechain_in, dropped) = au_negotiable_layouts(layouts);
     if dropped > 0 {
         eprintln!(
             "[truce AU] {}: {dropped} layout(s) dropped - their sidechain width differs from the \

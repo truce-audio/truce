@@ -265,11 +265,10 @@ impl PluginLogic for Synth {
     type Params = SynthParams;
     type DspState = SynthDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        // Stereo only: voices are panned across the stereo field, so a
-        // mono fold would collapse the spread this synth exists to show.
-        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
-    }
+    // Stereo only: voices are panned across the stereo field, so a
+    // mono fold would collapse the spread this synth exists to show.
+    const BUS_LAYOUTS: &'static [BusLayout] =
+        &[BusLayout::new().with_output("Main", ChannelConfig::Stereo)];
 
     fn reset(state: &mut SynthDspState, _params: &SynthParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;

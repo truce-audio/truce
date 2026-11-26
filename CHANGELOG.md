@@ -8,7 +8,7 @@ truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce
 
 ### Breaking
 
-- **LV2 moved to truce-extensions.** `truce` no longer has an `lv2` feature and `truce-build` no longer renders TTL. The runtime wrapper (`truce-lv2`) and a new `truce-format-lv2` helper, which `cargo truce` finds on `PATH`, live there, and the TTL they produce is byte-identical to 6.3's. Without the helper `--lv2` is an error, and `cargo truce doctor` reports whether it's installed. A plain `cargo truce uninstall` still removes LV2 bundles 6.x installed. The LV2 entries below describe `truce-lv2` / `truce-format-lv2` 7.0. **Migration:** see *Migrating from 6.x*, step 3.
+- **LV2 moved to truce-extensions.** `truce` no longer has an `lv2` feature and `truce-build` no longer renders TTL. The runtime wrapper (`truce-lv2`) and a new `truce-format-lv2` helper, which `cargo truce` finds on `PATH`, live there, and the TTL they produce is byte-identical to 6.3's for a plug-in whose layout matches its category's default. Without the helper `--lv2` is an error, and `cargo truce doctor` reports whether it's installed. A plain `cargo truce uninstall` still removes LV2 bundles 6.x installed. The LV2 entries below describe `truce-lv2` / `truce-format-lv2` 7.0. **Migration:** see *Migrating from 6.x*, step 4.
 - **GUI stack: egui 0.34 → 0.37, slint 1.15 → 1.19, wgpu 29 → 30.** Only plug-ins whose editors use these crates directly need changes. **Migration:** step 1.
 - **Minimum supported Rust is 1.95** (was 1.92), egui 0.37's floor. **Migration:** `rustup update`.
 - **`Editor::idle` takes `dt: std::time::Duration`**, the wall-clock time since the previous call. **Migration:** a custom `Editor` that overrides `idle` adds the parameter (`_dt` if unused).
@@ -16,7 +16,8 @@ truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce
 - **egui editors receive a key only when they claim it** or a text field is focused; unclaimed keys go to the host so DAW shortcuts keep working. **Migration:** call `truce_egui::claim_keys(ui.ctx(), &[…])` each frame with the keys you handle (`egui::Key::ALL` for every key), and `truce_egui::claim_shortcuts` for Cmd / Ctrl / Alt chords.
 - **iced editors return unconsumed keys to the host**, including keys handled in `subscription()`, so without a claim both act on them. **Migration:** implement `IcedPlugin::keeps_key` for the keys you handle.
 - **Unknown `truce.toml` values are compile errors.** `[[plugin]] category` must be `effect`, `instrument`, `midi` / `note_effect`, `analyzer` or `tool`, and `aax_category` a recognized value, checked in every format's build. 6.x treated an unknown category as an effect everywhere but the LV2 TTL. Correcting a misspelled instrument or note-effect category makes the plug-in one on every format: its MIDI wiring, its VST3 / CLAP / AAX / VST2 categories and, without `au_type`, its AU type (`aumu` / `aumi`) change, so hosts see a new AU. A corrected analyzer or tool spelling changes its VST3 category and CLAP features. **Migration:** fix the value the error names.
-- **LV2 refuses a plug-in whose audio layout differs from its category default** (effect, analyzer and tool 2 in / 2 out, instrument 0 in / 2 out, `midi` none) instead of loading it with shifted ports. That includes an `instrument` or `midi` plug-in left on the default stereo `bus_layouts()`, which means every `midi` plug-in scaffolded on 6.x. **Migration:** step 3, or ship that plug-in without LV2.
+- **`fn bus_layouts() -> Vec<BusLayout>` is now `const BUS_LAYOUTS: &'static [BusLayout]`.** Hosts negotiate layouts at setup and never re-query them, and a const lets `truce::plugin!` embed the layouts in the built binary, where package-time tools read them without running the plug-in. `BusLayout`'s builders are `const fn`, `stereo_and_mono()` / `stereo_and_mono_output()` are the consts `STEREO_AND_MONO` / `STEREO_AND_MONO_OUTPUT`, and `inputs` / `outputs` are fixed-capacity `Buses` (at most 32 per direction) that deref to `&[BusConfig]` instead of `Vec`s. **Migration:** step 3.
+- **LV2 declares the plug-in's real ports.** 6.x wrote the category's default audio ports into the TTL (effect, analyzer and tool 2 in / 2 out, instrument 0 in / 2 out, `midi` none), whatever the plug-in's layout. 7.0 writes its first `BUS_LAYOUTS` entry, so an `instrument` or `midi` plug-in left on the default stereo-and-mono layout now shows audio inputs in LV2 hosts - which means every `midi` plug-in scaffolded on 6.x. **Migration:** step 3.
 - **`cargo truce validate` fails when pluginval or clap-validator is missing and a VST3 / CLAP bundle is installed**, reported as `validation incomplete (N skipped)`; 6.x passed. **Migration:** install the validator in CI, or scope the run to formats you can validate.
 - **`Theme` gained `toggle_track_hover` and `toggle_thumb`.** **Migration:** set them in a full `Theme { … }` literal, or fill the rest from `..Theme::dark()`.
 - **`EventList::with_capacity` lists no longer grow.** A full list drops events other than parameter changes and modulation (which fold into the queued one) and note-offs (which still grow it), and `push_sysex` can return the new `PushError::QueueFull`. **Migration:** size lists with `block_event_capacity(max_block, param_count)`, use `EventList::growable_with_capacity` off the audio thread, and add the new arm to `PushError` matches.
@@ -76,7 +77,32 @@ truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce
    +.script(|s| s.set_param(P::Gain, 0.8))
    ```
 
-3. **If you ship LV2,** depend on `truce-lv2` directly and install the helper wherever you build bundles:
+3. **Make `bus_layouts` a const.** The builders are `const fn`, so the body moves over unchanged:
+
+   ```diff
+   -fn bus_layouts() -> Vec<BusLayout> {
+   -    vec![BusLayout::stereo()]
+   -}
+   +const BUS_LAYOUTS: &'static [BusLayout] = &[BusLayout::stereo()];
+   ```
+
+   ```diff
+   -BusLayout::stereo_and_mono()
+   +BusLayout::STEREO_AND_MONO
+   ```
+
+   A layout computed at runtime, or one pushed onto `inputs` / `outputs` directly, becomes a chain of `with_input` / `with_sidechain_input` / `with_output` calls. While you're there, give `instrument` and `midi` plug-ins their real layout, which LV2 now declares as-is. The current scaffold emits these:
+
+   ```rust
+   // category = "instrument": no audio input, stereo out
+   const BUS_LAYOUTS: &'static [BusLayout] =
+       &[BusLayout::new().with_output("Main", ChannelConfig::Stereo)];
+
+   // category = "midi": no audio I/O (AAX adds a passthrough itself)
+   const BUS_LAYOUTS: &'static [BusLayout] = &[BusLayout::new()];
+   ```
+
+4. **If you ship LV2,** depend on `truce-lv2` directly and install the helper wherever you build bundles:
 
    ```toml
    [features]
@@ -90,21 +116,7 @@ truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce
    cargo install truce-format-lv2
    ```
 
-   Give `instrument` and `midi` plug-ins their real bus layout, since LV2 refuses the effect default. The current scaffold emits these:
-
-   ```rust
-   // category = "instrument": no audio input, stereo out
-   fn bus_layouts() -> Vec<BusLayout> {
-       vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
-   }
-
-   // category = "midi": no audio I/O (AAX adds a passthrough itself)
-   fn bus_layouts() -> Vec<BusLayout> {
-       vec![BusLayout::new()]
-   }
-   ```
-
-4. **Rebuild all artifacts together.** A hot-reload shell checks its logic dylib's ABI version and AU v3 checks its framework / appex handshake, so 7.0 pieces refuse 6.x ones.
+5. **Rebuild all artifacts together.** A hot-reload shell checks its logic dylib's ABI version and AU v3 checks its framework / appex handshake, so 7.0 pieces refuse 6.x ones.
 
 ### Other changes
 
@@ -136,6 +148,7 @@ truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce
 - AU v3: Logic sizes the window from the editor's `preferredContentSize` (iOS still accepts any size), an aspect-locked editor ignores off-aspect resizes on macOS, and a re-entrant `gui_close` runs after the current callback instead of being lost.
 - AAX: fewer transport-API calls per block (sample location and bar / beat only while playing), and a save right after a load no longer keeps the pre-load state.
 - LV2: the TTL carries `lv2:minorVersion` / `lv2:microVersion` (minor `2 × (major × 256 + minor) + 2`, micro `2 × patch`, so versions order across a major bump). A release that adds or reorders parameters needs at least a minor version bump. The UI lists `ui:idleInterface` as a feature too, so hosts that check features call `idle`.
+- LV2: sidechain inputs and extra output buses. The TTL declares every bus of the plug-in's first layout, read at package time from the layout table `truce::plugin!` embeds in the binary (so cross builds render too): sidechain ports flagged `lv2:isSideChain`, extra buses named after themselves, and every bus after the first `lv2:connectionOptional`, so a host that doesn't route them leaves them unconnected and the plug-in reads silence. LV2 fixes ports per plug-in URI, so only the first layout is offered; list a sidechain layout first to get the sidechain in LV2.
 - Versions come from each plug-in's version (`[[plugin]].version`, else its crate's) in Info.plists, the AU component version, VST2, LV2 and the Windows standalone manifest (#240). For a 0.x plug-in that drops below 6.x's hardcoded values, so remove any 6.x copy in the other Library location (`~/Library` vs `/Library`): the AU registrar prefers the higher version.
 - macOS pkg: installers no longer version-check bundles, so an upgrade from a 6.x pkg and a rollback both replace the installed bundle.
 
@@ -151,7 +164,7 @@ truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce
 
 #### Standalone and test driver
 
-- The standalone app, `truce-driver` / `truce-test` and offline render feed audio input to any plug-in with an input bus in one of its `bus_layouts()`, not only effects, and offline render picks a layout with a main input.
+- The standalone app, `truce-driver` / `truce-test` and offline render feed audio input to any plug-in with an input bus in one of its `BUS_LAYOUTS`, not only effects, and offline render picks a layout with a main input.
 
 #### Real-time safety and hardening
 

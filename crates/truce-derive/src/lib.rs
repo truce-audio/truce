@@ -20,6 +20,7 @@ use syn::{Data, DeriveInput, Expr, Fields, Lit, Type, TypePath, UnOp};
 use truce_build::{Config, PluginDef};
 use truce_params::METER_ID_BASE;
 
+mod bus_table;
 mod meta_sidecar;
 
 /// Resolve `truce.toml` and pull out the `[[plugin]]` entry for the
@@ -373,6 +374,15 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+/// Embed `PluginLogic::BUS_LAYOUTS` in the built binary as an exported
+/// static, for package-time tools. Invoked by `truce::plugin!` as
+/// `__truce_bus_table!($crate, $logic)`. See [`bus_table`].
+#[doc(hidden)]
+#[proc_macro]
+pub fn __truce_bus_table(input: TokenStream) -> TokenStream {
+    bus_table::expand(input)
 }
 
 /// Record `<input>` as the plugin's root params type in the metadata

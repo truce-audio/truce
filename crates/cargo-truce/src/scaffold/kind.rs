@@ -68,24 +68,21 @@ impl PluginKind {
         }
     }
 
-    /// `PluginLogic::bus_layouts()` method body for non-stereo
-    /// kinds. Empty string for stereo (the trait default), so
-    /// the scaffold doesn't emit a redundant override.
+    /// `PluginLogic::BUS_LAYOUTS` override for non-effect kinds. Empty
+    /// string for an effect (the trait default), so the scaffold doesn't
+    /// emit a redundant override.
     #[must_use]
-    pub fn bus_layouts_method(self) -> &'static str {
+    pub fn bus_layouts_const(self) -> &'static str {
         match self {
             Self::Instrument => {
-                "    fn bus_layouts() -> Vec<BusLayout> {\n        \
-                 vec![BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)]\n    \
-                 }\n\n"
+                "    const BUS_LAYOUTS: &'static [BusLayout] =\n        \
+                 &[BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)];\n\n"
             }
             Self::Midi => {
                 "    // MIDI effect: no audio I/O. CLAP / VST3 / AU / LV2 honor this;\n    \
                  // AAX auto-adds a stereo passthrough inside truce-aax so the\n    \
                  // DAW's track audio flows through unchanged.\n    \
-                 fn bus_layouts() -> Vec<BusLayout> {\n        \
-                 vec![BusLayout::new()]\n    \
-                 }\n\n"
+                 const BUS_LAYOUTS: &'static [BusLayout] = &[BusLayout::new()];\n\n"
             }
             Self::Effect => "",
         }
@@ -119,8 +116,8 @@ impl PluginKind {
     }
 
     /// `truce::plugin!` invocation. Same shape across kinds; bus
-    /// layouts come from `PluginLogic::bus_layouts()` (see
-    /// [`Self::bus_layouts_method`]).
+    /// layouts come from `PluginLogic::BUS_LAYOUTS` (see
+    /// [`Self::bus_layouts_const`]).
     #[must_use]
     pub fn plugin_macro(self, struct_name: &str) -> String {
         let _ = self;

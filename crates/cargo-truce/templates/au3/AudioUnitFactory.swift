@@ -142,7 +142,7 @@ func forwardMIDIEventList(
 
 // A deinterleaved float32 format for `channels`. `standardFormat` only
 // defines mono/stereo layouts and returns nil for wider counts, so a
-// surround bus (declared via a multi-entry `bus_layouts()`) needs an
+// surround bus (declared via a multi-entry `BUS_LAYOUTS`) needs an
 // explicit channel layout or the force-unwrap would trap at init and the
 // host would see the appex fail to open (OpenAComponent 4097).
 func truceAudioFormat(sampleRate: Double, channels: AVAudioChannelCount) -> AVAudioFormat? {
@@ -1036,7 +1036,7 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     override var channelCapabilities: [NSNumber]? {
         guard let d = g_descriptor?.pointee else { return nil }
-        // Multiple declared bus_layouts(): one [in, out] pair per layout,
+        // Multiple declared BUS_LAYOUTS: one [in, out] pair per layout,
         // flattened, so the host can pick any supported channel config.
         if d.num_layouts > 0, let ins = d.layout_in_channels, let outs = d.layout_out_channels {
             var caps: [NSNumber] = []

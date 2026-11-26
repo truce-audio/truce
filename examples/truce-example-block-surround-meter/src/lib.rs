@@ -76,20 +76,16 @@ const METER_FLOOR_DB: f32 = -60.0;
 impl PurePluginLogic for SurroundMeter {
     type Params = SurroundMeterParams;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        // CHANS is a compile-time constant (6) that fits trivially
-        // in u32; the cast is the cleanest way to feed it to
-        // ChannelConfig::Custom.
-        #[allow(clippy::cast_possible_truncation)]
-        let n = CHANS as u32;
-        vec![
-            BusLayout::new()
-                .with_input("Surround", ChannelConfig::Custom(n))
-                .with_output("Surround", ChannelConfig::Custom(n)),
-            BusLayout::stereo(),
-            BusLayout::mono(),
-        ]
-    }
+    // CHANS is a compile-time constant (6), so the cast to
+    // ChannelConfig::Custom's u32 can't truncate.
+    #[allow(clippy::cast_possible_truncation)]
+    const BUS_LAYOUTS: &'static [BusLayout] = &[
+        BusLayout::new()
+            .with_input("Surround", ChannelConfig::Custom(CHANS as u32))
+            .with_output("Surround", ChannelConfig::Custom(CHANS as u32)),
+        BusLayout::stereo(),
+        BusLayout::mono(),
+    ];
 
     fn process(
         params: &SurroundMeterParams,

@@ -52,14 +52,10 @@ const SC_METERS: [P; 2] = [P::ScL, P::ScR];
 impl PurePluginLogic for Sidechain {
     type Params = SidechainParams;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![
-            BusLayout::new()
-                .with_input("Main", ChannelConfig::Stereo)
-                .with_sidechain_input("Sidechain", ChannelConfig::Stereo)
-                .with_output("Main", ChannelConfig::Stereo),
-        ]
-    }
+    const BUS_LAYOUTS: &'static [BusLayout] = &[BusLayout::new()
+        .with_input("Main", ChannelConfig::Stereo)
+        .with_sidechain_input("Sidechain", ChannelConfig::Stereo)
+        .with_output("Main", ChannelConfig::Stereo)];
 
     fn process(
         params: &SidechainParams,
@@ -151,10 +147,7 @@ mod tests {
 
     #[test]
     fn declares_a_separate_sidechain_bus() {
-        let layout = <Sidechain as PurePluginLogic>::bus_layouts()
-            .into_iter()
-            .next()
-            .unwrap();
+        let layout = &<Sidechain as PurePluginLogic>::BUS_LAYOUTS[0];
         assert_eq!(layout.inputs.len(), 2, "main + sidechain input buses");
         assert_eq!(layout.inputs[0].kind, truce_core::bus::BusKind::Main);
         assert_eq!(layout.inputs[1].kind, truce_core::bus::BusKind::Sidechain);

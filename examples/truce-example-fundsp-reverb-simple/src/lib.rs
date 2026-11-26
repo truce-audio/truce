@@ -166,15 +166,13 @@ impl PluginLogic for FundspReverbSimple {
     type Params = FundspReverbSimpleParams;
     type DspState = FundspReverbSimpleDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![
-            BusLayout::stereo(),
-            // Mono in, stereo out: a mono source through the stereo reverb.
-            BusLayout::new()
-                .with_input("Main", ChannelConfig::Mono)
-                .with_output("Main", ChannelConfig::Stereo),
-        ]
-    }
+    const BUS_LAYOUTS: &'static [BusLayout] = &[
+        BusLayout::stereo(),
+        // Mono in, stereo out: a mono source through the stereo reverb.
+        BusLayout::new()
+            .with_input("Main", ChannelConfig::Mono)
+            .with_output("Main", ChannelConfig::Stereo),
+    ];
 
     fn reset(
         state: &mut FundspReverbSimpleDspState,

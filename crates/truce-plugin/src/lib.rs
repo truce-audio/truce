@@ -92,10 +92,7 @@ pub trait PluginLogicCore<S: Sample = f32>: 'static {
     /// Supported audio bus configurations. The host picks one. Default:
     /// the standard audio effect - stereo and mono - so it appears on
     /// both track widths. Override for instruments, surround, sidechains.
-    #[must_use]
-    fn bus_layouts() -> Vec<BusLayout> {
-        BusLayout::stereo_and_mono()
-    }
+    const BUS_LAYOUTS: &'static [BusLayout] = BusLayout::STEREO_AND_MONO;
 
     /// Build initial state from params. See [`PluginLogic::init`].
     fn init(params: &Self::Params, cx: &InitContext) -> Self::DspState;
@@ -255,14 +252,24 @@ macro_rules! plugin_logic_leaf_trait {
                 false
             }
 
-            /// Supported audio bus configurations. The host picks one;
-            /// the others are rejected at bus-config time before
-            /// `process` is ever called. Default: the standard audio
-            /// effect - stereo and mono - so it shows on both track widths.
-            #[must_use]
-            fn bus_layouts() -> Vec<$crate::__plugin_logic_deps::BusLayout> {
-                $crate::__plugin_logic_deps::BusLayout::stereo_and_mono()
-            }
+            /// The audio bus layouts the plugin offers; the host picks
+            /// one before `process` is ever called and rejects the rest.
+            /// Default: the standard audio effect - stereo and mono - so it
+            /// shows on both track widths.
+            ///
+            /// A `const`, because no format changes the offered set at
+            /// runtime: hosts negotiate from it at setup, AAX registers a
+            /// plugin type per layout at scan, and LV2 fixes its ports in
+            /// the bundle. Being const also lets `truce::plugin!` embed the
+            /// set in the built binary for package-time tools:
+            ///
+            /// ```ignore
+            /// const BUS_LAYOUTS: &'static [BusLayout] = &[
+            ///     BusLayout::new().with_output("Main", ChannelConfig::Stereo),
+            /// ];
+            /// ```
+            const BUS_LAYOUTS: &'static [$crate::__plugin_logic_deps::BusLayout] =
+                $crate::__plugin_logic_deps::BusLayout::STEREO_AND_MONO;
 
             /// Build the initial audio state from params. Replaces the
             /// old `new` constructor: the descriptor is stateless, so
@@ -634,13 +641,11 @@ macro_rules! pure_plugin_leaf_trait {
                 false
             }
 
-            /// Supported audio bus configurations. Same contract as the
-            /// stateful leaf's `bus_layouts`. Default: the standard audio
-            /// effect - stereo and mono.
-            #[must_use]
-            fn bus_layouts() -> Vec<crate::__plugin_logic_deps::BusLayout> {
-                crate::__plugin_logic_deps::BusLayout::stereo_and_mono()
-            }
+            /// The audio bus layouts the plugin offers. Same contract as
+            /// the stateful leaf's `BUS_LAYOUTS`. Default: the standard
+            /// audio effect - stereo and mono.
+            const BUS_LAYOUTS: &'static [crate::__plugin_logic_deps::BusLayout] =
+                crate::__plugin_logic_deps::BusLayout::STEREO_AND_MONO;
 
             /// Process one block of audio as a pure function of params
             /// and input. Same real-time contract as the stateful
@@ -686,9 +691,8 @@ macro_rules! pure_plugin_leaf_trait {
                 <T as $name>::supports_in_place()
             }
 
-            fn bus_layouts() -> Vec<crate::__plugin_logic_deps::BusLayout> {
-                <T as $name>::bus_layouts()
-            }
+            const BUS_LAYOUTS: &'static [crate::__plugin_logic_deps::BusLayout] =
+                <T as $name>::BUS_LAYOUTS;
 
             fn process(
                 _state: &mut (),
@@ -742,7 +746,7 @@ pure_plugin_leaf_trait! {
     /// state type and arguments.
     ///
     /// Required: [`Self::process`], [`Self::editor`]. Optional:
-    /// [`Self::bus_layouts`], [`Self::supports_in_place`],
+    /// [`Self::BUS_LAYOUTS`], [`Self::supports_in_place`],
     /// [`Self::migrate_state`]. Anything state-shaped (`reset`,
     /// `save_state`, `latency`, `tail`, ...) needs state to act on -
     /// implement [`PluginLogic`] directly if you need those.
@@ -852,9 +856,7 @@ macro_rules! plugin_logic_bridge {
                 <Self as $leaf>::supports_in_place()
             }
 
-            fn bus_layouts() -> Vec<BusLayout> {
-                <Self as $leaf>::bus_layouts()
-            }
+            const BUS_LAYOUTS: &'static [BusLayout] = <Self as $leaf>::BUS_LAYOUTS;
 
             fn init(
                 params: &Self::Params,

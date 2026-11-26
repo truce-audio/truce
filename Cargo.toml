@@ -153,6 +153,9 @@ toml = "1"
 # `.preset` TOML `extra` field. Build-time crates only - truce-utils
 # and the runtime wrappers stay base64-free.
 base64 = "0.22"
+# Object-file reader (Mach-O / ELF / PE) for the bus-layout table a
+# built plugin embeds; read-only, no compression.
+object = { version = "0.40", default-features = false, features = ["read", "std"] }
 # wgpu's default features include `webgpu` (browser) and `webgl`
 # (browser GLES fallback). Plugins ship as native dylibs in DAWs,
 # never the browser, so opt out of those. Only `wgsl` (the shader

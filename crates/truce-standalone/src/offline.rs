@@ -77,7 +77,7 @@ where
     // layout with a main input otherwise. `channels` also drives the sidechain
     // offset and the output width.
     let layouts = P::bus_layouts();
-    let (channels, sidechain_width) = resolve_render_layout(&layouts, file_channels).ok_or(
+    let (channels, sidechain_width) = resolve_render_layout(layouts, file_channels).ok_or(
         "offline render needs a plug-in with a main audio input; \
          instruments need a MIDI input source which this path does not expose",
     )?;
@@ -302,7 +302,7 @@ mod tests {
         let vocoder = BusLayout::new()
             .with_input("Carrier", ChannelConfig::Mono)
             .with_output("Main", ChannelConfig::Mono);
-        let mut layouts = BusLayout::stereo_and_mono_output();
+        let mut layouts = BusLayout::STEREO_AND_MONO_OUTPUT.to_vec();
         assert_eq!(resolve_render_layout(&layouts, 2), None);
         layouts.push(vocoder);
         assert_eq!(resolve_render_layout(&layouts, 2), Some((1, 0)));

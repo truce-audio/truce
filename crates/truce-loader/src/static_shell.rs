@@ -161,11 +161,11 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         unreachable!("StaticShell::info() should not be called statically")
     }
 
-    fn bus_layouts() -> Vec<BusLayout>
+    fn bus_layouts() -> &'static [BusLayout]
     where
         Self: Sized,
     {
-        unreachable!("StaticShell::bus_layouts() should not be called statically")
+        <L as PluginLogicCore<S>>::BUS_LAYOUTS
     }
 
     fn init(&mut self) {}
@@ -375,8 +375,8 @@ pub(crate) fn publish_snapshot_with(
 /// Produces a `__HotShellWrapper` struct that implements `Plugin + PluginExport`,
 /// so format export macros (`export_clap!`, `export_vst3!`, etc.) work unchanged.
 /// No dlopen, no file watcher, zero runtime overhead. Bus layouts come from
-/// `<$logic as PluginLogic>::bus_layouts()` - override the trait method to
-/// pick something other than the stereo default.
+/// `<$logic as PluginLogic>::BUS_LAYOUTS` - override the const to pick
+/// something other than the stereo-and-mono default.
 ///
 /// ```ignore
 /// export_static! {
@@ -431,11 +431,11 @@ macro_rules! export_static {
                 $info
             }
 
-            fn bus_layouts() -> Vec<$crate::__macro_deps::truce_core::bus::BusLayout>
+            fn bus_layouts() -> &'static [$crate::__macro_deps::truce_core::bus::BusLayout]
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::bus_layouts()
+                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::BUS_LAYOUTS
             }
 
             fn init(&mut self) {

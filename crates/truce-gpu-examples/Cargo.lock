@@ -1229,6 +1229,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1767,8 +1776,10 @@ name = "truce-build"
 version = "6.3.0"
 dependencies = [
  "base64",
+ "object",
  "serde",
  "toml",
+ "truce-params",
  "truce-utils",
 ]
 
@@ -1839,7 +1850,6 @@ dependencies = [
  "truce-gui",
  "truce-gui-types",
  "truce-loader",
- "truce-lv2",
  "truce-params",
  "truce-standalone",
  "truce-test",
@@ -1924,18 +1934,6 @@ dependencies = [
  "truce-gui-types",
  "truce-params",
  "truce-plugin",
-]
-
-[[package]]
-name = "truce-lv2"
-version = "6.3.0"
-dependencies = [
- "base64",
- "objc",
- "truce-build",
- "truce-core",
- "truce-params",
- "x11-dl",
 ]
 
 [[package]]

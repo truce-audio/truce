@@ -566,7 +566,7 @@ unsafe extern "C" fn cb_match_bus_layout_perbus<P: PluginExport>(
 /// for the descriptor, from the plugin's first declared layout. The
 /// kind-byte arrays are leaked to `'static`.
 fn descriptor_buses<P: PluginExport>() -> (u32, u32, *const u8, *const u8) {
-    let first = P::bus_layouts().into_iter().next().unwrap_or_default();
+    let first = P::bus_layouts().first().cloned().unwrap_or_default();
     let ins = leak_bus_kinds(&first.inputs);
     let outs = leak_bus_kinds(&first.outputs);
     (
@@ -2510,7 +2510,7 @@ pub fn register_vst3<P: PluginExport>() {
             log_missing_bus_layout::<P>("VST3");
             return;
         };
-        let (max_in, max_out) = max_layout_channels(&P::bus_layouts());
+        let (max_in, max_out) = max_layout_channels(P::bus_layouts());
         if max_in > VST3_MAX_CHANNELS_PER_DIRECTION || max_out > VST3_MAX_CHANNELS_PER_DIRECTION {
             eprintln!(
                 "[truce VST3] {} declares up to {max_in} input / {max_out} output channels, \
@@ -2520,7 +2520,7 @@ pub fn register_vst3<P: PluginExport>() {
             );
             return;
         }
-        if !vst3_topology_consistent(&P::bus_layouts()) {
+        if !vst3_topology_consistent(P::bus_layouts()) {
             eprintln!(
                 "[truce VST3] {} declares bus layouts that differ in input/output bus count or \
                  kind. VST3 fixes one bus topology per plugin - only channel widths may vary \
@@ -2723,7 +2723,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         // Widest output width across all layouts, so the shim's per-channel
         // output discard scratch has a distinct block for every channel of
         // any negotiable layout (see the field's `ffi` doc).
-        max_outputs: max_layout_channels(&P::bus_layouts()).1,
+        max_outputs: max_layout_channels(P::bus_layouts()).1,
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {

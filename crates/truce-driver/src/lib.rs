@@ -849,7 +849,7 @@ impl<P: PluginExport> PluginDriver<P> {
 
         // Feed input to any plug-in that declares an audio input bus, not
         // only the `effect` category - an analyzer / tool takes audio too.
-        let takes_input = takes_audio_input(&P::bus_layouts());
+        let takes_input = takes_audio_input(P::bus_layouts());
         let total_frames = sample_count_usize(self.duration.as_secs_f64() * self.sample_rate);
 
         // Sidechain (non-main) input width. A plugin's sidechain bus is
@@ -863,7 +863,7 @@ impl<P: PluginExport> PluginDriver<P> {
         // width from two different layouts into an undeclared shape.
         let sidechain_channels = if takes_input {
             self.sidechain_channels
-                .unwrap_or_else(|| default_sidechain_channels(&P::bus_layouts(), channels))
+                .unwrap_or_else(|| default_sidechain_channels(P::bus_layouts(), channels))
         } else {
             0
         };
@@ -1427,10 +1427,10 @@ mod tests {
 
     #[test]
     fn input_follows_the_layout_not_the_category() {
-        // The default `bus_layouts()` - what an analyzer / tool keeps.
-        assert!(takes_audio_input(&BusLayout::stereo_and_mono()));
+        // The default `BUS_LAYOUTS` - what an analyzer / tool keeps.
+        assert!(takes_audio_input(BusLayout::STEREO_AND_MONO));
         // An instrument's output-only layouts and a MIDI-only plug-in.
-        assert!(!takes_audio_input(&BusLayout::stereo_and_mono_output()));
+        assert!(!takes_audio_input(BusLayout::STEREO_AND_MONO_OUTPUT));
         assert!(!takes_audio_input(&[]));
         // An instrument that declares an audio input (e.g. a vocoder).
         let vocoder = BusLayout::new()

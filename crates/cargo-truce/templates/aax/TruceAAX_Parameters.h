@@ -89,7 +89,7 @@ private:
     uint32_t mMaxBlockSize = 0;
     // Channel counts of the stem format this instance was instantiated
     // with, read from the controller in EffectInit. A plugin declaring
-    // multiple bus_layouts() gets one component (hence instance) per
+    // multiple BUS_LAYOUTS gets one component (hence instance) per
     // layout, so these vary per instance - RenderAudio must wire exactly
     // this many host pointers, not the descriptor's first-layout count.
     uint32_t mNumInputChannels = 0;

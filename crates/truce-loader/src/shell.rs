@@ -278,7 +278,7 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         unreachable!("HotShell::info() should not be called statically")
     }
 
-    fn bus_layouts() -> Vec<BusLayout>
+    fn bus_layouts() -> &'static [BusLayout]
     where
         Self: Sized,
     {

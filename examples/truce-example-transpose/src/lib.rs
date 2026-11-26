@@ -59,9 +59,7 @@ impl PluginLogic for Transpose {
     /// AAX (which has no audio-less plugin category) auto-adds a
     /// stereo passthrough inside `truce-aax` so the DAW's track
     /// audio flows through unchanged.
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::new()]
-    }
+    const BUS_LAYOUTS: &'static [BusLayout] = &[BusLayout::new()];
 
     fn process(
         state: &mut TransposeDspState,

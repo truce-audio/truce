@@ -247,9 +247,7 @@ impl PluginLogic for Multiport {
     type Params = MultiportParams;
     type DspState = MultiportDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        BusLayout::stereo_and_mono_output()
-    }
+    const BUS_LAYOUTS: &'static [BusLayout] = BusLayout::STEREO_AND_MONO_OUTPUT;
 
     fn reset(state: &mut MultiportDspState, _params: &MultiportParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;

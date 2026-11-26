@@ -10,7 +10,7 @@ use {struct_name}ParamsParamId as P;
 impl {impl_trait} for {struct_name} \{
     type Params = {struct_name}Params;
 {dsp_state_type | unescaped}
-{bus_layouts_method | unescaped}{process_body | unescaped}
+{bus_layouts_const | unescaped}{process_body | unescaped}
 
     fn editor(params: Arc<{struct_name}Params>) -> Box<dyn Editor> \{
         truce_gui::default_editor(

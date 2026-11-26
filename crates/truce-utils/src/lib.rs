@@ -33,6 +33,7 @@
 //! avoid `truce-core`'s `truce-params` chain (notably `cargo-truce`)
 //! depend on `truce-utils` directly.
 
+pub mod bus_table;
 pub mod cast;
 pub mod midi;
 pub mod preset;

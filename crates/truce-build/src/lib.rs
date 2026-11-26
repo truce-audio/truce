@@ -10,6 +10,7 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+pub mod bus_table;
 pub mod manifest;
 pub mod meta;
 pub mod presets;

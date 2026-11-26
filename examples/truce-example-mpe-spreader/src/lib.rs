@@ -178,10 +178,8 @@ impl PluginLogic for Spreader {
     type Params = SpreaderParams;
     type DspState = SpreaderDspState;
 
-    fn bus_layouts() -> Vec<BusLayout> {
-        // MIDI effect: no audio I/O.
-        vec![BusLayout::new()]
-    }
+    // MIDI effect: no audio I/O.
+    const BUS_LAYOUTS: &'static [BusLayout] = &[BusLayout::new()];
 
     fn reset(state: &mut SpreaderDspState, _params: &SpreaderParams, config: &AudioConfig) {
         let sample_rate = config.sample_rate;

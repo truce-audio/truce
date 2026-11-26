@@ -349,7 +349,7 @@ impl ParamCStrings {
 /// counts at registration time.
 ///
 /// **Note for `aumi` (MIDI processor) plugins:** the convention is
-/// `bus_layouts: [BusLayout::new()]`, which has zero input *and* zero
+/// `BUS_LAYOUTS = &[BusLayout::new()]`, which has zero input *and* zero
 /// output channels. This helper returns `Some((0, 0))` for that case,
 /// which is correct for AU (the AU shim's `channelCapabilities`
 /// returns `[0, 0]` and the host treats the plugin as MIDI-only) but
@@ -398,8 +398,8 @@ pub fn max_io_channels<P: PluginExport>() -> Option<(u32, u32)> {
 /// `None` is the same plugin-author-bug indicator as
 /// [`default_io_channels`]: log a diagnostic and skip registration.
 #[must_use]
-pub fn first_bus_layout<P: PluginExport>() -> Option<BusLayout> {
-    P::bus_layouts().into_iter().next()
+pub fn first_bus_layout<P: PluginExport>() -> Option<&'static BusLayout> {
+    P::bus_layouts().first()
 }
 
 /// Find the `bus_layouts()` index whose total input/output channel counts
@@ -421,10 +421,9 @@ pub fn find_bus_layout<P: PluginExport>(inputs: u32, outputs: u32) -> Option<usi
 /// wrapper prints the same actionable message.
 pub fn log_missing_bus_layout<P: PluginExport>(format: &str) {
     eprintln!(
-        "[truce {format}] {}::bus_layouts() returned an empty list - \
-         plugin will not register. Plugins with no audio I/O (e.g. \
-         aumi MIDI-effects) should return vec![BusLayout::new()] \
-         explicitly.",
+        "[truce {format}] {}: BUS_LAYOUTS is empty - plugin will not \
+         register. Plugins with no audio I/O (e.g. aumi MIDI-effects) \
+         should declare &[BusLayout::new()] explicitly.",
         type_name::<P>(),
     );
 }
@@ -456,7 +455,7 @@ pub fn log_midi_ports_clamped(format: &str, direction: &str, declared: u8) {
 /// configuration would do the same. Catching the unwind here turns
 /// any panic during registration into a logged diagnostic plus
 /// "host sees no plugin," which is the same outcome a plugin author
-/// would expect from a missing `bus_layouts` declaration.
+/// would expect from a missing `BUS_LAYOUTS` declaration.
 ///
 /// `AssertUnwindSafe` is applied internally - the panic is treated
 /// as fatal-for-this-plugin, so leaving an `Arc` ref-count or
