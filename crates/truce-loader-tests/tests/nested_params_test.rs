@@ -627,13 +627,28 @@ fn array_elements_get_disambiguated_names() {
         vec!["Master", "Gain 1", "Q 1", "Gain 2", "Q 2", "Gain 3", "Q 3"],
     );
 
+    // `short_name` gets the same index suffix - otherwise a host that shows
+    // short names (limited-width strips) still sees identical labels.
+    let short: Vec<&str> = BandArray::new()
+        .param_infos()
+        .iter()
+        .map(|i| i.short_name)
+        .collect();
+    assert_eq!(short, names);
+
     // The static table (what format wrappers register from) must match the
-    // live names exactly, or hosts and the running plugin would disagree.
+    // live table exactly - name and short_name both - or hosts and the
+    // running plugin would disagree.
     let stat: Vec<&str> = BandArray::param_infos_static()
         .iter()
         .map(|i| i.name)
         .collect();
     assert_eq!(stat, names);
+    let stat_short: Vec<&str> = BandArray::param_infos_static()
+        .iter()
+        .map(|i| i.short_name)
+        .collect();
+    assert_eq!(stat_short, short);
 }
 
 #[test]
@@ -697,7 +712,7 @@ fn ordinal_array_span_offsets_following_groups() {
     assert_eq!(p.tail.gain.id(), 5);
 }
 
-// Hash scheme: each element bases at `hash(field) + i * element_count`.
+// Hash scheme: each element bases at its own `hash("bands[i]")`.
 #[derive(Params)]
 struct HashArray {
     #[nested]
@@ -732,4 +747,83 @@ fn hash_array_elements_get_distinct_ids() {
     let id = p.bands[1].gain.id();
     p.set_plain(id, -3.0);
     assert_eq!(p.get_plain(id), Some(-3.0));
+}
+
+// `HashBand` plus one param. Same slot name as `HashArray`, so the only
+// difference is the element type's size.
+#[derive(Params)]
+struct HashBandGrown {
+    #[param(name = "Gain", range = "linear(-18, 18)", default = 0.0)]
+    gain: FloatParam,
+    #[param(name = "Q", range = "log(0.1, 10)", default = 0.7)]
+    q: FloatParam,
+    #[param(name = "Freq", range = "log(20, 20000)", default = 1000.0)]
+    freq: FloatParam,
+}
+
+#[derive(Params)]
+struct HashArrayGrown {
+    #[nested]
+    bands: [HashBandGrown; 3],
+}
+
+#[test]
+fn hash_array_ids_survive_element_growth() {
+    // Packing at `base + i * element_count` would move element 1's gain
+    // onto element 0's grown range (and so on) once `freq` is added;
+    // per-element hashed bases keep every existing param put.
+    let a = HashArray::new();
+    let b = HashArrayGrown::new();
+    for i in 0..3 {
+        assert_eq!(
+            a.bands[i].gain.id(),
+            b.bands[i].gain.id(),
+            "bands[{i}].gain moved"
+        );
+        assert_eq!(a.bands[i].q.id(), b.bands[i].q.id(), "bands[{i}].q moved");
+        assert_eq!(
+            HashArray::bands_id(i, HashBandParamId::Gain),
+            HashArrayGrown::bands_id(i, HashBandGrownParamId::Gain),
+        );
+    }
+    let stat: Vec<u32> = HashArrayGrown::param_infos_static()
+        .iter()
+        .map(|i| i.id)
+        .collect();
+    let inst: Vec<u32> = b.param_infos().iter().map(|i| i.id).collect();
+    assert_eq!(stat, inst);
+    for (i, band) in b.bands.iter().enumerate() {
+        assert_eq!(
+            HashArrayGrown::bands_id(i, HashBandGrownParamId::Freq),
+            band.freq.id()
+        );
+    }
+}
+
+// Zero-length arrays: no params, no `_id` helper, and nothing in the
+// generated code that trips clippy (the static table used to emit a
+// `0u32..0u32` loop).
+#[derive(Params)]
+struct EmptyHashArray {
+    #[param(name = "Mix", default = 1.0)]
+    mix: FloatParam,
+    #[nested]
+    bands: [HashBand; 0],
+}
+
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct EmptyOrdinalArray {
+    #[param(name = "Mix", default = 1.0)]
+    mix: FloatParam,
+    #[nested]
+    bands: [Band; 0],
+}
+
+#[test]
+fn zero_length_arrays_contribute_nothing() {
+    assert_eq!(EmptyHashArray::new().count(), 1);
+    assert_eq!(EmptyHashArray::param_infos_static().len(), 1);
+    assert_eq!(EmptyOrdinalArray::new().count(), 1);
+    assert_eq!(EmptyOrdinalArray::param_infos_static().len(), 1);
 }
