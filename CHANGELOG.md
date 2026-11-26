@@ -38,6 +38,14 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
    +egui::Panel::left("p").show(ui, |ui| { /* ... */ });
    ```
 
+   **Fonts.** egui 0.37 ships its built-in fonts (Ubuntu-Light, Hack, egui's icon glyphs, and the emoji fonts) only behind its `default_fonts` / `monochrome_emoji_fonts` features, which `truce-egui` doesn't enable. In 6.x egui's default fonts came with it. Text still renders: truce applies the editor's `with_font` (or JetBrains Mono when there's none, where 6.x fell back to egui's Ubuntu-Light / Hack) plus Noto Music for music symbols. But a custom UI that draws emoji or icon glyphs (`⚙`, `✔`, `🎸`, `egui::special_emojis`) now shows tofu. To get them back, enable egui's font features in your plug-in crate (`monochrome_emoji_fonts` implies `default_fonts`); Cargo unifies them into truce-egui's egui, and they slot in as fallbacks behind your font:
+
+   ```toml
+   egui = { version = "0.37", features = ["default_fonts", "monochrome_emoji_fonts"] }
+   ```
+
+   Those features only add fallbacks: an editor without `with_font` still draws its text in JetBrains Mono. To keep 6.x's Ubuntu-Light look, pass it explicitly (`with_font(epaint_default_fonts::UBUNTU_LIGHT)`, with `epaint_default_fonts` as a dependency); screenshot baselines of a `with_font`-less editor change either way.
+
    **slint 1.15 → 1.19** — bump `slint` and `slint-build` to `=1.19.1`:
 
    ```diff
@@ -75,7 +83,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 - **`idle()` everywhere.** `Editor::idle` is now driven on CLAP, VST3, VST2, AU v2, LV2 and the standalone host (#233); AAX already drove it, and the AU v3 app-extension view still does not. A side-effecting `idle()` now fires on the newly covered formats. The `dt` clock resets when an editor opens, so the first tick after a reopen doesn't report the whole closed interval, and `dt` is capped at 100 ms so a GUI-thread stall can't make animation jump. VST3 ticks `idle()` at ~60 fps only while an editor is open; with none open, only a slow restart poll runs (Windows). On CLAP, `idle()` rides the host's `clap.timer-support` extension — a host that doesn't offer it won't tick `idle()` (baseview editors still repaint through their own loop). See the new `idle-anim` example.
 - **Keyboard forwarding.** With the editor focused, a key it doesn't use goes back to the host (Space, Return, arrange shortcuts), so DAW commands keep working. egui, iced and slint all report unused keys, and a focused text field keeps every key. egui's `claim_keys` / `claim_shortcuts` and iced's `IcedPlugin::keeps_key` opt-ins are breaking for plug-ins that read keys directly (see Breaking). Claims made in one frame add up, so each panel can claim its own keys. A claim covers only the frame that made it, so a UI that stops claiming (say, a panel closes) hands those keys back on the next rendered frame. Keys held when the window loses focus are released instead of staying claimed.
 - `truce-egui`: recovers from a failed surface acquire instead of staying black, fixing a freeze and a GPU / host memory leak (#248). A frame dropped unrendered at shutdown or during a render panic no longer trips egui's texture-delta assert, which could abort the host in debug builds.
-- `truce-egui`: bundles Noto Music (`truce_font::NOTO_MUSIC`, SIL OFL 1.1) as a symbol fallback, so glyphs like `♩` render instead of tofu now that egui 0.37 makes its own symbol fonts opt-in.
+- `truce-egui`: bundles Noto Music (`truce_font::NOTO_MUSIC`, SIL OFL 1.1) as a symbol fallback, so glyphs like `♩` render instead of tofu now that egui 0.37 ships its own fonts only behind its `default_fonts` feature. An editor that sets no `with_font` now uses JetBrains Mono rather than no font at all. Emoji and egui's icon glyphs aren't covered - see the egui migration notes.
 - `truce-slint`: fixed window content bleeding through open popups by repainting the full frame in software (#241). A `.slint` UI that renders images or SVGs opts into decoding per plug-in via `i-slint-core` (see the slint migration note).
 - Built-in GUI: restyled toggle widget, picked up on rebuild with no code change. Its hover track and knob colours come from the new `Theme::toggle_track_hover` / `Theme::toggle_thumb`.
 

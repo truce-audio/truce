@@ -478,7 +478,7 @@ impl EventList {
     ///   leaves a voice stuck sounding forever. A note-off can't be folded
     ///   like a param change, so the ring grows to take it.
     ///
-    /// Either grow is a one-off reallocation that a list sized via
+    /// Any grow is a one-off reallocation that a list sized via
     /// [`block_event_capacity`] should never hit.
     ///
     /// Channel-mode "All Notes Off" / "All Sound Off" (CC 123 / 120) are

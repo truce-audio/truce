@@ -21,6 +21,8 @@ The bundled JetBrains Mono font is itself licensed under the **SIL
 Open Font License, Version 1.1**. The full license text is at
 `fonts/OFL.txt`. Downstream redistribution must keep the OFL with
 the font and preserve its embedded copyright notice
-("Copyright 2020 The JetBrains Mono Project Authors").
+("Copyright 2020 The JetBrains Mono Project Authors"). The bundled
+Noto Music symbol fallback is under the same license with its own
+notice, at `fonts/NotoMusic-OFL.txt`.
 
 Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).
