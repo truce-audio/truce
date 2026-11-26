@@ -75,6 +75,12 @@ struct Shared {
     /// compositor's real consumption rate instead of tessellating
     /// frames the slot will just drop.
     last_acquire_nanos: AtomicU64,
+    /// Set when `EguiRenderer::render` skipped a frame (surface
+    /// outdated / occluded / acquire timeout). The GUI thread drains
+    /// it via [`RenderThread::take_frame_skipped`] to schedule its
+    /// backed-off retry - the async counterpart of the inline painters
+    /// acting on `render`'s `false` return.
+    frame_skipped: AtomicBool,
 }
 
 fn lock(slot: &Mutex<Slot>) -> std::sync::MutexGuard<'_, Slot> {
@@ -114,6 +120,7 @@ impl RenderThread {
             cv: Condvar::new(),
             state: AtomicU8::new(STATE_INIT),
             last_acquire_nanos: AtomicU64::new(0),
+            frame_skipped: AtomicBool::new(false),
         });
         let thread_shared = shared.clone();
         let spawned = std::thread::Builder::new()
@@ -192,6 +199,16 @@ impl RenderThread {
     /// The render thread's most recent swapchain-acquire wait.
     pub fn last_acquire_wait(&self) -> std::time::Duration {
         std::time::Duration::from_nanos(self.shared.last_acquire_nanos.load(Ordering::Relaxed))
+    }
+
+    /// True when the render thread skipped a frame since the last call
+    /// (surface outdated / occluded / acquire timeout). The GUI thread
+    /// polls this each tick and schedules a backed-off retry, so the
+    /// skipped frame is re-run and resubmitted instead of leaving the
+    /// editor stale - the retry the inline (macOS / Linux) painters get
+    /// from `render`'s `false` return.
+    pub fn take_frame_skipped(&self) -> bool {
+        self.shared.frame_skipped.swap(false, Ordering::AcqRel)
     }
 }
 
@@ -276,21 +293,30 @@ fn run(shared: &Shared, hwnd: isize, width: u32, height: u32, device_lost: &Arc<
         // Blocking driver work happens here, off the host's GUI
         // thread. A panic (wgpu validation, poisoned device) flags
         // device loss so the editor rebuilds with a fresh thread.
-        let painted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some((w, h)) = resize {
                 renderer.resize(w, h);
             }
-            if let Some(mut f) = frame {
-                renderer.render(&mut f.textures_delta, &f.primitives, f.pixels_per_point);
+            frame.is_none_or(|mut f| {
+                let painted =
+                    renderer.render(&mut f.textures_delta, &f.primitives, f.pixels_per_point);
                 let nanos = u64::try_from(renderer.acquire_wait().as_nanos()).unwrap_or(u64::MAX);
                 shared.last_acquire_nanos.store(nanos, Ordering::Relaxed);
-            }
+                painted
+            })
         }));
-        if painted.is_err() {
-            device_lost.store(true, Ordering::Release);
-            shared.state.store(STATE_FAILED, Ordering::Release);
-            log::error!("egui render thread panicked; flagging device loss for rebuild");
-            break;
+        match outcome {
+            Ok(true) => {}
+            // Frame skipped (surface outdated / occluded / timeout).
+            // `render` already reconfigured where needed; flag it so the
+            // GUI thread resubmits.
+            Ok(false) => shared.frame_skipped.store(true, Ordering::Release),
+            Err(_) => {
+                device_lost.store(true, Ordering::Release);
+                shared.state.store(STATE_FAILED, Ordering::Release);
+                log::error!("egui render thread panicked; flagging device loss for rebuild");
+                break;
+            }
         }
     }
     mark_exited(shared);
