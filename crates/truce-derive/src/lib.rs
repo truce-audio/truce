@@ -437,12 +437,13 @@ pub(crate) struct NestedField {
     /// group right after the preceding params (own params, then each
     /// earlier nested group's span). Pin it for wire stability the same
     /// way you pin a param `id`. Arrays: under the hash scheme each
-    /// element's ids are mixed with its own salt and a pinned `base` is rejected;
-    /// under ordinal element `i` packs at `base + i * element_count`.
+    /// element's ids are placed by `mix_nested_id` (a hashed start per
+    /// child, stepped by a fixed stride) and a pinned `base` is rejected; under
+    /// ordinal element `i` packs at `base + i * element_count`.
     pub(crate) base: Option<u32>,
     /// `Some(N)` for a fixed-size array `#[nested] f: [T; N]`; `None`
     /// for a single nested field. Each array element is its own group,
-    /// laid out per [`Self::base`]'s rules (salted per element, or packed
+    /// laid out per [`Self::base`]'s rules (placed per element by `mix_nested_id`, or packed
     /// contiguously under ordinal).
     pub(crate) array_len: Option<usize>,
     /// Label prefixed onto this group's param names where they need
@@ -982,11 +983,10 @@ pub(crate) fn name_hash_id(name: &str) -> u32 {
 
 /// Hash-scheme salt of element `index` in a `#[nested] field: [T; N]`
 /// array ([`truce_params::nested_elem_salt`] over the field name's full
-/// FNV-1a). Each element's ids are mixed with its own salt
-/// ([`truce_params::mix_nested_id`]) rather than packed at
-/// `base + index * element_count` or offset by a per-element hash, so
-/// growing `T` moves no element and ordinary child names don't collide
-/// across elements. Shared with `lv2_emit`.
+/// FNV-1a). Each element's ids go through [`truce_params::mix_nested_id`]
+/// (a hashed start per child, plus the index times a fixed odd stride) rather
+/// than packed at `base + index * element_count`, so growing the array or
+/// `T` moves no element. Shared with `lv2_emit`.
 pub(crate) fn nested_elem_salt(field: &str, index: usize) -> u64 {
     truce_params::nested_elem_salt(
         state_field_hash(field),
@@ -2331,7 +2331,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // A pinned base on a hash-scheme array would still pack elements at
     // `base + i * element_count`, so growing the element type silently
     // remaps every element after the first. Reject it while arrays are
-    // new; each element's salted ids are already stable.
+    // new; each element's placed ids are already stable.
     if scheme == IdScheme::Hash
         && let Some(n) = nested_fields
             .iter()
@@ -2342,7 +2342,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             "`#[nested(base = N)]` isn't supported on an array under the hash id scheme: \
              elements would pack at `base + i * element_count`, so adding a param to the \
              element type would shift every later element's ids. Drop `base`; each \
-             element's ids are already stable (salted per element).",
+             element's ids are already stable (placed per element).",
         )
         .to_compile_error()
         .into();
@@ -2731,11 +2731,12 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     };
     // An array's element layout (see `ArrayLayout`). Hash scheme: a const
-    // table of per-element salts, ids mixed per element (`mix_nested_id`),
-    // so growing the element type moves no element and child names don't
-    // collide across elements. Ordinal: contiguous from `group_base`,
-    // `count` being one element's param count in the caller's context
-    // (static table vs. live instance).
+    // table of per-element salts; `mix_nested_id` puts element `i` of each
+    // child at a hashed start + `i` * a fixed odd stride, so growing the
+    // array or the element type moves no element and a child's elements
+    // never collide. Ordinal: contiguous from `group_base`, `count` being
+    // one element's param count in the caller's context (static table vs.
+    // live instance).
     let array_elem_base = |n: &NestedField,
                            group_base: proc_macro2::TokenStream,
                            count: proc_macro2::TokenStream|
@@ -3287,7 +3288,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         // Rebase each nested group by its base, after construction (the
         // child built itself at its own local ids). The base is explicit
         // or auto-assigned by scheme. An array rebases each element by
-        // `array_elem_base` (salted per element, or contiguous under
+        // `array_elem_base` (placed per element by `mix_nested_id`, or contiguous under
         // ordinal), mirroring the static table's layout.
         let offset_stmts: Vec<_> = nested_fields
             .iter()

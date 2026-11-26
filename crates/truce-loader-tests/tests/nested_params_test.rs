@@ -848,7 +848,7 @@ fn ordinal_array_span_offsets_following_groups() {
     assert_eq!(p.tail.gain.id(), 5);
 }
 
-// Hash scheme: each element's ids are mixed with its own salt for `bands[i]`.
+// Hash scheme: each element's ids are placed by `mix_nested_id` with the salt for `bands[i]`.
 #[derive(Params)]
 struct HashArray {
     #[nested]
@@ -907,7 +907,7 @@ struct HashArrayGrown {
 fn hash_array_ids_survive_element_growth() {
     // Packing at `base + i * element_count` would move element 1's gain
     // onto element 0's grown range (and so on) once `freq` is added;
-    // per-element salted ids keep every existing param put.
+    // per-element placed ids keep every existing param put.
     let a = HashArray::new();
     let b = HashArrayGrown::new();
     for i in 0..3 {
@@ -1063,12 +1063,11 @@ fn hash_array_inside_nested_group_agrees_live_and_static() {
     }
 }
 
-/// The layout's collision rate is the random 24-bit birthday rate, not the
-/// weak additive one: a 64 x 16 grid of common child names (1024 ids)
-/// stays distinct for this fixed set, where the additive layout collided
-/// for a large share of such structs.
+/// The progression layout: a 64 x 16 grid of common child names (1024 ids
+/// per field) stays distinct - a child's elements never repeat, so only two
+/// children's overlapping spans could collide.
 #[test]
-fn mixed_element_ids_spread_like_random_ids() {
+fn array_element_ids_stay_distinct() {
     let children = [
         "gain", "mix", "max", "min", "on", "a2", "level", "pan", "freq", "q", "attack", "decay",
         "sustain", "release", "drive", "tone",
@@ -1110,4 +1109,53 @@ fn fnv1a24(s: &str) -> u32 {
 #[should_panic(expected = "bands: index 9 out of bounds for array of length 3")]
 fn array_id_helper_names_the_bad_index() {
     let _ = BandArray::bands_id(9, BandParamId::Gain);
+}
+
+/// Progression layout: a child's ids across the array step by one fixed
+/// odd stride from a hashed start, so they never repeat and growing the
+/// array keeps every existing id at any length.
+#[test]
+fn progression_layout_is_distinct_and_growth_stable() {
+    let fh = fnv1a32("harmonics");
+    let child = fnv1a24("attack");
+    let at = |i: u32| truce_params::mix_nested_id(child, truce_params::nested_elem_salt(fh, i));
+    let stride = at(1).wrapping_sub(at(0)) & (truce_params::METER_ID_BASE - 1);
+    assert_eq!(stride & 1, 1, "odd stride");
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..4096 {
+        assert!(seen.insert(at(i)), "element {i} repeats an id");
+        assert_eq!(
+            at(i),
+            at(0).wrapping_add(i.wrapping_mul(stride)) & (truce_params::METER_ID_BASE - 1)
+        );
+    }
+}
+
+/// Two sibling copies of one group type (`osc1` / `osc2`, bases only 403
+/// apart in masked FNV) each holding a long array: a plain `start + index`
+/// layout made the copies overlap by construction; the stride doesn't.
+#[derive(Params)]
+struct LongHarm {
+    #[param(name = "Level", range = "linear(0, 1)", default = 0.5)]
+    level: FloatParam,
+}
+
+#[derive(Params)]
+struct LongOsc {
+    #[nested]
+    harm: [LongHarm; 600],
+}
+
+#[derive(Params)]
+struct TwoLongOsc {
+    #[nested]
+    osc1: LongOsc,
+    #[nested]
+    osc2: LongOsc,
+}
+
+#[test]
+fn sibling_copies_of_a_long_array_dont_overlap() {
+    let p = TwoLongOsc::new();
+    assert_eq!(p.count(), 1200);
 }
