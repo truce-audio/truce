@@ -1146,16 +1146,55 @@ fn num_slot_expr(s: &str) -> Result<proc_macro2::TokenStream, String> {
     }
 }
 
+/// A range / smoothing slot as a float literal, if it is one. Finite only:
+/// `str::parse::<f64>` also accepts `inf`, `infinity` and `NaN` in any
+/// case, so a const named `INF` or `NAN` would read as a non-finite
+/// literal - and `proc_macro2` asserts a float literal is finite, panicking
+/// the derive. Anything that isn't a finite number is a const expression.
+fn parse_f64_literal(s: &str) -> Option<f64> {
+    s.trim().parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
 /// Parse an `f64` range / smoothing slot, falling back to a const expr.
 fn num_slot_f64(s: &str) -> Result<NumSlot<f64>, String> {
     let s = s.trim();
-    if let Ok(v) = s.parse::<f64>() {
+    if let Some(v) = parse_f64_literal(s) {
         return Ok(NumSlot {
             lit: Some(v),
             tokens: f64_lit(v),
         });
     }
+    // A numeric literal that overflows (`1e999`) parses to infinity; it's
+    // no const, so don't let it through as one.
+    let digits = s.strip_prefix(['-', '+']).unwrap_or(s);
+    if digits.starts_with(|c: char| c.is_ascii_digit() || c == '.') && s.parse::<f64>().is_ok() {
+        return Err(format!("`{s}` is not a finite number"));
+    }
     num_slot_expr(s).map(|tokens| NumSlot { lit: None, tokens })
+}
+
+/// Why an integer slot that didn't parse as its integer type is still a
+/// plain numeric literal rather than a const expression, if it is one: an
+/// all-digit literal out of the type's range, or a decimal number that
+/// isn't an integer (`1.5`, `1e3`). The integer slots report those clearly
+/// instead of handing them to rustc as an expression (a type error).
+/// Expressions (`16-1`, `2*N`), hex / octal / binary and `_`-separated
+/// literals don't parse as `f64`, so they stay on the expression path.
+fn plain_literal_error(s: &str, what: &str) -> Option<String> {
+    // At most one sign: `--1` is `-(-1)`, an expression.
+    let body = s.strip_prefix(['-', '+']).unwrap_or(s);
+    if !body.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    // All digits: a whole number the type can't hold - unless it's a
+    // negative for the unsigned slot, which the `what` message covers.
+    let negative_for_unsigned = s.starts_with('-') && what.contains("non-negative");
+    if body.bytes().all(|b| b.is_ascii_digit()) && !negative_for_unsigned {
+        return Some(format!("`{s}` is out of range"));
+    }
+    s.parse::<f64>()
+        .is_ok()
+        .then(|| format!("`{s}` is not {what}"))
 }
 
 /// Parse an `i64` range slot (`discrete`), falling back to a const expr.
@@ -1166,6 +1205,9 @@ fn num_slot_i64(s: &str) -> Result<NumSlot<i64>, String> {
             lit: Some(v),
             tokens: i64_lit(v),
         });
+    }
+    if let Some(e) = plain_literal_error(s, "an integer") {
+        return Err(e);
     }
     num_slot_expr(s).map(|tokens| NumSlot { lit: None, tokens })
 }
@@ -1178,6 +1220,9 @@ fn num_slot_usize(s: &str) -> Result<NumSlot<usize>, String> {
             lit: Some(v),
             tokens: usize_lit(v),
         });
+    }
+    if let Some(e) = plain_literal_error(s, "a non-negative integer") {
+        return Err(e);
     }
     num_slot_expr(s).map(|tokens| NumSlot { lit: None, tokens })
 }
@@ -1429,7 +1474,7 @@ pub(crate) fn range_has_const(range: &str) -> bool {
     {
         return range_has_const(inner);
     }
-    let any_non_literal = |inner: &str| inner.split(',').any(|s| s.trim().parse::<f64>().is_err());
+    let any_non_literal = |inner: &str| inner.split(',').any(|s| parse_f64_literal(s).is_none());
     for prefix in ["linear(", "log(", "skewed(", "sym_skewed(", "discrete("] {
         if let Some(inner) = range.strip_prefix(prefix).and_then(|s| s.strip_suffix(')')) {
             return any_non_literal(inner);
@@ -1439,33 +1484,117 @@ pub(crate) fn range_has_const(range: &str) -> bool {
         .strip_prefix("enum(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return inner.trim().parse::<f64>().is_err();
+        return parse_f64_literal(inner).is_none();
     }
     false
 }
 
-/// The min / max bound tokens of a float range (`linear` / `log` /
-/// `skewed` / `sym_skewed`), each a literal or a const expression. Used
-/// to emit a `const` assertion when a slot is a const, since the
-/// expansion-time numeric check can't run. `None` for shapes without
-/// float bounds (`discrete` / `enum` / rangeless).
-fn float_range_bound_tokens(
-    range: &str,
-) -> Option<(proc_macro2::TokenStream, proc_macro2::TokenStream)> {
+/// Const-context checks for a range whose slots may be const
+/// expressions. `min` / `max` are `f64` expressions (bounded as `__min` /
+/// `__max`); `pre` runs before they're bound (an `enum` count, which `max`
+/// reads), `post` after (shape checks that read the bounds). Together they
+/// mirror the expansion-time checks [`parse_range_tokens`] applies to
+/// literals - positive `log` bounds, a positive skew factor, a `sym_skewed`
+/// center strictly inside the range, `enum` with at least two variants -
+/// which a const slot would otherwise skip. `None` for a malformed range
+/// (already a `compile_error!` from `parse_range_tokens`).
+struct ConstRangeChecks {
+    pre: proc_macro2::TokenStream,
+    min: proc_macro2::TokenStream,
+    max: proc_macro2::TokenStream,
+    post: proc_macro2::TokenStream,
+}
+
+fn const_range_checks(range: &str, name: &str) -> Option<ConstRangeChecks> {
     let range = range.trim();
     if let Some(inner) = range
         .strip_prefix("reversed(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        return float_range_bound_tokens(inner);
+        return const_range_checks(inner, name);
     }
-    for prefix in ["linear(", "log(", "skewed(", "sym_skewed("] {
-        if let Some(inner) = range.strip_prefix(prefix).and_then(|s| s.strip_suffix(')')) {
-            let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
-            let min = num_slot_f64(parts.first()?).ok()?.tokens;
-            let max = num_slot_f64(parts.get(1)?).ok()?.tokens;
-            return Some((min, max));
-        }
+    let args = |prefix: &str| -> Option<Vec<String>> {
+        let inner = range.strip_prefix(prefix)?.strip_suffix(')')?;
+        Some(inner.split(',').map(|p| p.trim().to_string()).collect())
+    };
+    let f64_slot = |s: &str| num_slot_f64(s).ok().map(|slot| slot.tokens);
+    let empty = proc_macro2::TokenStream::new;
+
+    if let Some(parts) = args("linear(") {
+        return Some(ConstRangeChecks {
+            pre: empty(),
+            min: f64_slot(parts.first()?)?,
+            max: f64_slot(parts.get(1)?)?,
+            post: empty(),
+        });
+    }
+    if let Some(parts) = args("log(") {
+        let msg = format!("param `{name}`: log range needs strictly positive bounds");
+        return Some(ConstRangeChecks {
+            pre: empty(),
+            min: f64_slot(parts.first()?)?,
+            max: f64_slot(parts.get(1)?)?,
+            post: quote! { assert!(__min > 0.0 && __max > 0.0, #msg); },
+        });
+    }
+    if let Some(parts) = args("skewed(") {
+        let factor = f64_slot(parts.get(2)?)?;
+        let msg = format!("param `{name}`: skewed range needs a strictly positive factor");
+        return Some(ConstRangeChecks {
+            pre: empty(),
+            min: f64_slot(parts.first()?)?,
+            max: f64_slot(parts.get(1)?)?,
+            // `> 0.0` also rejects NaN.
+            post: quote! {
+                let __factor: f64 = #factor;
+                assert!(__factor > 0.0, #msg);
+            },
+        });
+    }
+    if let Some(parts) = args("sym_skewed(") {
+        let factor = f64_slot(parts.get(2)?)?;
+        let center = f64_slot(parts.get(3)?)?;
+        let factor_msg =
+            format!("param `{name}`: sym_skewed range needs a strictly positive factor");
+        let center_msg =
+            format!("param `{name}`: sym_skewed center must be strictly between min and max");
+        return Some(ConstRangeChecks {
+            pre: empty(),
+            min: f64_slot(parts.first()?)?,
+            max: f64_slot(parts.get(1)?)?,
+            post: quote! {
+                let __factor: f64 = #factor;
+                assert!(__factor > 0.0, #factor_msg);
+                let __center: f64 = #center;
+                assert!(__center > __min && __center < __max, #center_msg);
+            },
+        });
+    }
+    if let Some(parts) = args("discrete(") {
+        let lo = num_slot_i64(parts.first()?).ok()?.tokens;
+        let hi = num_slot_i64(parts.get(1)?).ok()?.tokens;
+        return Some(ConstRangeChecks {
+            pre: quote! {
+                let __lo: i64 = #lo;
+                let __hi: i64 = #hi;
+            },
+            min: quote! { __lo as f64 },
+            max: quote! { __hi as f64 },
+            post: empty(),
+        });
+    }
+    if let Some(parts) = args("enum(") {
+        let count = num_slot_usize(parts.first()?).ok()?.tokens;
+        let msg = format!("param `{name}`: enum range needs at least 2 variants");
+        return Some(ConstRangeChecks {
+            pre: quote! {
+                let __count: usize = #count;
+                assert!(__count >= 2, #msg);
+            },
+            min: quote! { 0.0 },
+            max: quote! { (__count - 1) as f64 },
+            post: empty(),
+        });
     }
     None
 }
@@ -1484,28 +1613,52 @@ fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     if !range_const && !default_const {
         return None;
     }
-    // Bounds as `f64` tokens. A float range may carry const bounds (a token
-    // stream); an Int (`discrete`), Enum (`enum`) or Bool range resolves to
-    // literal bounds, so a const default on *those* kinds is range-checked
-    // too - previously only floats were, which the `lib.rs` comment denied.
-    let (min, max) = if let Some(mm) = a.range.as_deref().and_then(float_range_bound_tokens) {
-        mm
+    let name = a.name.as_deref().unwrap_or("param");
+    // Every range shape - literal or const slots - yields `f64` bound
+    // expressions plus the shape checks its literal form gets at expansion.
+    // A Bool (no range attribute) spans `0..=1`.
+    let ConstRangeChecks {
+        pre,
+        min,
+        max,
+        post,
+    } = if let Some(checks) = a.range.as_deref().and_then(|r| const_range_checks(r, name)) {
+        checks
     } else {
         let (lo, hi) = const_assert_bounds(f)?;
-        (f64_lit(lo), f64_lit(hi))
+        ConstRangeChecks {
+            pre: proc_macro2::TokenStream::new(),
+            min: f64_lit(lo),
+            max: f64_lit(hi),
+            post: proc_macro2::TokenStream::new(),
+        }
     };
-    let default_tokens = match a.default.as_ref() {
+    // The runtime default is the omitted `0.0` plain fallback when no
+    // `default` is given, so check that against the range too - otherwise a
+    // const range whose bounds exclude 0.0 (e.g. `linear(LO, HI)`, LO = 1.0)
+    // slips the compile-time check and panics at construction in debug /
+    // clamps in release, while the literal path (`default_range_error`)
+    // already rejects it. `has_default` only tunes the message.
+    let (default_tokens, has_default) = match a.default.as_ref() {
         Some(DefaultExpr {
             path_tokens: Some(t),
             ..
-        }) => Some(t.clone()),
-        Some(DefaultExpr { value: Some(v), .. }) => Some(f64_lit(*v)),
-        _ => None,
+        }) => (t.clone(), true),
+        Some(DefaultExpr { value: Some(v), .. }) => (f64_lit(*v), true),
+        _ => (f64_lit(0.0), false),
     };
-    let name = a.name.as_deref().unwrap_or("param");
     let order_msg = format!("param `{name}`: range needs min < max");
-    let default_assert = default_tokens.map(|d| {
-        let range_msg = format!("param `{name}`: default is outside its range");
+    let finite_msg = format!("param `{name}`: range bounds must be finite");
+    let default_assert = {
+        let d = default_tokens;
+        let range_msg = if has_default {
+            format!("param `{name}`: default is outside its range")
+        } else {
+            format!(
+                "param `{name}`: no `default` and its range doesn't contain 0.0 - \
+                 add `default = <value in range>`"
+            )
+        };
         // Match the expansion-time round-trip the comment promises: Int /
         // Enum defaults must be whole numbers, a Bool default must be 0 or 1.
         let shape_assert = match f.kind {
@@ -1524,19 +1677,22 @@ fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             assert!(__def >= __min && __def <= __max, #range_msg);
             #shape_assert
         }
-    });
+    };
     Some(quote! {
         const _: () = {
+            #pre
             let __min: f64 = #min;
             let __max: f64 = #max;
+            assert!(__min.is_finite() && __max.is_finite(), #finite_msg);
             assert!(__min < __max, #order_msg);
+            #post
             #default_assert
         };
     })
 }
 
 /// Literal `(min, max)` bounds for a non-float param kind, used by the
-/// const default assertion when `float_range_bound_tokens` can't supply
+/// const default assertion when the param has no range attribute to read
 /// them. Int (`discrete`) / Enum (`enum`) read the range string; a Bool
 /// spans `0..=1` and carries no range attribute.
 fn const_assert_bounds(f: &ParamField) -> Option<(f64, f64)> {
@@ -1561,8 +1717,8 @@ fn range_bounds(range: &str) -> Option<(f64, f64)> {
     }
     let leading_pair = |inner: &str| -> Option<(f64, f64)> {
         let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
-        let lo = parts.first()?.parse::<f64>().ok()?;
-        let hi = parts.get(1)?.parse::<f64>().ok()?;
+        let lo = parse_f64_literal(parts.first()?)?;
+        let hi = parse_f64_literal(parts.get(1)?)?;
         Some((lo.min(hi), lo.max(hi)))
     };
     for prefix in ["linear(", "log(", "skewed(", "sym_skewed("] {
@@ -3792,5 +3948,64 @@ mod parse_default_tests {
         // Function calls and arithmetic expressions are not const-evaluated.
         assert_eq!(eval("some_fn()"), None);
         assert_eq!(eval("1 + 2"), None);
+    }
+}
+
+#[cfg(test)]
+mod f64_slot_tests {
+    use super::num_slot_f64;
+
+    #[test]
+    fn finite_literals_are_literals() {
+        assert_eq!(num_slot_f64("1.5").unwrap().lit, Some(1.5));
+        assert_eq!(num_slot_f64(" -20 ").unwrap().lit, Some(-20.0));
+    }
+
+    #[test]
+    fn inf_and_nan_names_are_consts() {
+        for name in ["INF", "NAN", "INFINITY", "inf", "-INF", "nan"] {
+            let slot = num_slot_f64(name).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(slot.lit, None, "{name} must be a const expr");
+        }
+    }
+
+    #[test]
+    fn integer_slots_reject_non_integer_literals() {
+        use super::{num_slot_i64, num_slot_usize};
+        assert_eq!(
+            num_slot_i64("1.5").err().unwrap(),
+            "`1.5` is not an integer"
+        );
+        assert_eq!(
+            num_slot_usize("-1").err().unwrap(),
+            "`-1` is not a non-negative integer"
+        );
+        assert_eq!(
+            num_slot_i64("1e3").err().unwrap(),
+            "`1e3` is not an integer"
+        );
+        assert_eq!(
+            num_slot_i64("99999999999999999999").err().unwrap(),
+            "`99999999999999999999` is out of range"
+        );
+        assert_eq!(
+            num_slot_i64("-99999999999999999999").err().unwrap(),
+            "`-99999999999999999999` is out of range"
+        );
+        assert_eq!(num_slot_i64("-3").unwrap().lit, Some(-3));
+        // Consts, literal-only expressions and non-decimal literals stay
+        // const expressions.
+        assert_eq!(num_slot_i64("MAX_STEPS").unwrap().lit, None);
+        assert_eq!(num_slot_i64("16-1").unwrap().lit, None);
+        assert_eq!(num_slot_i64("--1").unwrap().lit, None);
+        assert_eq!(num_slot_usize("2+1").unwrap().lit, None);
+        assert_eq!(num_slot_usize("0x10").unwrap().lit, None);
+    }
+
+    #[test]
+    fn overflowing_literals_are_rejected() {
+        for lit in ["1e999", "-1e999", "+1e400", ".1e999"] {
+            assert!(num_slot_f64(lit).is_err(), "{lit} must not pass as a const");
+        }
     }
 }

@@ -18,6 +18,14 @@ use truce_font::JETBRAINS_MONO;
 const WINDOW_W: u32 = 320;
 const WINDOW_H: u32 = 120;
 
+// Bounds for the `Level` param's const `range` below. A const `range`
+// (vs literal bounds) can't be encoded in the LV2 TTL, which the TTL
+// emitter builds without running the plugin - so it builds only when the
+// `lv2` feature is off. This example omits `lv2`, so it's the natural
+// home for const-range build coverage.
+const LEVEL_MIN: f64 = -60.0;
+const LEVEL_MAX: f64 = 0.0;
+
 // --- Parameters ---
 
 /// Use `Param` for values the host should treat as a control: gain,
@@ -44,6 +52,13 @@ const WINDOW_H: u32 = 120;
 pub struct StateExampleParams {
     #[param(name = "Active", default = 1)]
     pub active: BoolParam,
+
+    /// A `FloatParam` whose `range` bounds come from `const`s, not
+    /// literals. It exercises the const-range build path end-to-end
+    /// through `truce::plugin!` (default `0.0` is in `[-60, 0]`). The
+    /// pass-through DSP ignores it; it's here purely for build coverage.
+    #[param(name = "Level", unit = "dB", range = "linear(LEVEL_MIN, LEVEL_MAX)", default = 0.0)]
+    pub level: FloatParam,
 
     #[persist = "memo"]
     pub memo: RwLock<InstanceMemo>,
