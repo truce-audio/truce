@@ -682,6 +682,21 @@ unsafe extern "C" fn clap_plugin_destroy<P: PluginExport>(plugin: *const clap_pl
         // live host alive; the instance is being torn down anyway.
         let plugin_ptr = plugin.cast_mut();
         let data_ptr = (*plugin).plugin_data.cast::<ClapPluginData<P>>();
+        // Safety net: a well-behaved host calls `gui_destroy` first, which
+        // unregisters the editor idle timer. A host that skips straight to
+        // destroy would otherwise leave the timer registered and keep firing
+        // `on_timer` into freed memory, so unregister it here too. A no-op
+        // once `gui_destroy` has taken the id. Guard dropped before the data.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let data = &*data_ptr;
+            let mut gui = data.gui.enter();
+            if let Some(timer_id) = gui.editor_timer_id.take()
+                && !data.host_timer.is_null()
+                && let Some(unregister) = (*data.host_timer).unregister_timer
+            {
+                unregister(data.host, timer_id);
+            }
+        }));
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             drop(Box::from_raw(data_ptr));
             drop(Box::from_raw(plugin_ptr));
@@ -3450,6 +3465,7 @@ unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
         let editor = {
             let mut gui = data.gui.enter();
             gui.gui_created = false;
+            gui.idle_clock.close();
             // Stop the idle timer before tearing the editor down so no
             // `on_timer` can land on a half-destroyed editor.
             if let Some(timer_id) = gui.editor_timer_id.take()
@@ -3589,13 +3605,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         let mut gui = data.gui.enter();
-        // Reset the idle clock on open: it persists across close/open on the
-        // per-instance gui cell, so the first `dt` after reopening would
-        // otherwise be the whole closed interval and jump animations.
-        gui.idle_clock.reset();
-        let Some(editor) = gui.editor.as_mut() else {
-            return false;
-        };
+        // Shut the gate for the open itself: a re-open without a close
+        // (AU v2 never reports one) would otherwise keep ticking an editor
+        // whose new `open` panicked. Reopened below once `open` returns.
+        gui.idle_clock.close();
 
         #[cfg(target_os = "macos")]
         let parent_ptr = (*window).specific.cocoa;
@@ -3607,6 +3620,9 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         if parent_ptr.is_null() {
             return false;
         }
+        let Some(editor) = gui.editor.as_mut() else {
+            return false;
+        };
 
         let params = Arc::clone(&data.params_arc);
         let meter_store = Arc::clone(&data.meter_store);
@@ -3758,6 +3774,12 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         // override the origin we set here.
         #[cfg(target_os = "macos")]
         anchor_child_to_top(parent_ptr);
+        // Open the idle gate only now that `editor.open` has returned: a
+        // panic in it (caught by the firewall) or an early return above
+        // leaves the `gui_create`d editor windowless, and `idle` must not
+        // reach it. Also clears the baseline so the first `dt` after a
+        // reopen reads zero.
+        gui.idle_clock.open();
         true
     }
 }
@@ -4113,7 +4135,9 @@ struct Extensions<P: PluginExport> {
 
 /// `clap.timer-support::on_timer`: the host ticks us on the main thread.
 /// Drive the editor's `idle` (repaint / animation / deferred setup) when
-/// the tick is our editor timer and an editor is live.
+/// the tick is our editor timer and the editor is open. The timer is
+/// registered at `gui_create`, before `set_parent` gives the editor a
+/// window, so `idle_clock` gates the gap.
 unsafe extern "C" fn clap_plugin_on_timer<P: PluginExport>(
     plugin: *const clap_plugin,
     timer_id: clap_id,
@@ -4128,7 +4152,9 @@ unsafe extern "C" fn clap_plugin_on_timer<P: PluginExport>(
         if gui.editor_timer_id != Some(timer_id) {
             return;
         }
-        let dt = gui.idle_clock.tick();
+        let Some(dt) = gui.idle_clock.tick() else {
+            return;
+        };
         if let Some(editor) = gui.editor.as_mut() {
             editor.idle(dt);
         }

@@ -818,6 +818,11 @@ public:
     // the timer runs at the fast idle rate (editor attached) or the slow
     // restart-drain rate; the TIMERPROC ticks `idle` only when it is set.
     UINT_PTR restartTimerId = 0;
+    // Thread that owns `restartTimerId`. A null-HWND timer can only be
+    // killed from the thread that created it, so KillTimer is guarded on
+    // this: calling it from another thread silently fails and would leak
+    // the timer. 0 until the first SetTimer succeeds.
+    DWORD restartTimerThreadId = 0;
     bool editorOpen = false;
 #endif
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
@@ -881,6 +886,7 @@ public:
                 restartTimerId = SetTimer(
                     nullptr, 0, (UINT)kRestartTimerIntervalMs,
                     truce_vst3_restart_timer_proc);
+                restartTimerThreadId = GetCurrentThreadId();
 #endif
             }
         }
@@ -926,11 +932,12 @@ public:
 #endif
 #if defined(_WIN32)
         // Map unregistration above happens first, so a WM_TIMER already
-        // in the queue resolves no component and is a safe no-op. Hosts
-        // release on the creating (UI) thread, where KillTimer removes
-        // the thread timer; from any other thread it fails and the
-        // orphaned proc keeps no-oping via the map - never this instance.
-        if (restartTimerId) {
+        // in the queue resolves no component and is a safe no-op. A
+        // null-HWND timer can only be killed from its creating thread;
+        // kill only when released on that thread. From any other thread the
+        // orphaned proc keeps no-oping via the map (never this instance)
+        // and is reclaimed when its thread exits.
+        if (restartTimerId && restartTimerThreadId == GetCurrentThreadId()) {
             KillTimer(nullptr, restartTimerId);
             restartTimerId = 0;
         }
@@ -1053,6 +1060,9 @@ public:
                 if (deferredParent) {
                     g_cb->gui_open(ctx, deferredParent);
                     deferredParent = nullptr;
+#if !defined(__linux__)
+                    setEditorActive(true);  // window now open: arm idle (see pv_attached)
+#endif
                 }
             }
             g_cb->reset(ctx, sampleRate, maxFrames, procMode);
@@ -1105,6 +1115,9 @@ public:
         if (deferredParent) {
             g_cb->gui_open(ctx, deferredParent);
             deferredParent = nullptr;
+#if !defined(__linux__)
+            setEditorActive(true);  // window now open: arm idle (see pv_attached)
+#endif
         }
         return result;
     }
@@ -2026,13 +2039,23 @@ public:
 #if defined(_WIN32)
         if (active == editorOpen) return;
         editorOpen = active;
-        // Re-arm the thread timer at the new rate on the UI thread that
-        // owns it, so Kill/SetTimer are valid here.
-        if (restartTimerId) KillTimer(nullptr, restartTimerId);
+        // Re-arm the thread timer at the new rate. A null-HWND timer can
+        // only be killed from its creating thread, so kill the old one only
+        // when this runs on that thread; a host that created the component
+        // off the UI thread would otherwise silently fail the KillTimer and
+        // leak the timer. The replacement is created on - and owned by -
+        // the current thread (where the editor's idle must land). Any timer
+        // left on the old thread is id-mismatched, so its proc no-ops via
+        // the `restartTimerId` check, and it is reclaimed when that thread
+        // exits.
+        if (restartTimerId && restartTimerThreadId == GetCurrentThreadId()) {
+            KillTimer(nullptr, restartTimerId);
+        }
         restartTimerId = SetTimer(
             nullptr, 0,
             (UINT)(active ? kIdleTimerIntervalMs : kRestartTimerIntervalMs),
             truce_vst3_restart_timer_proc);
+        restartTimerThreadId = GetCurrentThreadId();
 #endif
         (void)active;
     }
@@ -2266,10 +2289,20 @@ static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
     auto* pv = (TrucePlugView*)s;
     if (!g_cb || !pv->ctx) return kResultOk;
     if (pv->comp && !pv->comp->stateLoaded) {
-        // Editor attached before state was restored - defer gui_open
+        // Editor attached before state was restored - defer gui_open, and
+        // the idle-timer arm with it (armed at the deferred gui_open site in
+        // setActive / setState), so idle never ticks into a windowless editor.
         pv->comp->deferredParent = parent;
     } else {
         g_cb->gui_open(pv->ctx, parent);
+#if !defined(__linux__)
+        // Arm the idle timer once the editor window actually exists. Gating
+        // on open (not setFrame) stops the timer running while the editor is
+        // closed and arms it even if the host skips setFrame. gui_idle calls
+        // BuiltinEditor::idle, which does a full offscreen CPU render when it
+        // has no window, so the timer must only run between open and close.
+        if (pv->comp) pv->comp->setEditorActive(true);
+#endif
     }
     return kResultOk;
 }
@@ -2277,6 +2310,9 @@ static tresult pv_removed(void* s) {
     auto* pv = (TrucePlugView*)s;
     if (pv->comp) pv->comp->deferredParent = nullptr;
     if (g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
+#if !defined(__linux__)
+    if (pv->comp) pv->comp->setEditorActive(false);
+#endif
     return kResultOk;
 }
 static tresult pv_getSize(void* s, void* rect) {
@@ -2319,18 +2355,18 @@ static tresult pv_onSize(void* s, void* rect) {
 static tresult pv_setFrame(void* s, void* frame) {
     auto* pv = (TrucePlugView*)s;
     pv->frame = frame;
-    // Editor attached (non-null frame) or detached (null): gate the idle
-    // timer so it only runs while an editor is open.
-    if (pv->comp) {
 #if defined(__linux__)
-        // Bind (or, on a null frame, unbind) the restart timer to the
-        // frame's run loop so a latency change reaches the host UI thread
-        // even without param polling.
-        pv->comp->updateRunLoopRegistration(frame);
-#else
-        pv->comp->setEditorActive(frame != nullptr);
+    // Bind (or, on a null frame, unbind) the restart timer to the frame's
+    // run loop so a latency change reaches the host UI thread even without
+    // param polling. The run loop lives on the frame, so this genuinely
+    // needs setFrame; the idle timer proper is gated by attached/removed.
+    if (pv->comp) pv->comp->updateRunLoopRegistration(frame);
 #endif
-    }
+    // The Apple / Windows idle gate is NOT driven here: setFrame hands over
+    // the frame pointer and a host may call it once for the view's whole
+    // life, so gating idle on it leaves the timer running while the editor
+    // is closed (full CPU render with no window) and never arms it for a
+    // host that skips setFrame. See pv_attached / pv_removed.
     return kResultOk;
 }
 
@@ -2750,8 +2786,10 @@ static tresult pcr_qi(void* s, const TUID iid, void** obj) { return PCR(s).query
 static uint32 pcr_addRef(void* s) { return PCR(s).addRef(); }
 static uint32 pcr_release(void* s) { auto* com = com_from_pcr(s); auto r = com->impl.release(); if (r == 0) { com->impl.~TruceComponent(); free(com); } return r; }
 static uint32 pcr_getReqs(void*) {
-    return (1 << 1) |  // kNeedContinousTimeSamples
-           (1 << 2) |  // kNeedProjectTimeMusic
+    // No kNeedContinousTimeSamples: the sample position comes from
+    // projectTimeSamples (always provided); continousTimeSamples is never
+    // read, so don't ask the host to maintain it.
+    return (1 << 2) |  // kNeedProjectTimeMusic
            (1 << 3) |  // kNeedBarPositionMusic
            (1 << 4) |  // kNeedCycleMusic
            (1 << 6) |  // kNeedTempo

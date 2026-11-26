@@ -470,7 +470,9 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             param_slots,
             meter_slots,
             editor: Some(editor),
-            idle_clock: IdleClock::new(),
+            // `editor.open` already ran above; the UI lives exactly as
+            // long as the open editor (`cleanup_ui` closes it).
+            idle_clock: IdleClock::opened(),
             opened: AtomicBool::new(true),
             urid_map,
             notify_port_index: layout.notify_out_port(),
@@ -695,7 +697,9 @@ unsafe extern "C" fn ui_idle_dispatch<P: PluginExport>(ui: *mut c_void) -> i32 {
             return 0;
         }
         let inst = &mut *ui.cast::<Lv2UiInstance<P>>();
-        let dt = inst.idle_clock.tick();
+        let Some(dt) = inst.idle_clock.tick() else {
+            return 0;
+        };
         if let Some(editor) = inst.editor.as_mut() {
             editor.idle(dt);
         }
