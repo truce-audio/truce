@@ -158,7 +158,7 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
     egui::Panel::top("header")
         .exact_size(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
@@ -171,7 +171,7 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
         });
     egui::CentralPanel::default()
         .frame(egui::Frame::central_panel(ui.style()).inner_margin(10.0))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(10.0, 12.0);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -270,7 +270,7 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
 /// the `Context` so it uploads once. A plugin can't open a URL, so the
 /// image-widget demo embeds the bytes rather than fetching them.
 fn carrot_texture(ctx: &egui::Context) -> egui::TextureHandle {
-    let cache_id = egui::Id::new("zoo_carrot_tex");
+    let cache_id = egui::Id::unique("zoo_carrot_tex");
     if let Some(handle) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(cache_id)) {
         return handle;
     }
@@ -302,12 +302,12 @@ fn decode_carrot() -> (u32, u32, Vec<u8>) {
 /// horizontal + vertical slider, progress bar, separator. `zoo_ui` is
 /// stateless, so each widget's value lives in egui's `Context` memory.
 fn egui_widgets_section(ui: &mut egui::Ui) {
-    let counter_id = egui::Id::new("zoo_w_counter");
-    let check_id = egui::Id::new("zoo_w_check");
-    let radio_id = egui::Id::new("zoo_w_radio");
-    let slider_id = egui::Id::new("zoo_w_slider");
-    let vslider_id = egui::Id::new("zoo_w_vslider");
-    let drag_id = egui::Id::new("zoo_w_drag");
+    let counter_id = egui::Id::unique("zoo_w_counter");
+    let check_id = egui::Id::unique("zoo_w_check");
+    let radio_id = egui::Id::unique("zoo_w_radio");
+    let slider_id = egui::Id::unique("zoo_w_slider");
+    let vslider_id = egui::Id::unique("zoo_w_vslider");
+    let drag_id = egui::Id::unique("zoo_w_drag");
 
     let mut counter = ui.data_mut(|d| d.get_temp::<u32>(counter_id).unwrap_or(0));
     let mut checked = ui.data_mut(|d| d.get_temp::<bool>(check_id).unwrap_or(true));
@@ -386,8 +386,8 @@ fn egui_widgets_section(ui: &mut egui::Ui) {
 /// that mirrors the last key press from anywhere. `zoo_ui` is stateless, so
 /// the box contents and last-key label live in egui's `Context` memory.
 fn keyboard_section(ui: &mut egui::Ui) {
-    let box_id = egui::Id::new("zoo_keyboard_textbox");
-    let key_id = egui::Id::new("zoo_keyboard_last");
+    let box_id = egui::Id::unique("zoo_keyboard_textbox");
+    let key_id = egui::Id::unique("zoo_keyboard_last");
 
     // Immediate-mode: keys are this frame's input events. Take the most
     // recent press (any focus) and remember it.

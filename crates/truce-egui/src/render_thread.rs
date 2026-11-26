@@ -151,12 +151,19 @@ impl RenderThread {
     pub fn submit(&self, mut packet: FramePacket) {
         let mut slot = lock(&self.shared.slot);
         if let Some(mut prev) = slot.frame.take() {
-            prev.textures_delta
-                .set
-                .append(&mut packet.textures_delta.set);
+            // egui 0.37's `set` is a per-id map of `SmallVec` deltas and
+            // `free` is a set; merge this (newer) frame's entries after the
+            // superseded (older) frame's so atlas uploads stay in order.
+            for (id, deltas) in packet.textures_delta.set.drain() {
+                prev.textures_delta
+                    .set
+                    .entry(id)
+                    .or_default()
+                    .extend(deltas);
+            }
             prev.textures_delta
                 .free
-                .append(&mut packet.textures_delta.free);
+                .extend(packet.textures_delta.free.drain());
             packet.textures_delta = prev.textures_delta;
         }
         slot.frame = Some(packet);
@@ -255,8 +262,8 @@ fn run(shared: &Shared, hwnd: isize, width: u32, height: u32, device_lost: &Arc<
             if let Some((w, h)) = resize {
                 renderer.resize(w, h);
             }
-            if let Some(f) = frame {
-                renderer.render(&f.textures_delta, &f.primitives, f.pixels_per_point);
+            if let Some(mut f) = frame {
+                renderer.render(&mut f.textures_delta, &f.primitives, f.pixels_per_point);
                 let nanos = u64::try_from(renderer.acquire_wait().as_nanos()).unwrap_or(u64::MAX);
                 shared.last_acquire_nanos.store(nanos, Ordering::Relaxed);
             }

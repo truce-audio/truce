@@ -123,7 +123,7 @@ impl EditorUi<StateExampleParams> for StateExampleUi {
         egui::Panel::top("header")
             .exact_size(30.0)
             .frame(egui::Frame::NONE.fill(HEADER_BG))
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(10.0);
                     ui.label(
@@ -137,7 +137,7 @@ impl EditorUi<StateExampleParams> for StateExampleUi {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).inner_margin(12.0))
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.label("Instance label");
                 ui.add_space(4.0);
                 let response = ui.add(
