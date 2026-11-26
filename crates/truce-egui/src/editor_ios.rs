@@ -71,6 +71,8 @@ struct Inner<P: Params + ?Sized> {
     logical_h: u32,
     scale: f32,
     egui_ctx: egui::Context,
+    /// Last author-UI panic logged; see the desktop editor's field.
+    last_ui_panic: Option<String>,
     renderer: EguiRenderer,
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     params: Arc<P>,
@@ -270,6 +272,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             .opened(&typed_ctx);
 
         let inner = Inner {
+            last_ui_panic: None,
             child_view: view,
             display_link: link,
             logical_w: lw,
@@ -849,23 +852,42 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         .or_default()
         .native_pixels_per_point = Some(inner.scale);
 
+    let mut ui_panic = None;
     let mut output = inner.egui_ctx.run_ui(raw_input, |root_ui| {
-        // Recover a poisoned `ui` mutex (into_inner) rather than skip the
-        // frame forever: a panic in author `ui` code is caught by the thunk
-        // firewall, and the editor must keep rendering afterward - matching
-        // the built-in editor's non-poisoning RefCell.
-        inner
-            .ui
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .ui(root_ui, &inner.context);
+        // Caught here, not by the thunk firewall: egui must finish the pass
+        // (see `catch_ui_panic`). The frame renders what the UI drew and the
+        // editor keeps running; the poisoned `ui` mutex is recovered
+        // (into_inner) next frame, matching the built-in editor's RefCell.
+        if let Some(p) = crate::catch_ui_panic(|| {
+            inner
+                .ui
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .ui(root_ui, &inner.context);
+        }) {
+            ui_panic.get_or_insert(p);
+        }
     });
+    match ui_panic {
+        Some(payload) => {
+            let msg = crate::panic_message(&*payload);
+            if inner.last_ui_panic.as_deref() != Some(msg.as_str()) {
+                log::error!("egui editor ui panicked (frame kept, editor still live): {msg}");
+                inner.last_ui_panic = Some(msg);
+            }
+        }
+        None => inner.last_ui_panic = None,
+    }
+    // Owned before `tessellate` so a panic from here on can't drop it
+    // unapplied (see `OwnedTexturesDelta`).
+    let mut textures_delta =
+        crate::renderer::OwnedTexturesDelta(std::mem::take(&mut output.textures_delta));
     let clipped = inner
         .egui_ctx
         .tessellate(output.shapes, output.pixels_per_point);
     inner
         .renderer
-        .render(&mut output.textures_delta, &clipped, inner.scale);
+        .render(&mut textures_delta.0, &clipped, inner.scale);
     // Drive the iOS soft keyboard from egui's focus state. egui
     // sets `egui_wants_keyboard_input()` while a `TextEdit` (or
     // other focus-grabbing widget) is the active receiver; we
