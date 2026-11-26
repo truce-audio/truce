@@ -19,6 +19,9 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 - **`truce-iced` editors return keys no widget consumed to the host.** In 6.x the iced editor kept every key; now an unconsumed key also goes to the host so DAW shortcuts keep working. A key handled in `subscription()` (`keyboard::listen`, `event::listen_with`) counts as unconsumed, so without a claim both the plug-in and the host act on it. **Migration:** implement `IcedPlugin::keeps_key` and return `true` for the keys you handle (`gui-zoo-iced` keeps all of them). A focused `text_input` still keeps its keys.
 - **`Theme` gained `toggle_track_hover` and `toggle_thumb`.** A custom built-in-GUI theme written as a full `Theme { … }` literal no longer compiles. **Migration:** set the two fields, or fill the rest from `..Theme::dark()`.
 - **`EventList::with_capacity` lists are now capped at their capacity.** They used to grow on demand; now a full list drops events other than parameter changes / modulation and note-offs (those fold or grow), and `push_sysex` returns the new `PushError::QueueFull`. Code that builds its own list with a small capacity (tests, a custom host) and pushes more than that loses the overflow. `PushError` is matched exhaustively, so a `match` on it needs the new arm. **Migration:** size the list for the block (`block_event_capacity(max_block, param_count)`), or use `EventList::growable_with_capacity` outside the audio thread.
+- **LV2 refuses to instantiate a plug-in whose audio layout differs from its category default.** The TTL's audio ports come from the category (an effect, analyzer or tool declares 2 in / 2 out, an instrument 0 in / 2 out), so a different real layout - a mono effect, a mono-in / stereo-out tool, an extra aux output bus - would bind host audio buffers where the runtime expects atom sequences. 6.x loaded it with shifted port indices; 7.0 fails `instantiate` cleanly and logs the mismatch. A sidechain input on top of the default main bus still loads (the sidechain is dropped). **Migration:** an LV2 build of such a plug-in no longer loads; match the category's default layout or ship that plug-in without LV2 until the TTL is rendered from the real layout.
+- **`cargo truce validate` fails when pluginval or clap-validator is missing and a VST3 / CLAP bundle is installed.** 6.x printed "not found" and passed a default (no-flag) run in that case; now an installed bundle puts the format in scope, so the run ends with `validation incomplete (N skipped)` and a non-zero exit. An explicit `--pluginval` / `--clap` with the validator missing still fails as in 6.x, now reported as skipped rather than as a validation failure. auval and AAX are unchanged (a missing validator fails only when explicitly requested). **Migration:** install the missing validator in CI, or scope the run to the formats you can validate.
+- **The LV2 TTL now carries `lv2:minorVersion` / `lv2:microVersion`, taken from the plug-in version's minor and patch.** LV2 has no major component (an incompatible change belongs in the plugin URI), so the major is dropped: 1.9 → 2.0 maps 9.0 → 0.0, which a host reads as a downgrade and may keep the older bundle. 6.x emitted no version. **Migration:** bump the minor across a major release, or give an incompatible release a new LV2 URI (`<vendor.url>/lv2/<bundle_id>`) by changing `bundle_id` or `[vendor].url` - note that `bundle_id` also feeds the CLAP / VST3 ids and the state hash, so hosts treat it as a different plug-in on every format.
 
 ### Migrating from 6.x
 
@@ -105,7 +108,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 #### CLI
 
 - `cargo truce package --arch x86_64|arm64` builds a single non-host macOS slice; `--arch` with `--host-only` is an error.
-- `cargo truce validate` reports a missing validator as a failure instead of a pass, reads clap-validator's coloured summary counts correctly (it showed `PASS (0/44)` instead of `38/44`, #245), and uses clap-validator 0.4.1's `--exclude` argument.
+- `cargo truce validate` treats a missing pluginval / clap-validator as incomplete when its format is in scope (see Breaking), reads clap-validator's coloured summary counts correctly (it showed `PASS (0/44)` instead of `38/44`, #245), and uses clap-validator 0.4.1's `--exclude` argument.
 - Packaging dedupes macOS archives safely, and an empty `[vendor].name` is rejected (it made `reset-aax` / `reset-au` / `uninstall --stale` match and delete every file).
 - Building for the host target no longer requires a rustup-managed toolchain; only cross targets go through rustup.
 - Scaffolded MIDI plug-ins declare an explicit empty audio bus layout, fixing clap-validator failures.
@@ -116,7 +119,6 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 - Parameter get / set callbacks are panic-firewalled across the C ABI (AU / VST2 / VST3).
 - CLAP / VST2 validate host-declared event and chunk sizes before reading them, closing out-of-bounds reads.
 - AAX's save-blob cache no longer serves stale state after a GUI-driven state change.
-- LV2 refuses to instantiate when the plug-in's audio layout doesn't match the category's TTL ports.
 - Bumped `zip` for a `cargo audit` advisory.
 
 #### Examples
