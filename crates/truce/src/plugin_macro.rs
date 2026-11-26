@@ -421,6 +421,13 @@ macro_rules! __plugin_hot_reload {
                 self.inner.load_state(data)
             }
 
+            fn default_extra() -> Option<Vec<u8>>
+            where
+                Self: Sized,
+            {
+                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::default_extra()
+            }
+
             fn republish_snapshot(&mut self) {
                 self.inner.republish_snapshot();
             }

@@ -21,6 +21,12 @@
 //! 0 = 0.75
 //! 1 = 0.40
 //! ```
+//!
+//! A preset without `extra` (or with an empty one) carries no custom
+//! state. Loading it loads the plugin's `default_extra` instead; by
+//! default that's `None`, which keeps the instance's current custom
+//! state, and a plugin that wants such a preset to replace it - drop the
+//! previous preset's patch cables, say - returns its default state there.
 
 use base64::Engine as _;
 use serde::Deserialize;

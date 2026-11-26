@@ -39,8 +39,8 @@ use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
     ParamCStrings, PluginCell, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
-    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
-    run_extern_callback_with, run_register, save_extra, shared_plugin,
+    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, publish_loaded_extra,
+    run_audio_block, run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
 use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
@@ -1805,57 +1805,6 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
     len
 }
 
-/// Refresh the custom-state snapshot slot from just-loaded `extra` bytes.
-///
-/// A host state load hands the custom-state blob to the audio thread via
-/// `pending_state`, which applies it and republishes the snapshot each
-/// block. But Pro Tools can load while no block is rendering - an inactive
-/// preset recall, or a `GetChunkSize` that fires between the load and the
-/// next render - and the wrapper can't take the plugin lock off the audio
-/// thread to republish, since a `SetChunk` may race `RenderAudio`. The
-/// loaded bytes are the same wire format `snapshot_into` emits, so publish
-/// them into the inline lane directly: a save before the next render then
-/// returns the loaded state instead of the pre-load snapshot. The next
-/// render's queue drain re-applies and republishes canonically.
-///
-/// Off-thread-lane plugins (large sampler state) republish from their own
-/// `state_changed` hook - the same division of labor as the CLAP / VST3
-/// `republish_snapshot`, which also drives only the inline lane.
-fn republish_loaded_snapshot(slot: &SnapshotSlot, extra: Option<&[u8]>) {
-    /// The audio thread holds the slot only while it copies a block's
-    /// snapshot in, so a short retry lands the loaded bytes.
-    const PUBLISH_ATTEMPTS: u32 = 64;
-    let Some(bytes) = extra.filter(|b| !b.is_empty()) else {
-        return;
-    };
-    for _ in 0..PUBLISH_ATTEMPTS {
-        let landed = slot.publish(|buf| {
-            buf.extend_from_slice(bytes);
-            true
-        });
-        if landed {
-            // Known window: if this lands while a block is in flight, that
-            // block's own publish can rewrite the pre-load custom state (an
-            // unversioned plug-in, or one whose `snapshot_version` moved), so
-            // a save before the drain that applies the load returns the
-            // loaded params with the old extra. That drain fixes it; it only
-            // sticks if rendering stops before the drain.
-            //
-            // Bump the snapshot generation so the save-blob cache (keyed on
-            // it) re-serializes the loaded bytes on the next `_save_state`,
-            // even before the audio thread drains the load queue and bumps
-            // `state_revision` (an inactive recall may never render).
-            slot.mark_published();
-            return;
-        }
-        std::thread::yield_now();
-    }
-    // Still contended (the audio thread publishing, or another reader):
-    // the block that applies the load republishes it and bumps the
-    // generation when that publish lands. Don't bump for bytes that never
-    // landed - a save would cache the pre-load snapshot under the new key.
-}
-
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
     run_extern_callback_with::<P, ()>("aax", "load_state", (), || unsafe {
         let inst = &*ctx.cast::<AaxInstance<P>>();
@@ -1879,7 +1828,7 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             // Refresh the snapshot slot now so a save before the next
             // render block sees the loaded custom state rather than the
             // pre-load snapshot (an inactive recall may never render).
-            republish_loaded_snapshot(&inst.snapshot, deserialized.extra.as_deref());
+            publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending blob
             // - see the `pending_state` field comment for why
@@ -1932,11 +1881,11 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
         }) else {
             return 0;
         };
-        let deserialized: state::DeserializedState = migrated.into();
+        let deserialized = state::with_default_extra::<P>(migrated.into());
         state::apply_params(&*inst.params_arc, &deserialized);
         // Same inactive-load republish as `_load_state`: keep a save
         // before the next render consistent with the migrated custom state.
-        republish_loaded_snapshot(&inst.snapshot, deserialized.extra.as_deref());
+        publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
         let _ = inst.pending_state.force_push(deserialized);
         if let Ok(mut guard) = inst.state_cache.lock() {
             *guard = None;
@@ -2083,7 +2032,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     // returns the new state, and the generation bump
                     // invalidates the save-blob cache even for an inactive
                     // plugin whose render queue never drains.
-                    republish_loaded_snapshot(&snapshot_for_set, Some(&bytes));
+                    publish_loaded_extra(&snapshot_for_set, Some(&bytes));
                     // Route the bytes to the plugin's `load_state` on the
                     // audio thread via the same handoff queue the host load
                     // path uses (the queue is what avoids aliasing
