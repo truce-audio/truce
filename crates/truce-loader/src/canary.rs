@@ -54,7 +54,16 @@ use truce_gui_types::theme::{Color, Theme};
 /// token that lets the shell skip re-serializing an unchanged snapshot).
 /// A stale epoch-5 dylib lacks the symbol; this bump rejects it at the
 /// canary before symbol resolution fails.
-pub const ABI_EPOCH: u32 = 6;
+/// Epoch 7 (truce 7.0): `EventList` gained its `event_limit` /
+/// `sysex_limit` fields - it crosses by reference, as `truce_process`'s
+/// `events` argument and as `ProcessContext::output_events` (which the
+/// dylib pushes into), and the canary doesn't measure it. `Editor::idle`
+/// gained a `dt: Duration` parameter, changing the signature behind the
+/// `dyn Editor` vtable slot the `truce_build_editor` export hands across.
+/// Neither moves a size this canary checks. (7.0's `Theme` growth happens
+/// to change `theme_size` too, but the epoch shouldn't rely on that - it
+/// also has to reject 7.0 dev builds from before the `Theme` change.)
+pub const ABI_EPOCH: u32 = 7;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
