@@ -303,12 +303,38 @@ fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<Strin
         .as_ref()
 }
 
-/// Ensure `rustup` has `triple` installed, adding it if missing. Errors
-/// with a clear message when rustup itself isn't on PATH (the common
-/// case is a Homebrew `cargo` shadowing rustup's shim; see the
-/// `build-install-split.md` doc for the recovery steps). Same gating
-/// rationale as [`installed_rustup_targets`].
+/// The triple the active `rustc` runs on (its `host:` line), cached for
+/// the process. `None` when `rustc` can't be run or the output has no
+/// host line.
+fn host_triple() -> Option<&'static str> {
+    static CACHE: OnceLock<Option<String>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let out = Command::new("rustc").arg("-vV").output().ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find_map(|l| l.strip_prefix("host: ").map(str::to_string))
+        })
+        .as_deref()
+}
+
+/// Ensure `rustup` has `triple` installed, adding it if missing. The
+/// host triple passes without consulting rustup (host std is always
+/// present). For cross triples, errors with a clear message when rustup
+/// itself isn't on PATH (the common case is a Homebrew `cargo`
+/// shadowing rustup's shim). Same gating rationale as
+/// [`installed_rustup_targets`].
 pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
+    // The host triple needs no rustup bookkeeping: every toolchain ships
+    // its own host std, rustup-managed or not. Gating it behind rustup
+    // broke host-arch builds (x64 AAX on an x64 box) on machines whose
+    // toolchain isn't rustup-managed.
+    if host_triple() == Some(triple) {
+        return Ok(());
+    }
     let Some(installed) = installed_rustup_targets() else {
         return Err(format!(
             "rustup not available - can't verify target `{triple}` is installed. \
