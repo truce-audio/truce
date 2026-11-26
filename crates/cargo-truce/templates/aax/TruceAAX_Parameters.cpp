@@ -527,11 +527,34 @@ void TruceAAX_Parameters::RenderAudio(
             transport.time_sig_den = den;
             transport.valid = 1;
         }
+        // The sample-location and bar/beat queries below run only while
+        // the transport is rolling. GetCurrentNativeSampleLocation only
+        // returns a value during playback (per its SDK docs), so the
+        // stopped-state calls were pure waste - and GetBarBeatPosition,
+        // which the SDK flags with "a minor performance cost ... should
+        // not be used excessively without need" in Pro Tools, rides on
+        // that sample position (a stopped sample pos of 0 would make it
+        // report bar 1 anyway), so it's gated too. Per-block host queries
+        // on the render thread are the AAE-9093 (processing deadline)
+        // failure genre, so idle sessions skip them.
         int64_t sampleLoc = 0;
-        if (trans->GetCurrentNativeSampleLocation(&sampleLoc) == AAX_SUCCESS) {
+        if (playing
+            && trans->GetCurrentNativeSampleLocation(&sampleLoc) == AAX_SUCCESS)
+        {
             transport.position_samples = (double)sampleLoc;
             transport.valid = 1;
         }
+        // GetCurrentTickPosition is deliberately NOT gated on `playing`:
+        // it's an independent query (no dependence on the sample location)
+        // that reports the edit-cursor tick while stopped, so
+        // position_beats keeps tracking the cursor the way CLAP / VST3 / AU
+        // do - they populate the beat position regardless of play state. It
+        // is also the cheapest of the three playhead calls, so leaving it
+        // live while stopped barely dents the idle-session saving.
+        // This assumes GetCurrentTickPosition reports the edit-cursor tick
+        // while stopped (not 0), matching AAX transport semantics. If a host
+        // instead returns 0 while stopped, gate this on `playing` like the
+        // sample-location query above.
         int64_t tickPos = 0;
         if (trans->GetCurrentTickPosition(&tickPos) == AAX_SUCCESS) {
             // AAX ticks are 1/960000 of a quarter note; convert to beats.
@@ -544,7 +567,8 @@ void TruceAAX_Parameters::RenderAudio(
         int32_t bars = 0, beats = 0;
         int64_t barDisplayTicks = 0;
         int64_t samplePos = (int64_t)transport.position_samples;
-        if (trans->GetBarBeatPosition(&bars, &beats, &barDisplayTicks, samplePos)
+        if (playing
+            && trans->GetBarBeatPosition(&bars, &beats, &barDisplayTicks, samplePos)
                 == AAX_SUCCESS
             && transport.time_sig_num > 0)
         {
