@@ -4,9 +4,9 @@
 //! App menu (Quit / Hide / About) and a single "Settings" menu
 //! carrying both the audio and MIDI controls:
 //!
-//! - **Mic Input** (toggle, ⌘I, checkmark when on; effect plugins only)
+//! - **Mic Input** (toggle, ⌘I, checkmark when on; plug-ins with an audio input only)
 //! - **Audio Output** (toggle, ⌘O, checkmark when unmuted)
-//! - **Input Device** submenu - lists cpal-visible inputs (effects only)
+//! - **Input Device** submenu - lists cpal-visible inputs (plug-ins with an audio input only)
 //! - **Output Device** submenu - same for outputs
 //! - **Input / Output Channels** submenus - channel routing (when the
 //!   device exposes >= 2 channels)
@@ -96,13 +96,13 @@ struct MenuState {
 
 /// Install the native menu bar.
 ///
-/// `is_effect` controls whether mic-input and input-device items
-/// appear - input-side controls are useless for instruments and
-/// analyzers since the runner feeds them silence.
+/// `takes_input` controls whether mic-input and input-device items
+/// appear - input-side controls are useless for a plug-in with no audio
+/// input bus (an instrument), which the runner never feeds.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn install(
     app_name: &str,
-    is_effect: bool,
+    takes_input: bool,
     channels: usize,
     input: &InputController,
     output: &OutputController,
@@ -131,8 +131,8 @@ pub fn install(
             qwerty.clone(),
         );
 
-        // Mic toggle (⌘I) - only meaningful for effects.
-        let mic_item = if is_effect {
+        // Mic toggle (⌘I) - only meaningful with an audio input.
+        let mic_item = if takes_input {
             let item = make_toggle_item("Mic Input", "i", sel!(toggleInputAction:), target);
             let _: () = msg_send![plugin_menu, addItem: item];
             item
@@ -159,8 +159,8 @@ pub fn install(
         let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
         let _: () = msg_send![plugin_menu, addItem: sep];
 
-        // Input device submenu - only useful for effects (instrument
-        // runners don't read from the input ring). Empty at install;
+        // Input device submenu - only useful with an audio input (a
+        // plug-in without one never reads the input ring). Empty at install;
         // repopulated on open.
         //
         // The parent item is built with `noopAction:` (see
@@ -172,7 +172,7 @@ pub fn install(
         // dodge this because AppKit always enables those for
         // navigation.) Point the item at `target`, which implements
         // `noopAction:`, so validation passes and it stays clickable.
-        let input_dev_menu = if is_effect {
+        let input_dev_menu = if takes_input {
             let input_dev_item = make_menu_item("Input Device");
             let _: () = msg_send![input_dev_item, setTarget: target];
             let menu = make_menu("Input Device");
@@ -201,7 +201,7 @@ pub fn install(
             let sep2: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
             let _: () = msg_send![plugin_menu, addItem: sep2];
 
-            if is_effect {
+            if takes_input {
                 let in_ch_item = make_menu_item("Input Channels");
                 let _: () = msg_send![in_ch_item, setTarget: target];
                 let in_ch_menu = make_menu("Input Channels");

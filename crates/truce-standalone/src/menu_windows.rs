@@ -4,10 +4,10 @@
 //! carrying both the audio and MIDI controls:
 //!
 //! - **Mic Input** (checkable, `Ctrl+I` shown as the accelerator hint;
-//!   effect plugins only)
+//!   plug-ins with an audio input only)
 //! - **Audio Output** (checkable mute toggle, `Ctrl+O`)
 //! - **Input Device** submenu - repopulated from cpal on each open
-//!   (effect plugins only)
+//!   (plug-ins with an audio input only)
 //! - **Output Device** submenu - same for outputs
 //! - **Input / Output Channels** submenus - channel routing (when the
 //!   device exposes >= 2 channels)
@@ -133,7 +133,7 @@ struct MenuState {
     /// The Plugin popup itself - needed for `CheckMenuItem` on the
     /// toggles (whose commands live in the Plugin popup).
     hmenu_plugin: HMENU,
-    /// True if the mic-input item is in the menu (effect plugins
+    /// True if the mic-input item is in the menu (plug-ins with an audio input
     /// only). Gates `WM_COMMAND` dispatch and skips the
     /// checkmark refresh on `WM_INITMENUPOPUP` for instruments.
     has_mic_item: bool,
@@ -173,14 +173,14 @@ struct MenuState {
 
 /// Install the native menu bar.
 ///
-/// `is_effect` controls whether mic-input and input-device items
-/// appear - input-side controls are useless for instruments and
-/// analyzers since the runner feeds them silence.
+/// `takes_input` controls whether mic-input and input-device items
+/// appear - input-side controls are useless for a plug-in with no audio
+/// input bus (an instrument), which the runner never feeds.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn install(
     hwnd: *mut c_void,
     _app_name: &str,
-    is_effect: bool,
+    takes_input: bool,
     channels: usize,
     input: InputController,
     output: OutputController,
@@ -202,7 +202,7 @@ pub fn install(
             return;
         }
 
-        let input_dev_menu = if is_effect {
+        let input_dev_menu = if takes_input {
             let m = CreatePopupMenu();
             if m.is_null() {
                 return;
@@ -212,11 +212,11 @@ pub fn install(
             std::ptr::null_mut()
         };
 
-        // Mic-input item (effects only). `\t` separates the label
-        // from the accelerator hint; Windows right-aligns the hint
-        // in the popup. The hint is cosmetic - actual `Ctrl+I`
+        // Mic-input item (plug-ins with an audio input only). `\t`
+        // separates the label from the accelerator hint; Windows
+        // right-aligns the hint in the popup. The hint is cosmetic - actual `Ctrl+I`
         // dispatch happens in the baseview keyboard handler.
-        if is_effect {
+        if takes_input {
             let item_text = wide("Mic Input\tCtrl+I");
             AppendMenuW(
                 plugin_menu,
@@ -256,8 +256,8 @@ pub fn install(
         );
 
         // Input Device submenu - empty at install; repopulated on
-        // WM_INITMENUPOPUP so hot-plug just works. Effects only.
-        if is_effect {
+        // WM_INITMENUPOPUP so hot-plug just works. Input-taking plug-ins only.
+        if takes_input {
             let input_label = wide("Input Device");
             AppendMenuW(
                 plugin_menu,
@@ -282,7 +282,7 @@ pub fn install(
         let (input_ch_menu, output_ch_menu) = if channels >= 2 {
             AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
 
-            let in_ch = if is_effect {
+            let in_ch = if takes_input {
                 let m = CreatePopupMenu();
                 if !m.is_null() {
                     let label = wide("Input Channels");
@@ -382,7 +382,7 @@ pub fn install(
             output,
             keyboard: qwerty,
             hmenu_plugin: plugin_menu,
-            has_mic_item: is_effect,
+            has_mic_item: takes_input,
             hmenu_input_devices: input_dev_menu,
             hmenu_output_devices: output_dev_menu,
             hmenu_input_channels: input_ch_menu,
