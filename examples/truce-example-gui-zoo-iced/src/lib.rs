@@ -229,6 +229,14 @@ impl IcedPlugin<ZooParams> for ZooUi {
         Task::none()
     }
 
+    /// The subscription below mirrors every key press, so keep every key
+    /// rather than also returning it to the host (as `gui-zoo-egui` does
+    /// with `claim_keys(.., Key::ALL)`). A real editor would claim only the
+    /// keys it acts on.
+    fn keeps_key(&self, _event: &truce_iced::iced::keyboard::Event) -> bool {
+        true
+    }
+
     fn subscription(&self) -> truce_iced::iced::Subscription<Message<ZooMsg>> {
         // Mirror every key press, regardless of which widget has focus, by
         // listening to the raw event stream (the truce-iced subscription
