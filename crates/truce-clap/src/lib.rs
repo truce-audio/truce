@@ -2825,19 +2825,20 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     // of aborting the host across this `extern "C"` boundary.
     run_extern_callback_with::<P, bool>("CLAP", "save_state", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
-        // While inactive the audio thread never runs, so a state edit the
-        // editor queued through `set_state` (or a load) sits undrained in
-        // `pending_state` and would not reach the snapshot below - the save
-        // would serialize the pre-edit state. Drain and apply it here on the
-        // host thread, which owns the plugin while inactive, then republish
-        // so the snapshot read reflects the edit. While active the audio
-        // thread owns the plugin and drains the queue itself, so we must not
-        // touch it here (read the snapshot only).
-        if !data.active.load(Ordering::Relaxed)
-            && let Some(deserialized) = data.pending_state.pop()
-        {
+        // While inactive the audio thread never runs, so the snapshot below
+        // is whatever the last block published - stale if state changed
+        // since (an `activate` that reset it, a hot reload), and a state
+        // edit the editor queued through `set_state` sits undrained in
+        // `pending_state`. The host thread owns the plugin while inactive,
+        // so apply any queued edit here and always republish before
+        // reading. While active the audio thread owns the plugin and keeps
+        // the snapshot current itself, so we must not touch it here (read
+        // the snapshot only).
+        if !data.active.load(Ordering::Relaxed) {
             let mut instance = enter_plugin(&data.plugin);
-            state::apply_state(&mut *instance, &deserialized);
+            if let Some(deserialized) = data.pending_state.pop() {
+                state::apply_state(&mut *instance, &deserialized);
+            }
             instance.republish_snapshot();
         }
         let (ids, values) = data.params_arc.collect_values();

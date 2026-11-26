@@ -94,7 +94,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         let init_ctx =
             InitContext::new(tasks.clone()).with_snapshot(SnapshotPublisher::new(&snapshots));
         let state = L::init(&params, &init_ctx);
-        Self {
+        let mut shell = Self {
             params,
             state,
             meters: MeterStore::new(),
@@ -104,7 +104,19 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
             sample_rate: 44100.0,
             tasks,
             _sample: std::marker::PhantomData,
-        }
+        };
+        // Publish once before any host sees the instance. Every format's
+        // save reads custom state from this slot, which `process` fills -
+        // so without this, a save before the first block (a fresh instance,
+        // one that never activates) would carry no custom state at all.
+        // Nothing else can own the shell yet, so this is the safe moment.
+        publish_snapshot::<S, L>(
+            &shell.state,
+            &shell.snapshots,
+            &mut shell.try_snapshot,
+            &mut shell.last_snapshot_version,
+        );
+        shell
     }
 
     /// Shared meter storage handle - the GUI-thread-safe channel
