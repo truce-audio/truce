@@ -49,8 +49,8 @@ pub struct Lv2Bundle {
     /// (incompatible changes belong in the plugin URI), so the TTL maps
     /// minor/patch onto `lv2:minorVersion` / `lv2:microVersion`.
     pub version: String,
-    /// Plugin URI. Caller computes (typically `<vendor.url>/lv2/<clap_id>`
-    /// or `urn:truce:<clap_id>` when `url` is empty) - kept explicit so
+    /// Plugin URI. Caller computes (typically `<vendor.url>/lv2/<bundle_id>`
+    /// or `urn:truce:<bundle_id>` when `url` is empty) - kept explicit so
     /// the URI scheme stays in one place at the call site.
     pub uri: String,
     /// UI URI. Convention is `<plugin_uri>#ui`.
