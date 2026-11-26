@@ -113,6 +113,9 @@ impl<P: Params + 'static> EguiEditor<P> {
         self
     }
 
+    /// Set a custom default font (TrueType data). Without one the editor
+    /// uses [`truce_font::JETBRAINS_MONO`] (egui 0.37 ships no fonts of
+    /// its own here); either way the Noto Music symbol fallback is added.
     #[must_use]
     pub fn with_font(mut self, font: &'static [u8]) -> Self {
         self.font = Some(font);
@@ -255,24 +258,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         if let Some(v) = self.visuals.clone() {
             egui_ctx.set_visuals(v);
         }
-        if let Some(font_bytes) = self.font {
-            let mut fonts = egui::FontDefinitions::default();
-            fonts.font_data.insert(
-                "truce-egui".into(),
-                Arc::new(egui::FontData::from_static(font_bytes)),
-            );
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "truce-egui".into());
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .insert(0, "truce-egui".into());
-            egui_ctx.set_fonts(fonts);
-        }
+        // Same font setup as the desktop editor and the screenshot
+        // renderer, including the tweaked Noto Music symbol fallback -
+        // a hand-rolled copy here had no fallback, so `♩` drew as tofu.
+        crate::font::apply_editor_font(&egui_ctx, self.font);
 
         let typed_ctx = context.with_params(Arc::clone(&self.params));
         self.ui

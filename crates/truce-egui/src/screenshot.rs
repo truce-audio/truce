@@ -36,9 +36,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     let ctx = egui::Context::default();
     ctx.set_visuals(visuals.unwrap_or_else(crate::theme::dark));
 
-    if let Some(font_data) = font {
-        crate::font::apply_font(&ctx, font_data);
-    }
+    crate::font::apply_editor_font(&ctx, font);
 
     // Acquire the GPU *before* running the UI. Both requests below can
     // fail on a GPU-less host (headless CI, a stripped container), and a

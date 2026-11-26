@@ -308,7 +308,9 @@ impl<P: Params + 'static> EguiEditor<P> {
         self
     }
 
-    /// Set a custom default font (TrueType data).
+    /// Set a custom default font (TrueType data). Without one the editor
+    /// uses [`truce_font::JETBRAINS_MONO`] (egui 0.37 ships no fonts of
+    /// its own here); either way the Noto Music symbol fallback is added.
     ///
     /// ```ignore
     /// EguiEditor::new(params, (400, 300), my_ui)
@@ -532,9 +534,7 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         }
         let egui_ctx = crate::new_egui_context();
         egui_ctx.set_visuals(self.visuals.clone());
-        if let Some(font_data) = self.font {
-            crate::font::apply_font(&egui_ctx, font_data);
-        }
+        crate::font::apply_editor_font(&egui_ctx, self.font);
         self.egui_ctx = egui_ctx;
         self.device_lost = device_lost;
     }
@@ -1597,9 +1597,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                         RenderThread::spawn(hwnd, phys_w, phys_h, device_lost_for_renderer)
                     });
 
-                if let Some(font_data) = font {
-                    crate::font::apply_font(&egui_ctx, font_data);
-                }
+                crate::font::apply_editor_font(&egui_ctx, font);
 
                 // baseview's `on_frame` drives the frame loop, but it no
                 // longer paints unconditionally every tick: the handler's

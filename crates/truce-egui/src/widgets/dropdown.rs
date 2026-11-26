@@ -14,16 +14,15 @@ use truce_params::{Params, sample::Float};
 // row of mixed dropdowns / knobs has all labels at the same baseline.
 const CELL_W: f32 = 80.0;
 const CELL_H: f32 = 82.0;
-/// Y of the label's top edge inside the cell. The knob paints its
-/// label with a direct `painter.text(..., Align2::CENTER_TOP)` call
-/// at `rect.top + 69`, whose visual top sits a few pixels lower
-/// than where `egui::Label` rendered through a `top_down` layout
-/// lands at the same y - the layout path applies extra item spacing
-/// above the label. Nudging the target down by ~3 px makes the
-/// label baselines match by eye.
-const LABEL_TOP_Y: f32 = 72.0;
-/// `ComboBox` button height under egui's default spacing.
-const COMBO_TOTAL_Y: f32 = 22.0;
+/// Y of the label's top edge inside the cell - exactly where
+/// `param_knob` paints its own. Painted directly the same way (not laid
+/// out after the `ComboBox`), so egui's widget metrics can't move it:
+/// egui 0.37's taller `interact_size` pushed a flowed label ~2 pt below
+/// the knobs'.
+const LABEL_TOP_Y: f32 = 69.0;
+/// Space above the `ComboBox` button, centring it in the area over the
+/// label.
+const COMBO_TOP_PAD: f32 = 25.0;
 
 /// Render a click-to-open dropdown for the param `id` with `label`
 /// underneath. Option labels are derived from the param's range +
@@ -74,18 +73,19 @@ pub fn param_dropdown<P: Params + ?Sized>(
             .max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::Center)),
     );
-    // Vertically center the ComboBox button inside the cell. The label
-    // still anchors at `LABEL_TOP_Y` to line up with `param_knob`'s
-    // label. Layout from the top: pad above to center the button, then
-    // pad below to drop the label at the shared Y.
-    let combo_top_pad = ((LABEL_TOP_Y - COMBO_TOTAL_Y) / 2.0).max(0.0);
-    let combo_bottom_pad = (LABEL_TOP_Y - COMBO_TOTAL_Y - combo_top_pad).max(0.0);
-    child.add_space(combo_top_pad);
+    child.add_space(COMBO_TOP_PAD);
+    // egui 0.37's 8 pt button padding leaves a 1-col cell too narrow for
+    // a 6-char option ("Mode A", "Square") and wraps it mid-word into a
+    // taller button that can reach the label. Tighter padding fits those
+    // again; anything longer truncates with an ellipsis (`cols` widens
+    // the cell) rather than wrapping.
+    child.spacing_mut().button_padding.x = 4.0;
 
     let cur_value: f32 = state.get_param(id);
     let combo_resp = egui::ComboBox::from_id_salt(("truce-egui:param_dropdown", id))
         .selected_text(&current_text)
         .width(cell_w - 4.0)
+        .truncate()
         .show_ui(&mut child, |ui| {
             for i in 0..count {
                 let norm = discrete_norm(i, count);
@@ -101,10 +101,15 @@ pub fn param_dropdown<P: Params + ?Sized>(
             }
         });
 
-    child.add_space(combo_bottom_pad);
     let dim = ui.visuals().widgets.noninteractive.fg_stroke.color;
-    child.add(egui::Label::new(
-        egui::RichText::new(label).color(dim).size(10.0),
-    ));
+    // Clipped to the cell like `param_knob`'s, so a long label can't run
+    // into the neighbour.
+    ui.painter_at(rect).text(
+        egui::pos2(rect.center().x, rect.top() + LABEL_TOP_Y),
+        egui::Align2::CENTER_TOP,
+        label,
+        egui::FontId::proportional(10.0),
+        dim,
+    );
     combo_resp.response
 }

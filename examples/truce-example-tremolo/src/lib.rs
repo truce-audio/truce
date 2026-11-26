@@ -251,6 +251,9 @@ fn draw_transport_readout(ui: &mut egui::Ui, state: &PluginContext<TremoloParams
         Some([tempo, sig, beat, samples]) => {
             egui::Grid::new("transport")
                 .num_columns(2)
+                // Rows as tall as the text, not egui's `interact_size.y`
+                // (20 in 0.37) - these are read-only labels, nothing to hit.
+                .min_row_height(0.0)
                 .spacing(egui::vec2(16.0, 2.0))
                 .show(ui, |ui| {
                     cell(ui, &tempo);
