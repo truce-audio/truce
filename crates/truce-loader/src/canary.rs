@@ -63,7 +63,10 @@ use truce_gui_types::theme::{Color, Theme};
 /// Neither moves a size this canary checks. (7.0's `Theme` growth happens
 /// to change `theme_size` too, but the epoch shouldn't rely on that - it
 /// also has to reject 7.0 dev builds from before the `Theme` change.)
-pub const ABI_EPOCH: u32 = 7;
+/// Epoch 8 (truce 7.0): `Editor::wants_idle` added a `dyn Editor` vtable
+/// slot between `idle` and `set_size`, shifting every later slot; this
+/// rejects 7.0 dev dylibs built before it, which still report epoch 7.
+pub const ABI_EPOCH: u32 = 8;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///

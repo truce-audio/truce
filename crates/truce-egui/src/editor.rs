@@ -1706,6 +1706,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // baseview drives its own frame loop via on_frame().
     }
 
+    fn wants_idle(&self) -> bool {
+        false
+    }
+
     fn set_size(&mut self, width: u32, height: u32) -> bool {
         if width == 0 || height == 0 {
             return false;

@@ -423,6 +423,10 @@ struct Vst3Callbacks {
     // per-instance timer below. The Rust side drives `Editor::idle` when an
     // editor is open and no-ops otherwise.
     void (*gui_idle)(void*);
+    // Whether the open editor's `idle` does anything (`Editor::wants_idle`).
+    // 0 lets the shim skip the ~60fps idle tick - the restart drain keeps
+    // its own slower cadence. 1 when unknown (no editor yet).
+    int32_t (*gui_wants_idle)(void*);
     // IMidiMapping: resolve a (bus, channel, controllerNumber) query to
     // a parameter id. Returns 1 (kResultOk) + writes *out on a hit.
     int32_t (*midi_mapping_get_param_id)(void*, int32_t, int16_t, int16_t, uint32_t*);
@@ -682,12 +686,13 @@ static constexpr int32_t kRunLoopUnregisterTimerIndex = 6;
 // pending restart (a negligible atomic exchange) at the same cadence.
 static constexpr uint64_t kIdleTimerIntervalMs = 16;
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__linux__)
 // With no editor open, the always-on Windows thread timer still polls for
 // a pending restart (a rare latency change) - but slowly, since there is
 // nothing to repaint. macOS drains restarts through an event-driven
 // dispatch source and Linux through the param-poll flush, so neither keeps
-// a timer running once the editor is closed.
+// a timer running once the editor is closed. Linux's run-loop timer also
+// drops to this rate while an editor that doesn't want idle is open.
 static constexpr uint64_t kRestartTimerIntervalMs = 30;
 #endif
 
@@ -815,8 +820,9 @@ public:
     // pendingRestart there - the editor-closed / no-param-poll path the
     // callback hooks below can't cover. 0 if creation failed (fall back
     // to the param-poll / edit-gesture flush). `editorOpen` tracks whether
-    // the timer runs at the fast idle rate (editor attached) or the slow
-    // restart-drain rate; the TIMERPROC ticks `idle` only when it is set.
+    // the timer runs at the fast idle rate (an editor that wants idle is
+    // attached) or the slow restart-drain rate - so it stays false while a
+    // no-idle editor is open; the TIMERPROC ticks `idle` only when it is set.
     UINT_PTR restartTimerId = 0;
     // Thread that owns `restartTimerId`. A null-HWND timer can only be
     // killed from the thread that created it, so KillTimer is guarded on
@@ -2007,6 +2013,13 @@ public:
         restart(componentHandler, flags);
     }
 
+    // Whether to run the fast idle tick for the open editor (see
+    // `gui_wants_idle`); an editor whose `idle` no-ops doesn't need one.
+    bool editorWantsIdle() const {
+        if (!g_cb || !g_cb->gui_wants_idle || !ctx) return true;
+        return g_cb->gui_wants_idle(ctx) != 0;
+    }
+
     // Editor attached (`active`) or detached. Gates the per-instance idle
     // timer so it only wakes the UI thread while an editor is open - no
     // 60fps churn for a component with no visible editor. macOS: create /
@@ -2017,6 +2030,8 @@ public:
     // `updateRunLoopRegistration` (its run-loop timer is only registered
     // while a frame is attached). Runs on the host UI thread.
     void setEditorActive(bool active) {
+        // Only an editor that wants idle gets the ~60fps tick.
+        active = active && editorWantsIdle();
 #if __APPLE__
         if (active && !idleSource) {
             idleSource = dispatch_source_create(
@@ -2088,7 +2103,10 @@ public:
         if (qi(frame, IRunLoop_iid, &rl) != kResultOk || !rl) return;
         auto reg = (tresult (*)(void*, void*, uint64_t))
             (*(void***)rl)[kRunLoopRegisterTimerIndex];
-        if (reg(rl, &restartTimer, kIdleTimerIntervalMs) == kResultOk) {
+        // The idle rate only for an editor that wants idle; otherwise the
+        // timer just drains restarts, at the slower restart cadence.
+        uint64_t interval = editorWantsIdle() ? kIdleTimerIntervalMs : kRestartTimerIntervalMs;
+        if (reg(rl, &restartTimer, interval) == kResultOk) {
             runLoop = rl;
         } else {
             auto rel = (uint32 (*)(void*))(*(void***)rl)[2];
@@ -2116,8 +2134,9 @@ static tresult th_queryInterface(void* self, const TUID iid, void** obj) {
 static uint32 th_addRef(void*) { return 1; }
 static uint32 th_release(void*) { return 1; }
 static void th_onTimer(void* self) {
-    // Runs on the host UI thread every kRestartTimerIntervalMs while an
-    // editor is open. Cheap when idle: flushPendingRestart exchanges the
+    // Runs on the host UI thread while a frame is attached (every
+    // kIdleTimerIntervalMs, or kRestartTimerIntervalMs for an editor that
+    // doesn't want idle). Cheap when idle: flushPendingRestart exchanges the
     // atomic and returns immediately when no bits are set.
     auto* h = (RestartTimerHandler*)self;
     if (h->comp) {

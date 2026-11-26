@@ -100,8 +100,16 @@ extern int truce_au_v2_ctx_alive(void *ctx, uint64_t token);
     [super viewDidMoveToWindow];
     if (self.window) {
         // `gui_idle` is a v6 (append-only) callback; guard the pointer in
-        // case a host ever pairs this view with an older core build.
-        if (!self.idleTimer && [self ctxLive] && self.callbacks->gui_idle) {
+        // case a host ever pairs this view with an older core build. An
+        // editor whose `idle` no-ops (v8 `gui_wants_idle` == 0: baseview
+        // repaints it) gets no 60 Hz timer at all.
+        BOOL wantsIdle = YES;
+        uint32_t abi = self.callbacks->abi_version;
+        if ((abi & TRUCE_AU_ABI_MAGIC_MASK) == TRUCE_AU_ABI_MAGIC && (abi & 0xFFu) >= 8u &&
+            self.callbacks->gui_wants_idle && [self ctxLive]) {
+            wantsIdle = self.callbacks->gui_wants_idle(self.rustCtx) != 0;
+        }
+        if (!self.idleTimer && wantsIdle && [self ctxLive] && self.callbacks->gui_idle) {
             __weak TRUCE_AU_FIXED_CONTAINER_NAME *weakSelf = self;
             NSTimer *t = [NSTimer timerWithTimeInterval:1.0 / 60.0
                                                 repeats:YES
