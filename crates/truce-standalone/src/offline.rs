@@ -17,8 +17,10 @@
 //! `main.rs` bins. This module just adapts the CLI input/output
 //! shape to the driver's builder.
 //!
-//! Instrument support is disabled because instruments need a MIDI
-//! input source (e.g. a MIDI file driver), which this offline path
+//! Renders any plug-in with a main audio input bus - an effect,
+//! analyzer or tool, whatever its category. One without (an instrument
+//! on output-only layouts, a MIDI-only plug-in) is refused: it needs a
+//! MIDI input source (e.g. a MIDI file driver), which this offline path
 //! doesn't expose.
 
 use std::path::Path;
@@ -28,7 +30,6 @@ use truce_core::bus::BusLayout;
 use truce_core::cast::frame_count_f64;
 use truce_core::config::ProcessMode;
 use truce_core::export::PluginExport;
-use truce_core::info::PluginCategory;
 use truce_driver::{InputSource, PluginDriver};
 
 use crate::cli::Options;
@@ -45,7 +46,7 @@ const DEFAULT_BLOCK_SIZE: usize = 1024;
 /// # Errors
 ///
 /// Returns `Err(String)` if `--input-file` / `--output-file` are
-/// missing, the plugin category is not `Effect`, or any
+/// missing, no declared layout has a main audio input bus, or any
 /// `hound::WavReader` / `WavWriter` step fails (open, decode,
 /// channel-count negotiation, write, finalize).
 pub fn render<P: PluginExport>(opts: &Options) -> Result<(), String>
@@ -61,12 +62,6 @@ where
         .as_deref()
         .ok_or("offline render requires --output-file")?;
 
-    if P::info().category != PluginCategory::Effect {
-        return Err("offline render only supports effect plugins; \
-             instruments need a MIDI input source which this path does not expose"
-            .into());
-    }
-
     let (file_sr, file_channels) = peek_wav_spec(input_path)?;
     let sample_rate = opts
         .sample_rate
@@ -79,14 +74,13 @@ where
     // file into a stereo-main plugin would route sidechain L as the main
     // right channel). Prefer a layout whose main width already matches the
     // file so the common case never remixes; fall back to the first
-    // declared layout otherwise. `channels` also drives the sidechain
+    // layout with a main input otherwise. `channels` also drives the sidechain
     // offset and the output width.
     let layouts = P::bus_layouts();
-    let (channels, sidechain_width) = resolve_render_layout(&layouts, file_channels)
-        .ok_or("effect plugin declares no bus layout; cannot offline-render")?;
-    if channels == 0 {
-        return Err("plugin's main input bus has no channels; cannot offline-render".into());
-    }
+    let (channels, sidechain_width) = resolve_render_layout(&layouts, file_channels).ok_or(
+        "offline render needs a plug-in with a main audio input; \
+         instruments need a MIDI input source which this path does not expose",
+    )?;
     let block_size = opts.buffer_size.map_or(DEFAULT_BLOCK_SIZE, |b| b as usize);
 
     eprintln!(
@@ -117,7 +111,7 @@ where
         }
         Some(path) => {
             eprintln!(
-                "--sidechain-file {} ignored: plugin has no sidechain input bus",
+                "--sidechain-file {} ignored: the render layout has no sidechain input",
                 path.display(),
             );
             None
@@ -196,15 +190,17 @@ fn sidechain_bus_width(layout: &BusLayout) -> usize {
 /// Pick the layout to render in and return `(main_width, sidechain_width)`.
 /// Prefers a declared layout whose main width already equals the file's,
 /// so the common case never up/down-mixes; falls back to the first
-/// declared layout otherwise. The file is then adapted to `main_width`, so
-/// the sidechain (appended after the main channels) always lands at the
-/// right flat offset regardless of the file's own width. `None` only when
-/// the plugin declares no layout at all.
+/// declared layout with a main input otherwise. The file is then adapted
+/// to `main_width`, so the sidechain (appended after the main channels)
+/// always lands at the right flat offset regardless of the file's own
+/// width. Output-only layouts are skipped; `None` when no layout has a
+/// main input (an instrument, a MIDI-only plug-in) - render is refused.
 fn resolve_render_layout(layouts: &[BusLayout], file_channels: usize) -> Option<(usize, usize)> {
-    let layout = layouts
-        .iter()
+    let mut with_input = layouts.iter().filter(|l| main_bus_width(l) > 0);
+    let layout = with_input
+        .clone()
         .find(|l| main_bus_width(l) == file_channels)
-        .or_else(|| layouts.first())?;
+        .or_else(|| with_input.next())?;
     Some((main_bus_width(layout), sidechain_bus_width(layout)))
 }
 
@@ -297,5 +293,18 @@ mod tests {
     #[test]
     fn no_layout_is_none() {
         assert_eq!(resolve_render_layout(&[], 2), None);
+    }
+
+    /// Output-only layouts (an instrument's) are skipped: the fallback is
+    /// the first layout with a main input, and with none render is refused.
+    #[test]
+    fn output_only_layouts_are_skipped() {
+        let vocoder = BusLayout::new()
+            .with_input("Carrier", ChannelConfig::Mono)
+            .with_output("Main", ChannelConfig::Mono);
+        let mut layouts = BusLayout::stereo_and_mono_output();
+        assert_eq!(resolve_render_layout(&layouts, 2), None);
+        layouts.push(vocoder);
+        assert_eq!(resolve_render_layout(&layouts, 2), Some((1, 0)));
     }
 }

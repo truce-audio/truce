@@ -54,10 +54,19 @@ use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::PluginCategory;
 use truce_core::plugin::PluginRuntime;
 use truce_core::state::restore_plugin;
 use truce_params::{ParamInfo, Params};
+
+/// Whether any declared layout has an audio input bus (main or sidechain).
+/// What decides if the driver feeds input - not the category, so an
+/// analyzer / tool on the default stereo layout gets audio like an effect.
+/// The main input is fed `channels` wide (the output width), so a layout
+/// whose main input is narrower or wider than its output - an asymmetric
+/// effect, a mono-carrier vocoder - sees a mismatched input width.
+fn takes_audio_input(layouts: &[BusLayout]) -> bool {
+    layouts.iter().any(|l| l.total_input_channels() > 0)
+}
 
 /// Sidechain (non-main) input width for the declared layout whose main
 /// input width equals `main_channels`. Reading this from the layout the
@@ -836,7 +845,9 @@ impl<P: PluginExport> PluginDriver<P> {
             f(&mut plugin, &ctx);
         }
 
-        let is_effect = P::info().category == PluginCategory::Effect;
+        // Feed input to any plug-in that declares an audio input bus, not
+        // only the `effect` category - an analyzer / tool takes audio too.
+        let takes_input = takes_audio_input(&P::bus_layouts());
         let total_frames = sample_count_usize(self.duration.as_secs_f64() * self.sample_rate);
 
         // Sidechain (non-main) input width. A plugin's sidechain bus is
@@ -848,7 +859,7 @@ impl<P: PluginExport> PluginDriver<P> {
         // always layout 0, so a plugin driven at a non-default width
         // (`.channels(...)`) doesn't combine a main width and a sidechain
         // width from two different layouts into an undeclared shape.
-        let sidechain_channels = if is_effect {
+        let sidechain_channels = if takes_input {
             self.sidechain_channels
                 .unwrap_or_else(|| default_sidechain_channels(&P::bus_layouts(), channels))
         } else {
@@ -924,7 +935,7 @@ impl<P: PluginExport> PluginDriver<P> {
         let mut out_bufs: Vec<Vec<f32>> = (0..channels)
             .map(|_| vec![0.0f32; self.block_size])
             .collect();
-        let mut in_bufs: Vec<Vec<f32>> = if is_effect {
+        let mut in_bufs: Vec<Vec<f32>> = if takes_input {
             (0..num_in).map(|_| vec![0.0f32; self.block_size]).collect()
         } else {
             Vec::new()
@@ -997,7 +1008,7 @@ impl<P: PluginExport> PluginDriver<P> {
                 event_list.ensure_sorted_by_offset();
             }
 
-            if is_effect {
+            if takes_input {
                 // Main bus from `input`, sidechain bus from `sidechain` -
                 // disjoint slices of the flat `in_bufs`, filled from the
                 // two independent sources.
@@ -1310,7 +1321,7 @@ fn check_normalized(id: u32, normalized: f64, from_script: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Script, default_sidechain_channels};
+    use super::{Script, default_sidechain_channels, takes_audio_input};
     use truce_core::bus::{BusLayout, ChannelConfig};
     use truce_core::events::EventBody;
     use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, ParamValueKind};
@@ -1390,6 +1401,20 @@ mod tests {
         let layouts =
             [BusLayout::stereo().with_sidechain_input("Sidechain", ChannelConfig::Stereo)];
         assert_eq!(default_sidechain_channels(&layouts, 6), 0);
+    }
+
+    #[test]
+    fn input_follows_the_layout_not_the_category() {
+        // The default `bus_layouts()` - what an analyzer / tool keeps.
+        assert!(takes_audio_input(&BusLayout::stereo_and_mono()));
+        // An instrument's output-only layouts and a MIDI-only plug-in.
+        assert!(!takes_audio_input(&BusLayout::stereo_and_mono_output()));
+        assert!(!takes_audio_input(&[]));
+        // An instrument that declares an audio input (e.g. a vocoder).
+        let vocoder = BusLayout::new()
+            .with_input("Carrier", ChannelConfig::Mono)
+            .with_output("Main", ChannelConfig::Stereo);
+        assert!(takes_audio_input(&[vocoder]));
     }
 
     /// A plugin with no sidechain bus resolves to 0 at its declared width.

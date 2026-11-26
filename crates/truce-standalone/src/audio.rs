@@ -28,7 +28,6 @@ use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::config::{AudioConfig, ProcessMode};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, block_event_capacity};
 use truce_core::export::PluginExport;
-use truce_core::info::PluginCategory;
 use truce_params::{ParamInfo, Params};
 
 use crate::cli::Options;
@@ -127,7 +126,11 @@ pub struct AudioHandles<P: PluginExport> {
     /// Audio config (sample rate, channels) resolved from the device.
     pub sample_rate: f64,
     pub channels: usize,
-    pub is_effect: bool,
+    /// Whether any of the plug-in's bus layouts takes audio input (main or
+    /// sidechain), whatever its category. Gates the mic / input-device
+    /// menu items, `--input-file` / `--sidechain-file` and the callback's
+    /// input block.
+    pub takes_input: bool,
     /// `Send + Sync` handle for toggling mic input and switching
     /// the input device. Backed by a worker thread that owns the
     /// (`!Send`) cpal input stream.
@@ -623,7 +626,15 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let sample_format = default_config.sample_format();
     let sample_rate = f64::from(config.sample_rate);
     let channels = config.channels as usize;
-    let is_effect = P::info().category == PluginCategory::Effect;
+    // Set up the input path for any plug-in with an input bus in some
+    // declared layout - an effect, analyzer or tool, not just the `effect`
+    // category (an analyzer used to get none). Any layout, not the launch
+    // one: the Bus Layout menu can switch to a layout with inputs later,
+    // and the callback sizes the input to the active layout (0 channels
+    // on an output-only one).
+    let takes_input = P::bus_layouts()
+        .iter()
+        .any(|l| l.total_input_channels() > 0);
 
     // Capacity 256: covers a generous MIDI burst within a single
     // audio callback period. ArrayQueue is lock-free MPMC - the MIDI
@@ -654,7 +665,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         p
     }));
 
-    let input_setup = setup_input_pipeline(&audio_host, opts, is_effect, channels, sample_rate);
+    let input_setup = setup_input_pipeline(&audio_host, opts, takes_input, channels, sample_rate);
     let input_ring = input_setup.ring;
     let input_enabled = input_setup.enabled;
     let input_ring_width = input_setup.ring_width;
@@ -730,7 +741,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         // `num_main_in > 0`: a layout with no main input bus has nowhere
         // to route the file, and decoding to a zero width divides by zero
         // in `PlaybackSource::from_wav`.
-        Some(path) if is_effect && num_main_in > 0 => {
+        Some(path) if takes_input && num_main_in > 0 => {
             // Decode to the plugin's MAIN-bus width, not the device
             // stream width: the callback mixes this into
             // `input_bufs[..num_main_in]`, and a main bus wider than the
@@ -746,29 +757,30 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
             Some(Arc::new(src))
         }
         Some(_) => {
-            // A non-effect (no input bus) or a layout with no main input
-            // has nowhere to feed the file; warn and ignore rather than
-            // failing.
-            eprintln!("--input-file ignored: plugin has no main input bus");
+            // The selected layout has no main input bus, so there's nowhere
+            // to feed the file; warn and ignore rather than failing.
+            eprintln!("--input-file ignored: the selected bus layout has no main input");
             None
         }
         None => None,
     };
 
-    // Decode `--sidechain-file` against the sidechain bus width. A
-    // plugin with no sidechain bus (or a non-effect) has nowhere to
-    // route it, so warn and ignore rather than fail.
+    // Decode `--sidechain-file` against the sidechain bus width. A layout
+    // with no sidechain bus has nowhere to route it, so warn and ignore
+    // rather than fail.
     #[cfg(feature = "playback")]
     let sidechain_playback = {
         let sc_width = num_in.saturating_sub(num_main_in);
         match &opts.sidechain_file {
-            Some(path) if is_effect && sc_width > 0 => {
+            Some(path) if takes_input && sc_width > 0 => {
                 let src = crate::playback::PlaybackSource::from_wav(path, sample_rate, sc_width)?;
                 vlog!("Sidechain: {} → sidechain bus (one-shot)", path.display());
                 Some(Arc::new(src))
             }
             Some(_) => {
-                eprintln!("--sidechain-file ignored: plugin has no sidechain input bus");
+                eprintln!(
+                    "--sidechain-file ignored: the selected bus layout has no sidechain input"
+                );
                 None
             }
             None => None,
@@ -829,7 +841,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
                 num_in,
                 num_out,
                 num_main_in,
-                is_effect,
+                takes_input,
                 res,
             );
         })
@@ -856,7 +868,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         plugin,
         sample_rate,
         channels,
-        is_effect,
+        takes_input,
         input: input_controller,
         output: output_controller,
         transport,
@@ -884,13 +896,14 @@ struct InputSetup {
 }
 
 /// Resolve the initial input device, allocate the input ring + control
-/// channels, and (for effects) spawn the input worker thread. Also
+/// channels, and (for a plug-in with an audio input) spawn the input
+/// worker thread. Also
 /// flips `set_enabled(true)` when the user passed
 /// `--input-enabled on`, so the launch state matches the CLI ask.
 fn setup_input_pipeline(
     audio_host: &cpal::Host,
     opts: &Options,
-    is_effect: bool,
+    takes_input: bool,
     channels: usize,
     sample_rate: f64,
 ) -> InputSetup {
@@ -909,7 +922,7 @@ fn setup_input_pipeline(
     // Resolve the initial input device name so the menu can show
     // the currently-active device on first open. Worker re-resolves
     // on each open against this name (or whatever the user picks).
-    let initial_input_name: Option<String> = if is_effect {
+    let initial_input_name: Option<String> = if takes_input {
         let device = match &opts.input_device {
             Some(name) => find_device(audio_host, name, false),
             None => audio_host.default_input_device(),
@@ -936,7 +949,7 @@ fn setup_input_pipeline(
         channel_route: Arc::new(AtomicUsize::new(0)),
     };
 
-    if is_effect {
+    if takes_input {
         let device_name = initial_input_name.clone();
         let ring = Arc::clone(&input_ring);
         let ring_width = Arc::clone(&ring_width);
@@ -958,12 +971,12 @@ fn setup_input_pipeline(
             .ok();
     }
 
-    let want_input_enabled = is_effect && opts.input_enabled.unwrap_or(false);
+    let want_input_enabled = takes_input && opts.input_enabled.unwrap_or(false);
     if want_input_enabled {
         controller.set_enabled(true);
     }
 
-    if is_effect {
+    if takes_input {
         vlog!(
             "Input:  {} ({})",
             initial_input_name.as_deref().unwrap_or("(none)"),
@@ -1067,7 +1080,7 @@ fn output_worker<P: PluginExport>(
     // reassigned - not re-derived from ambiguous totals - on a runtime
     // `SetLayout` switch below.
     mut num_main_in: usize,
-    is_effect: bool,
+    takes_input: bool,
     res: OutputResources<P>,
 ) {
     let mut stream: Option<cpal::Stream> = None;
@@ -1081,7 +1094,7 @@ fn output_worker<P: PluginExport>(
         num_in,
         num_out,
         num_main_in,
-        is_effect,
+        takes_input,
         false,
         &res,
         &mut stream,
@@ -1109,7 +1122,7 @@ fn output_worker<P: PluginExport>(
                     num_in,
                     num_out,
                     num_main_in,
-                    is_effect,
+                    takes_input,
                     false,
                     &res,
                     &mut stream,
@@ -1126,7 +1139,7 @@ fn output_worker<P: PluginExport>(
                         num_in,
                         num_out,
                         num_main_in,
-                        is_effect,
+                        takes_input,
                         false,
                         &res,
                         &mut stream,
@@ -1175,7 +1188,7 @@ fn output_worker<P: PluginExport>(
                     num_in,
                     num_out,
                     num_main_in,
-                    is_effect,
+                    takes_input,
                     true,
                     &res,
                     &mut stream,
@@ -1196,7 +1209,7 @@ fn output_worker<P: PluginExport>(
                         num_in,
                         num_out,
                         num_main_in,
-                        is_effect,
+                        takes_input,
                         true,
                         &res,
                         &mut stream,
@@ -1228,7 +1241,7 @@ fn reopen_output_or_default<P: PluginExport>(
     num_in: usize,
     num_out: usize,
     num_main_in: usize,
-    is_effect: bool,
+    takes_input: bool,
     force_reset: bool,
     res: &OutputResources<P>,
     stream: &mut Option<cpal::Stream>,
@@ -1242,7 +1255,7 @@ fn reopen_output_or_default<P: PluginExport>(
         num_in,
         num_out,
         num_main_in,
-        is_effect,
+        takes_input,
         force_reset,
         res,
         stream,
@@ -1259,7 +1272,7 @@ fn reopen_output_or_default<P: PluginExport>(
         num_in,
         num_out,
         num_main_in,
-        is_effect,
+        takes_input,
         force_reset,
         res,
         stream,
@@ -1281,7 +1294,7 @@ fn open_output_stream<P: PluginExport>(
     // num_in) are the sidechain bus. Resolved by the caller from the
     // selected layout index (see `layout_at_index`).
     num_main_in: usize,
-    is_effect: bool,
+    takes_input: bool,
     // Force a `reset()` even when the frame bound didn't grow. A bus-layout
     // switch changes the channel arrangement, so the plugin has to re-prepare
     // its per-channel DSP state; every format wrapper couples an arrangement
@@ -1323,7 +1336,7 @@ fn open_output_stream<P: PluginExport>(
     // it lives across callbacks but never crosses threads - cpal calls
     // the closure on a single dedicated audio thread per stream.
     // Amortizes the `vec![0.0; num_frames]` per-channel allocation and
-    // the `channel_bufs.clone()` for the effect input mirror, plus the
+    // the input buffers the mic / file sources sum into, plus the
     // two `EventList::default()`s per block (input drain + plugin output)
     // - both `clear()`ed and reused, capacity-preserving.
     let mut channel_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
@@ -1416,7 +1429,7 @@ fn open_output_stream<P: PluginExport>(
                         num_main_in,
                         num_out,
                         sample_rate,
-                        is_effect,
+                        takes_input,
                         &plugin_a,
                         &pending_a,
                         &pending_state_a,
@@ -1862,7 +1875,7 @@ fn audio_callback<P: PluginExport>(
     num_main_in: usize,
     num_out: usize,
     sample_rate: f64,
-    is_effect: bool,
+    takes_input: bool,
     plugin: &Arc<Mutex<P>>,
     pending: &Arc<ArrayQueue<MidiEvent>>,
     pending_state: &Arc<ArrayQueue<Vec<u8>>>,
@@ -1942,12 +1955,13 @@ fn audio_callback<P: PluginExport>(
         buf.resize(num_frames, 0.0);
     }
 
-    // Effect-only input plumbing: mic + file are independent input
-    // sources that *sum* into the plugin's input bus (`input_bufs`, sized
-    // `num_in`), separate from the output the plugin writes (`channel_bufs`,
-    // sized `num_out`). Instruments skip the whole block and just clear
-    // `input_bufs`.
-    if is_effect {
+    // Input plumbing, for a plug-in with an audio input: mic + file are
+    // independent input sources that *sum* into the plugin's input bus
+    // (`input_bufs`, sized `num_in` - 0 on an output-only layout),
+    // separate from the output the plugin writes (`channel_bufs`, sized
+    // `num_out`). One with no input bus anywhere skips the whole block and
+    // just clears `input_bufs`.
+    if takes_input {
         // Input scratch: (num_in, num_frames), zeroed. Same
         // resize-without-realloc trick as the output above.
         input_bufs.resize_with(num_in, Vec::new);
@@ -2026,9 +2040,9 @@ fn audio_callback<P: PluginExport>(
     }
     // Build raw-pointer arrays that mirror `input_bufs` / `channel_bufs`
     // and feed them through the shared `RawBufferScratch::build` helper.
-    // Standalone never aliases input and output buffers (`input_bufs`
-    // is a copy of `channel_bufs` for effects, plain empty for
-    // instruments), so the alias-detection scratch path inside
+    // Standalone never aliases input and output buffers (`input_bufs` is
+    // its own mic + file sum, empty for a plug-in without an audio
+    // input or on an output-only layout), so the alias-detection scratch path inside
     // `build` is dormant; routing through the same helper keeps
     // every host on a single unsafe path.
     ptr_scratch.inputs.clear();

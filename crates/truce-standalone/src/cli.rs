@@ -118,7 +118,7 @@ OPTIONS:
   --list-devices            List audio output + input devices and exit
   --list-midi               List MIDI input devices and exit
   --output <name>           Audio output device (substring match)
-  --input <name>            Audio input device (effect plugins)
+  --input <name>            Audio input device (plug-ins with an audio input)
   --output-channels <spec>  Route output to specific device channels:
                             `direct` (all, default), a channel like `3`
                             (mono), or a pair like `3-4` (stereo).
