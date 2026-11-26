@@ -1076,7 +1076,8 @@ where
                 // Poisoned (audio thread panicked) degrades to empty.
                 plugin_save
                     .lock()
-                    .map_or_default(|p| read_custom_state_offthread(&*p))
+                    .map(|p| read_custom_state_offthread(&*p))
+                    .unwrap_or_default()
             }),
             set_state: Box::new(move |bytes| {
                 // Hand the blob to the audio thread instead of locking the

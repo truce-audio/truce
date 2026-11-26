@@ -237,7 +237,7 @@ testing / presets / shipping / hot-reload reference, per-format gotchas
 
 ## Requirements
 
-- Rust 1.92+ (`rustup update`).
+- Rust 1.95+ (`rustup update`).
 - **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3 + iOS.
 - **Windows**: MSVC build tools (Visual Studio 2019+ with the "Desktop
   development with C++" workload). Rust `x86_64-pc-windows-msvc`

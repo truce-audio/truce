@@ -708,11 +708,12 @@ fn enum_variant_names(enum_type: &str, sidecar_dir: &std::path::Path) -> Vec<Str
     table
         .get("names")
         .and_then(toml::Value::as_array)
-        .map_or_default(|arr| {
+        .map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect()
         })
+        .unwrap_or_default()
 }
 
 fn parse_pair_f64(s: &str) -> Result<(f64, f64), String> {
