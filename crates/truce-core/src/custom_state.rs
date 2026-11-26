@@ -27,6 +27,12 @@
 //!         None => Err(StateLoadError::Malformed("MyState")),
 //!     }
 //! }
+//! // A restore with no custom state - a parameter-only preset - loads
+//! // these bytes instead. Return your default if it should replace
+//! // yours; without this (`None`) the instance keeps whatever it had.
+//! fn default_extra() -> Option<Vec<u8>> {
+//!     Some(MyState::default().serialize())
+//! }
 //! ```
 //!
 //! For MB-scale state (a sampler's audio, big wavetables), publish it off

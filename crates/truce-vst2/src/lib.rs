@@ -34,8 +34,8 @@ use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
     ParamCStrings, PluginCell, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
-    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, run_audio_block,
-    run_extern_callback_with, run_register, save_extra, shared_plugin,
+    log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, publish_loaded_extra,
+    run_audio_block, run_extern_callback_with, run_register, save_extra, shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::{ParamFlags, ParamInfo, Params};
@@ -1063,6 +1063,10 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
                 // restored values without waiting for `cb_process`
                 // to pop the queue.
                 state::apply_params(&*inst.params_arc, &deserialized);
+                // Publish the loaded custom state now so an
+                // `effGetChunk` before the block that applies it doesn't
+                // pair the restored params with the pre-load state.
+                publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
                 let _ = inst.pending_state.force_push(deserialized);
                 true
             } else {
@@ -1224,6 +1228,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
             let params_for_ctx = params.clone();
             let task_spawner_for_ctx = inst.task_spawner.clone();
             let pending_state_for_set = inst.pending_state.clone();
+            let snapshot_for_set = Arc::clone(&inst.snapshot);
             let transport_slot = inst.transport_slot.clone();
             let context = PluginContext::from_closures(
                 ClosureBridge {
@@ -1273,6 +1278,8 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         // load path uses (the queue is what avoids aliasing
                         // `process()`'s `&mut plugin`). No params ride along:
                         // the editor mutates params through `set_param`.
+                        // Publish first, as the host load path does.
+                        publish_loaded_extra(&snapshot_for_set, Some(&bytes));
                         let _ = pending_state_for_set.force_push(state::DeserializedState {
                             params: Vec::new(),
                             extra: Some(bytes),
