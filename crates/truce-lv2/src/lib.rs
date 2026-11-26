@@ -518,8 +518,9 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
             LV2_MAX_PREALLOC_BLOCK,
         );
         // Grow the event rings off the audio thread, like the other
-        // wrappers do at activate. LV2 has no max-block contract, so size
-        // for the same ceiling the audio scratch uses.
+        // wrappers do at activate. LV2 has no max-block contract, so pass
+        // the audio scratch's ceiling; `block_event_capacity` clamps the
+        // per-frame event term below it (`MAX_BLOCK_EVENT_FRAMES`).
         let event_cap = block_event_capacity(LV2_MAX_PREALLOC_BLOCK, inst.param_infos.len());
         inst.event_list.reserve_events(event_cap);
         inst.output_events.reserve_events(event_cap);
