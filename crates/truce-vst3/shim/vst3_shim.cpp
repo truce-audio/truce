@@ -841,6 +841,21 @@ public:
     // (Cubase theme change, Live dock/undock) would otherwise leave
     // a dangling pointer in the closure.
     TrucePlugView* plugView;
+    // The view whose `attached` opened (or deferred) the editor: the only
+    // one whose `removed` / release may close it, turn idle off or clear
+    // `deferredParent`. Not `plugView` (the newest view) - a host can
+    // create and release a throwaway view while the editor is open, and
+    // an old view can be removed or released after the next one attached.
+    TrucePlugView* editorView = nullptr;
+    // Every live view this component created (added in createView, removed
+    // on the view's final release), so `detachViews` reaches all of them -
+    // not just the tracked ones - when the component dies first.
+    std::vector<TrucePlugView*> liveViews;
+#if defined(__linux__)
+    // The view whose frame the run-loop timer is bound to; only its
+    // setFrame(nullptr) / release unbinds it.
+    TrucePlugView* runLoopView = nullptr;
+#endif
 
     TruceComponent() : ctx(nullptr), sampleRate(44100), maxFrames(1024),
                        componentHandler(nullptr), inPerformEdit(false),
@@ -898,7 +913,15 @@ public:
         }
     }
 
+    // Defined after TrucePlugView (needs the complete type).
+    void detachViews();
+
     ~TruceComponent() {
+        // A view can outlive its component (the host releases the
+        // component first); cut every live view's back-pointers so a later
+        // release / removed / setFrame / size call on it doesn't reach the
+        // freed component or the destroyed Rust ctx.
+        detachViews();
         if (componentHandler) {
             auto release_fn = (uint32 (*)(void*))(*(void***)componentHandler)[2];
             release_fn(componentHandler);
@@ -2210,6 +2233,11 @@ struct IPlugViewContentScaleSupportVtbl {
 // a single COM object. queryInterface returns a pointer to the relevant
 // vtable slot; the functions behind each vtable derive the base with
 // pointer arithmetic, matching the TruceComponent pattern.
+struct TrucePlugView;
+#if defined(__linux__)
+static void unbind_run_loop(TruceComponent* comp, TrucePlugView* pv);
+#endif
+
 struct TrucePlugView {
     IPlugViewVtbl* vtbl;
     IPlugViewContentScaleSupportVtbl* vtbl_scale;
@@ -2224,6 +2252,38 @@ struct TrucePlugView {
     // Live.
     void* frame;
 };
+
+void TruceComponent::detachViews() {
+    for (TrucePlugView* v : liveViews) {
+        v->comp = nullptr;
+        v->ctx = nullptr;
+    }
+    liveViews.clear();
+    plugView = nullptr;
+    editorView = nullptr;
+#if defined(__linux__)
+    runLoopView = nullptr;
+#endif
+}
+
+#if defined(__linux__)
+// The run-loop owner `pv` lets go of its frame (setFrame(nullptr) or its
+// release). If another view still shows the editor with a frame of its
+// own - a newer throwaway view took the run loop and is now going away -
+// hand the registration back to it rather than leaving the open editor
+// with no idle / restart timer.
+static void unbind_run_loop(TruceComponent* comp, TrucePlugView* pv) {
+    if (comp->runLoopView != pv) return;
+    TrucePlugView* ev = comp->editorView;
+    if (ev && ev != pv && ev->frame) {
+        comp->updateRunLoopRegistration(ev->frame);
+        comp->runLoopView = ev;
+    } else {
+        comp->updateRunLoopRegistration(nullptr);
+        comp->runLoopView = nullptr;
+    }
+}
+#endif
 
 static TrucePlugView* pv_from_scale(void* s) {
     return reinterpret_cast<TrucePlugView*>(
@@ -2249,24 +2309,45 @@ static uint32 pv_addRef(void* s) { return ++((TrucePlugView*)s)->refCount; }
 static uint32 pv_release(void* s) {
     auto* pv = (TrucePlugView*)s;
     if (--pv->refCount <= 0) {
-        if (pv->comp) {
-            pv->comp->deferredParent = nullptr;
-            // The frame goes away with the view: stop the idle timer so the
-            // host doesn't keep a handler tied to a freed view. A spec-
-            // compliant host already called setFrame(nullptr); this covers
-            // those that don't.
-#if defined(__linux__)
-            pv->comp->updateRunLoopRegistration(nullptr);
-#else
-            pv->comp->setEditorActive(false);
+        if (auto* comp = pv->comp) {
+            // The frame goes away with the view: stop the idle timer and
+            // unbind the run loop so the host doesn't keep a handler tied
+            // to a freed view. A spec-compliant host already called
+            // removed() / setFrame(nullptr); this covers those that don't.
+            // Only for the view that owns them - releasing a throwaway
+            // view, or an old one after the next attached, must not stop
+            // the open editor's idle for good.
+            if (comp->editorView == pv) {
+                // Clear ownership before closing (as pv_removed does), so
+                // anything re-entering during the close - a resize request
+                // from the author's close code - doesn't target this view
+                // or its (possibly already gone) frame.
+                comp->deferredParent = nullptr;
+                comp->editorView = nullptr;
+                if (comp->plugView == pv) comp->plugView = nullptr;
+                pv->frame = nullptr;
+                // Released without removed() (non-compliant host): the
+                // editor's parent is gone, so close it here too.
+                if (g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
+#if !defined(__linux__)
+                comp->setEditorActive(false);
 #endif
-            // Null the component's pointer to this view so
+            }
+#if defined(__linux__)
+            unbind_run_loop(comp, pv);
+#endif
+            // Null the component's pointers to this view so
             // `truce_vst3_request_resize` doesn't dereference a
             // freed plug-view between the host releasing the
             // editor and creating a new one. `pv->comp` is the
             // component lifetime, longer than the plug view's.
-            if (pv->comp->plugView == pv) {
-                pv->comp->plugView = nullptr;
+            if (comp->plugView == pv) comp->plugView = nullptr;
+            auto& lv = comp->liveViews;
+            for (size_t i = 0; i < lv.size(); i++) {
+                if (lv[i] == pv) {
+                    lv.erase(lv.begin() + (std::ptrdiff_t)i);
+                    break;
+                }
             }
         }
         free(pv);
@@ -2307,6 +2388,7 @@ static tresult pv_isPlatformTypeSupported(void*, FIDString type) {
 static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
     auto* pv = (TrucePlugView*)s;
     if (!g_cb || !pv->ctx) return kResultOk;
+    if (pv->comp) pv->comp->editorView = pv;
     if (pv->comp && !pv->comp->stateLoaded) {
         // Editor attached before state was restored - defer gui_open, and
         // the idle-timer arm with it (armed at the deferred gui_open site in
@@ -2327,7 +2409,14 @@ static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
 }
 static tresult pv_removed(void* s) {
     auto* pv = (TrucePlugView*)s;
-    if (pv->comp) pv->comp->deferredParent = nullptr;
+    // The editor is one per component: a stale view removed after the
+    // next one attached (attach-new-then-remove-old) must not close the
+    // editor now living in the new view's parent.
+    if (pv->comp && pv->comp->editorView != pv) return kResultOk;
+    if (pv->comp) {
+        pv->comp->deferredParent = nullptr;
+        pv->comp->editorView = nullptr;
+    }
     if (g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
 #if !defined(__linux__)
     if (pv->comp) pv->comp->setEditorActive(false);
@@ -2379,7 +2468,18 @@ static tresult pv_setFrame(void* s, void* frame) {
     // run loop so a latency change reaches the host UI thread even without
     // param polling. The run loop lives on the frame, so this genuinely
     // needs setFrame; the idle timer proper is gated by attached/removed.
-    if (pv->comp) pv->comp->updateRunLoopRegistration(frame);
+    // Any view's frame binds (the latest wins); only the bound view's
+    // setFrame(nullptr) unbinds - handing the timer back to the editor's
+    // view if that's a different one - so neither a stale nor a throwaway
+    // view leaves the open editor without its run loop.
+    if (auto* comp = pv->comp) {
+        if (frame) {
+            comp->updateRunLoopRegistration(frame);
+            comp->runLoopView = pv;
+        } else {
+            unbind_run_loop(comp, pv);
+        }
+    }
 #endif
     // The Apple / Windows idle gate is NOT driven here: setFrame hands over
     // the frame pointer and a host may call it once for the view's whole
@@ -2603,11 +2703,11 @@ void* TruceComponent::createView(FIDString /*name*/) {
     pv->frame = nullptr;
     // Track the live plug view on the component so
     // `truce_vst3_request_resize` can find it without holding a
-    // raw pointer in a Rust closure. Replacing an earlier
-    // outstanding view is fine: VST3 hosts use one editor at a
-    // time, and the most-recently-created is the one
-    // request_resize should target.
+    // raw pointer in a Rust closure. This is the newest view, not
+    // necessarily the one showing the editor - `editorView` tracks
+    // that, and request_resize prefers it.
     plugView = pv;
+    liveViews.push_back(pv);
     return pv;
 }
 
@@ -3250,8 +3350,11 @@ static constexpr int32_t kPlugFrameResizeViewIndex = 3;
 
 int32_t truce_vst3_request_resize(void* ctx, uint32_t w, uint32_t h) {
     auto* comp = ctx_lookup(ctx);
-    if (!comp || !comp->plugView) return 0;
-    auto* pv = comp->plugView;
+    if (!comp) return 0;
+    // The view showing the editor, not the newest one (a throwaway view
+    // created after it has no frame).
+    auto* pv = comp->editorView ? comp->editorView : comp->plugView;
+    if (!pv) return 0;
     if (!pv->frame) return 0;
     ViewRect rect;
     rect.left = 0;

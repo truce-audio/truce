@@ -2264,10 +2264,19 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     run_extern_callback_with::<P, ()>("vst3", "gui_open", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         let mut gui = inst.gui.enter();
+        // A host can attach a second view before removing the first
+        // (attach-new-then-remove-old). The editor is one per instance, and
+        // the old view's `removed` is ignored so it can't close the editor
+        // now in the new view - so close it out of the old parent here, or
+        // its window and render thread would leak.
+        let reopen = gui.idle_clock.is_open();
         // Shut the gate for the open itself: a re-open without a close
         // (AU v2 never reports one) would otherwise keep ticking an editor
         // whose new `open` panicked. Reopened below once `open` returns.
         gui.idle_clock.close();
+        if reopen && let Some(ref mut editor) = gui.editor {
+            editor.close();
+        }
         if let Some(ref mut editor) = gui.editor {
             // Re-sync the editor's content scale to the host's current
             // value right before opening. `host_scale` lives on the
