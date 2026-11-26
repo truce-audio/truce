@@ -9,6 +9,7 @@
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/CoreMIDI.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <dlfcn.h>
@@ -215,19 +216,40 @@ static void notify_listeners(TruceAUv2 *inst, AudioUnitPropertyID prop,
     }
 }
 
-// Global ctx→TruceAUv2* mapping for host notification from GUI callbacks
-#define kMaxAUInstances 64
+// Global ctx→TruceAUv2* mapping for host notification from GUI callbacks,
+// and the liveness check the Cocoa view runs before every call into Rust.
+// Each registration gets a fresh generation token: a view holds its
+// instance's token, so a ctx freed by `au_v2_close` and re-allocated at
+// the same address for a new instance still reads as dead to the old view.
+// Written only by `au_v2_open` / `au_v2_close`, which AU v2 hosts call on
+// the main thread; read there by the view and the GUI callbacks, and by the
+// `truce-au-param-notify` thread looking up its own ctx (its scan reads
+// other slots with plain loads while the main thread may write them -
+// benign for aligned pointers, and no other slot can hold its ctx). Close
+// unregisters before `destroy`, so the notifier's final flush finds NULL
+// and drops; `destroy` joins that thread before the instance is freed. The view's liveness check
+// relies on open / close staying on the main thread with the view.
+// Sized like VST3's `kMaxInstances`: an instance that doesn't fit gets no
+// slot, so its view reads it as dead (no idle, no size pinning) and its
+// host notifications are dropped.
+#define kMaxAUInstances 1024
 static void *g_au_ctx_keys[kMaxAUInstances] = {0};
 static TruceAUv2 *g_au_ctx_vals[kMaxAUInstances] = {0};
+static uint64_t g_au_ctx_gens[kMaxAUInstances] = {0};
+static uint64_t g_au_ctx_next_gen = 1;
 
 static void au_ctx_map_register(void *ctx, TruceAUv2 *inst) {
     for (int i = 0; i < kMaxAUInstances; i++) {
         if (!g_au_ctx_keys[i]) {
             g_au_ctx_keys[i] = ctx;
             g_au_ctx_vals[i] = inst;
+            g_au_ctx_gens[i] = g_au_ctx_next_gen++;
             return;
         }
     }
+    fprintf(stderr, "truce-au: more than %d live AU v2 instances; this one's "
+            "editor won't idle and its host notifications are dropped\n",
+            kMaxAUInstances);
 }
 
 static void au_ctx_map_unregister(void *ctx) {
@@ -235,9 +257,27 @@ static void au_ctx_map_unregister(void *ctx) {
         if (g_au_ctx_keys[i] == ctx) {
             g_au_ctx_keys[i] = NULL;
             g_au_ctx_vals[i] = NULL;
+            g_au_ctx_gens[i] = 0;
             return;
         }
     }
+}
+
+/* The live registration token for `ctx`, or 0 if it isn't a live
+ * instance. The view records it at creation. */
+uint64_t truce_au_v2_ctx_token(void *ctx) {
+    for (int i = 0; i < kMaxAUInstances; i++) {
+        if (ctx && g_au_ctx_keys[i] == ctx) return g_au_ctx_gens[i];
+    }
+    return 0;
+}
+
+/* Whether `ctx` is still the live instance registered as `token`.
+ * `au_v2_close` unregisters before `destroy`, so a view whose AU was
+ * disposed while it stayed in a window reads false here and must not
+ * call into Rust. */
+int truce_au_v2_ctx_alive(void *ctx, uint64_t token) {
+    return token != 0 && truce_au_v2_ctx_token(ctx) == token;
 }
 
 static TruceAUv2 *au_ctx_map_lookup(void *ctx) {
