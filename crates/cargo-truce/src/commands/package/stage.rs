@@ -69,6 +69,15 @@ pub(crate) fn stage_external(
         return Err(format!("Missing: {}", built.display()).into());
     }
 
+    // A name with nothing this format can spell (no ASCII letters or digits
+    // for a slug) would make the bundle just the suffix.
+    if fmt.spell(&p.name).is_empty() {
+        return Err(format!(
+            "{}: plugin name {:?} has no characters a {} bundle name can use",
+            fmt.label, p.name, fmt.label
+        )
+        .into());
+    }
     let bundle = staging.join(fmt.bundle_name_for(p));
     let _ = fs::remove_dir_all(&bundle);
     fs::create_dir_all(&bundle)?;

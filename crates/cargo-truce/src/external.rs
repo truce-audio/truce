@@ -309,6 +309,39 @@ impl ExternalFormat {
         }
     }
 
+    /// Reject a reply whose layout fields could aim a delete somewhere they
+    /// shouldn't. `bundle_suffix` and `install_dir` build the paths install
+    /// stages into (after `remove_dir_all` on the bundle) and uninstall
+    /// removes: an empty or path-bearing suffix with a name that spells to
+    /// nothing would name the install directory itself, and a relative
+    /// root would resolve against whatever the current directory is.
+    fn validate(&self) -> Result<(), String> {
+        let ext = self.bundle_suffix.strip_prefix('.').unwrap_or_default();
+        if ext.is_empty() || ext.contains(['/', '\\', '.']) {
+            return Err(format!(
+                "bundle_suffix {:?} must be `.` plus a name with no `.` or path separators",
+                self.bundle_suffix
+            ));
+        }
+        let roots = [
+            ("macos", self.install_dir.macos.as_ref(), false),
+            ("linux", self.install_dir.linux.as_ref(), false),
+            ("windows", self.install_dir.windows.as_ref(), true),
+        ];
+        for (os, dirs, windows) in roots {
+            let Some(dirs) = dirs else { continue };
+            for raw in std::iter::once(&dirs.user).chain(dirs.system.as_ref()) {
+                if !is_rooted(raw, windows) {
+                    return Err(format!(
+                        "install_dir.{os} {raw:?} must start at `~`, an `%ENV%` variable, \
+                         or an absolute path"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Dylib name suffix (`_lv2`). Always set; see [`fill_defaults`](Self::fill_defaults).
     pub(crate) fn dylib_suffix(&self) -> &str {
         self.dylib_suffix
@@ -410,6 +443,30 @@ impl ExternalFormat {
 /// doesn't resolve, so a helper describing a Windows path on Linux is
 /// skipped rather than turned into a nonsense relative path.
 pub(crate) fn expand_dir(raw: &str) -> Option<PathBuf> {
+    expand_dir_unchecked(raw).filter(|p| p.is_absolute())
+}
+
+/// Whether `raw` names a root `expand_dir` can anchor: home (`~/`), an
+/// `%ENV%` variable, or an absolute path in `windows`' syntax or not.
+fn is_rooted(raw: &str, windows: bool) -> bool {
+    if raw.starts_with("~/") || raw.starts_with("~\\") {
+        return true;
+    }
+    if let Some(rest) = raw.strip_prefix('%') {
+        return rest.split_once('%').is_some_and(|(var, _)| !var.is_empty());
+    }
+    if windows {
+        let b = raw.as_bytes();
+        (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/'))
+            || raw.starts_with("\\\\")
+    } else {
+        raw.starts_with('/')
+    }
+}
+
+/// [`expand_dir`] before its absolute-path check: `~` and `%VAR%` resolved,
+/// anything else taken as written.
+fn expand_dir_unchecked(raw: &str) -> Option<PathBuf> {
     if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
         return Some(crate::dirs::home_dir()?.join(rest));
     }
@@ -500,6 +557,9 @@ fn run_describe(helper: &Path, name: &str) -> Result<ExternalFormat, CargoTruceE
         )
         .into());
     }
+    parsed
+        .validate()
+        .map_err(|e| format!("{} describe: {e}", helper.display()))?;
     parsed.fill_defaults();
     parsed.helper = helper.to_path_buf();
     Ok(parsed)
@@ -1083,6 +1143,10 @@ mod tests {
             let layout = legacy_layout(name);
             assert_eq!(layout.format, *name);
             assert!(
+                layout.validate().is_ok(),
+                "{name}'s 6.x layout passes describe's checks"
+            );
+            assert!(
                 layout.capabilities.is_empty(),
                 "a legacy handle has no helper to send a verb to"
             );
@@ -1103,6 +1167,42 @@ mod tests {
                 .map(|os| os.as_ref().map(|r| (r.user.clone(), r.system.clone())))
         };
         assert_eq!(roots(&legacy.install_dir), roots(&helper.install_dir));
+    }
+
+    /// Layout fields feed install's `remove_dir_all` and uninstall's
+    /// deletes, so a reply that could aim them elsewhere is refused.
+    #[test]
+    fn describe_layout_that_could_misdirect_a_delete_is_refused() {
+        assert!(lv2().validate().is_ok(), "the documented reply is fine");
+        for suffix in ["", ".", "lv2", "./x", ".a/b", ".a.b"] {
+            let mut f = lv2();
+            f.bundle_suffix = suffix.into();
+            assert!(f.validate().is_err(), "suffix {suffix:?}");
+        }
+        let mut f = lv2();
+        f.install_dir.linux.as_mut().unwrap().user = "plugins/lv2".into();
+        assert!(f.validate().is_err(), "a relative root");
+        let mut f = lv2();
+        f.install_dir.windows.as_mut().unwrap().user = "LV2".into();
+        assert!(f.validate().is_err(), "a relative Windows root");
+    }
+
+    #[test]
+    fn rooted_install_directories() {
+        for ok in ["~/.lv2", "/Library/LV2", "%APPDATA%/LV2"] {
+            assert!(is_rooted(ok, false), "{ok}");
+        }
+        for ok in [
+            "C:\\LV2",
+            "c:/LV2",
+            "\\\\server\\share",
+            "%COMMONPROGRAMFILES%\\LV2",
+        ] {
+            assert!(is_rooted(ok, true), "{ok}");
+        }
+        for bad in ["LV2", "./lv2", "%%/x", "", "C:LV2"] {
+            assert!(!is_rooted(bad, true) && !is_rooted(bad, false), "{bad:?}");
+        }
     }
 
     /// A helper may answer without reading its whole request (`preset-decode`
@@ -1218,10 +1318,20 @@ mod tests {
 
     #[test]
     fn expansion_leaves_an_absolute_path_alone() {
-        assert_eq!(
-            expand_dir("/Library/Audio/Plug-Ins/LV2"),
-            Some(PathBuf::from("/Library/Audio/Plug-Ins/LV2"))
-        );
+        let abs = if cfg!(windows) {
+            "C:\\Program Files\\Common Files\\LV2"
+        } else {
+            "/Library/Audio/Plug-Ins/LV2"
+        };
+        assert_eq!(expand_dir(abs), Some(PathBuf::from(abs)));
+    }
+
+    /// A drive-relative `\` root names a different place on each drive, so
+    /// it isn't a location on Windows.
+    #[cfg(windows)]
+    #[test]
+    fn expansion_refuses_a_driveless_root_on_windows() {
+        assert_eq!(expand_dir("/Library/Audio/Plug-Ins/LV2"), None);
     }
 
     #[test]
