@@ -61,7 +61,7 @@ fn chunker_perf() {
         // 32`, so every one triggers a sub-block split.
         for _ in 0..(blocks * 4) {
             s.wait_samples(64);
-            s.set_param(truce_example_gain::GainParamsParamId::Gain, -10.0);
+            s.set_param(truce_example_gain::GainParamsParamId::Gain, 0.0);
         }
     });
 
