@@ -355,8 +355,13 @@ macro_rules! plugin_logic_leaf_trait {
             /// **Default.** Delegates to [`Self::save_state`], so a plugin
             /// that overrides only the legacy `save_state` still publishes
             /// through this slot - at the cost of running `save_state` on
-            /// the audio thread. A plugin overriding neither publishes
-            /// nothing (its empty `save_state`).
+            /// the audio thread. It always returns `true`, publishing an
+            /// empty blob when `save_state` is empty: it can't tell "no
+            /// custom state" from "empty right now" (no sample loaded yet),
+            /// and reading the second as the first would stop publishing
+            /// before the state ever filled, so it would never be saved. A
+            /// plugin overriding neither pays only for publishing that empty
+            /// blob.
             ///
             /// **Size regime.** This inline lane copies the whole buffer
             /// on every *changed* block, so it is for **KB-scale** state (a
@@ -367,13 +372,8 @@ macro_rules! plugin_logic_leaf_trait {
             /// `InitContext::snapshot_publisher()` (a background-serialized,
             /// pointer-swapped buffer) and leave this at the default.
             fn snapshot_into(state: &Self::DspState, buf: &mut Vec<u8>) -> bool {
-                let bytes = Self::save_state(state);
-                if bytes.is_empty() {
-                    false
-                } else {
-                    buf.extend_from_slice(&bytes);
-                    true
-                }
+                buf.extend_from_slice(&Self::save_state(state));
+                true
             }
 
             /// Generation token for the state [`Self::snapshot_into`]

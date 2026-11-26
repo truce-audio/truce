@@ -508,6 +508,11 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // skipping on a stale version and leaving pre-load bytes in the
         // slot (see `StaticShell::load_state`).
         self.last_snapshot_version = None;
+        // Re-arm publishing: a plugin that reported no snapshot before the
+        // load (empty custom state at construction) may have some now, and
+        // a latch left off would keep every later save on the bytes the
+        // load published, or on nothing.
+        self.try_snapshot = true;
         result
     }
 
