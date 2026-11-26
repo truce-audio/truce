@@ -39,6 +39,16 @@ use syn::Type;
 use truce_build::lv2::Lv2Param;
 use truce_params::METER_ID_BASE;
 
+/// One `#[nested]` field as the sidecar records it.
+pub(crate) struct SidecarNested {
+    pub(crate) field: syn::Ident,
+    pub(crate) ty: Type,
+    pub(crate) base: Option<u32>,
+    pub(crate) array_len: Option<usize>,
+    /// Name prefix where the group's params need disambiguating.
+    pub(crate) label: String,
+}
+
 /// Write the per-struct sidecar. Best-effort; errors don't fail the
 /// build (a missing sidecar will surface later when
 /// `__truce_lv2_emit_root!` aggregates).
@@ -47,7 +57,7 @@ pub(crate) fn write_struct_sidecar(
     hash_scheme: bool,
     params: &[ParamField],
     meters: &[MeterField],
-    nested: &[(syn::Ident, Type, Option<u32>, Option<usize>)],
+    nested: &[SidecarNested],
 ) {
     let Some(out_dir) = sidecar_dir() else {
         return;
@@ -133,13 +143,21 @@ pub(crate) fn write_struct_sidecar(
             let _ = writeln!(buf, "id = {id}\n");
         }
     }
-    for (field, ty, base, array_len) in nested {
+    for SidecarNested {
+        field,
+        ty,
+        base,
+        array_len,
+        label,
+    } in nested
+    {
         if let Some(t) = type_last_segment(ty) {
             buf.push_str("[[nested]]\n");
             let _ = writeln!(buf, "type = \"{t}\"");
             // The field identifier preserves declaration order and lets
             // the aggregator name auto-packed groups deterministically.
             let _ = writeln!(buf, "field = \"{}\"", toml_escape(&field.to_string()));
+            let _ = writeln!(buf, "label = \"{}\"", toml_escape(label));
             if let Some(b) = base {
                 let _ = writeln!(buf, "base = {b}");
             }
@@ -229,6 +247,7 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
         &mut meter_ids,
         &mut fields,
         &mut ancestors,
+        false,
     ) {
         let lit = msg;
         return quote! { compile_error!(#lit); }.into();
@@ -342,6 +361,9 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
 
 /// Recursively walk `<root>.params.toml`, then each `[[nested]]`
 /// reference, accumulating params + meter IDs into the supplied vecs.
+/// Returns, per param this call appended, whether it sits under a
+/// `#[nested]` array (its name is array-qualified) - a parent single group
+/// prefixes its label onto exactly those, as the runtime does.
 #[allow(clippy::too_many_arguments)]
 fn aggregate(
     sidecar_dir: &std::path::Path,
@@ -351,7 +373,8 @@ fn aggregate(
     meter_ids: &mut Vec<u32>,
     fields: &mut Vec<(u32, String)>,
     ancestors: &mut std::collections::HashSet<String>,
-) -> Result<(), String> {
+    qualify: bool,
+) -> Result<Vec<bool>, String> {
     // Track the active path, not every visited struct: the same Params
     // type reused in two `#[nested]` slots must be walked twice, but a
     // true cycle (a type nesting an ancestor) still has to be rejected.
@@ -387,6 +410,7 @@ fn aggregate(
     // Own params carry struct-local ids; fold them into the parent's id
     // space by `id_base` (additive + mask, matching `offset_ids`).
     let mut own_count = 0u32;
+    let mut under_array: Vec<bool> = Vec::new();
     if let Some(toml::Value::Array(arr)) = toml.get("param") {
         for entry in arr {
             let mut p = parse_param_entry(entry, sidecar_dir)
@@ -396,6 +420,7 @@ fn aggregate(
                 fields.push((p.id, field.to_string()));
             }
             params.push(p);
+            under_array.push(false);
             own_count += 1;
         }
     }
@@ -456,7 +481,10 @@ fn aggregate(
                 } else {
                     (id_base + elem_base) & mask
                 };
-                aggregate(
+                // Match the runtime's naming: an array element is walked
+                // qualified (its single groups prefix their label), and so
+                // is a single group that is itself inside an element.
+                let sub_under_array = aggregate(
                     sidecar_dir,
                     t,
                     walk_base,
@@ -464,6 +492,7 @@ fn aggregate(
                     meter_ids,
                     fields,
                     ancestors,
+                    qualify || array.is_some(),
                 )?;
                 if let Some(salt) = salt {
                     let remap = |id: u32| (truce_params::mix_nested_id(id, salt) + id_base) & mask;
@@ -474,15 +503,32 @@ fn aggregate(
                         *id = remap(*id);
                     }
                 }
-                // Match the runtime's `param_infos()`: an array element's
-                // params (inner arrays already suffixed) get a 1-based index
-                // suffix, `Level` -> `Level 1`. The port name - and the
-                // `lv2:symbol` derived from it - must agree, and symbols are
-                // persisted in host sessions, so they can't change later.
+                // Match the runtime's `param_infos()` (`gen_infos_appends`):
+                // an array element's names get the array's label and 1-based
+                // index (`Level` -> `Step 1 Level`); a single group's get its
+                // label when walked qualified (inside an element), and
+                // otherwise only on the names that came from an array below
+                // it. The port name - and the `lv2:symbol` derived from it -
+                // must agree, and symbols are persisted in host sessions, so
+                // they can't change later.
+                let label = entry
+                    .get("label")
+                    .and_then(toml::Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| slot_field.map(crate::field_label))
+                    .unwrap_or_default();
                 if array.is_some() {
                     for p in &mut params[before..] {
-                        p.name = format!("{} {}", p.name, i + 1);
+                        p.name = format!("{label} {} {}", i + 1, p.name);
                     }
+                    under_array.extend(std::iter::repeat_n(true, sub_under_array.len()));
+                } else {
+                    for (p, &arr) in params[before..].iter_mut().zip(&sub_under_array) {
+                        if qualify || arr {
+                            p.name = format!("{label} {}", p.name);
+                        }
+                    }
+                    under_array.extend(sub_under_array);
                 }
                 let added = u32::try_from(params.len() - before).unwrap_or(0);
                 elem_base = elem_base.wrapping_add(added);
@@ -497,7 +543,7 @@ fn aggregate(
         }
     }
     ancestors.remove(struct_name);
-    Ok(())
+    Ok(under_array)
 }
 
 fn parse_param_entry(v: &toml::Value, sidecar_dir: &std::path::Path) -> Result<Lv2Param, String> {
@@ -811,11 +857,11 @@ mod tests {
     use super::{aggregate, parse_range_value};
     use truce_build::lv2::Lv2Range;
 
-    /// `#[nested]` array elements must carry the same index suffix in the
-    /// TTL as at runtime (`Level 1` .. `Level N`, nested arrays suffixed
-    /// innermost first), so each port gets a distinct, name-derived
-    /// `lv2:symbol` instead of `Level`, `p_<id>`, ... A single nested
-    /// group stays unsuffixed.
+    /// `#[nested]` array elements must carry the same names in the TTL as
+    /// at runtime (`Bank 1 Step 2 Level`: each array's label and 1-based
+    /// index, outermost first), so each port gets a distinct, name-derived
+    /// `lv2:symbol` instead of `Level`, `p_<id>`, ... A root-level single
+    /// group stays raw; one inside an element gets its label.
     #[test]
     fn nested_array_ports_get_index_suffixes() {
         let dir = std::env::temp_dir().join(format!("truce-lv2-nested-{}", std::process::id()));
@@ -832,7 +878,8 @@ mod tests {
         write(
             "Bank",
             "scheme = \"ordinal\"\n\
-             [[nested]]\ntype = \"Step\"\nfield = \"step\"\narray_len = 2\n",
+             [[nested]]\ntype = \"Step\"\nfield = \"step\"\narray_len = 2\n\
+             [[nested]]\ntype = \"Step\"\nfield = \"main_env\"\n",
         );
         write(
             "Step",
@@ -850,6 +897,7 @@ mod tests {
             &mut Vec::new(),
             &mut Vec::new(),
             &mut std::collections::HashSet::new(),
+            false,
         )
         .unwrap();
         let _ = std::fs::remove_dir_all(&dir);
@@ -857,7 +905,15 @@ mod tests {
         let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Level 1 1", "Level 2 1", "Level 1 2", "Level 2 2", "Level"]
+            [
+                "Bank 1 Step 1 Level",
+                "Bank 1 Step 2 Level",
+                "Bank 1 Main Env Level",
+                "Bank 2 Step 1 Level",
+                "Bank 2 Step 2 Level",
+                "Bank 2 Main Env Level",
+                "Level",
+            ]
         );
         let symbols: Vec<String> = truce_build::lv2::resolved_param_symbols(&params)
             .into_iter()
@@ -865,7 +921,72 @@ mod tests {
             .collect();
         assert_eq!(
             symbols,
-            ["Level_1_1", "Level_2_1", "Level_1_2", "Level_2_2", "Level"]
+            [
+                "Bank_1_Step_1_Level",
+                "Bank_1_Step_2_Level",
+                "Bank_1_Main_Env_Level",
+                "Bank_2_Step_1_Level",
+                "Bank_2_Step_2_Level",
+                "Bank_2_Main_Env_Level",
+                "Level",
+            ]
+        );
+    }
+
+    /// A single group outside any array keeps its own params raw but
+    /// prefixes its label onto names from an array below it, so the same
+    /// group type in two slots doesn't repeat `Harm 1 Level` - matching
+    /// the runtime's `param_infos_under_array` handling.
+    #[test]
+    fn reused_group_prefixes_only_its_array_names() {
+        let dir = std::env::temp_dir().join(format!("truce-lv2-reused-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, body: &str| {
+            std::fs::write(dir.join(format!("{name}.params.toml")), body).unwrap();
+        };
+        write(
+            "Root",
+            "scheme = \"ordinal\"\n\
+             [[nested]]\ntype = \"Holder\"\nfield = \"osc_a\"\nlabel = \"Osc A\"\n\
+             [[nested]]\ntype = \"Holder\"\nfield = \"osc_b\"\nlabel = \"Osc B\"\n",
+        );
+        write(
+            "Holder",
+            "scheme = \"ordinal\"\n\
+             [[param]]\nid = 0\nname = \"Gain\"\nkind = \"Float\"\n\
+             range = \"linear(0, 1)\"\ndefault = 1\n\
+             [[nested]]\ntype = \"Leaf\"\nfield = \"harm\"\nlabel = \"Harm\"\narray_len = 2\n",
+        );
+        write(
+            "Leaf",
+            "scheme = \"ordinal\"\n\
+             [[param]]\nid = 0\nname = \"Level\"\nkind = \"Float\"\n\
+             range = \"linear(0, 1)\"\ndefault = 1\n",
+        );
+        let mut params = Vec::new();
+        aggregate(
+            &dir,
+            "Root",
+            0,
+            &mut params,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut std::collections::HashSet::new(),
+            false,
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Gain",
+                "Osc A Harm 1 Level",
+                "Osc A Harm 2 Level",
+                "Gain",
+                "Osc B Harm 1 Level",
+                "Osc B Harm 2 Level",
+            ]
         );
     }
 
@@ -900,6 +1021,7 @@ mod tests {
             &mut Vec::new(),
             &mut Vec::new(),
             &mut std::collections::HashSet::new(),
+            false,
         )
         .unwrap();
         let _ = std::fs::remove_dir_all(&dir);
