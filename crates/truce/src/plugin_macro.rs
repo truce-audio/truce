@@ -81,12 +81,6 @@ macro_rules! plugin {
 #[macro_export]
 macro_rules! __plugin_impl {
     ($logic:ty, $params:ty, $(tasks: [$($task:ty),+],)?) => {
-        // Compile-time LV2 TTL emission. Walks the params type's
-        // sidecar tree (written by `derive(Params)`) and produces
-        // `manifest.ttl` / `plugin.ttl` next to it. cargo-truce's
-        // stage_lv2 reads those files at package time - no dlopen.
-        $crate::__reexport::__truce_lv2_emit_root!($params);
-
         // Always export the PluginLogic for dylib use (shell-mode or
         // testing). Static-mode shells ignore these exports.
         $crate::__reexport::export_plugin!($logic, $params);
@@ -105,6 +99,18 @@ macro_rules! __plugin_impl {
             // (e.g. `Gain`, `GainParams`); pull the parent scope in so
             // they resolve from inside the synthetic module.
             use super::*;
+
+            // Compile-time LV2 TTL emission. Walks the params type's
+            // sidecar tree (written by `derive(Params)`) and produces
+            // `manifest.ttl` / `plugin.ttl` next to it; cargo-truce's
+            // stage_lv2 reads those at package time - no dlopen. Gated on
+            // the `lv2` feature so a const `range` / `default` (which the
+            // TTL can't encode) only errors when LV2 is actually built -
+            // every other format reads the const at runtime. The `cfg`
+            // lives inside this `#[allow(unexpected_cfgs)]` module so a
+            // downstream crate without an `lv2` feature doesn't warn.
+            #[cfg(feature = "lv2")]
+            $crate::__reexport::__truce_lv2_emit_root!($params);
 
             // --- Static mode (default, and always under `cfg(test)`) ---
             // Embed the logic directly. Zero overhead.
