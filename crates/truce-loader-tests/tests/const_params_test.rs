@@ -205,3 +205,19 @@ fn consts_named_inf_or_nan_are_consts_not_literals() {
     let stat = &NonFiniteNamedConsts::param_infos_static()[0];
     assert_eq!((stat.range.min(), stat.range.max()), (-6.0, 6.0));
 }
+
+// A brace in a param name must not reach the const range check's
+// `assert!` as a format string (`Q {x}` used to fail with "cannot find
+// value `x`").
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct BraceNamedConstRange {
+    #[param(name = "Q {x}", range = "linear(MIN_RATIO, MAX_RATIO)", default = 4.0)]
+    q: FloatParam,
+}
+
+#[test]
+fn brace_in_name_with_const_range_compiles() {
+    let p = BraceNamedConstRange::new();
+    assert_eq!(p.q.info.name, "Q {x}");
+}

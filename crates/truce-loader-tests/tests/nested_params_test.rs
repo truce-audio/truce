@@ -1105,3 +1105,9 @@ fn fnv1a32(s: &str) -> u32 {
 fn fnv1a24(s: &str) -> u32 {
     fnv1a32(s) & (truce_params::METER_ID_BASE - 1)
 }
+
+#[test]
+#[should_panic(expected = "bands: index 9 out of bounds for array of length 3")]
+fn array_id_helper_names_the_bad_index() {
+    let _ = BandArray::bands_id(9, BandParamId::Gain);
+}
