@@ -40,28 +40,13 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         crate::font::apply_font(&ctx, font_data);
     }
 
-    // Run the egui frame
-    let mut raw_input = egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(width as f32, height as f32),
-        )),
-        time: Some(0.0),
-        focused: true,
-        ..Default::default()
-    };
-    raw_input
-        .viewports
-        .entry(egui::ViewportId::ROOT)
-        .or_default()
-        .native_pixels_per_point = Some(pixels_per_point);
-
-    let output = ctx.run_ui(raw_input, |ui| {
-        ui_fn(ui, state);
-    });
-
-    let clipped_primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
-
+    // Acquire the GPU *before* running the UI. Both requests below can
+    // fail on a GPU-less host (headless CI, a stripped container), and a
+    // `?` early return after `run_ui` would drop egui 0.37's `output`
+    // while its `TexturesDelta` still holds unapplied set-deltas - whose
+    // `Drop` asserts, panicking instead of letting this return `None` and
+    // the caller fall back / skip. Nothing here depends on the UI output.
+    //
     // Headless wgpu rendering. `PRIMARY` picks the platform-default
     // backend (Metal on macOS, DX12 on Windows, Vulkan on Linux) so
     // the screenshot pipeline runs everywhere. Per-backend
@@ -85,6 +70,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .ok()?;
 
@@ -97,6 +83,28 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         trace: wgpu::Trace::Off,
     }))
     .ok()?;
+
+    // Run the egui frame (only now that a GPU is in hand - see above).
+    let mut raw_input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(width as f32, height as f32),
+        )),
+        time: Some(0.0),
+        focused: true,
+        ..Default::default()
+    };
+    raw_input
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .native_pixels_per_point = Some(pixels_per_point);
+
+    let mut output = ctx.run_ui(raw_input, |ui| {
+        ui_fn(ui, state);
+    });
+
+    let clipped_primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
 
     // Match the live render path, which picks the first non-sRGB
     // surface format in `renderer.rs` (`!f.is_srgb()`). Also matches
@@ -130,9 +138,11 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     let mut egui_renderer =
         egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
 
-    // Update textures
-    for (id, delta) in &output.textures_delta.set {
-        egui_renderer.update_texture(&device, &queue, *id, delta);
+    // Update textures (egui 0.37 batches per-id deltas into a `SmallVec`).
+    for (id, deltas) in &output.textures_delta.set {
+        for delta in deltas {
+            egui_renderer.update_texture(&device, &queue, *id, delta);
+        }
     }
 
     let screen_desc = egui_wgpu::ScreenDescriptor {
@@ -225,7 +235,9 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     });
     rx.recv().unwrap().expect("buffer map failed");
 
-    let mapped = buf_slice.get_mapped_range();
+    let mapped = buf_slice
+        .get_mapped_range()
+        .expect("screenshot readback buffer mapped");
     let mut pixels = Vec::with_capacity((phys_w * phys_h * 4) as usize);
     for row in 0..phys_h {
         let start = (row * bytes_per_row) as usize;
@@ -239,6 +251,9 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     for id in &output.textures_delta.free {
         egui_renderer.free_texture(id);
     }
+    // egui 0.37's `TexturesDelta` panics on drop if it still holds
+    // unapplied deltas; they're applied above, so clear it.
+    output.textures_delta.clear();
 
     Some((pixels, phys_w, phys_h))
 }

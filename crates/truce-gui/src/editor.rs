@@ -756,6 +756,8 @@ fn create_wgpu_backend(
                     desired_maximum_frame_latency: 2,
                     alpha_mode: wgpu::CompositeAlphaMode::Auto,
                     view_formats: vec![],
+                    // `Auto` keeps wgpu's historical sRGB behavior.
+                    color_space: wgpu::SurfaceColorSpace::Auto,
                 };
 
                 // Blit texture matches the CPU pixmap, which is sized at
@@ -767,11 +769,11 @@ fn create_wgpu_backend(
                 let parts = BlitParts {
                     blit,
                     surface_config: surface_config.clone(),
-                    queue,
+                    queue: queue.clone(),
                     device: device.clone(),
                     max_texture_dim,
                 };
-                Some((parts, device, surface_config))
+                Some((parts, device, queue, surface_config))
             }),
         )
     }?;

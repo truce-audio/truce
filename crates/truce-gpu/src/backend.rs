@@ -368,9 +368,10 @@ impl WgpuBackend {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .ok()?;
-        let (mut backend, device, config) =
+        let (mut backend, device, _queue, config) =
             Self::pump_init(&adapter, &surface, logical_w, logical_h, scale)?;
         surface.configure(&device, &config);
         backend.surface = Some(surface);
@@ -548,7 +549,7 @@ impl WgpuBackend {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[vertex_layout],
+                buffers: &[Some(vertex_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -631,7 +632,7 @@ impl WgpuBackend {
         logical_w: u32,
         logical_h: u32,
         scale: f32,
-    ) -> Option<(Self, wgpu::Device, wgpu::SurfaceConfiguration)> {
+    ) -> Option<(Self, wgpu::Device, wgpu::Queue, wgpu::SurfaceConfiguration)> {
         // Request what the adapter actually supports rather than the
         // fixed `downlevel_defaults` cap (2048 max texture dim). On a
         // desktop GPU that's typically 8192-16384, which is needed for
@@ -649,6 +650,7 @@ impl WgpuBackend {
         }))
         .ok()?;
         let plain_device = device.clone();
+        let plain_queue = queue.clone();
         let device = Arc::new(device);
         let queue = Arc::new(queue);
 
@@ -688,6 +690,9 @@ impl WgpuBackend {
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
+            // `Auto` reproduces wgpu's historical color-space behavior
+            // (sRGB for the 8-bit formats this surface uses).
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
 
         let backend = Self::from_parts(
@@ -699,7 +704,7 @@ impl WgpuBackend {
             height,
             scale,
         );
-        Some((backend, plain_device, surface_config))
+        Some((backend, plain_device, plain_queue, surface_config))
     }
 
     /// Attach the pump client the backend's acquire / configure /
@@ -933,7 +938,7 @@ impl WgpuBackend {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[vertex_layout],
+                buffers: &[Some(vertex_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -1735,12 +1740,12 @@ impl RenderBackend for WgpuBackend {
             // visible flicker on idle). Issue a clear-only pass so the
             // surface ends up at `clear_color`.
             self.clear_only_pass(&frame_view);
-            frame.present();
+            self.queue.present(frame);
             return;
         }
 
         self.render_pass(&frame_view);
-        frame.present();
+        self.queue.present(frame);
     }
 }
 
@@ -1893,6 +1898,7 @@ impl WgpuBackend {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .ok()?;
 
@@ -2067,7 +2073,7 @@ impl WgpuBackend {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[vertex_layout],
+                buffers: &[Some(vertex_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -2216,7 +2222,9 @@ impl WgpuBackend {
         });
         rx.recv().unwrap().expect("buffer map failed");
 
-        let mapped = buf_slice.get_mapped_range();
+        let mapped = buf_slice
+            .get_mapped_range()
+            .expect("readback buffer mapped");
         let mut pixels = Vec::with_capacity((w * h * 4) as usize);
         for row in 0..h {
             let start = (row * bytes_per_row) as usize;
@@ -2343,6 +2351,7 @@ mod tests {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             }))
         else {
             return; // no GPU in this environment
@@ -2435,7 +2444,7 @@ mod tests {
             timeout: None,
         });
         rx.recv().unwrap().unwrap();
-        let mapped = slice.get_mapped_range();
+        let mapped = slice.get_mapped_range().expect("readback buffer mapped");
 
         // Probe the green rect center (16, 16) - should be ~green.
         let row_off = 16usize * bytes_per_row as usize;

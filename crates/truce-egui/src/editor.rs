@@ -575,17 +575,20 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     /// deltas if the previous frame was dropped unconsumed.
     // Owned args match the Windows variant, which moves them into the
     // render thread's `FramePacket`; this inline variant only borrows.
+    /// Paints the frame, returning whether it reached the surface. A
+    /// `false` (surface not ready) keeps `force_paint` armed so the next
+    /// tick retries instead of leaving the editor stale.
     #[allow(clippy::needless_pass_by_value)]
     #[cfg(not(target_os = "windows"))]
     fn painter_paint(
         &mut self,
-        textures_delta: egui::TexturesDelta,
+        mut textures_delta: egui::TexturesDelta,
         primitives: Vec<egui::ClippedPrimitive>,
         pixels_per_point: f32,
-    ) {
-        if let Some(renderer) = self.renderer.as_mut() {
-            renderer.render(&textures_delta, &primitives, pixels_per_point);
-        }
+    ) -> bool {
+        self.renderer.as_mut().is_none_or(|renderer| {
+            renderer.render(&mut textures_delta, &primitives, pixels_per_point)
+        })
     }
     #[cfg(target_os = "windows")]
     fn painter_paint(
@@ -593,7 +596,7 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         textures_delta: egui::TexturesDelta,
         primitives: Vec<egui::ClippedPrimitive>,
         pixels_per_point: f32,
-    ) {
+    ) -> bool {
         if let Some(rt) = &self.render_thread {
             rt.submit(FramePacket {
                 textures_delta,
@@ -601,6 +604,10 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
                 pixels_per_point,
             });
         }
+        // The render thread paints asynchronously and reconfigures a
+        // stale surface on its own; from the GUI thread the submit always
+        // lands in the latest-wins mailbox.
+        true
     }
 
     /// How long the most recent swapchain acquire blocked - measured
@@ -663,14 +670,15 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     // `(u32, u32)` editor sizes widen to `f32` for egui's screen rect.
     // Editor sizes are bounded by display dimensions, well below 2^23.
     /// Run + paint one egui frame. Returns egui's requested
-    /// `repaint_delay` for the root viewport (`None` if no renderer),
-    /// which the caller folds into the idle gate: `ZERO` means animate
-    /// next frame, a finite delay schedules one, and `Duration::MAX`
-    /// means idle.
+    /// `repaint_delay` for the root viewport (`None` if no renderer) plus
+    /// whether the frame reached the surface. The delay folds into the
+    /// idle gate: `ZERO` means animate next frame, a finite delay
+    /// schedules one, and `Duration::MAX` means idle. A `false` paint
+    /// (surface not ready) tells the caller to keep `force_paint` armed.
     #[allow(clippy::cast_precision_loss)]
-    fn run_frame(&mut self, window: &mut Window) -> Option<std::time::Duration> {
+    fn run_frame(&mut self, window: &mut Window) -> (Option<std::time::Duration>, bool) {
         if !self.painter_ready() {
-            return None;
+            return (None, false);
         }
 
         // Pick up host-driven scale changes (CLAP `set_scale`, VST3
@@ -712,8 +720,17 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
                 egui::vec2(lw, lh),
             )),
             time: Some(self.start_time.elapsed().as_secs_f64()),
-            modifiers: self.modifiers,
-            events: std::mem::take(&mut self.pending_events),
+            // egui 0.37 dropped `RawInput.modifiers`; the global modifier
+            // state now comes only from `ModifiersChanged` events. The event
+            // drain keeps `self.modifiers` current but never enqueues one, so
+            // seed every frame with it - otherwise `ui.input(|i| i.modifiers)`
+            // is always empty and shift fine-drag / cmd-alt-click logic breaks.
+            events: {
+                let mut events = Vec::with_capacity(self.pending_events.len() + 1);
+                events.push(egui::Event::ModifiersChanged(self.modifiers));
+                events.append(&mut self.pending_events);
+                events
+            },
             focused: true,
             ..Default::default()
         };
@@ -745,13 +762,13 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             .egui_ctx
             .tessellate(output.shapes, output.pixels_per_point);
 
-        self.painter_paint(
+        let painted = self.painter_paint(
             output.textures_delta,
             clipped_primitives,
             output.pixels_per_point,
         );
 
-        repaint_delay
+        (repaint_delay, painted)
     }
 
     /// Poll params into the snapshot, returning whether any moved since
@@ -954,8 +971,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             if !self.should_paint() {
                 return;
             }
-            let repaint_delay = self.run_frame(window);
-            self.force_paint = false;
+            let (repaint_delay, painted) = self.run_frame(window);
+            // Keep `force_paint` armed when the surface couldn't take the
+            // frame (reconfigured / transient), so an idle editor retries
+            // next tick instead of staying stale after the recovery.
+            if painted {
+                self.force_paint = false;
+            }
             self.pacer.record_acquire(self.painter_acquire_wait());
             // Schedule the next forced paint from egui's reported delay:
             // `ZERO` -> paint next frame (animating), a finite delay ->
@@ -1068,6 +1090,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                                 // baseview doesn't tell us touch / inertial phase;
                                 // `Move` is egui's "unknown" recommendation.
                                 phase: egui::TouchPhase::Move,
+                                // baseview can't distinguish wheel vs trackpad.
+                                source: egui::MouseWheelSource::Unknown,
                                 modifiers: self.modifiers,
                             });
                             EventStatus::Captured

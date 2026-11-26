@@ -94,6 +94,7 @@ impl EguiRenderer {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .ok()?;
 
@@ -150,6 +151,7 @@ impl EguiRenderer {
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &surface_config);
 
@@ -203,6 +205,7 @@ impl EguiRenderer {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                     force_fallback_adapter: false,
+                    apply_limit_buckets: false,
                 }))
                 .ok()?;
 
@@ -256,6 +259,7 @@ impl EguiRenderer {
                 desired_maximum_frame_latency: 2,
                 alpha_mode,
                 view_formats: vec![],
+                color_space: wgpu::SurfaceColorSpace::Auto,
             };
             surface.configure(&device, &surface_config);
 
@@ -279,17 +283,65 @@ impl EguiRenderer {
         }
     }
 
-    /// Paint a frame of egui output to the surface.
+    /// Paint a frame of egui output to the surface. Returns `false` when
+    /// the frame was skipped (the surface couldn't give a texture), so
+    /// the caller keeps `force_paint` armed and retries next tick instead
+    /// of leaving the editor stale.
     pub fn render(
         &mut self,
-        textures_delta: &egui::TexturesDelta,
+        textures_delta: &mut egui::TexturesDelta,
         clipped_primitives: &[egui::ClippedPrimitive],
         pixels_per_point: f32,
-    ) {
-        for (id, delta) in &textures_delta.set {
-            self.egui_rpass
-                .update_texture(&self.device, &self.queue, *id, delta);
+    ) -> bool {
+        // Apply the texture-set uploads first. egui sends each delta only
+        // once, so these must run even on a skipped frame (a skip flushes
+        // them via `submit`) or the texture update is lost. egui 0.37
+        // batches per-id deltas into a `SmallVec`.
+        for (id, deltas) in &textures_delta.set {
+            for delta in deltas {
+                self.egui_rpass
+                    .update_texture(&self.device, &self.queue, *id, delta);
+            }
         }
+
+        // Acquire the swapchain texture *before* writing the vertex /
+        // index buffers. `update_buffers` and `update_texture` allocate
+        // staging buffers that wgpu frees only on the next `submit`; a
+        // failed acquire that returned early after `update_buffers`
+        // stranded them, leaking GBs/min until the host was OOM-killed.
+        let acquire_start = std::time::Instant::now();
+        let acquired = self.surface.get_current_texture();
+        self.last_acquire_wait = acquire_start.elapsed();
+
+        // A `Suboptimal` surface still paints this frame but must be
+        // reconfigured before the next acquire.
+        let mut reconfigure = false;
+        let frame = match acquired {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                reconfigure = true;
+                frame
+            }
+            // Out-of-date / lost / invalid: reconfigure and skip. Without
+            // this the surface never recovered - every later frame failed
+            // the acquire, froze the window black, and leaked.
+            wgpu::CurrentSurfaceTexture::Outdated
+            | wgpu::CurrentSurfaceTexture::Lost
+            | wgpu::CurrentSurfaceTexture::Validation => {
+                self.surface.configure(&self.device, &self.surface_config);
+                self.skip_frame(textures_delta);
+                return false;
+            }
+            // Transient (occluded window / acquire timeout): skip without
+            // reconfiguring.
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                self.skip_frame(textures_delta);
+                return false;
+            }
+        };
+        let frame_view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [self.width, self.height],
@@ -309,18 +361,6 @@ impl EguiRenderer {
             clipped_primitives,
             &screen_desc,
         );
-
-        let acquire_start = std::time::Instant::now();
-        let acquired = self.surface.get_current_texture();
-        self.last_acquire_wait = acquire_start.elapsed();
-        let (wgpu::CurrentSurfaceTexture::Success(frame)
-        | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = acquired
-        else {
-            return;
-        };
-        let frame_view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
 
         {
             // `egui_wgpu::Renderer::render` (egui 0.31) takes
@@ -361,11 +401,32 @@ impl EguiRenderer {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
+        self.queue.present(frame);
 
         for id in &textures_delta.free {
             self.egui_rpass.free_texture(id);
         }
+        // egui 0.37's `TexturesDelta` panics on drop with unapplied
+        // deltas; everything above is applied, so clear it.
+        textures_delta.clear();
+
+        if reconfigure {
+            self.surface.configure(&self.device, &self.surface_config);
+        }
+        true
+    }
+
+    /// Flush and discard the GPU work queued for a frame the surface
+    /// couldn't take. An (even empty) `submit` frees the staging buffers
+    /// wgpu allocated for the texture uploads above - the leak this
+    /// method exists to prevent. The texture frees and the delta reset
+    /// must still happen (egui won't resend them).
+    fn skip_frame(&mut self, textures_delta: &mut egui::TexturesDelta) {
+        self.queue.submit(std::iter::empty());
+        for id in &textures_delta.free {
+            self.egui_rpass.free_texture(id);
+        }
+        textures_delta.clear();
     }
 
     /// Resize the surface. Clamps against the adapter-reported

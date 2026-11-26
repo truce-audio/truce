@@ -860,7 +860,7 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         .or_default()
         .native_pixels_per_point = Some(inner.scale);
 
-    let output = inner.egui_ctx.run_ui(raw_input, |root_ui| {
+    let mut output = inner.egui_ctx.run_ui(raw_input, |root_ui| {
         // Recover a poisoned `ui` mutex (into_inner) rather than skip the
         // frame forever: a panic in author `ui` code is caught by the thunk
         // firewall, and the editor must keep rendering afterward - matching
@@ -876,7 +876,7 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         .tessellate(output.shapes, output.pixels_per_point);
     inner
         .renderer
-        .render(&output.textures_delta, &clipped, inner.scale);
+        .render(&mut output.textures_delta, &clipped, inner.scale);
     // Drive the iOS soft keyboard from egui's focus state. egui
     // sets `egui_wants_keyboard_input()` while a `TextEdit` (or
     // other focus-grabbing widget) is the active receiver; we

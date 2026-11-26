@@ -198,7 +198,7 @@ fn tremolo_ui(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
     egui::Panel::top("header")
         .exact_size(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
@@ -212,7 +212,7 @@ fn tremolo_ui(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
 
     egui::CentralPanel::default()
         .frame(egui::Frame::central_panel(ui.style()).inner_margin(10.0))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             draw_transport_readout(ui, state);
             ui.add_space(10.0);
 
