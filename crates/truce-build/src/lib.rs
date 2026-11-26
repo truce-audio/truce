@@ -659,8 +659,58 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
     toml::from_str(&content).map_err(|e| format!("Failed to parse {}: {e}", path.display()))
 }
 
+/// Escape `s` for the inside of a TOML basic string (`"..."`).
+///
+/// TOML forbids a raw `"`, `\` and most control characters there, so
+/// a name, unit or label carrying a newline or tab would otherwise
+/// produce a file nothing can parse back. Every hand-written TOML this
+/// workspace emits - metadata sidecars, `root.toml`, a helper's config
+/// view, authored `.preset` files - goes through here.
+#[must_use]
+pub fn toml_escape(s: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\u{:04X}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// Whatever a name holds, the escaped form parses back to it.
+    #[test]
+    fn toml_escape_round_trips_through_a_toml_parser() {
+        for raw in [
+            "plain",
+            "say \"hi\"",
+            "back\\slash",
+            "line\nbreak",
+            "tab\there",
+            "cr\rlf",
+            "bell\u{7}",
+            "del\u{7f}",
+            "c1\u{85}",
+            "ünïcødé ✓",
+        ] {
+            let doc = format!("v = \"{}\"", super::toml_escape(raw));
+            let parsed: toml::Table = doc
+                .parse()
+                .unwrap_or_else(|e| panic!("{raw:?} -> {doc:?}: {e}"));
+            assert_eq!(parsed["v"].as_str(), Some(raw));
+        }
+    }
     use super::{
         MidiWiring, effective_plugin_version, extract_json_string, midi_wiring, midi2_dialects,
         validate_bundle_id,
