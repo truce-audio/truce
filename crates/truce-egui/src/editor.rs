@@ -1193,7 +1193,24 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     let claimed = claimed_keys(&self.egui_ctx);
                     let shortcuts = claimed_shortcuts(&self.egui_ctx);
                     let key = egui_key_of(&kb.key, kb.code);
-                    let kept = keep_key(text_focused, self.modifiers, key, &claimed, &shortcuts);
+                    // An open popup (a ComboBox - truce's `param_dropdown` -
+                    // or a menu) is driven by keys egui reads itself: Escape
+                    // closes it, arrows / Enter navigate. Routing those to the
+                    // host broke that, so keep them while one is open.
+                    // Memory-tracked state only: it's current in both
+                    // directions (open the frame a click opens it, closed the
+                    // frame it closes). `Context::any_popup_open` reads pass
+                    // state, which between frames is the frame before last -
+                    // after a dropdown closed, an idle editor would keep
+                    // reading "open" and swallow the next Space from the host.
+                    // That covers ComboBox, menus, context menus and the color
+                    // picker. A plug-in's own `Popup` left always-open or
+                    // driven by `.open(bool)` / `.open_bool(..)` isn't in
+                    // memory, so its keys still go to the host - drive it with
+                    // `.open_memory(..)` to have them kept.
+                    let popup_open = egui::Popup::is_any_open(&self.egui_ctx);
+                    let kept = keep_for_popup(popup_open, self.modifiers, key)
+                        || keep_key(text_focused, self.modifiers, key, &claimed, &shortcuts);
                     let code = (kb.code != keyboard_types::Code::Unidentified).then_some(kb.code);
                     let routed = self.held_keys.route(
                         code,
@@ -1482,6 +1499,15 @@ fn keep_key(
     shortcuts
         .iter()
         .any(|s| s.logical_key == key && modifiers.matches_exact(s.modifiers))
+}
+
+/// Whether a key-down stays with the editor because an egui popup is open:
+/// any key egui can name, unless it's a Cmd / Ctrl / Alt chord - those
+/// still go to the host (or to `claim_shortcuts`), so an open dropdown
+/// never swallows DAW shortcuts.
+fn keep_for_popup(popup_open: bool, modifiers: egui::Modifiers, key: Option<egui::Key>) -> bool {
+    let chord = modifiers.command || modifiers.ctrl || modifiers.alt;
+    popup_open && !chord && key.is_some()
 }
 
 // Editor trait implementation
@@ -1969,5 +1995,73 @@ mod key_tests {
         );
         // No egui variant: stays with the host whatever is claimed.
         assert_eq!(egui_key_of(&K::Unidentified, Code::Unidentified), None);
+    }
+
+    /// egui closes a `ComboBox` / menu on `key_pressed(Escape)` and drives it
+    /// with arrows / Enter, so those must reach egui while one is open even
+    /// though nothing claimed them - but a chord still goes to the host.
+    #[test]
+    fn open_popup_keeps_plain_keys_not_chords() {
+        use super::keep_for_popup;
+        let esc = Some(Key::Escape);
+        assert!(keep_for_popup(true, Modifiers::NONE, esc));
+        assert!(keep_for_popup(true, Modifiers::NONE, Some(Key::ArrowDown)));
+        assert!(keep_for_popup(true, Modifiers::SHIFT, Some(Key::Enter)));
+        assert!(
+            !keep_for_popup(true, Modifiers::COMMAND, Some(Key::Z)),
+            "chord goes to host"
+        );
+        assert!(
+            !keep_for_popup(false, Modifiers::NONE, esc),
+            "no popup: normal routing"
+        );
+        assert!(
+            !keep_for_popup(true, Modifiers::NONE, None),
+            "unnameable key"
+        );
+    }
+
+    /// The detection the routing relies on: an open egui `ComboBox` (what
+    /// `param_dropdown` wraps) reads as open while it is, and as closed the
+    /// frame it closes - a stale "open" would keep swallowing host keys.
+    #[test]
+    fn open_combo_box_is_detected() {
+        let ctx = crate::new_egui_context();
+        crate::font::apply_font(&ctx, truce_font::JETBRAINS_MONO);
+        // Runs one frame; returns the ComboBox's button id and whether its
+        // popup body actually rendered.
+        let frame = |ctx: &egui::Context| {
+            let mut ids = (egui::Id::NULL, false);
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let r = egui::ComboBox::from_id_salt("probe")
+                    .selected_text("A")
+                    .show_ui(ui, |ui| {
+                        ui.label("B");
+                    });
+                ids = (r.response.id, r.inner.is_some());
+            });
+            out.textures_delta.clear();
+            ids
+        };
+        let (button_id, shown) = frame(&ctx);
+        assert!(!shown && !egui::Popup::is_any_open(&ctx));
+        // Open it the way a click does (memory-tracked popup state).
+        let popup_id = button_id.with("popup");
+        egui::Popup::open_id(&ctx, popup_id);
+        for _ in 0..3 {
+            let (_, shown) = frame(&ctx);
+            assert!(shown, "the real ComboBox's popup must be open");
+            assert!(
+                egui::Popup::is_any_open(&ctx),
+                "open ComboBox must read as open"
+            );
+        }
+        egui::Popup::close_id(&ctx, popup_id);
+        let (_, shown) = frame(&ctx);
+        assert!(!shown);
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "closed popup must read closed immediately"
+        );
     }
 }
