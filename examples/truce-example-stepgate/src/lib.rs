@@ -3,9 +3,10 @@
 //! The pattern is one `#[nested]` field typed as a fixed-size array
 //! (`[StepParams; NUM_STEPS]`), so the same two-param group (level +
 //! on/off) is instantiated `NUM_STEPS` times and the DSP + editor just
-//! index into it. Each element is its own id range, packed contiguously
-//! after the one before it; `#[nested(base = 0)]` pins element 0 so the
-//! flattened ids are wire-stable.
+//! index into it. Under the default hash id scheme each element gets
+//! its own hashed base (`step[0]`, `step[1]`, ...), so adding a param to
+//! `StepParams` later leaves every existing step's ids - and the host's
+//! saved automation - where they were.
 //!
 //! `derive(Params)` also ships a static id resolver per array field -
 //! `GateParams::step_id(i, StepParamsParamId::Level)` - for code that
@@ -59,12 +60,11 @@ impl Rate {
     }
 }
 
-/// One step: a level and an on/off. Ordinal ids so the group numbers
-/// locally 0 (level), 1 (on); the parent rebases each array element off
-/// those. Level is unsmoothed - the gate's own slew handles ramping, so a
-/// plain `read()` returns the target with no per-sample smoother to pump.
+/// One step: a level and an on/off, hash ids local to the group; the
+/// parent rebases each array element off them. Level is unsmoothed - the
+/// gate's own slew handles ramping, so a plain `read()` returns the
+/// target with no per-sample smoother to pump.
 #[derive(Params)]
-#[params(id_scheme = "ordinal")]
 pub struct StepParams {
     #[param(name = "Level", range = "linear(0, 1)", unit = "%", default = 1.0)]
     pub level: FloatParam,
@@ -74,24 +74,18 @@ pub struct StepParams {
 }
 
 /// The pattern: a fixed-size array of steps, then the global rate and
-/// edge slew. Pinned bases (steps at 0, globals after the array's span)
-/// fix the flattened ids a shipped plugin's saved state depends on.
+/// edge slew. All ids are hashes of field names (per element for the
+/// array), so neither reordering fields nor growing `StepParams` moves
+/// the ids a shipped plugin's saved state depends on.
 #[derive(Params)]
-#[params(id_scheme = "ordinal")]
 pub struct GateParams {
-    #[nested(base = 0)]
+    #[nested]
     pub step: [StepParams; 8],
 
-    #[param(id = 16, name = "Rate")]
+    #[param(name = "Rate")]
     pub rate: EnumParam<Rate>,
 
-    #[param(
-        id = 17,
-        name = "Slew",
-        range = "linear(0, 50)",
-        unit = "ms",
-        default = 2.0
-    )]
+    #[param(name = "Slew", range = "linear(0, 50)", unit = "ms", default = 2.0)]
     pub slew: FloatParam,
 }
 
@@ -245,13 +239,15 @@ mod tests {
     use truce_test::{InputSource, assertions, driver};
 
     #[test]
-    fn step_ids_pack_contiguously() {
+    fn step_ids_are_distinct() {
         let p = GateParams::new();
-        // Eight steps of two params each (0..15), then rate and slew.
+        // Eight steps of two params each, then rate and slew, every id
+        // distinct (construction also asserts no collisions).
         assert_eq!(p.count(), NUM_STEPS * 2 + 2);
         let mut ids: Vec<u32> = p.param_infos().iter().map(|i| i.id).collect();
         ids.sort_unstable();
-        assert_eq!(ids, (0..=17).collect::<Vec<_>>());
+        ids.dedup();
+        assert_eq!(ids.len(), NUM_STEPS * 2 + 2);
     }
 
     #[test]

@@ -391,12 +391,14 @@ pub(crate) struct NestedField {
     /// group's local id 0. `None` auto-assigns the base by packing the
     /// group right after the preceding params (own params, then each
     /// earlier nested group's span). Pin it for wire stability the same
-    /// way you pin a param `id`. On an array the base pins element 0;
-    /// element `i` packs at `base + i * element_count`.
+    /// way you pin a param `id`. Arrays: under the hash scheme each
+    /// element gets its own hashed base and a pinned `base` is rejected;
+    /// under ordinal element `i` packs at `base + i * element_count`.
     pub(crate) base: Option<u32>,
     /// `Some(N)` for a fixed-size array `#[nested] f: [T; N]`; `None`
     /// for a single nested field. Each array element is its own group,
-    /// packed contiguously after the one before it.
+    /// based per [`Self::base`]'s rules (hashed per element, or packed
+    /// contiguously under ordinal).
     pub(crate) array_len: Option<usize>,
 }
 
@@ -893,6 +895,16 @@ pub(crate) fn name_hash_id(name: &str) -> u32 {
         h = h.wrapping_mul(FNV_PRIME);
     }
     h & (METER_ID_BASE - 1)
+}
+
+/// Hash-scheme base of element `index` in a `#[nested] field: [T; N]`
+/// array: [`name_hash_id`] of `"field[index]"`. Each element is salted
+/// on its own, not packed at `base + index * element_count`, so adding
+/// a param to `T` doesn't shift every later element onto its
+/// neighbour's old ids. `[` can't appear in an ident, so the key never
+/// aliases a plain field's. Shared with `lv2_emit`.
+pub(crate) fn nested_elem_hash_base(field: &str, index: usize) -> u32 {
+    name_hash_id(&format!("{field}[{index}]"))
 }
 
 /// Full 32-bit FNV-1a of a field name - the keyed `#[derive(State)]`
@@ -2169,6 +2181,25 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         Ok(s) => s,
         Err(e) => return e.to_compile_error().into(),
     };
+    // A pinned base on a hash-scheme array would still pack elements at
+    // `base + i * element_count`, so growing the element type silently
+    // remaps every element after the first. Reject it while arrays are
+    // new; each element's hashed base is already stable.
+    if scheme == IdScheme::Hash
+        && let Some(n) = nested_fields
+            .iter()
+            .find(|n| n.base.is_some() && n.array_len.is_some())
+    {
+        return syn::Error::new_spanned(
+            &n.ident,
+            "`#[nested(base = N)]` isn't supported on an array under the hash id scheme: \
+             elements would pack at `base + i * element_count`, so adding a param to the \
+             element type would shift every later element's ids. Drop `base`; each \
+             element already gets a stable hashed base.",
+        )
+        .to_compile_error()
+        .into();
+    }
     match scheme {
         IdScheme::Ordinal => {
             let explicit_ids: HashSet<u32> =
@@ -2400,6 +2431,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         let __idx = u32::try_from(__i).unwrap_or(u32::MAX);
                         for __info in &mut into[__start..] {
                             __info.name = ::truce::params::indexed_name(__info.name, __idx);
+                            __info.short_name =
+                                ::truce::params::indexed_name(__info.short_name, __idx);
                         }
                     }
                 }
@@ -2487,6 +2520,37 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             }
         }
     };
+    // An array element's base as `(prelude, expr)`, `expr` reading
+    // `__i: u32` plus whatever `prelude` binds. Hash scheme: a const
+    // table of per-element hashes (`nested_elem_hash_base`), so growing
+    // the element type moves no element. Ordinal: contiguous from
+    // `group_base`, `count` being one element's param count in the
+    // caller's context (static table vs. live instance).
+    let array_elem_base = |n: &NestedField,
+                           group_base: proc_macro2::TokenStream,
+                           count: proc_macro2::TokenStream|
+     -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+        let len = n
+            .array_len
+            .expect("array_elem_base called on a non-array field");
+        if scheme == IdScheme::Hash {
+            let field = n.ident.to_string();
+            let bases: Vec<u32> = (0..len).map(|k| nested_elem_hash_base(&field, k)).collect();
+            (
+                quote! { const __BASES: [u32; #len] = [#(#bases),*]; },
+                quote! { __BASES[__i as usize] },
+            )
+        } else {
+            (
+                quote! {
+                    let __group_base: u32 = #group_base;
+                    let __c: u32 = #count;
+                },
+                quote! { __group_base + __i * __c },
+            )
+        }
+    };
+    let static_elem_count = |ty: &syn::Type| quote! { <#ty as ::truce::params::Params>::param_infos_static().len() as u32 };
     let nested_static_calls: Vec<proc_macro2::TokenStream> = nested_fields
         .iter()
         .enumerate()
@@ -2508,14 +2572,18 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         );
                     }
                 },
+                // No elements: emit nothing, not `for __i in 0u32..0u32`
+                // (clippy's deny-by-default `reversed_empty_ranges` fires
+                // on it in the user's crate).
+                Some(0) => quote! {},
                 Some(len) => {
                     let n_elems = u32::try_from(len).unwrap_or(0);
+                    let (prelude, elem_base) = array_elem_base(n, base_expr, static_elem_count(ty));
                     quote! {
                         {
-                            let __group_base: u32 = #base_expr;
-                            let __c = <#ty as ::truce::params::Params>::param_infos_static().len() as u32;
+                            #prelude
                             for __i in 0u32..#n_elems {
-                                let __base = __group_base + __i * __c;
+                                let __base: u32 = #elem_base;
                                 infos.extend(
                                     <#ty as ::truce::params::Params>::param_infos_static()
                                         .into_iter()
@@ -2523,9 +2591,14 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                                             __info.id =
                                                 (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
                                             // Match the runtime path: disambiguate each
-                                            // element's leaf names (`Level` -> `Level 1` ..).
+                                            // element's leaf names (`Level` -> `Level 1` ..),
+                                            // name and short_name both, or the static table
+                                            // (what VST3 / AU / VST2 / AAX register from)
+                                            // would show identical short labels.
                                             __info.name =
                                                 ::truce::params::indexed_name(__info.name, __i);
+                                            __info.short_name =
+                                                ::truce::params::indexed_name(__info.short_name, __i);
                                             __info
                                         }),
                                 );
@@ -2885,9 +2958,9 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
         // Rebase each nested group by its base, after construction (the
         // child built itself at its own local ids). The base is explicit
-        // or auto-packed after the own params and each earlier group. An
-        // array rebases each element contiguously (`base + i *
-        // element_count`), mirroring the static table's layout.
+        // or auto-assigned by scheme. An array rebases each element by
+        // `array_elem_base` (hashed per element, or contiguous under
+        // ordinal), mirroring the static table's layout.
         let offset_stmts: Vec<_> = nested_fields
             .iter()
             .enumerate()
@@ -2919,17 +2992,21 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 match n.array_len {
                     None => quote! { me.#ident.offset_ids(#base_expr); },
                     Some(0) => quote! {},
-                    Some(_) => quote! {
-                        {
-                            let __group_base: u32 = #base_expr;
-                            let __c = ::truce::params::Params::count(&me.#ident[0]) as u32;
-                            let mut __off = __group_base;
-                            for __elem in &mut me.#ident {
-                                __elem.offset_ids(__off);
-                                __off += __c;
+                    Some(_) => {
+                        let (prelude, elem_base) = array_elem_base(
+                            n,
+                            base_expr,
+                            quote! { ::truce::params::Params::count(&me.#ident[0]) as u32 },
+                        );
+                        quote! {
+                            {
+                                #prelude
+                                for (__i, __elem) in (0u32..).zip(&mut me.#ident) {
+                                    __elem.offset_ids(#elem_base);
+                                }
                             }
                         }
-                    },
+                    }
                 }
             })
             .collect();
@@ -3004,18 +3081,51 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // For each `#[nested] f: [T; N]`, a static id resolver so element
     // params are addressable without a live instance:
     // `MyParams::f_id(i, TParamId::X)`. Mirrors the static table's
-    // layout exactly (`group_base + i * element_count + local`), so the
-    // id it returns is the one the running plugin exposes.
+    // layout exactly (`array_elem_base` + local), so the id it returns
+    // is the one the running plugin exposes.
     let nested_array_helpers: Vec<proc_macro2::TokenStream> = nested_fields
         .iter()
         .enumerate()
-        .filter(|(_, n)| n.array_len.is_some())
+        // `[T; 0]` has no element to address.
+        .filter(|(_, n)| n.array_len.is_some_and(|len| len > 0))
         .map(|(i, n)| {
             let ty = &n.ty;
+            let len = n.array_len.expect("filtered to array fields");
             let base_expr = static_group_base(i, n);
             let fn_name = syn::Ident::new(&format!("{}_id", n.ident), n.ident.span());
+            let (prelude, elem_base) = array_elem_base(n, base_expr, static_elem_count(ty));
+            // Ordinal needs element counts from `param_infos_static()` (a
+            // `Vec` clone each); compute the layout once and cache it so
+            // later calls are a load. Hash bases are a const table already.
+            let (prelude, alloc_note) = if scheme == IdScheme::Hash {
+                (
+                    prelude,
+                    "Allocation-free; safe to call on the audio thread.",
+                )
+            } else {
+                (
+                    quote! {
+                        static __LAYOUT: ::std::sync::LazyLock<(u32, u32)> =
+                            ::std::sync::LazyLock::new(|| {
+                                #prelude
+                                (__group_base, __c)
+                            });
+                        let (__group_base, __c) = *__LAYOUT;
+                    },
+                    "The first call computes and caches the layout (allocating once); \
+                     later calls are allocation-free. To use it on the audio thread, call \
+                     it once beforehand (e.g. at plugin construction).",
+                )
+            };
             let doc = format!(
-                "Global parameter id of element `index`'s `sub` param in the `{}` array.",
+                "Global parameter id of element `index`'s `sub` param in the `{}` array.\n\n\
+                 {alloc_note}\n\n\
+                 # Panics\n\n\
+                 If `index >= {len}` (the array length).",
+                n.ident
+            );
+            let oob_msg = format!(
+                "{}: index {{index}} out of bounds for array of length {len}",
                 n.ident
             );
             quote! {
@@ -3026,11 +3136,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                     // cast cannot truncate in practice.
                     #[allow(clippy::cast_possible_truncation)]
                     pub fn #fn_name(index: usize, sub: impl ::core::convert::Into<u32>) -> u32 {
-                        let __c =
-                            <#ty as ::truce::params::Params>::param_infos_static().len() as u32;
-                        let __group_base: u32 = #base_expr;
-                        (__group_base + (index as u32) * __c + sub.into())
-                            & (::truce::params::METER_ID_BASE - 1)
+                        assert!(index < #len, #oob_msg);
+                        #prelude
+                        let __i = index as u32;
+                        (#elem_base + sub.into()) & (::truce::params::METER_ID_BASE - 1)
                     }
                 }
             }

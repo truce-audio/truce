@@ -81,7 +81,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 
 #### Parameters
 
-- `#[nested]` accepts a fixed-size array (`[T; N]`, any `N`) with contiguous id ranges and a `<field>_id(i, sub)` resolver. Each element's parameter names get an index suffix (`Level 1` … `Level N`) so hosts and the GUI can tell them apart; LV2 port names and `lv2:symbol`s carry the same suffix (`Level_1` …).
+- `#[nested]` accepts a fixed-size array (`[T; N]`, any `N`) and a `<field>_id(i, sub)` resolver. Under the default hash id scheme each element gets its own hashed base (from `field[i]`), so adding a param to the element type later moves no existing element's ids; `#[nested(base = N)]` on a hash-scheme array is a compile error. Under `id_scheme = "ordinal"` elements pack contiguously, positional like the rest of that scheme. Each element's parameter names get an index suffix (`Level 1` … `Level N`) so hosts and the GUI can tell them apart; LV2 port names and `lv2:symbol`s carry the same suffix (`Level_1` …).
 - `range` / `smooth` / `default` accept an `f64` const. A const in `range` / `default` is a build error under `lv2`. A const `default` on an Int, Enum or Bool param is now range-checked at compile time like a float's: Int / Enum defaults must be whole numbers, and a Bool default must be 0 or 1. Const range slots get the same compile-time checks as literals: ordered bounds (including `discrete` and `enum`), positive `log` bounds, a positive skew factor, a `sym_skewed` center inside the range, and at least two `enum` variants.
 
 #### Formats

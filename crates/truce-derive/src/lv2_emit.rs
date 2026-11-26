@@ -30,7 +30,7 @@
 //!   in the TTL until `audio_in` / `audio_out` are added to
 //!   `[[plugin]]` in `truce.toml`.
 
-use crate::{MeterField, ParamField, name_hash_id};
+use crate::{MeterField, ParamField, name_hash_id, nested_elem_hash_base};
 use proc_macro::TokenStream;
 use quote::quote;
 use std::fmt::Write as _;
@@ -144,7 +144,8 @@ pub(crate) fn write_struct_sidecar(
                 let _ = writeln!(buf, "base = {b}");
             }
             // An array group is walked `array_len` times by the
-            // aggregator, each element packed after the one before it.
+            // aggregator, each element at its own base (hashed, or packed
+            // after the one before it under ordinal).
             if let Some(n) = array_len {
                 let _ = writeln!(buf, "array_len = {n}");
             }
@@ -423,9 +424,10 @@ fn aggregate(
                 .unwrap_or(auto_base);
             // A single `#[nested]` writes no `array_len` and walks once;
             // an array writes its literal length (`0` walks zero times).
-            // Each element walks the child type at `base + i *
-            // element_count`, the count discovered by how many params the
-            // walk added.
+            // Hash: each element walks the child type at its own hashed
+            // base (`nested_elem_hash_base`, the derive rejects a pinned
+            // base there). Ordinal: at `base + i * element_count`, the
+            // count discovered by how many params the walk added.
             let array = entry
                 .get("array_len")
                 .and_then(toml::Value::as_integer)
@@ -434,10 +436,14 @@ fn aggregate(
             let mut elem_base = base;
             for i in 0..array_len {
                 let before = params.len();
+                let this_base = match (hash_scheme, array.is_some(), slot_field) {
+                    (true, true, Some(f)) => nested_elem_hash_base(f, i),
+                    _ => elem_base,
+                };
                 aggregate(
                     sidecar_dir,
                     t,
-                    (id_base + elem_base) & mask,
+                    (id_base + this_base) & mask,
                     params,
                     meter_ids,
                     fields,
@@ -851,6 +857,50 @@ mod tests {
             symbols,
             ["Level_1_1", "Level_2_1", "Level_1_2", "Level_2_2", "Level"]
         );
+    }
+
+    /// Hash-scheme arrays: each element lands at its own hashed base
+    /// (`nested_elem_hash_base`), matching the runtime, not packed at
+    /// `base + i * element_count`.
+    #[test]
+    fn hash_nested_array_uses_per_element_bases() {
+        let dir = std::env::temp_dir().join(format!("truce-lv2-hash-array-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, body: &str| {
+            std::fs::write(dir.join(format!("{name}.params.toml")), body).unwrap();
+        };
+        write(
+            "Root",
+            "scheme = \"hash\"\n\
+             [[nested]]\ntype = \"Step\"\nfield = \"step\"\narray_len = 3\n",
+        );
+        write(
+            "Step",
+            "scheme = \"hash\"\n\
+             [[param]]\nid = 7\nname = \"Level\"\nkind = \"Float\"\n\
+             range = \"linear(0, 1)\"\ndefault = 1\n",
+        );
+
+        let mut params = Vec::new();
+        aggregate(
+            &dir,
+            "Root",
+            0,
+            &mut params,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut std::collections::HashSet::new(),
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let ids: Vec<u32> = params.iter().map(|p| p.id).collect();
+        let want: Vec<u32> = (0..3)
+            .map(|i| {
+                (crate::nested_elem_hash_base("step", i) + 7) & (truce_params::METER_ID_BASE - 1)
+            })
+            .collect();
+        assert_eq!(ids, want);
     }
 
     /// `truce::plugin!` expands the LV2 emitter unconditionally (no `lv2`
