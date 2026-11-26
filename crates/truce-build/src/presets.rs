@@ -317,131 +317,48 @@ pub fn read_single_preset(
     read_preset_file(&root, path, false, names)
 }
 
-/// Per-param info from the `derive(Params)` sidecars: the Rust
-/// field identifier (the canonical `.preset` key), the display
-/// name, and the unit (the latter two used for generated comments).
+/// Per-param info from the metadata tree: the Rust field identifier
+/// (the canonical `.preset` key), the display name, and the unit (the
+/// latter two used for generated comments).
 #[derive(Debug, Clone)]
 pub struct ParamAnnotation {
-    /// Rust field identifier (`cutoff`). Empty for sidecars written
-    /// before the field line existed; rebuild the plugin to refresh.
+    /// Rust field identifier (`cutoff`).
     pub field: String,
     pub name: String,
     pub unit: String,
 }
 
-/// Read the param-name / unit table from the `derive(Params)`
-/// sidecars at `<target>/lv2-meta/<crate>/*.params.toml`. Returns an
-/// empty map when the plugin hasn't been built yet (annotations are
-/// a nicety, not a requirement). Sidecars exist per params struct,
-/// including helpers; ids are unique within a plugin, so a plain
-/// union suffices.
+/// Read the param-name / unit table out of the metadata tree at
+/// `<target>/truce-meta/<crate>/`.
+///
+/// Resolved through [`crate::meta::resolve_root`] rather than unioning
+/// the per-struct sidecars: those carry struct-local ids that collide
+/// across `#[nested]` groups, so a union mis-resolves a nested
+/// plugin's keys. Resolving on demand also means there is no generated
+/// index file to go stale - cargo doesn't track a proc macro's file
+/// writes, so one that was deleted while its crate stayed cached used
+/// to stay deleted through the next incremental build.
+///
+/// Empty when the plugin hasn't been built yet, or its tree is
+/// unreadable: annotations are a nicety, not a requirement.
 #[must_use]
-pub fn read_param_annotations(
-    sidecar_dir: &Path,
-) -> std::collections::BTreeMap<u32, ParamAnnotation> {
+pub fn read_param_annotations(meta_dir: &Path) -> std::collections::BTreeMap<u32, ParamAnnotation> {
     let mut out = std::collections::BTreeMap::new();
-    // `param_index.toml` is the flattened, base-resolved id->field table
-    // the root `derive(Params)` writes. Prefer it: the per-struct
-    // sidecars carry struct-local ids that collide across `#[nested]`
-    // groups, so unioning them mis-resolves a nested plugin's keys.
-    let index = sidecar_dir.join("param_index.toml");
-    let sources: Vec<std::path::PathBuf> = if index.is_file() {
-        vec![index]
-    } else {
-        let Ok(entries) = std::fs::read_dir(sidecar_dir) else {
-            return out;
-        };
-        entries
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("toml"))
-            .collect()
-    };
-    for path in sources {
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(doc) = content.parse::<toml::Table>() else {
-            continue;
-        };
-        let Some(params) = doc.get("param").and_then(toml::Value::as_array) else {
-            continue;
-        };
-        for p in params {
-            let Some(id) = p
-                .get("id")
-                .and_then(toml::Value::as_integer)
-                .and_then(|i| u32::try_from(i).ok())
-            else {
-                continue;
-            };
-            let field = |key: &str| {
-                p.get(key)
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string()
-            };
-            out.insert(
-                id,
-                ParamAnnotation {
-                    field: field("field"),
-                    name: field("name"),
-                    unit: field("unit"),
-                },
-            );
-        }
-    }
-    out
-}
-
-/// Render the `id -> lv2:symbol` table (from
-/// [`crate::lv2::resolved_param_symbols`]) as the `symbols.toml`
-/// sidecar the derive macro writes next to `plugin.ttl`. The install
-/// step reads it back with [`read_param_symbols`] to emit a preset's
-/// `lv2:port` / `pset:value` entries with the exact symbols the
-/// manifest declared (collision resolution needs the full param list,
-/// which only exists at manifest-aggregation time).
-#[must_use]
-pub fn render_param_symbols(symbols: &[(u32, String)]) -> String {
-    use std::fmt::Write as _;
-    let mut buf = String::new();
-    for (id, symbol) in symbols {
-        let _ = writeln!(buf, "[[symbol]]");
-        let _ = writeln!(buf, "id = {id}");
-        let _ = writeln!(buf, "symbol = \"{}\"\n", toml_escape(symbol));
-    }
-    buf
-}
-
-/// Read the `id -> lv2:symbol` table written by [`render_param_symbols`]
-/// from `<sidecar_dir>/symbols.toml`. Empty when the file is missing
-/// (plugin built before this existed - rebuild to refresh) or
-/// unparseable; the caller then falls back to a `state:state`-only
-/// preset.
-#[must_use]
-pub fn read_param_symbols(sidecar_dir: &Path) -> std::collections::BTreeMap<u32, String> {
-    let mut out = std::collections::BTreeMap::new();
-    let Ok(content) = std::fs::read_to_string(sidecar_dir.join("symbols.toml")) else {
+    let Ok(root) = crate::meta::read_root(meta_dir) else {
         return out;
     };
-    let Ok(doc) = content.parse::<toml::Table>() else {
+    let Ok(resolved) = crate::meta::resolve_root(meta_dir, &root.root) else {
         return out;
     };
-    let Some(symbols) = doc.get("symbol").and_then(toml::Value::as_array) else {
-        return out;
-    };
-    for s in symbols {
-        let Some(id) = s
-            .get("id")
-            .and_then(toml::Value::as_integer)
-            .and_then(|i| u32::try_from(i).ok())
-        else {
-            continue;
-        };
-        let Some(symbol) = s.get("symbol").and_then(toml::Value::as_str) else {
-            continue;
-        };
-        out.insert(id, symbol.to_string());
+    for p in resolved.params {
+        out.insert(
+            p.id,
+            ParamAnnotation {
+                field: p.field,
+                name: p.name,
+                unit: p.unit,
+            },
+        );
     }
     out
 }

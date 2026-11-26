@@ -25,6 +25,18 @@ pub(crate) struct Pins<'a> {
     pub use_registry: bool,
 }
 
+/// The requirement a scaffolded project puts on a truce-extensions crate
+/// (`truce-lv2`) for truce `version`: `~X.Y`.
+///
+/// truce-extensions tracks truce's major.minor on its own patch line, so
+/// truce's exact version may not exist there, and anything looser than
+/// the minor would let a mismatched pair resolve.
+fn extensions_req(version: &str) -> String {
+    let base = version.split('-').next().unwrap_or(version);
+    let major_minor: Vec<&str> = base.split('.').take(2).collect();
+    format!("~{}", major_minor.join("."))
+}
+
 // ---------------------------------------------------------------------------
 // PluginScaffoldingContext - fields the per-plugin templates (Cargo.toml,
 // build.rs, src/lib.rs, src/main.rs) reference.
@@ -43,6 +55,9 @@ pub(crate) struct PluginScaffoldingContext {
     /// Plain semver version (e.g. `0.48.7`). Used by the registry
     /// dep form when `use_registry` is true.
     pub version: String,
+    /// `~X.Y` requirement for the truce-extensions crates the commented
+    /// LV2 hint names; see [`extensions_req`].
+    pub extensions_req: String,
     /// Toggles the dep style emitted by the per-plugin Cargo.toml's
     /// commented LV2/AU/AAX hints. Mirrors the same flag on
     /// `WorkspaceContext` so workspace + plugin templates stay in
@@ -95,6 +110,7 @@ impl PluginScaffoldingContext {
             upper_name,
             tag: pins.tag.to_string(),
             version: pins.version.to_string(),
+            extensions_req: extensions_req(pins.version),
             use_registry: pins.use_registry,
             is_workspace,
             has_standalone,
@@ -124,6 +140,7 @@ pub(crate) struct WorkspaceContext {
     pub members: Vec<String>,
     pub tag: String,
     pub version: String,
+    pub extensions_req: String,
     pub use_registry: bool,
     pub has_standalone: bool,
 }
@@ -143,6 +160,7 @@ impl WorkspaceContext {
                 .collect(),
             tag: tag.to_string(),
             version: version.to_string(),
+            extensions_req: extensions_req(version),
             use_registry,
             has_standalone: features.standalone,
         }
@@ -255,5 +273,20 @@ fn dep_args(dep_form: DepForm, tag: &str, version: &str) -> String {
         DepForm::GitTag => format!(r#"git = "{REPO_URL}", tag = "{tag}""#),
         DepForm::Registry => format!(r#"version = "{version}""#),
         DepForm::Workspace => "workspace = true".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extensions_req;
+
+    /// truce-extensions has its own patch line, so a scaffold must not
+    /// pin truce's exact version on it - only the shared major.minor.
+    #[test]
+    fn the_extensions_requirement_is_truces_major_minor() {
+        assert_eq!(extensions_req("7.0.3"), "~7.0");
+        // The registry pin the scaffold already carries is major.minor.
+        assert_eq!(extensions_req("7.0"), "~7.0");
+        assert_eq!(extensions_req("7.1.0-rc.1"), "~7.1");
     }
 }

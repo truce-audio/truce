@@ -46,7 +46,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn cmd_status(args: &[String]) -> Res {
-    use crate::commands::package::stage::lv2_slug;
+    use crate::install_scope::InstallScope;
     use crate::{dirs, load_config};
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -77,11 +77,6 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
     let vst3_names = expect_with_ext("vst3");
     let vst2_names = expect_with_ext("vst");
     let au2_names = expect_with_ext("component");
-    let lv2_names: HashSet<String> = config
-        .plugin
-        .iter()
-        .map(|p| format!("{}.lv2", lv2_slug(&p.name)))
-        .collect();
     let au3_app_names: HashSet<String> = config
         .plugin
         .iter()
@@ -90,48 +85,58 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
 
     // Each format can land in either user or system scope; both are
     // scanned so a per-user install isn't invisible to status.
-    let sections: &[(&str, [PathBuf; 2], &HashSet<String>)] = &[
+    let mut sections: Vec<(&str, Vec<PathBuf>, HashSet<String>)> = vec![
         (
             "AU v2 Components",
-            [
+            vec![
                 home.join("Library/Audio/Plug-Ins/Components"),
                 PathBuf::from("/Library/Audio/Plug-Ins/Components"),
             ],
-            &au2_names,
+            au2_names,
         ),
         (
             "CLAP",
-            [
+            vec![
                 home.join("Library/Audio/Plug-Ins/CLAP"),
                 PathBuf::from("/Library/Audio/Plug-Ins/CLAP"),
             ],
-            &clap_names,
+            clap_names,
         ),
         (
             "VST2",
-            [
+            vec![
                 home.join("Library/Audio/Plug-Ins/VST"),
                 PathBuf::from("/Library/Audio/Plug-Ins/VST"),
             ],
-            &vst2_names,
+            vst2_names,
         ),
         (
             "VST3",
-            [
+            vec![
                 home.join("Library/Audio/Plug-Ins/VST3"),
                 PathBuf::from("/Library/Audio/Plug-Ins/VST3"),
             ],
-            &vst3_names,
-        ),
-        (
-            "LV2",
-            [
-                home.join("Library/Audio/Plug-Ins/LV2"),
-                PathBuf::from("/Library/Audio/Plug-Ins/LV2"),
-            ],
-            &lv2_names,
+            vst3_names,
         ),
     ];
+
+    // Every installed helper gets a section too, from the directories
+    // and bundle names it declares - so `status` keeps reporting a
+    // format the moment its helper is on `PATH`, with no entry here.
+    for e in crate::external::installed()? {
+        let paths: Vec<PathBuf> = [InstallScope::User, InstallScope::System]
+            .into_iter()
+            .filter_map(|scope| e.dir(scope))
+            .collect();
+        if paths.is_empty() {
+            continue;
+        }
+        sections.push((
+            &e.label,
+            paths,
+            config.plugin.iter().map(|p| e.bundle_name_for(p)).collect(),
+        ));
+    }
 
     for (i, (label, paths, expected)) in sections.iter().enumerate() {
         if i > 0 {

@@ -63,6 +63,31 @@ pub fn slugify(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// Title-case a Rust field identifier into the display label a
+/// `#[nested]` group prefixes onto its children's parameter names
+/// (`main_env` → `Main Env`). A raw identifier's `r#` escape is
+/// dropped, `_` separates words, and empty runs collapse.
+///
+/// Both `#[derive(Params)]` (which records the label in its metadata
+/// sidecar) and `truce-build`'s aggregator (which reads it back and
+/// applies it) call this, so a port's name - and the `lv2:symbol`
+/// derived from it, which hosts persist in saved sessions - can't
+/// differ between the two.
+#[must_use]
+pub fn field_label(raw: &str) -> String {
+    raw.trim_start_matches("r#")
+        .split('_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Leading ASCII-decimal value of `part`, 0 when it has no leading
 /// digits, saturating at `u32::MAX` when the digits overflow (so a huge
 /// component clamps like any other out-of-range one, never reading as 0).

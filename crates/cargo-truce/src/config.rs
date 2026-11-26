@@ -645,53 +645,63 @@ pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
     Ok(config)
 }
 
+/// A minimal `[[plugin]]` for tests: everything optional left unset,
+/// so a test only has to state the fields it actually exercises.
+/// Shared across this crate's test modules rather than re-spelled per
+/// module - the struct has thirty-odd fields and every copy of this
+/// literal is one more thing to fix when a field is added.
+#[cfg(test)]
+pub(crate) fn test_plugin(crate_name: &str, bundle_id: &str) -> PluginDef {
+    PluginDef {
+        shared: truce_build::PluginDef {
+            name: crate_name.into(),
+            bundle_id: bundle_id.into(),
+            crate_name: crate_name.into(),
+            version: None,
+            description: None,
+            fourcc: None,
+            category: "effect".into(),
+            au_type: None,
+            au_subtype: None,
+            aax_category: None,
+            vst3_subcategory: None,
+            vst3_name: None,
+            clap_name: None,
+            vst2_name: None,
+            au_name: None,
+            au3_name: None,
+            aax_name: None,
+            lv2_name: None,
+            mute_preview_output: false,
+            midi_input: None,
+            midi_output: None,
+            midi2: false,
+            midi2_input: None,
+            midi2_output: None,
+            midi_input_ports: None,
+            midi_output_ports: None,
+            presets: None,
+            legacy_state: None,
+        },
+        au3_subtype: None,
+        au_tag: default_au_tag(),
+        windows_icon: None,
+        macos_icon: None,
+        ios_app_group: None,
+        ios_icon_set: None,
+        ios_minimum_os_version: None,
+        ios_url: None,
+        ios_orientations: None,
+        ios_scale_editor_to_fit: true,
+    }
+}
+
 #[cfg(test)]
 mod suite_tests {
     use super::*;
 
     fn plugin(crate_name: &str, bundle_id: &str) -> PluginDef {
-        PluginDef {
-            shared: truce_build::PluginDef {
-                name: crate_name.into(),
-                bundle_id: bundle_id.into(),
-                crate_name: crate_name.into(),
-                version: None,
-                description: None,
-                fourcc: None,
-                category: "effect".into(),
-                au_type: None,
-                au_subtype: None,
-                aax_category: None,
-                vst3_subcategory: None,
-                vst3_name: None,
-                clap_name: None,
-                vst2_name: None,
-                au_name: None,
-                au3_name: None,
-                aax_name: None,
-                lv2_name: None,
-                mute_preview_output: false,
-                midi_input: None,
-                midi_output: None,
-                midi2: false,
-                midi2_input: None,
-                midi2_output: None,
-                midi_input_ports: None,
-                midi_output_ports: None,
-                presets: None,
-                legacy_state: None,
-            },
-            au3_subtype: None,
-            au_tag: default_au_tag(),
-            windows_icon: None,
-            macos_icon: None,
-            ios_app_group: None,
-            ios_icon_set: None,
-            ios_minimum_os_version: None,
-            ios_url: None,
-            ios_orientations: None,
-            ios_scale_editor_to_fit: true,
-        }
+        test_plugin(crate_name, bundle_id)
     }
 
     fn suite(name: &str) -> SuiteDef {

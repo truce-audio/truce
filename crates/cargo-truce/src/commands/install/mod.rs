@@ -11,12 +11,8 @@ use crate::{
 // Windows admin elevation is per-process; the non-macOS install branches
 // below use `fs_ctx` directly and surface the OS-level EACCES if the user
 // isn't elevated for a system-scope write.
-//
-// `tmp_lv2` is only consumed by `install_lv2`'s macOS sudo-stage path
-// (Windows/Linux write straight into the destination), so it joins the
-// same cfg-gate to keep the non-macOS build clean.
 #[cfg(target_os = "macos")]
-use crate::{run_sudo, tmp_lv2};
+use crate::run_sudo;
 // CLAP / VST3 / VST2 read the cdylib from `release_lib` on non-macOS
 // targets only; on macOS those formats consume the bundle-bin produced
 // by the `clang -bundle` link step, so `release_lib` is unused there.
@@ -52,30 +48,26 @@ use aax::install_aax;
 #[cfg(target_os = "macos")]
 use au_v3::build_and_install_au_v3;
 
-/// Guarantee the param-manifest sidecar exists for every plugin that
-/// ships presets, so install-time preset name resolution can't fail on a
+/// Guarantee the metadata tree exists for every plugin that ships
+/// presets, so install-time preset name resolution can't fail on a
 /// missing one.
 ///
-/// `truce::plugin!` / `#[derive(Params)]` write
-/// `target/lv2-meta/<crate>/param_index.toml` as a compile-time side
-/// effect, but cargo doesn't track it: delete it (or `cargo clean` only
-/// that dir) while the crate stays cached and the next *incremental* build
-/// won't re-run the macro, leaving preset install to abort with "no param
-/// manifest". When the file is missing we force `cargo clean -p <crate>`
-/// so the upcoming build recompiles the crate and regenerates it. A crate
-/// that was never built has nothing to clean (the build writes the sidecar
-/// naturally); only the deleted-but-cached case actually pays for it.
+/// `truce::plugin!` / `#[derive(Params)]` write `target/truce-meta/<crate>/`
+/// as a compile-time side effect, but cargo doesn't track it: delete it
+/// (or `cargo clean` only that dir) while the crate stays cached and the
+/// next *incremental* build won't re-run the macro, leaving preset install
+/// to abort with "no param manifest". When the tree's root is missing we
+/// force `cargo clean -p <crate>` so the upcoming build recompiles the
+/// crate and regenerates it. A crate that was never built has nothing to
+/// clean (the build writes the tree naturally); only the
+/// deleted-but-cached case actually pays for it.
 fn ensure_preset_sidecars(plugins: &[&PluginDef], root: &Path) -> Res {
     for p in plugins {
         let ships_presets = presets::authored_presets_dir(root, p).is_some_and(|d| d.is_dir());
         if !ships_presets {
             continue;
         }
-        let sidecar = truce_build::target_dir(root)
-            .join("lv2-meta")
-            .join(&p.crate_name)
-            .join("param_index.toml");
-        if sidecar.exists() {
+        if crate::plugin_meta_dir(root, p).join("root.toml").exists() {
             continue;
         }
         crate::vprintln!(
@@ -106,7 +98,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut clap = false;
     let mut vst3 = false;
     let mut vst2 = false;
-    let mut lv2 = false;
+    // Formats selected by a `--<name>` flag that names an installed
+    // `truce-format-<name>` helper rather than a compiled-in format.
+    let mut externals: Vec<&'static crate::external::ExternalFormat> = Vec::new();
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
@@ -127,7 +121,6 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--clap" => clap = true,
             "--vst3" => vst3 = true,
             "--vst2" => vst2 = true,
-            "--lv2" => lv2 = true,
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
@@ -167,7 +160,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
                 print_help();
                 return Ok(());
             }
-            other => return Err(format!("Unknown flag: {other}").into()),
+            // An unrecognised `--<name>` is a format flag before it is
+            // a mistake: `--lv2` reaches this arm now and resolves to
+            // the `truce-format-lv2` helper. `external::select` reports
+            // the unknown-flag error when it isn't one.
+            other => crate::external::select(other, &mut externals)?,
         }
         i += 1;
     }
@@ -213,14 +210,14 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
     }
 
-    if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
+    if !clap && !vst3 && !vst2 && externals.is_empty() && !au2 && !au3 && !aax {
         // No format flags specified - enable all formats that the project supports.
         // Check which features are defined in the first plugin's Cargo.toml.
         let available = detect_default_features();
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
-        lv2 = available.contains("lv2");
+        externals = crate::external::defaults_for(&available)?;
         // AU is macOS-only at runtime, but flip the flags on every platform
         // so the build/install paths can emit per-plugin skip lines for
         // Linux / Windows users with `"au"` in their `[features].default`.
@@ -299,15 +296,19 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // per format.
     if !no_build {
         use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
-        let format_selection: &[(bool, BuildFormat)] = &[
+        // An external format's cdylib is the same cargo invocation as a
+        // compiled-in one - only the staging afterwards differs - so it
+        // joins the same selection list.
+        let selection = [
             (clap, BuildFormat::Clap),
             (vst3, BuildFormat::Vst3),
             (vst2, BuildFormat::Vst2),
-            (lv2, BuildFormat::Lv2),
             (au2, BuildFormat::Au2),
             (aax, BuildFormat::Aax),
-        ];
-        for &(selected, format) in format_selection {
+        ]
+        .into_iter()
+        .chain(externals.iter().map(|e| (true, BuildFormat::External(e))));
+        for (selected, format) in selection {
             if selected {
                 build_format_dylibs(format, &plugins, &extra_features, &config, &root, dt, None)?;
             }
@@ -332,7 +333,12 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // and vst2 / aax have no preset support yet - so an au3-only (or vst2 /
     // aax-only) install must not read the param-manifest sidecar here,
     // which for `--au3` after a clean hasn't been built yet.
-    let needs_loop_presets = clap || vst3 || lv2 || au2;
+    let needs_loop_presets = clap
+        || vst3
+        || au2
+        || externals
+            .iter()
+            .any(|e| e.has(crate::external::Capability::Presets));
 
     for p in &plugins {
         // Parsed once per plugin; each format re-envelopes the same
@@ -355,9 +361,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             let s = scope_for(Format::Vst2, cli_scope);
             install_vst2(&root, p, &config, s)?;
         }
-        if lv2 {
-            let s = scope_for(Format::Lv2, cli_scope);
-            install_lv2(&root, p, &config, s, fp)?;
+        for &e in &externals {
+            let s = scope_for(Format::External(e), cli_scope);
+            install_external(e, &root, p, &config, s, fp)?;
         }
         if au2 {
             #[cfg(target_os = "macos")]
@@ -423,8 +429,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
-                           [--ios|--ios-device]
+Usage: cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
+                           [--<helper format>] [--ios|--ios-device]
                            [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
                            [--target-cpu <value>]
 
@@ -447,7 +453,9 @@ Options:
   --clap           CLAP only
   --vst3           VST3 only
   --vst2           VST2 only (legacy format)
-  --lv2            LV2 only
+  --lv2            LV2 only (needs the `truce-format-lv2` helper on PATH;
+                   any other installed `truce-format-<name>` helper takes
+                   a `--<name>` flag the same way)
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.appex, macOS only)
   --aax            AAX only (requires pre-built template)
@@ -805,93 +813,87 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
     Ok(())
 }
 
-/// Install an LV2 bundle.
+/// Install the bundle for a format described by a
+/// `truce-format-<name>` helper, into the directory that helper
+/// declared for this OS and scope (LV2's `~/.lv2/` on Linux,
+/// `~/Library/Audio/Plug-Ins/LV2/` on macOS, and so on).
 ///
-/// Destination:
-/// - **Linux**: `~/.lv2/{slug}.lv2/`
-/// - **macOS**: `~/Library/Audio/Plug-Ins/LV2/{slug}.lv2/`
-/// - **Windows**: `%APPDATA%\LV2\{slug}.lv2\`
+/// The bundle's whole layout - its name, the binary inside it, any
+/// manifests - is the helper's business; see
+/// [`stage_external`](crate::commands::package::stage::stage_external).
+/// This only picks the destination and gets the bytes there.
 ///
-/// Stages the bundle via `package::stage::stage_lv2`, which copies the
-/// shared library (`{slug}.so` on Linux/macOS, `{slug}.dll` on Windows
-/// because Windows's loader only accepts `.dll`) alongside the
-/// `manifest.ttl` and `plugin.ttl` that `truce-derive`'s `export_lv2!`
-/// proc-macro emitted at compile time as sidecar files.
-///
-/// Bundle and binary filenames are slugged to lowercase ASCII with hyphens
-/// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
-/// encoding. Some LV2 hosts reject bundles whose TTL has spaces or other
-/// non-URI characters in filenames even when the on-disk files are valid.
-fn install_lv2(
+/// A helper that declares no install location for this OS is skipped
+/// with a note rather than an error: a format can be packageable on a
+/// host it has nowhere to install to.
+fn install_external(
+    fmt: &'static crate::external::ExternalFormat,
     root: &Path,
     p: &PluginDef,
     config: &Config,
     scope: InstallScope,
     factory_presets: Option<&FactoryPresets>,
 ) -> Res {
-    let lv2_dir = scope.lv2_dir();
-    let lv2_plugin_uri =
-        truce_build::lv2::plugin_uri(config.vendor.url.as_deref().unwrap_or(""), &p.bundle_id);
+    let Some(dest_dir) = Format::External(fmt).dir(scope) else {
+        crate::log_skip(format!(
+            "{}: `{}` declares no install location on this platform.",
+            fmt.label, fmt.format,
+        ));
+        return Ok(());
+    };
+
+    // Presets reach the helper as part of the `stage` request rather
+    // than being layered on afterwards, so it can fold them into
+    // whatever manifest its bundle carries.
+    let payload = match factory_presets {
+        Some(fp) if fmt.has(crate::external::Capability::Presets) => presets::external_payload(fp),
+        _ => Vec::new(),
+    };
+    let bundle_name = fmt.bundle_name_for(p);
+    let identity = crate::application_identity();
 
     // macOS system scope is the only path that needs the stage-then-
-    // copy-via-sudo dance: `/Library/Audio/Plug-Ins/LV2/` is root-
-    // owned, so the `stage_lv2`-internal `fs::write`s would EACCES if
-    // they ran against the live destination. Windows admin elevation
-    // is per-process (not per-command), and Linux installs are always
-    // per-user, so both can stage straight into the destination.
+    // copy-via-sudo dance: `/Library/Audio/Plug-Ins/...` is root-owned,
+    // so the helper's writes would EACCES if it ran against the live
+    // destination. Windows admin elevation is per-process (not
+    // per-command), and Linux installs are always per-user, so both can
+    // stage straight into the destination.
     #[cfg(target_os = "macos")]
     if scope.needs_sudo() {
-        run_sudo("mkdir", &[OsStr::new("-p"), lv2_dir.as_os_str()])?;
-        let staging = tmp_lv2(&p.bundle_id);
+        run_sudo("mkdir", &[OsStr::new("-p"), dest_dir.as_os_str()])?;
+        let staging = crate::util::tmp_format(&fmt.format, &p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs_ctx::create_dir_all(&staging)?;
-        crate::commands::package::stage::stage_lv2(
-            root,
-            p,
-            &staging,
-            &crate::application_identity(),
-            None,
+        crate::commands::package::stage::stage_external(
+            fmt, root, p, config, &staging, &identity, None, &payload,
         )?;
-        let slug = crate::commands::package::stage::lv2_slug(&p.name);
-        let staged_bundle = staging.join(format!("{slug}.lv2"));
-        // Presets join the bundle while it's still in user-writable
-        // staging; the sudo copy below carries them along.
-        if let Some(fp) = factory_presets {
-            presets::emit_lv2_presets(fp, &staged_bundle, &lv2_plugin_uri)?;
-        }
-        let dst_bundle = lv2_dir.join(format!("{slug}.lv2"));
+        let dst_bundle = dest_dir.join(&bundle_name);
         run_sudo("rm", &[OsStr::new("-rf"), dst_bundle.as_os_str()])?;
         run_sudo(
             "cp",
             &[
                 OsStr::new("-R"),
-                staged_bundle.as_os_str(),
+                staging.join(&bundle_name).as_os_str(),
                 dst_bundle.as_os_str(),
             ],
         )?;
-        crate::log_output(format!("LV2:  {}", dst_bundle.display()));
+        crate::log_output(format!("{}:  {}", fmt.label, dst_bundle.display()));
         return Ok(());
     }
 
-    // User scope on macOS, and every scope on Windows / Linux: write
-    // straight into `lv2_dir`. Windows system-scope writes EACCES if
+    // User scope on macOS, and every scope on Windows / Linux: stage
+    // straight into `dest_dir`. Windows system-scope writes EACCES if
     // the cargo-truce process isn't elevated; the OS error message
     // surfaces unchanged.
-    fs_ctx::create_dir_all(&lv2_dir)?;
-    crate::commands::package::stage::stage_lv2(
-        root,
-        p,
-        &lv2_dir,
-        &crate::application_identity(),
-        None,
+    fs_ctx::create_dir_all(&dest_dir)?;
+    crate::commands::package::stage::stage_external(
+        fmt, root, p, config, &dest_dir, &identity, None, &payload,
     )?;
-    let slug = crate::commands::package::stage::lv2_slug(&p.name);
-    let dst_bundle = lv2_dir.join(format!("{slug}.lv2"));
-    if let Some(fp) = factory_presets {
-        presets::emit_lv2_presets(fp, &dst_bundle, &lv2_plugin_uri)?;
-    }
-    crate::log_output(format!("LV2:  {}", dst_bundle.display()));
-    let _ = scope;
+    crate::log_output(format!(
+        "{}:  {}",
+        fmt.label,
+        dest_dir.join(&bundle_name).display()
+    ));
     Ok(())
 }
 

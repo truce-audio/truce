@@ -74,10 +74,11 @@ jobs:
 
       # AU v2 must land in the system Components dir (auval only scans
       # there). CI macOS runners have passwordless sudo, so --system is
-      # fine. CLAP / VST3 / VST2 / LV2 piggyback on the same install
-      # call so we exercise every macOS bundle format in one shot.
-      - name: cargo truce install --system --clap --vst3 --vst2 --au2 --lv2
-        run: sudo ./target/debug/cargo-truce install --system --clap --vst3 --vst2 --au2 --lv2 -p truce-example-gain
+      # fine. CLAP / VST3 / VST2 piggyback on the same install call so
+      # we exercise every in-tree macOS bundle format in one shot. LV2
+      # is out of tree (truce-extensions) and covered by that repo's CI.
+      - name: cargo truce install --system --clap --vst3 --vst2 --au2
+        run: sudo ./target/debug/cargo-truce install --system --clap --vst3 --vst2 --au2 -p truce-example-gain
 
       - name: Verify installed bundle filetypes
         run: |
@@ -128,7 +129,7 @@ jobs:
       - name: Verify nothing left behind
         run: |
           set -e
-          for fmt in "CLAP/Truce Gain.clap" "VST3/Truce Gain.vst3" "VST/Truce Gain.vst" "Components/Truce Gain.component" "LV2/truce-gain.lv2"; do
+          for fmt in "CLAP/Truce Gain.clap" "VST3/Truce Gain.vst3" "VST/Truce Gain.vst" "Components/Truce Gain.component"; do
             if [ -e "/Library/Audio/Plug-Ins/$fmt" ]; then
               echo "::error::uninstall left $fmt behind"
               exit 1
@@ -202,15 +203,14 @@ jobs:
           command -v clap-validator
           command -v pluginval
 
-      - name: cargo truce install --clap --vst3 --lv2
-        run: ./target/debug/cargo-truce install --user --clap --vst3 --lv2 -p truce-example-gain
+      - name: cargo truce install --clap --vst3
+        run: ./target/debug/cargo-truce install --user --clap --vst3 -p truce-example-gain
 
       - name: Verify installed bundles
         run: |
           set -e
           ls -la "$HOME/.clap/"
           ls -la "$HOME/.vst3/"
-          ls -la "$HOME/.lv2/"
 
       - name: cargo truce validate --clap --pluginval
         run: |
@@ -227,7 +227,7 @@ jobs:
       - name: Verify nothing left behind
         run: |
           set -e
-          for fmt in ".clap/Truce Gain.clap" ".vst3/Truce Gain.vst3" ".lv2/truce-gain.lv2"; do
+          for fmt in ".clap/Truce Gain.clap" ".vst3/Truce Gain.vst3"; do
             if [ -e "$HOME/$fmt" ]; then
               echo "::error::uninstall left $fmt behind"
               exit 1

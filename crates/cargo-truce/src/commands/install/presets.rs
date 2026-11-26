@@ -14,8 +14,11 @@
 //! - AU v2: `.aupreset` plists under the OS preset location
 //!   (`[~]/Library/Audio/Presets/<Vendor>/<Plugin>/`), which Logic
 //!   and `GarageBand` walk.
-//! - LV2: `pset:Preset` TTL files inside the `.lv2` bundle plus the
-//!   `manifest.ttl` entries pointing at them.
+//!
+//! A format described by a `truce-format-<name>` helper gets none of
+//! these: its container is unknown here, so it receives the
+//! format-neutral payload from [`external_payload`] and writes its own
+//! files during `stage`.
 //!
 //! The state-envelope hash is derived from the same
 //! `truce_build::plugin_id` string `truce::plugin_info!()` bakes into
@@ -47,12 +50,11 @@ pub(crate) struct EmittablePreset {
     blob: Vec<u8>,
     /// Source file stem; per-format files reuse it.
     stem: String,
-    /// Per-control-port plain values `(lv2:symbol, value)` decoded from
-    /// `blob`, for the LV2 preset's `pset:value` entries. Empty when
-    /// the `symbols.toml` sidecar is missing (plugin not rebuilt since
-    /// this landed) or the blob can't be decoded; the LV2 preset then
-    /// falls back to `state:state` only.
-    lv2_ports: Vec<(String, f64)>,
+    /// Plain parameter values `(id, value)` decoded out of `blob`, for
+    /// formats that apply presets port-by-port rather than through the
+    /// opaque envelope. Empty when the blob can't be decoded, which
+    /// leaves such a format with the envelope alone.
+    params: Vec<(u32, f64)>,
 }
 
 impl EmittablePreset {
@@ -152,13 +154,9 @@ pub(crate) fn load_factory_presets(
         return Ok(None);
     }
 
-    let sidecar_dir = truce_build::target_dir(root)
-        .join("lv2-meta")
-        .join(&p.crate_name);
-    let annotations = truce_build::presets::read_param_annotations(&sidecar_dir);
+    let meta_dir = crate::plugin_meta_dir(root, p);
+    let annotations = truce_build::presets::read_param_annotations(&meta_dir);
     let names = truce_build::presets::ParamNameMap::from_annotations(&annotations);
-    // `id -> lv2:symbol` for the LV2 preset's `pset:value` port entries.
-    let symbols = truce_build::presets::read_param_symbols(&sidecar_dir);
     let authored = truce_build::presets::read_presets_dir(&dir, true, Some(&names))?;
     if authored.is_empty() {
         return Ok(None);
@@ -169,21 +167,19 @@ pub(crate) fn load_factory_presets(
         .into_iter()
         .map(|a| {
             let blob = a.state_blob(hash);
-            // Decode the envelope's plain param values and pair each
-            // with its control-port symbol. `state:state` still carries
-            // the full envelope; this is the redundant port-value path
-            // that port-based hosts (REAPER) apply through.
-            let lv2_ports = state::deserialize_state(&blob, hash).map_or_else(Vec::new, |s| {
-                s.params
-                    .iter()
-                    .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
-                    .collect()
+            // Decode the envelope's plain param values. The envelope
+            // still carries the whole state; this is the redundant
+            // per-param path that port-based hosts (REAPER through LV2,
+            // say) apply through, and it is the format helper's job to
+            // map these ids onto its own vocabulary.
+            let params = state::deserialize_state(&blob, hash).map_or_else(Vec::new, |s| {
+                s.params.iter().map(|(id, v)| (*id, *v)).collect()
             });
             EmittablePreset {
                 blob,
                 meta: a.meta,
                 stem: a.stem,
-                lv2_ports,
+                params,
             }
         })
         .collect();
@@ -499,48 +495,38 @@ pub(crate) fn emit_au_presets(
     Ok(())
 }
 
-/// Emit LV2 preset TTLs into a staged / installed `.lv2` bundle:
-/// one `presets/<stem>.ttl` per preset plus the `manifest.ttl`
-/// entries referencing them. Runs against the writable bundle (the
-/// staging dir on macOS system scope), so no sudo handling here.
-pub(crate) fn emit_lv2_presets(fp: &FactoryPresets, bundle: &Path, plugin_uri: &str) -> Res {
-    let presets_dir = bundle.join("presets");
-    fs_ctx::create_dir_all(&presets_dir)?;
+/// This library as the format-neutral payload a `truce-format-<name>`
+/// helper receives alongside a `stage` request, so it can write the
+/// presets into the bundle in its own native shape.
+///
+/// Formats compiled into this tool get a bespoke emitter above because
+/// their container is known here; a helper's isn't, so it is handed the
+/// envelope plus the decoded values and writes the files itself.
+pub(crate) fn external_payload(fp: &FactoryPresets) -> Vec<crate::external::Preset> {
+    fp.presets
+        .iter()
+        .map(|pr| {
+            crate::external::Preset::new(
+                &pr.meta.uuid,
+                &pr.meta.name,
+                &pr.meta.category,
+                &safe_filename(&pr.stem),
+                &pr.blob,
+                &pr.params,
+            )
+        })
+        .collect()
+}
 
-    let mut manifest_additions = String::from(truce_build::lv2::PRESET_MANIFEST_PREFIXES);
-    for pr in &fp.presets {
-        let file_name = format!("{}.ttl", safe_filename(&pr.stem));
-        let label = if pr.meta.category.is_empty() {
-            pr.meta.name.clone()
-        } else {
-            // LV2 hosts show a flat label list; keep the category
-            // visible the way subdirectories do it elsewhere.
-            format!("{}/{}", pr.meta.category, pr.meta.name)
-        };
-        let ttl = truce_build::lv2::render_preset_ttl(
-            plugin_uri,
-            &pr.meta.uuid,
-            &label,
-            &pr.blob,
-            &pr.lv2_ports,
-        );
-        fs_ctx::write(presets_dir.join(&file_name), &ttl)?;
-        manifest_additions.push_str(&truce_build::lv2::render_preset_manifest_entry(
-            plugin_uri,
-            &pr.meta.uuid,
-            &format!("presets/{file_name}"),
-        ));
-    }
-
-    let manifest_path = bundle.join("manifest.ttl");
-    let mut manifest = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
-    manifest.push_str(&manifest_additions);
-    fs_ctx::write(&manifest_path, &manifest)?;
-    crate::log_output(format!(
-        "      {} factory presets -> {}",
-        fp.presets.len(),
-        presets_dir.display()
-    ));
-    Ok(())
+/// The payload for a plugin that may have no preset library at all -
+/// an empty `Vec` then, which a helper reads as "no presets".
+pub(crate) fn external_payload_for(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+) -> Result<Vec<crate::external::Preset>, crate::CargoTruceError> {
+    Ok(load_factory_presets(root, p, config)?
+        .as_ref()
+        .map(external_payload)
+        .unwrap_or_default())
 }

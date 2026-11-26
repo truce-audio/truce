@@ -203,11 +203,6 @@ fn local_appdata() -> PathBuf {
     crate::dirs::require_local_appdata().expect("LOCALAPPDATA required")
 }
 
-#[cfg(target_os = "windows")]
-fn appdata() -> PathBuf {
-    crate::dirs::require_appdata().expect("APPDATA required")
-}
-
 #[cfg(target_os = "macos")]
 impl InstallScope {
     pub(crate) fn clap_dir(self) -> PathBuf {
@@ -226,12 +221,6 @@ impl InstallScope {
         match self {
             Self::User => home().join("Library/Audio/Plug-Ins/VST"),
             Self::System => PathBuf::from("/Library/Audio/Plug-Ins/VST"),
-        }
-    }
-    pub(crate) fn lv2_dir(self) -> PathBuf {
-        match self {
-            Self::User => home().join("Library/Audio/Plug-Ins/LV2"),
-            Self::System => PathBuf::from("/Library/Audio/Plug-Ins/LV2"),
         }
     }
     pub(crate) fn au_v2_dir(self) -> PathBuf {
@@ -267,8 +256,8 @@ impl InstallScope {
         }
     }
     // `self` is unused - Windows VST2 has no per-scope split. Kept on
-    // `&self` for shape-symmetry with `clap_dir` / `vst3_dir` / `lv2_dir`
-    // so callers don't need a special case for VST2.
+    // `&self` for shape-symmetry with `clap_dir` / `vst3_dir` so
+    // callers don't need a special case for VST2.
     #[allow(clippy::unused_self)]
     pub(crate) fn vst2_dir(self) -> PathBuf {
         // Windows VST2 falls back to system in `effective_scope` -
@@ -276,12 +265,6 @@ impl InstallScope {
         // `--user` invocation still resolves to a real directory if
         // something bypasses `effective_scope`.
         crate::program_files().join("Steinberg").join("VstPlugins")
-    }
-    pub(crate) fn lv2_dir(self) -> PathBuf {
-        match self {
-            Self::User => appdata().join("LV2"),
-            Self::System => crate::common_program_files().join("LV2"),
-        }
     }
 }
 
@@ -302,9 +285,5 @@ impl InstallScope {
     pub(crate) fn vst2_dir(self) -> PathBuf {
         let _ = self;
         home().join(".vst")
-    }
-    pub(crate) fn lv2_dir(self) -> PathBuf {
-        let _ = self;
-        home().join(".lv2")
     }
 }

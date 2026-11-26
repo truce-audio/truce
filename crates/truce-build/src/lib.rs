@@ -10,8 +10,8 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-pub mod lv2;
 pub mod manifest;
+pub mod meta;
 pub mod presets;
 pub use manifest::{BundleEntry, BundleManifest, host_triple};
 
@@ -97,6 +97,20 @@ pub struct MidiWiring {
     pub output_ports: u8,
 }
 
+/// A `[[plugin]] category`, parsed. Mirrors the runtime
+/// `truce_core::PluginCategory` one variant to one, and carries no
+/// format opinion of its own - what ports a category implies is a
+/// question for whoever renders them, which for an out-of-tree format
+/// is the `truce-format-<name>` helper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    Instrument,
+    Effect,
+    NoteEffect,
+    Analyzer,
+    Tool,
+}
+
 /// The `[[plugin]] category` values `truce.toml` accepts, in the exact
 /// spelling the parser matches.
 pub const PLUGIN_CATEGORIES: &[&str] = &[
@@ -109,26 +123,24 @@ pub const PLUGIN_CATEGORIES: &[&str] = &[
 ];
 
 /// Parse a `[[plugin]] category`: the one parser behind both the runtime
-/// `PluginCategory` (`plugin_info!`) and the LV2 TTL's port set, so the two
-/// can't disagree. They used to: the TTL side matched case-insensitively
-/// with extra aliases while the runtime matched lowercase only, so
-/// `category = "Instrument"` declared an instrument's 0-in / 2-out ports
-/// while every other consumer built an effect (no MIDI input, AU
-/// `aufx`). Returned as [`lv2::Lv2Category`], whose variants mirror
-/// `PluginCategory` one to one.
+/// `PluginCategory` (`plugin_info!`) and every format's port set, so the
+/// two can't disagree. They used to: the LV2 TTL side matched
+/// case-insensitively with extra aliases while the runtime matched
+/// lowercase only, so `category = "Instrument"` declared an instrument's
+/// 0-in / 2-out ports while every other consumer built an effect (no
+/// MIDI input, AU `aufx`).
 ///
 /// # Errors
 ///
 /// Any value outside [`PLUGIN_CATEGORIES`] (exact, lowercase) - an
 /// unknown category used to fall back to `effect` silently.
-pub fn parse_plugin_category(category: &str) -> Result<lv2::Lv2Category, String> {
-    use lv2::Lv2Category;
+pub fn parse_plugin_category(category: &str) -> Result<Category, String> {
     Ok(match category {
-        "effect" => Lv2Category::Effect,
-        "instrument" => Lv2Category::Instrument,
-        "midi" | "note_effect" => Lv2Category::NoteEffect,
-        "analyzer" => Lv2Category::Analyzer,
-        "tool" => Lv2Category::Tool,
+        "effect" => Category::Effect,
+        "instrument" => Category::Instrument,
+        "midi" | "note_effect" => Category::NoteEffect,
+        "analyzer" => Category::Analyzer,
+        "tool" => Category::Tool,
         other => {
             return Err(format!(
                 "unknown category `{other}`; expected one of {}",
@@ -315,7 +327,14 @@ pub struct VendorConfig {
 /// logic read the same definition. Install-time tooling extends this
 /// with extra fields like `au3_subtype` / `au_tag` via
 /// `#[serde(flatten)]`.
-#[derive(Deserialize, Debug)]
+///
+/// [`Default`] is for building one field-by-field - an out-of-tree
+/// format helper assembling a plugin from its own config view, or a
+/// test naming only the keys it cares about. The defaulted `category`
+/// is the empty string, which [`parse_plugin_category`] rejects, so a
+/// `..Default::default()` still has to set the fields that have no
+/// sensible default.
+#[derive(Deserialize, Debug, Default)]
 pub struct PluginDef {
     pub name: String,
     /// The stable per-plugin identity key: [`plugin_id`] derives
@@ -658,14 +677,14 @@ mod tests {
 
     #[test]
     fn plugin_category_parses_only_the_documented_names() {
-        use crate::lv2::Lv2Category as C;
-        let ok = |s| crate::parse_plugin_category(s).map(|c| format!("{c:?}"));
-        assert_eq!(ok("effect").unwrap(), format!("{:?}", C::Effect));
-        assert_eq!(ok("instrument").unwrap(), format!("{:?}", C::Instrument));
-        assert_eq!(ok("midi").unwrap(), format!("{:?}", C::NoteEffect));
-        assert_eq!(ok("note_effect").unwrap(), format!("{:?}", C::NoteEffect));
-        assert_eq!(ok("analyzer").unwrap(), format!("{:?}", C::Analyzer));
-        assert_eq!(ok("tool").unwrap(), format!("{:?}", C::Tool));
+        use crate::Category as C;
+        let ok = crate::parse_plugin_category;
+        assert_eq!(ok("effect").unwrap(), C::Effect);
+        assert_eq!(ok("instrument").unwrap(), C::Instrument);
+        assert_eq!(ok("midi").unwrap(), C::NoteEffect);
+        assert_eq!(ok("note_effect").unwrap(), C::NoteEffect);
+        assert_eq!(ok("analyzer").unwrap(), C::Analyzer);
+        assert_eq!(ok("tool").unwrap(), C::Tool);
         // The spellings the old LV2-only parser accepted, and which the
         // runtime silently read as `effect`, are now errors everywhere.
         for bad in [

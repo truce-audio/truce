@@ -49,7 +49,7 @@ cargo truce install --ios        # AU v3 on the booted iOS Simulator
 cargo truce install --ios-device # AU v3 on a tethered iPhone / iPad
 cargo truce install --aax        # AAX (requires AAX SDK)
 cargo truce install --vst2       # VST2 
-cargo truce install --lv2        # LV2
+cargo truce install --lv2        # LV2 (needs truce-extensions, see below)
 
 cargo truce validate             # auval + pluginval + clap-validator on installed plugins
 ```
@@ -194,7 +194,7 @@ By platform:
 | CLAP   | Yes   | Yes     | Yes   | —   |
 | VST3   | Yes   | Yes     | Yes   | —   |
 | VST2   | Yes   | Yes     | Yes   | —   |
-| LV2    | Yes   | Yes     | Yes   | —   |
+| LV2 *  | Yes   | Yes     | Yes   | —   |
 | AU v2  | Yes   | —       | —     | —   |
 | AU v3  | Yes   | —       | —     | Yes |
 | AAX    | Yes   | Yes     | —     | —   |
@@ -204,14 +204,18 @@ v3 ships on both macOS (`.appex` extension) and iOS (`.appex` inside
 a container `.app` for AUM, GarageBand, Logic Pro for iPad, Cubasis,
 BeatMaker 3, Loopy Pro). LV2 is the native Linux format and also
 builds on macOS and Windows — supports audio, MIDI, state, and UI
-(X11UI on Linux, CocoaUI on macOS, WindowsUI on Windows). AAX
+(X11UI on Linux, CocoaUI on macOS, WindowsUI on Windows). *LV2 ships
+separately in [truce-extensions](https://github.com/truce-audio/truce-extensions):
+add `truce-lv2` to your plugin and put the `truce-format-lv2` helper on
+your `PATH`, then `--lv2` works like any other format (`cargo truce
+doctor` tells you if it can't find it). AAX
 requires the Avid AAX SDK and PACE/iLok signing for retail Pro Tools
 releases. VST2 is opt-in on all platforms. iOS only hosts AU v3 by 
 platform contract; every other format is unviable there.
 
 ## Features
 
-- **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
+- **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, AU v2, AU v3, AAX opt-in, LV2 via truce-extensions)
 - **Cross-platform** — macOS, Windows, Linux, plus iOS via AU v3 with the same Rust DSP, params, and editor
 - **MIDI 2.0 & multi-port** — opt-in MIDI 2.0 / UMP and multiple MIDI in/out ports, with per-note expression (MPE) mapped across CLAP, VST3, and AU v3; MIDI 1.0 single-port plugins are unchanged
 - **f32 or f64 DSP** — write 64-bit DSP with `prelude64`; the host's native 64-bit audio wire is taken directly on VST3, VST2, and CLAP, widen/narrow elsewhere
