@@ -466,15 +466,19 @@ fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
             .and_then(|d| d.description().map(|desc| desc.name().to_string()).ok())
     };
     let names = if output {
-        host.output_devices().map_or_default(|it| {
-            it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
-                .collect()
-        })
+        host.output_devices()
+            .map(|it| {
+                it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     } else {
-        host.input_devices().map_or_default(|it| {
-            it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
-                .collect()
-        })
+        host.input_devices()
+            .map(|it| {
+                it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     };
     (default_name, names)
 }
@@ -528,7 +532,10 @@ impl DeviceCache {
     #[must_use]
     pub fn outputs(&self) -> Vec<String> {
         self.ensure_warm();
-        self.inner.lock().map_or_default(|g| g.outputs.clone())
+        self.inner
+            .lock()
+            .map(|g| g.outputs.clone())
+            .unwrap_or_default()
     }
 
     /// Cached input device names. Same cold-read guarantee as
@@ -536,7 +543,10 @@ impl DeviceCache {
     #[must_use]
     pub fn inputs(&self) -> Vec<String> {
         self.ensure_warm();
-        self.inner.lock().map_or_default(|g| g.inputs.clone())
+        self.inner
+            .lock()
+            .map(|g| g.inputs.clone())
+            .unwrap_or_default()
     }
 
     fn ensure_warm(&self) {

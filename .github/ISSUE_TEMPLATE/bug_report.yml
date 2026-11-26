@@ -108,7 +108,7 @@ body:
     id: env
     attributes:
       label: OS and Rust version
-      placeholder: macOS 14.5 (arm64), rustc 1.92.0
+      placeholder: macOS 14.5 (arm64), rustc 1.95.0
   - type: textarea
     id: logs
     attributes:

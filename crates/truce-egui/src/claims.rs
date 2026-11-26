@@ -57,7 +57,8 @@ fn add_unique<T: Copy + PartialEq>(claimed: &mut Vec<T>, new: &[T]) {
 pub(crate) fn claimed_keys(ctx: &egui::Context) -> Vec<egui::Key> {
     ctx.data(|data| {
         data.get_temp::<ClaimedKeys>(egui::Id::NULL)
-            .map_or_default(|claimed| claimed.0)
+            .map(|claimed| claimed.0)
+            .unwrap_or_default()
     })
 }
 
@@ -96,7 +97,8 @@ pub fn claim_shortcuts(ctx: &egui::Context, shortcuts: &[egui::KeyboardShortcut]
 pub(crate) fn claimed_shortcuts(ctx: &egui::Context) -> Vec<egui::KeyboardShortcut> {
     ctx.data(|data| {
         data.get_temp::<ClaimedShortcuts>(egui::Id::NULL)
-            .map_or_default(|claimed| claimed.0)
+            .map(|claimed| claimed.0)
+            .unwrap_or_default()
     })
 }
 

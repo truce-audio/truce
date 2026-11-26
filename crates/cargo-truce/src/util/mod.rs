@@ -823,7 +823,8 @@ fn read_features_table(manifest: &Path) -> BTreeMap<String, Vec<String>> {
 fn read_default_features(manifest: &Path) -> HashSet<String> {
     read_features_table(manifest)
         .get("default")
-        .map_or_default(|d| d.iter().cloned().collect())
+        .map(|d| d.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// One plugin crate's declared default features (its `[features].default`).
@@ -831,7 +832,9 @@ fn read_default_features(manifest: &Path) -> HashSet<String> {
 /// Resolves the crate's own manifest, so it works in both the single-crate
 /// and workspace layouts.
 pub(crate) fn plugin_default_features(root: &Path, crate_name: &str) -> HashSet<String> {
-    locate_plugin_manifest(root, crate_name).map_or_default(|m| read_default_features(&m))
+    locate_plugin_manifest(root, crate_name)
+        .map(|m| read_default_features(&m))
+        .unwrap_or_default()
 }
 
 /// Cargo `--features` tokens (`crate/feature`) for every non-format
@@ -1009,7 +1012,8 @@ pub(crate) fn log_output(line: String) {
 pub(crate) fn take_outputs() -> Vec<String> {
     OUTPUTS
         .lock()
-        .map_or_default(|mut v| std::mem::take(&mut *v))
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default()
 }
 
 /// Per-process collector of soft-skipped install reasons (e.g. AAX with
@@ -1033,7 +1037,8 @@ pub(crate) fn log_skip(line: String) {
 pub(crate) fn take_skipped() -> Vec<String> {
     SKIPPED
         .lock()
-        .map_or_default(|mut v| std::mem::take(&mut *v))
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default()
 }
 
 /// Run `codesign` with the given args. Prints a one-line success or

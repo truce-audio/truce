@@ -532,7 +532,8 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
         eprintln!("    {} {name}: {}", tag_ok(), path.display());
     } else {
         let hint = env_var
-            .map_or_default(|v| format!(" (or set ${v} in shell or .cargo/config.toml [env])"));
+            .map(|v| format!(" (or set ${v} in shell or .cargo/config.toml [env])"))
+            .unwrap_or_default();
         eprintln!("    {} {name}: not found{hint}", tag_warn());
     }
 }

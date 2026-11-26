@@ -4,6 +4,7 @@ version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Reload-transition fixture (ResetState). Distinct fingerprint from keep-a/keep-b, so a reload to it must drop + re-init state. Internal test-only."
 publish = false

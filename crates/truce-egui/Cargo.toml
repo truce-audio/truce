@@ -14,7 +14,7 @@ truce-gui = { workspace = true }
 truce-params = { workspace = true }
 # For the bundled Noto Music symbol fallback (`♩` etc.); byte const only,
 # so no raster/skrifa deps.
-truce-font = { workspace = true, default-features = false }
+truce-font = { workspace = true }
 egui = "0.37"
 # default-features off so wgpu/default doesn't re-enable every backend;
 # truce-gpu gates them per target_os.

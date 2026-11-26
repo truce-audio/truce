@@ -81,7 +81,7 @@ edition = "2024"
 # in LICENSE; the SPDX `LicenseRef-` carries it as a custom identifier
 # (the rider is not captured by `Apache-2.0 OR MIT` alone).
 license = "LicenseRef-TruceLicense-1.0"
-rust-version = "1.92"
+rust-version = "1.95"
 repository = "https://github.com/truce-audio/truce"
 homepage = "https://truce.audio"
 

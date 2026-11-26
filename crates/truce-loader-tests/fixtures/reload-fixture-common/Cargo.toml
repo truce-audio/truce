@@ -4,6 +4,7 @@ version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Shared params / DSP-state / logic types for truce-loader's reload-transition fixtures. Internal test-only."
 publish = false
