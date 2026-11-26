@@ -24,6 +24,10 @@
 
 #include "au_shim_types.h"
 
+// Liveness registry in au_v2_shim.c (same dylib).
+extern uint64_t truce_au_v2_ctx_token(void *ctx);
+extern int truce_au_v2_ctx_alive(void *ctx, uint64_t token);
+
 // Private properties exposed by `au_v2_shim.c`:
 //   64000: AuPlugin context pointer (rustCtx)
 //   64001: pointer to the AU's AuCallbacks table (g_callbacks of the
@@ -51,16 +55,32 @@
 /// us. Use AU v3 (or CLAP / VST3 / LV2) for resizable editors.
 @interface TRUCE_AU_FIXED_CONTAINER_NAME : NSView
 @property(nonatomic, assign) void *rustCtx;
+/// Registration token of `rustCtx` (see `truce_au_v2_ctx_token`).
+@property(nonatomic, assign) uint64_t ctxToken;
 @property(nonatomic, assign) const AuCallbacks *callbacks;
 @property(nonatomic, strong) NSTimer *idleTimer;
 @end
 
 @implementation TRUCE_AU_FIXED_CONTAINER_NAME
+// Whether `rustCtx` is still the live instance this view was made for.
+// `au_v2_close` frees the instance without telling the view, and a host
+// may dispose the AU before removing (or while still showing) its view;
+// the view outlives it, so every call into Rust checks first. Once dead,
+// drop the pointer and stop the idle timer for good.
+- (BOOL)ctxLive {
+    if (self.rustCtx == NULL || self.callbacks == NULL) return NO;
+    if (truce_au_v2_ctx_alive(self.rustCtx, self.ctxToken)) return YES;
+    self.rustCtx = NULL;
+    [self.idleTimer invalidate];
+    self.idleTimer = nil;
+    return NO;
+}
+
 - (void)setFrameSize:(NSSize)newSize {
     // Pin to the editor's natural size. Any host call to resize
     // us (Logic embedding into its plug-in pane, Ableton's frame
     // measurement, REAPER's FX panel layout) is ignored.
-    if (self.rustCtx != NULL && self.callbacks != NULL) {
+    if ([self ctxLive]) {
         uint32_t natW = 0, natH = 0;
         self.callbacks->gui_get_size(self.rustCtx, &natW, &natH);
         if (natW > 0 && natH > 0) {
@@ -81,7 +101,7 @@
     if (self.window) {
         // `gui_idle` is a v6 (append-only) callback; guard the pointer in
         // case a host ever pairs this view with an older core build.
-        if (!self.idleTimer && self.callbacks && self.callbacks->gui_idle) {
+        if (!self.idleTimer && [self ctxLive] && self.callbacks->gui_idle) {
             __weak TRUCE_AU_FIXED_CONTAINER_NAME *weakSelf = self;
             NSTimer *t = [NSTimer timerWithTimeInterval:1.0 / 60.0
                                                 repeats:YES
@@ -91,7 +111,7 @@
                                                         [timer invalidate];
                                                         return;
                                                     }
-                                                    if (s.rustCtx && s.callbacks &&
+                                                    if ([s ctxLive] &&
                                                         s.callbacks->gui_idle) {
                                                         s.callbacks->gui_idle(s.rustCtx);
                                                     }
@@ -149,6 +169,7 @@
     TRUCE_AU_FIXED_CONTAINER_NAME *container =
         [[TRUCE_AU_FIXED_CONTAINER_NAME alloc] initWithFrame:frame];
     container.rustCtx = ctx;
+    container.ctxToken = truce_au_v2_ctx_token(ctx);
     container.callbacks = cb;
     cb->gui_open(ctx, (__bridge void *)container);
     return container;
