@@ -401,3 +401,45 @@ jobs:
           set -e -o pipefail
           cd crates/truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-vizia --formats clap,vst3 --no-sign --no-notarize
+
+  # MSRV gate. The workspace pins rust-version = 1.95, the floor egui 0.37
+  # sets; `map_or_default` (1.98) is not used so it can stay there. Nothing else
+  # verified the floor, so a stray newer-std call or a manifest feature an
+  # older cargo rejects would silently raise it. `check` (not build/test)
+  # is enough to catch API / edition / manifest breaks. `cargo +1.95.0` is
+  # explicit because rust-toolchain.toml pins `stable`, which would
+  # otherwise override the action's installed toolchain. Each GUI backend
+  # is its own Cargo workspace, so gate them individually.
+  msrv:
+    name: MSRV (1.95)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.95
+          cache-bin: false
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libwayland-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev
+
+      - name: check (main workspace)
+        run: cargo +1.95.0 check --workspace --all-targets
+      - name: check (truce-slint sub-workspace)
+        run: cargo +1.95.0 check --manifest-path crates/truce-slint/Cargo.toml --workspace --all-targets
+      - name: check (truce-vizia sub-workspace)
+        run: cargo +1.95.0 check --manifest-path crates/truce-vizia/Cargo.toml --workspace --all-targets
+      - name: check (truce-gpu-examples sub-workspace)
+        run: cargo +1.95.0 check --manifest-path crates/truce-gpu-examples/Cargo.toml --workspace --all-targets

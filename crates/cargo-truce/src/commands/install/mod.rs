@@ -269,7 +269,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
     let target_cpu = target_cpu_arg
         .as_deref()
-        .map_or_default(parse_target_cpu_arg);
+        .map(parse_target_cpu_arg)
+        .unwrap_or_default();
     crate::set_target_cpu(target_cpu);
 
     let root = project_root();

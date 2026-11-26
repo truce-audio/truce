@@ -114,7 +114,8 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
     let target_cpu = opts
         .target_cpu_arg
         .as_deref()
-        .map_or_default(crate::util::parse_target_cpu_arg);
+        .map(crate::util::parse_target_cpu_arg)
+        .unwrap_or_default();
     crate::set_target_cpu(target_cpu);
 
     let config = load_config()?;
@@ -2524,7 +2525,9 @@ fn iss_dual_dest(
     } else {
         ""
     };
-    let arch = arch_check.map_or_default(|c| format!(" Check: {c};"));
+    let arch = arch_check
+        .map(|c| format!(" Check: {c};"))
+        .unwrap_or_default();
     format!(
         "Source: \"{src_quoted}\"; DestDir: \"{dest}\"; \
          Components: {component};{arch} \
@@ -2551,10 +2554,12 @@ fn iss_admin_only(
     } else {
         ""
     };
-    let arch_clause = arch_check.map_or_default(|c| format!(" and {c}"));
+    let arch_clause = arch_check.map(|c| format!(" and {c}")).unwrap_or_default();
     match scope {
         PkgScope::System | PkgScope::User => {
-            let arch = arch_check.map_or_default(|c| format!(" Check: {c};"));
+            let arch = arch_check
+                .map(|c| format!(" Check: {c};"))
+                .unwrap_or_default();
             format!(
                 "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
                  Components: {component};{arch} \

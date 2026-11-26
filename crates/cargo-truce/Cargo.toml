@@ -1,6 +1,7 @@
 [package]
 name = "cargo-truce"
 version.workspace = true
+rust-version.workspace = true
 edition = "2024"
 # The Truce License (LicenseRef-TruceLicense-1.0), same as the
 # workspace - dual Apache-2.0 / MIT plus the framework rider in LICENSE.

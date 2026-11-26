@@ -69,7 +69,8 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     crate::set_no_default_features(no_default_features);
     let target_cpu = target_cpu_arg
         .as_deref()
-        .map_or_default(parse_target_cpu_arg);
+        .map(parse_target_cpu_arg)
+        .unwrap_or_default();
     crate::set_target_cpu(target_cpu);
 
     let matched = super::pick_plugins(&config, plugin_filter.as_deref())?;

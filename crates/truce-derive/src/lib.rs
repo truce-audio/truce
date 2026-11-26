@@ -675,7 +675,8 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
             let key = meta
                 .path
                 .get_ident()
-                .map_or_default(std::string::ToString::to_string);
+                .map(std::string::ToString::to_string)
+                .unwrap_or_default();
             // Two-step pattern for the string-typed keys: parse the
             // literal first, then either assign or stash a
             // compile_error. Avoids needing `&mut attrs` aliased with
