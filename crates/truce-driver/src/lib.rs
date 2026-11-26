@@ -269,23 +269,25 @@ impl Script {
     ///
     /// The `ParamChange` event carries a plain value, so the argument
     /// is denormalized through the parameter's range before it is
-    /// pushed. An unknown id leaves the value untouched.
+    /// pushed. An id the script has no range for - any id on a bare
+    /// `Script::default()`, or one the plugin doesn't declare - passes
+    /// the value through untouched.
     ///
     /// # Panics
     ///
-    /// In debug builds, if `normalized` is outside `[0, 1]` (or NaN) -
-    /// almost certainly a plain value from a pre-7.0 script, which would
-    /// otherwise be silently clamped to the range end. Release builds warn
-    /// once on stderr and carry on (clamped for a known id; an unknown id
-    /// passes the value through untouched, as always).
+    /// In debug builds, if the id has a range and `normalized` is outside
+    /// `[0, 1]` (or NaN) - almost certainly a plain value from a pre-7.0
+    /// script, which the range would otherwise silently clamp to its end.
+    /// Release builds warn once on stderr and clamp.
     pub fn set_param(&mut self, id: impl Into<u32>, normalized: f64) {
         let id = id.into();
-        check_normalized(id, normalized, true);
-        let plain = self
-            .param_infos
-            .iter()
-            .find(|pi| pi.id == id)
-            .map_or(normalized, |pi| pi.range.denormalize(normalized));
+        let plain = match self.param_infos.iter().find(|pi| pi.id == id) {
+            Some(pi) => {
+                check_normalized(id, normalized, true);
+                pi.range.denormalize(normalized)
+            }
+            None => normalized,
+        };
         self.push(EventBody::ParamChange { id, value: plain });
     }
 
@@ -1353,6 +1355,26 @@ mod tests {
             ..Script::default()
         };
         script.set_param(7u32, 8.0);
+    }
+
+    /// With no range to clamp against, there's nothing to check: a bare
+    /// `Script` (and an id the plugin doesn't declare) passes any value
+    /// through, as documented, rather than tripping the debug check.
+    #[test]
+    fn set_param_without_a_range_passes_any_value_through() {
+        let mut bare = Script::default();
+        bare.set_param(7u32, 8.0);
+        let mut known = Script {
+            param_infos: vec![linear_info(7, 0.0, 10.0)],
+            ..Script::default()
+        };
+        known.set_param(99u32, -3.0);
+        for (script, want) in [(bare, 8.0), (known, -3.0)] {
+            match script.events.as_slice() {
+                [(_, EventBody::ParamChange { value, .. })] => assert_eq!(*value, want),
+                other => panic!("expected one ParamChange, got {other:?}"),
+            }
+        }
     }
 
     /// `set_param` takes a normalized argument but the `ParamChange`
