@@ -162,7 +162,7 @@ pub(crate) fn write_struct_sidecar(
                 let _ = writeln!(buf, "base = {b}");
             }
             // An array group is walked `array_len` times by the
-            // aggregator, each element salted (hash scheme) or packed
+            // aggregator, each element placed by `mix_nested_id` (hash scheme) or packed
             // after the one before it (ordinal).
             if let Some(n) = array_len {
                 let _ = writeln!(buf, "array_len = {n}");
@@ -990,9 +990,9 @@ mod tests {
         );
     }
 
-    /// Hash-scheme arrays: each element's ids are mixed with its own salt
-    /// (`nested_elem_salt` / `mix_nested_id`), matching the runtime, not
-    /// packed at `base + i * element_count`.
+    /// Hash-scheme arrays: each element's ids are placed by
+    /// `mix_nested_id` with its `nested_elem_salt`, matching the runtime,
+    /// not packed at `base + i * element_count`.
     #[test]
     fn hash_nested_array_uses_per_element_bases() {
         let dir = std::env::temp_dir().join(format!("truce-lv2-hash-array-{}", std::process::id()));
