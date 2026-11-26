@@ -599,8 +599,8 @@ ios_icon_set = "static/truce-minimal.appiconset"
 name = "Truce Idle Anim"
 bundle_id = "idle-anim"
 crate = "truce-example-idle-anim"
-# Demonstrates the `Editor::idle` hook: the editor animates a meter from
-# its idle tick (no DSP drives it), so the bar moves only while `idle`
+# Demonstrates the `Editor::idle` hook: the editor sweeps a knob from
+# its idle tick (no DSP drives it), so the knob moves only while `idle`
 # fires on the host UI thread.
 category = "effect"
 fourcc = "TIdl"
