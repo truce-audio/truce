@@ -132,7 +132,7 @@ use truce_core::state::PluginFormat;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::ump::decode_ump_channel_voice_2;
 use truce_core::wrapper::{
-    PluginCell, SharedPlugin, copy_c_str, enter_plugin, run_audio_block_with,
+    PluginCell, SharedPlugin, copy_c_str, enter_plugin, publish_loaded_extra, run_audio_block_with,
     run_extern_callback_with, save_extra, shared_plugin,
 };
 use truce_core::{Float, Sample};
@@ -2933,6 +2933,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             // under its exclusive `&mut plugin`. `force_push` overwrites
             // any older pending blob - see the `pending_state` field
             // comment for why "newest wins" is right.
+            publish_loaded_extra(&data.snapshot, deserialized.extra.as_deref());
             let _ = data.pending_state.force_push(deserialized);
         } else {
             // Inactive: no `process` will run, so the queue would never
@@ -3030,6 +3031,7 @@ unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
         // keeps offline preset browsing from stranding the custom-state
         // blob (sample buffers, wavetables) on the queue.
         if data.active.load(Ordering::Relaxed) {
+            publish_loaded_extra(&data.snapshot, deserialized.extra.as_deref());
             let _ = data.pending_state.force_push(deserialized);
         } else {
             let mut instance = enter_plugin(&data.plugin);
@@ -3661,6 +3663,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let params_for_ctx = params.clone();
         let task_spawner_for_ctx = data.task_spawner.clone();
         let pending_state_for_set = data.pending_state.clone();
+        let snapshot_for_set = Arc::clone(&data.snapshot);
         let transport_slot = data.transport_slot.clone();
         let context = PluginContext::from_closures(
             ClosureBridge {
@@ -3739,6 +3742,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     // drains the queue while active; while inactive the main
                     // thread drains it in `state_save` / `deactivate`, so an
                     // edit made in that window is neither lost nor stranded.
+                    // Publishing touches only the snapshot slot, which any
+                    // thread may write, so a `get_state` or save before the
+                    // drain already sees the edit.
+                    publish_loaded_extra(&snapshot_for_set, Some(&bytes));
                     let _ = pending_state_for_set.force_push(state::DeserializedState {
                         params: Vec::new(),
                         extra: Some(bytes),

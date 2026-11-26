@@ -159,6 +159,28 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
     }
 }
 
+/// Settle the custom state a restore hands the plugin: the envelope's own
+/// `extra`, or - when it carries none - the plugin's
+/// [`PluginRuntime::default_extra`](crate::plugin::PluginRuntime::default_extra).
+///
+/// The envelope stores an empty `extra` and an absent one identically, so
+/// "none" covers both a preset authored with parameters only and a session
+/// whose custom state serialized to nothing. Filling it here, on the host
+/// thread before the load is applied or queued, turns that case into an
+/// ordinary load: the wrapper can publish the bytes before the audio thread
+/// drains the queue, so a save in between carries them rather than the
+/// pre-load custom state (truce#251). `None` from the plugin leaves `extra`
+/// absent, so `load_state` doesn't run and the instance keeps its state.
+#[must_use]
+pub fn with_default_extra<P: crate::plugin::PluginRuntime>(
+    mut state: DeserializedState,
+) -> DeserializedState {
+    if state.extra.is_none() {
+        state.extra = P::default_extra();
+    }
+    state
+}
+
 /// Parse a host-supplied state blob and, when it isn't this plugin's
 /// envelope, offer it to the plugin's
 /// [`crate::plugin::PluginRuntime::migrate_state`] hook. One routing
@@ -170,6 +192,9 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
 /// - a future envelope version and a corrupt envelope fail the load
 ///   (never handed to the plugin), each with its own log line.
 ///
+/// A state that carries no custom state comes back with the plugin's
+/// [`with_default_extra`] filled in.
+///
 /// `None` means the load failed and the wrapper must report failure
 /// to the host in its own idiom. Runs on the host thread - that's
 /// where `migrate_state` is allowed to do allocator-heavy parsing.
@@ -179,7 +204,7 @@ pub fn parse_or_migrate<P: PluginExport>(
     format: PluginFormat,
     source_key: Option<&str>,
 ) -> Option<DeserializedState> {
-    match truce_utils::state::parse_state(data, expected_plugin_id) {
+    let parsed = match truce_utils::state::parse_state(data, expected_plugin_id) {
         StateParse::Ok(state) => Some(state),
         StateParse::NotAnEnvelope => P::migrate_state(&ForeignState::Raw {
             format,
@@ -209,7 +234,8 @@ pub fn parse_or_migrate<P: PluginExport>(
             eprintln!("truce: state blob is a corrupt truce envelope - load failed");
             None
         }
-    }
+    };
+    parsed.map(with_default_extra::<P>)
 }
 
 /// Apply just the parameter values from a deserialized state - the
@@ -300,8 +326,9 @@ pub fn snapshot_plugin<P: PluginExport>(plugin: &P) -> Vec<u8> {
 
 /// Inverse of [`snapshot_plugin`]. Validates the envelope's magic,
 /// version, and plugin-ID hash; on success restores parameter
-/// values via `Params::restore_values` and forwards the optional
-/// extra payload to `Plugin::load_state`.
+/// values via `Params::restore_values` and forwards the extra payload
+/// (or, when the envelope carries none, the plugin's `default_extra`) to
+/// `Plugin::load_state`.
 ///
 /// # Errors
 ///
@@ -311,7 +338,7 @@ pub fn snapshot_plugin<P: PluginExport>(plugin: &P) -> Vec<u8> {
 /// payload were forwarded to the plugin.
 pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(), RestoreError> {
     let id = hash_plugin_id(P::info().clap_id);
-    let s = deserialize_state(bytes, id).ok_or(RestoreError::Invalid)?;
+    let s = with_default_extra::<P>(deserialize_state(bytes, id).ok_or(RestoreError::Invalid)?);
     plugin.params().restore_values(&s.params);
     plugin.params().load_persist(&s.persist);
     if let Some(extra) = s.extra {

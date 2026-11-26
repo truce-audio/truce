@@ -268,6 +268,13 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S, Params = P> + 'static,
         <L as PluginLogicCore<S>>::migrate_state(foreign)
     }
 
+    fn default_extra() -> Option<Vec<u8>>
+    where
+        Self: Sized,
+    {
+        <L as PluginLogicCore<S>>::default_extra()
+    }
+
     fn latency(&self) -> u32 {
         L::latency(&self.state)
     }
@@ -456,6 +463,13 @@ macro_rules! export_static {
                 data: &[u8],
             ) -> Result<(), $crate::__macro_deps::truce_core::state::StateLoadError> {
                 self.inner.load_state(data)
+            }
+
+            fn default_extra() -> Option<Vec<u8>>
+            where
+                Self: Sized,
+            {
+                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::default_extra()
             }
 
             fn republish_snapshot(&mut self) {

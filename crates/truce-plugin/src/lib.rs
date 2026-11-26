@@ -140,6 +140,12 @@ pub trait PluginLogicCore<S: Sample = f32>: 'static {
         let _ = (state, data);
         Ok(())
     }
+    /// Custom state to load when a restore carries none. See
+    /// [`PluginLogic::default_extra`].
+    #[must_use]
+    fn default_extra() -> Option<Vec<u8>> {
+        None
+    }
     /// Translate foreign state into truce shape. See
     /// [`PluginLogic::migrate_state`].
     #[must_use]
@@ -399,7 +405,9 @@ macro_rules! plugin_logic_leaf_trait {
                 $crate::__plugin_logic_deps::SNAPSHOT_PREALLOC
             }
 
-            /// Restore plugin-specific state into `state`.
+            /// Restore plugin-specific state into `state`. A restored state
+            /// that carries no custom state loads [`Self::default_extra`]
+            /// instead, or skips this when that's `None`.
             ///
             /// Runs on the audio thread between blocks, with the same
             /// exclusive access `process()` has - writing any field
@@ -417,6 +425,36 @@ macro_rules! plugin_logic_leaf_trait {
             ) -> Result<(), $crate::__plugin_logic_deps::StateLoadError> {
                 let _ = (state, data);
                 Ok(())
+            }
+
+            /// The custom-state bytes to load when a restored state carries
+            /// none, in the format [`Self::snapshot_into`] writes. They go
+            /// through [`Self::load_state`] like any other restore.
+            ///
+            /// That case covers an authored preset written without custom
+            /// state (parameters only), and a session whose custom state
+            /// serialized to nothing - the state envelope stores an empty
+            /// payload and an absent one identically, so the two can't be
+            /// told apart. Returning `None` (the default) skips
+            /// `load_state` entirely, so the instance keeps whatever custom
+            /// state it had: right for a plugin that wants a
+            /// parameter-only preset to leave, say, a loaded sample alone.
+            /// Return your default custom state instead if a full restore
+            /// should replace it (drop the last preset's patch cables):
+            ///
+            /// ```ignore
+            /// fn default_extra() -> Option<Vec<u8>> {
+            ///     Some(Patch::default().serialize())
+            /// }
+            /// ```
+            ///
+            /// Receiverless because the wrapper calls it on the host thread
+            /// while the audio thread may own the instance, so a save made
+            /// before the audio thread applies the load already carries
+            /// these bytes.
+            #[must_use]
+            fn default_extra() -> Option<Vec<u8>> {
+                None
             }
 
             /// Called on the audio thread immediately after
@@ -864,6 +902,10 @@ macro_rules! plugin_logic_bridge {
 
             fn load_state(state: &mut Self::DspState, data: &[u8]) -> Result<(), StateLoadError> {
                 <Self as $leaf>::load_state(state, data)
+            }
+
+            fn default_extra() -> Option<Vec<u8>> {
+                <Self as $leaf>::default_extra()
             }
 
             fn state_changed(state: &mut Self::DspState, params: &Self::Params) {

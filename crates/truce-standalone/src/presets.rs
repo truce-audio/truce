@@ -80,6 +80,7 @@ pub fn apply_selected<P: PluginExport>(store: &PresetStore, plugin: &mut P, sel:
     };
     match store.load(&preset.uri) {
         Ok(state) => {
+            let state = truce_core::state::with_default_extra::<P>(state);
             // `apply_state` no longer touches `#[persist]` fields (they
             // lock, so they're kept off the audio thread); apply them here
             // on the calling thread. Harmless double-write of params.

@@ -158,6 +158,18 @@ pub trait PluginRuntime: Send + 'static {
         Ok(())
     }
 
+    /// The custom-state bytes to load when a restored state carries none.
+    /// See `truce_plugin::PluginLogic::default_extra`. Receiverless so a
+    /// wrapper can ask on the host thread, where it can't touch the
+    /// instance. Default: `None`, which keeps the current custom state.
+    #[must_use]
+    fn default_extra() -> Option<Vec<u8>>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// Refresh the lock-free snapshot slot from the current state.
     ///
     /// The audio thread publishes a fresh snapshot after every

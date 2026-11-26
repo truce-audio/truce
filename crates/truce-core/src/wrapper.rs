@@ -92,6 +92,56 @@ pub fn save_extra(snapshot: &crate::snapshot::SnapshotSlot) -> Vec<u8> {
     snapshot.read().unwrap_or_default()
 }
 
+/// Publish a just-queued load's custom state into the snapshot slot, so a
+/// save before the audio thread applies the load carries it.
+///
+/// A wrapper that can't touch the plugin on the host thread hands a state
+/// load to the audio thread, which applies it at the top of the next block
+/// and republishes. Until then the slot holds the pre-load custom state, so
+/// a save would pair the restored params (applied on the host thread at
+/// once) with the old custom state - and when nothing renders (an inactive
+/// recall) that lasts until the next block. The loaded bytes are the wire
+/// format `snapshot_into` emits, so they go straight into the inline lane.
+///
+/// `extra` is the state's custom state after
+/// [`crate::state::with_default_extra`]; `None` means the plugin keeps its
+/// current custom state, which the slot already holds, so nothing changes.
+/// Empty bytes are skipped too: they say nothing about what `load_state`
+/// will build from them, so the block that applies the load publishes.
+///
+/// Known window: if this lands while a block is in flight, that block's own
+/// publish can rewrite the pre-load custom state (an unversioned plugin, or
+/// one whose `snapshot_version` moved). The block that applies the load
+/// republishes, so it only sticks if rendering stops before then.
+/// Off-thread-lane plugins (large sampler state) republish from their own
+/// `state_changed` hook.
+pub fn publish_loaded_extra(slot: &crate::snapshot::SnapshotSlot, extra: Option<&[u8]>) {
+    /// The audio thread holds the slot only while it copies a block's
+    /// snapshot in, so a short retry lands the loaded bytes.
+    const PUBLISH_ATTEMPTS: u32 = 64;
+    let Some(bytes) = extra.filter(|b| !b.is_empty()) else {
+        return;
+    };
+    for _ in 0..PUBLISH_ATTEMPTS {
+        let landed = slot.publish(|buf| {
+            buf.extend_from_slice(bytes);
+            true
+        });
+        if landed {
+            // Bump the snapshot generation so a save-blob cache keyed on it
+            // (AAX's) re-serializes the loaded bytes on the next save, even
+            // before the audio thread drains the load.
+            slot.mark_published();
+            return;
+        }
+        std::thread::yield_now();
+    }
+    // Still contended: the block that applies the load republishes it and
+    // bumps the generation when that publish lands. Don't bump for bytes
+    // that never landed - a save would cache the pre-load snapshot under
+    // the new key.
+}
+
 /// Lock-free plugin ownership cell, uniform across platforms. Holds no
 /// OS mutex: the audio thread owns the plugin while processing, the host
 /// thread while stopped, and a spec-compliant host never overlaps the
