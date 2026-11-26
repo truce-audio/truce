@@ -45,13 +45,22 @@ pub struct SnapshotSlot {
     /// Set once *either* lane publishes for the first time. Until then a
     /// reader falls back to the locked `save_state()` path.
     supported: AtomicBool,
+    /// Publish generation, folded into a consumer's save-blob cache key.
     /// Bumped every time the off-thread lane swaps in new bytes
-    /// ([`Self::store_arc`]). A GUI-driven state change (a sample load, a
-    /// wavetable swap) publishes there without going through the wrapper's
-    /// param / state-load revision, so a save-blob cache keyed only on that
-    /// revision would return stale bytes. Consumers fold this into their
-    /// cache key so an off-thread republish invalidates it.
+    /// ([`Self::store_arc`]), on a wrapper's [`Self::mark_published`], and
+    /// on the first landed inline publish after [`Self::mark_on_next_publish`].
+    /// A GUI-driven state change (a sample load, a wavetable swap) publishes
+    /// on the off-thread lane without going through the wrapper's param /
+    /// state-load revision, so a cache keyed only on that revision would
+    /// return stale bytes.
     generation: AtomicU64,
+    /// Set by [`Self::mark_on_next_publish`]: the next inline publish that
+    /// lands bumps `generation`. A wrapper arms it when it applies a state
+    /// load on the audio thread, so a save-blob cache entry made before the
+    /// loaded state reached the slot is invalidated exactly when it does -
+    /// not when a block merely ran (a reader can make that block's
+    /// `try_lock` publish skip).
+    mark_pending: AtomicBool,
 }
 
 impl SnapshotSlot {
@@ -74,6 +83,7 @@ impl SnapshotSlot {
             swapped: Mutex::new(None),
             supported: AtomicBool::new(false),
             generation: AtomicU64::new(0),
+            mark_pending: AtomicBool::new(false),
         };
         // Warm both locks off the audio thread: some platforms' std
         // `Mutex` (macOS boxes a `pthread_mutex_t`) lazily allocate the OS
@@ -104,6 +114,11 @@ impl SnapshotSlot {
             if write(&mut guard) {
                 self.supported.store(true, Ordering::Release);
             }
+            // Under the lock, so a reader that sees the bumped generation
+            // reads these bytes.
+            if self.mark_pending.swap(false, Ordering::AcqRel) {
+                self.generation.fetch_add(1, Ordering::Release);
+            }
             true
         } else {
             false
@@ -133,11 +148,18 @@ impl SnapshotSlot {
         self.generation.fetch_add(1, Ordering::Release);
     }
 
-    /// The off-thread publish generation (see the `generation` field).
-    /// Starts at 0; each [`Self::store_arc`] / [`Self::mark_published`]
-    /// bumps it. A save-blob cache keyed partly on this re-serializes after
-    /// a GUI-driven off-thread state change (a sample load) even when no
-    /// parameter moved.
+    /// Bump the generation on the next inline [`Self::publish`] that lands
+    /// (see `mark_pending`). Lock-free and allocation-free, so the audio
+    /// thread can arm it right after applying a state load.
+    pub fn mark_on_next_publish(&self) {
+        self.mark_pending.store(true, Ordering::Release);
+    }
+
+    /// The publish generation (see the `generation` field). Starts at 0;
+    /// each [`Self::store_arc`] / [`Self::mark_published`] / armed landed
+    /// publish ([`Self::mark_on_next_publish`]) bumps it. A save-blob cache
+    /// keyed partly on this re-serializes after a GUI-driven off-thread
+    /// state change (a sample load) even when no parameter moved.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
@@ -235,6 +257,31 @@ impl SnapshotPublisher {
 #[cfg(test)]
 mod tests {
     use super::{SNAPSHOT_PREALLOC, SnapshotPublisher, SnapshotSlot};
+
+    /// A mark armed after a state load bumps the generation only on the
+    /// first publish that lands - a skipped (contended) one leaves it armed.
+    #[test]
+    fn mark_on_next_publish_bumps_on_the_first_landed_publish() {
+        let slot = SnapshotSlot::new();
+        let g0 = slot.generation();
+        slot.mark_on_next_publish();
+        {
+            let _reader = slot.bytes.lock().unwrap();
+            assert!(!slot.publish(|_| true), "contended publish skips");
+        }
+        assert_eq!(
+            slot.generation(),
+            g0,
+            "skipped publish keeps the mark armed"
+        );
+        assert!(slot.publish(|buf| {
+            buf.push(1);
+            true
+        }));
+        assert_eq!(slot.generation(), g0 + 1);
+        assert!(slot.publish(|_| true));
+        assert_eq!(slot.generation(), g0 + 1, "one bump per mark");
+    }
 
     #[test]
     fn buffer_is_prewarmed_so_first_publish_does_not_allocate() {
