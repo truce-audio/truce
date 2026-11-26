@@ -22,9 +22,13 @@
 //!
 //! `DenormalGuard::new()` reads the current control word, ORs in
 //! the flush bits, writes it back, and stashes the original.
-//! `drop()` restores. The format wrappers' bridge layer
-//! (`truce_plugin`) wraps every `process()` call in a guard, so
-//! plugin authors get the right FPU state without opting in. A
+//! `drop()` restores. Every format wrapper's process callback runs
+//! under one (`wrapper::run_audio_block` / `run_audio_block_with`), so
+//! the wrapper's own per-sample work - format conversion, slicing,
+//! metering - is flushed too, not just the plug-in body; `process_chunked`
+//! and the `truce_plugin` bridge add their own for the standalone app,
+//! the offline driver and the hot-reload shell. Plugin authors get the
+//! right FPU state without opting in. A
 //! plugin that needs gradual underflow (extremely rare in audio)
 //! can construct an opposite guard inside `process()` to flip the
 //! bits back for the duration.
