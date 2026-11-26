@@ -287,6 +287,9 @@ pub struct Vst3Callbacks {
     /// no-ops otherwise), so animation / deferred work runs on the host UI
     /// thread the same way it does under CLAP and standalone.
     pub gui_idle: unsafe extern "C" fn(ctx: *mut c_void),
+    /// [`truce_core::editor::Editor::wants_idle`] for the open editor (1 if
+    /// there's none yet). The shim skips the ~60fps idle tick on 0.
+    pub gui_wants_idle: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     /// `IMidiMapping::getMidiControllerAssignment`. Given the event-input
     /// bus, MIDI channel (0..=15), and a VST3 `ControllerNumbers` value
     /// (`0..=127` CC, `kAfterTouch`/`kPitchBend`/`kCtrlProgramChange`),

@@ -1272,6 +1272,10 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // baseview drives its own frame loop.
     }
 
+    fn wants_idle(&self) -> bool {
+        false
+    }
+
     fn screenshot(
         &mut self,
         _params: Arc<dyn truce_params::Params>,

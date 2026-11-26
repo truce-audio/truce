@@ -46,9 +46,11 @@
 // v6: appended `gui_idle`; gate on abi_version >= v6 before calling it.
 // v7: appended `gui_has_aspect_lock`; gate on abi_version >= v7 before
 // calling it.
+// v8: appended `gui_wants_idle`; gate on abi_version >= v8 before calling
+// it.
 #define TRUCE_AU_ABI_MAGIC_MASK 0xFFFFFF00u
 #define TRUCE_AU_ABI_MAGIC 0x54417500u
-#define TRUCE_AU_ABI_VERSION 0x54417507u
+#define TRUCE_AU_ABI_VERSION 0x54417508u
 
 typedef struct {
     uint8_t component_type[4];
@@ -364,6 +366,12 @@ typedef struct {
      * per the append-only rule; gate on abi_version (>= v7) before
      * calling. */
     int32_t (*gui_has_aspect_lock)(void *ctx);
+    /* 1 if the open editor's `idle` does anything (`Editor::wants_idle`),
+     * 0 if it no-ops (the built-in / egui / iced / slint editors, which
+     * repaint through baseview's own loop); 1 when there's no editor yet.
+     * The v2 view skips its ~60fps idle NSTimer on 0. Appended per the
+     * append-only rule; gate on abi_version (>= v8) before calling. */
+    int32_t (*gui_wants_idle)(void *ctx);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

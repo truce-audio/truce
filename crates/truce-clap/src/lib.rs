@@ -3438,11 +3438,13 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
         // from the reloaded dylib).
         gui.editor = (data.editor_builder)(data.params_arc.clone());
         gui.gui_created = gui.editor.is_some();
-        // Register the UI-thread idle timer while the editor is live. Hosts
-        // that lack `clap.timer-support` leave `host_timer` null; baseview-
-        // backed editors still repaint via their own loop, but a raw editor
-        // depends on this tick (see `Editor::idle`).
-        if gui.editor.is_some()
+        // Register the UI-thread idle timer while the editor is live - but
+        // only for an editor whose `idle` does something: the baseview-backed
+        // ones repaint via their own loop and no-op it, so a 60 Hz host tick
+        // per open editor would be pure overhead. Hosts that lack
+        // `clap.timer-support` leave `host_timer` null; a raw editor depends
+        // on this tick (see `Editor::idle`).
+        if gui.editor.as_ref().is_some_and(|e| e.wants_idle())
             && gui.editor_timer_id.is_none()
             && !data.host_timer.is_null()
             && let Some(register) = (*data.host_timer).register_timer

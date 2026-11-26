@@ -1765,6 +1765,11 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         }
     }
 
+    // Open in a host, baseview's frame loop repaints and `idle` no-ops.
+    fn wants_idle(&self) -> bool {
+        false
+    }
+
     fn screenshot(
         &mut self,
         _params: Arc<dyn truce_params::Params>,

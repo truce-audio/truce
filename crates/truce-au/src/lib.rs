@@ -2023,6 +2023,19 @@ unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_vo
     })
 }
 
+unsafe extern "C" fn cb_gui_wants_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+    run_extern_callback_with::<P, i32>("au", "gui_wants_idle", 1, || unsafe {
+        if ctx.is_null() {
+            return 1;
+        }
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        // Busy cell or no editor yet: assume it wants idle (the safe side).
+        gui_try_enter(inst).map_or(1, |gui| {
+            i32::from(gui.editor.as_ref().is_none_or(|e| e.wants_idle()))
+        })
+    })
+}
+
 /// Whether the editor locks its aspect ratio. The AU v3 Swift shim
 /// refuses an off-aspect host resize (Logic's 4:3 view configuration,
 /// which would letterbox the layout) only for a locked editor, so a
@@ -2675,6 +2688,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         param_parse_value: cb_param_parse_value::<P>,
         gui_idle: cb_gui_idle::<P>,
         gui_has_aspect_lock: cb_gui_has_aspect_lock::<P>,
+        gui_wants_idle: cb_gui_wants_idle::<P>,
     }));
 
     let param_descs = param_descs.leak();

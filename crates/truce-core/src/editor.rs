@@ -291,6 +291,22 @@ pub trait Editor: Send {
     /// own timer until it does.
     fn idle(&mut self, _dt: std::time::Duration) {}
 
+    /// Whether [`Self::idle`] does anything while the editor is open. A
+    /// format skips its ~60 Hz idle timer for an editor that says `false`:
+    /// CLAP registers no `clap.timer-support` tick, VST3 runs no idle source
+    /// (its restart drain keeps its slower cadence) and the AU v2 view no
+    /// `NSTimer`. Read once the editor is built, before or right after
+    /// `open` depending on the format, so it must not depend on state `open`
+    /// sets, and must stay the same for the editor's lifetime.
+    ///
+    /// The default is `true`; the built-in, egui, iced and slint editors,
+    /// which repaint through baseview's frame loop and no-op `idle`, return
+    /// `false`. Override it alongside `idle` - and a wrapper that adds idle
+    /// work of its own must not forward an inner editor's `false`.
+    fn wants_idle(&self) -> bool {
+        true
+    }
+
     /// Host requests a resize. Return true to accept.
     fn set_size(&mut self, _width: u32, _height: u32) -> bool {
         false
