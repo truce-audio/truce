@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use truce_core::export::PluginExport;
-use truce_core::info::PluginCategory;
 
 use crate::audio;
 use crate::cli::Options;
@@ -33,12 +32,14 @@ pub fn run<P: PluginExport>(opts: &Options) {
         Arc::clone(&handles.pending),
     );
 
-    let is_instrument = P::info().category != PluginCategory::Effect;
+    // No audio input bus (an instrument, or a MIDI-only plug-in): MIDI is
+    // the only thing that can drive it.
+    let no_audio_in = !handles.takes_input;
     vlog!("Plugin: {}", P::info().name);
-    if is_instrument && opts.midi_inputs.is_empty() {
+    if no_audio_in && opts.midi_inputs.is_empty() {
         // Soft warning - actionable, so always print.
         eprintln!(
-            "(instrument; no --midi-input specified - plugin will \
+            "(no audio input and no --midi-input specified - plugin will \
              emit silence. Use --list-midi to see available devices.)"
         );
     }

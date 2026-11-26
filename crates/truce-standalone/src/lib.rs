@@ -23,9 +23,10 @@
 //!   baseview window hosting the plugin's editor, drives a cpal
 //!   stream on the audio thread.
 //! - **Headless** (`--headless` flag or the `gui` feature disabled):
-//!   audio only. For effects this means audio passes through; for
-//!   instruments the plugin emits silence unless a MIDI device is
-//!   connected (`--midi-input`; see [`midi`]).
+//!   audio only. A plug-in with an audio input processes the input
+//!   (`--input-file`, or the device with `--input-enabled`); one without
+//!   (an instrument) emits silence unless a MIDI device is connected
+//!   (`--midi-input`; see [`midi`]).
 //!
 //! See [`cli`] for the full flag surface.
 

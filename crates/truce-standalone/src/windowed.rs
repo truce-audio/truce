@@ -151,7 +151,7 @@ where
     // backs the key handler's gate, the Cmd/Ctrl+K toggle, and the
     // Settings-menu item, so all three read and write the same state.
     let qwerty_enabled = Arc::new(AtomicBool::new(opts.qwerty_midi));
-    let is_effect = audio_handles.is_effect;
+    let takes_input = audio_handles.takes_input;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let channels = audio_handles.channels;
     // Move the `--output-file` capture sink into the handler so the
@@ -211,9 +211,8 @@ where
         // The menu installs for every plugin category - the
         // Audio Output toggle and Output Device picker are
         // universally useful. The install path itself omits the
-        // Mic Input toggle and Input Device picker for non-effects
-        // (input is silent for instruments / analyzers without
-        // input routing).
+        // Mic Input toggle and Input Device picker for a plug-in with
+        // no audio input bus in any layout (an instrument).
         let preset_ctrl =
             crate::presets::PresetController::new::<P>(Arc::clone(&plugin), presets_dir.clone());
 
@@ -240,7 +239,7 @@ where
         {
             crate::menu_macos::install(
                 P::info().name,
-                is_effect,
+                takes_input,
                 channels,
                 &input_ctrl,
                 &output_ctrl,
@@ -261,7 +260,7 @@ where
             crate::menu_windows::install(
                 h.hwnd,
                 P::info().name,
-                is_effect,
+                takes_input,
                 channels,
                 input_ctrl.clone(),
                 output_ctrl.clone(),
@@ -437,7 +436,7 @@ where
             transport,
             input_ctrl,
             output_ctrl,
-            is_effect,
+            takes_input,
             qwerty_enabled: qwerty_enabled.clone(),
             octave_offset: 0,
             presets: preset_ctrl,
@@ -507,9 +506,9 @@ where
     /// Toggle / device-switch handle for the output. Cmd+O / Ctrl+O
     /// dispatches mute through this; the menu owns device switching.
     output_ctrl: OutputController,
-    /// True only for effect plugins; gates the `I` keyboard
-    /// shortcut.
-    is_effect: bool,
+    /// True for a plug-in with an audio input bus in some layout;
+    /// gates the `I` keyboard shortcut.
+    takes_input: bool,
     /// QWERTY-keyboard-to-MIDI, off by default. Shared with the
     /// Settings menu item and flipped by Cmd/Ctrl+K; the note handler
     /// only plays keys when this is set.
@@ -889,16 +888,16 @@ where
         }
 
         // Cmd+I (macOS) / Ctrl+I (Linux / Windows) → toggle mic
-        // input (effects only). First press on macOS triggers the
-        // system permission dialog; subsequent toggles don't
-        // re-prompt. On macOS the NSMenuItem accelerator usually
+        // input (plug-ins with an audio input only). First press on
+        // macOS triggers the system permission dialog; subsequent
+        // toggles don't re-prompt. On macOS the NSMenuItem accelerator usually
         // dispatches this before baseview sees the event - the
         // handler below is the only path on Windows / Linux (Win32
         // menu accelerators need an HACCEL table baseview doesn't
         // expose) and a guard on macOS. Capture both Down and Up
         // so the note-handler below never sees a stray modifier+I
         // Up that would emit a NoteOff for a note we never played.
-        if kb.code == Code::KeyI && self.is_effect && is_mod_pressed(kb.modifiers) {
+        if kb.code == Code::KeyI && self.takes_input && is_mod_pressed(kb.modifiers) {
             if kb.state == KeyState::Down {
                 let want = !self.input_ctrl.is_enabled();
                 self.input_ctrl.set_enabled(want);
