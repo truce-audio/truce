@@ -445,6 +445,12 @@ pub(crate) struct NestedField {
     /// laid out per [`Self::base`]'s rules (salted per element, or packed
     /// contiguously under ordinal).
     pub(crate) array_len: Option<usize>,
+    /// Label prefixed onto this group's param names where they need
+    /// disambiguating (array elements, groups inside them, and a group's
+    /// names that come from an array below it): the
+    /// `#[nested(label = "...")]` override, else the field name in title
+    /// case (`bands` -> `Bands`).
+    pub(crate) label: String,
 }
 
 /// A meter slot field.
@@ -815,22 +821,53 @@ fn has_nested_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("nested"))
 }
 
-/// Parse the optional `base = N` from `#[nested(base = N)]`. Returns
-/// `None` when the attribute is bare (`#[nested]`), which auto-assigns
-/// the base.
-fn nested_base(field: &syn::Field) -> Option<u32> {
-    let attr = field.attrs.iter().find(|a| a.path().is_ident("nested"))?;
+/// Parse `#[nested]` / `#[nested(base = N, label = "...")]`: the optional
+/// explicit base (`None` auto-assigns it) and the optional name label
+/// (`None` uses the field name, title-cased). An unknown key, a mistyped
+/// value or an empty / control-character label is a compile error - a
+/// silently dropped `base` would move persisted ids.
+fn parse_nested_attr(field: &syn::Field) -> syn::Result<(Option<u32>, Option<String>)> {
+    let mut attrs = field.attrs.iter().filter(|a| a.path().is_ident("nested"));
+    let Some(attr) = attrs.next() else {
+        return Ok((None, None));
+    };
+    if let Some(dup) = attrs.next() {
+        return Err(syn::Error::new_spanned(
+            dup,
+            "duplicate `#[nested]` attribute - put `base` / `label` in one",
+        ));
+    }
+    if matches!(attr.meta, syn::Meta::Path(_)) {
+        return Ok((None, None));
+    }
     let mut base = None;
-    // A bare `#[nested]` has no parens to parse; ignore the error so it
-    // falls through to the auto-assigned base.
-    let _ = attr.parse_nested_meta(|meta| {
+    let mut label = None;
+    attr.parse_nested_meta(|meta| {
         if meta.path.is_ident("base") {
+            if base.is_some() {
+                return Err(meta.error("duplicate `base`"));
+            }
             let lit: syn::LitInt = meta.value()?.parse()?;
-            base = lit.base10_parse::<u32>().ok();
+            base = Some(lit.base10_parse::<u32>()?);
+        } else if meta.path.is_ident("label") {
+            if label.is_some() {
+                return Err(meta.error("duplicate `label`"));
+            }
+            let lit: syn::LitStr = meta.value()?.parse()?;
+            let v = lit.value();
+            if v.trim().is_empty() || v.chars().any(char::is_control) {
+                return Err(syn::Error::new(
+                    lit.span(),
+                    "`#[nested(label)]` must be non-empty, without control characters",
+                ));
+            }
+            label = Some(v);
+        } else {
+            return Err(meta.error("unknown `#[nested]` key - expected `base` or `label`"));
         }
         Ok(())
-    });
-    base
+    })?;
+    Ok((base, label))
 }
 
 /// Check if a field has `#[meter]` attribute.
@@ -1146,11 +1183,14 @@ fn collect_fields(fields: &Fields) -> CollectedFields {
         }
 
         if has_nested_attr(f) {
-            match nested_elem_and_len(&f.ty) {
-                Ok((ty, array_len)) => nested.push(NestedField {
+            match nested_elem_and_len(&f.ty).and_then(|(ty, len)| {
+                parse_nested_attr(f).map(|(base, label)| (ty, len, base, label))
+            }) {
+                Ok((ty, array_len, base, label)) => nested.push(NestedField {
+                    label: label.unwrap_or_else(|| nested_field_label(&ident)),
                     ident,
                     ty,
-                    base: nested_base(f),
+                    base,
                     array_len,
                 }),
                 Err(e) => errors.push(e.to_compile_error()),
@@ -1235,6 +1275,29 @@ fn num_slot_expr(s: &str) -> Result<proc_macro2::TokenStream, String> {
         Ok(expr) => Ok(expr.to_token_stream()),
         Err(_) => Err(format!("`{s}` is not a number or a valid const expression")),
     }
+}
+
+/// Display label for a `#[nested]` field, prefixed onto its params' names
+/// where they need disambiguating (see `gen_infos_appends`): `step` ->
+/// `Step`, `bank_a` -> `Bank A`, `r#type` -> `Type`.
+fn nested_field_label(ident: &syn::Ident) -> String {
+    field_label(&ident.to_string())
+}
+
+/// [`nested_field_label`] from the field's name as written (the LV2
+/// aggregator reads it back from the sidecar).
+pub(crate) fn field_label(raw: &str) -> String {
+    raw.trim_start_matches("r#")
+        .split('_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A range / smoothing slot as a float literal, if it is one. Finite only:
@@ -2243,6 +2306,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     };
 
     if param_fields.is_empty() && nested_fields.is_empty() && meter_fields.is_empty() {
+        // A field that failed to parse (a bad `#[nested(...)]`) is why
+        // nothing was recognized: report that, not the generic error.
+        if !nested_type_errors.is_empty() {
+            return quote! { #(#nested_type_errors)* }.into();
+        }
         return syn::Error::new_spanned(
             &ast,
             "Params derive: no recognized fields (FloatParam, BoolParam, IntParam, EnumParam, MeterSlot, or #[nested])",
@@ -2421,11 +2489,16 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // walks the sidecar tree to aggregate. Failures here are silent -
     // they surface at TTL-emit time when the aggregator can't find
     // the data it needs.
-    let nested_for_sidecar: Vec<(syn::Ident, syn::Type, Option<u32>, Option<usize>)> =
-        nested_fields
-            .iter()
-            .map(|n| (n.ident.clone(), n.ty.clone(), n.base, n.array_len))
-            .collect();
+    let nested_for_sidecar: Vec<lv2_emit::SidecarNested> = nested_fields
+        .iter()
+        .map(|n| lv2_emit::SidecarNested {
+            field: n.ident.clone(),
+            ty: n.ty.clone(),
+            base: n.base,
+            array_len: n.array_len,
+            label: n.label.clone(),
+        })
+        .collect();
     lv2_emit::write_struct_sidecar(
         struct_name,
         scheme == IdScheme::Hash,
@@ -2492,34 +2565,87 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // Recurse via `append_param_infos` so each nested struct pushes
     // directly into the shared buffer instead of building its own `Vec`
     // that the outer call then extends - saves O(depth) intermediate
-    // allocations per `param_infos()` call. Array elements additionally
-    // get their just-appended leaf names index-suffixed (`Level` ->
-    // `Level 1` .. `Level N`) so hosts and the GUI can tell them apart;
-    // a single (non-array) nested group can't collide, so it's left raw.
-    // `into` is the `&mut Vec` buffer in both the override and the
-    // `param_infos()` body below.
-    let infos_appends: Vec<_> = nested_fields
-        .iter()
-        .map(|n| {
-            let ident = &n.ident;
-            if n.array_len.is_some() {
-                quote! {
-                    for (__i, __n) in self.#ident.iter().enumerate() {
-                        let __start = into.len();
-                        __n.append_param_infos(into);
-                        let __idx = u32::try_from(__i).unwrap_or(u32::MAX);
-                        for __info in &mut into[__start..] {
-                            __info.name = ::truce::params::indexed_name(__info.name, __idx);
-                            __info.short_name =
-                                ::truce::params::indexed_name(__info.short_name, __idx);
+    // allocations per `param_infos()` call. `into` is the `&mut Vec`
+    // buffer in both the override and the `param_infos()` body below.
+    //
+    // An array element's names also carry the array field's label (`Step
+    // 1 Level`), so two arrays of one element type don't collide, and the
+    // element is appended *qualified*: its own single nested groups prefix
+    // their field label too (`Step 1 Env Level`), so a group inside an
+    // element can't collide with the element's own params. A single group
+    // outside any array keeps its own params raw, as in 6.x (its names feed
+    // persisted LV2 port symbols), but prefixes its label onto names from
+    // an array below it (`Osc A Harm 1 Level`). Short names keep the bare
+    // index suffix (`Lv 1`) to stay short.
+    let gen_infos_appends = |qualify: bool| -> Vec<proc_macro2::TokenStream> {
+        nested_fields
+            .iter()
+            .map(|n| {
+                let ident = &n.ident;
+                let label = &n.label;
+                if n.array_len.is_some() {
+                    quote! {
+                        for (__i, __n) in self.#ident.iter().enumerate() {
+                            let __start = into.len();
+                            __n.append_param_infos_qualified(into);
+                            let __idx = u32::try_from(__i).unwrap_or(u32::MAX);
+                            for __info in &mut into[__start..] {
+                                __info.name = ::truce::params::prefixed_name(
+                                    #label,
+                                    ::core::option::Option::Some(__idx),
+                                    __info.name,
+                                );
+                                __info.short_name =
+                                    ::truce::params::indexed_name(__info.short_name, __idx);
+                            }
+                        }
+                    }
+                } else if qualify {
+                    quote! {
+                        {
+                            let __start = into.len();
+                            self.#ident.append_param_infos_qualified(into);
+                            for __info in &mut into[__start..] {
+                                __info.name = ::truce::params::prefixed_name(
+                                    #label,
+                                    ::core::option::Option::None,
+                                    __info.name,
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    // Unqualified (not inside an element): raw names, as in
+                    // 6.x - except those that came from an array below this
+                    // group, which take its label too so the same group type
+                    // in two slots doesn't repeat `Harm 1 Level`.
+                    let ty = &n.ty;
+                    quote! {
+                        if !<#ty as ::truce::params::Params>::param_infos_any_under_array() {
+                            // The common 6.x shape: nothing to prefix, no
+                            // flags vector to build.
+                            self.#ident.append_param_infos(into);
+                        } else {
+                            let __start = into.len();
+                            self.#ident.append_param_infos(into);
+                            let __under = <#ty as ::truce::params::Params>::param_infos_under_array();
+                            for (__info, __arr) in into[__start..].iter_mut().zip(__under) {
+                                if __arr {
+                                    __info.name = ::truce::params::prefixed_name(
+                                        #label,
+                                        ::core::option::Option::None,
+                                        __info.name,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
-            } else {
-                quote! { self.#ident.append_param_infos(into); }
-            }
-        })
-        .collect();
+            })
+            .collect()
+    };
+    let infos_appends = gen_infos_appends(false);
+    let infos_appends_qualified = gen_infos_appends(true);
 
     let infos_expr = if nested_fields.is_empty() {
         quote! { vec![#(#own_infos),*] }
@@ -2544,6 +2670,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             fn append_param_infos(&self, into: &mut Vec<::truce::params::ParamInfo>) {
                 #(into.push(#own_infos);)*
                 #(#infos_appends)*
+            }
+
+            fn append_param_infos_qualified(&self, into: &mut Vec<::truce::params::ParamInfo>) {
+                #(into.push(#own_infos);)*
+                #(#infos_appends_qualified)*
             }
         }
     };
@@ -2630,72 +2761,186 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     };
     let static_elem_count = |ty: &syn::Type| quote! { <#ty as ::truce::params::Params>::param_infos_static().len() as u32 };
-    let nested_static_calls: Vec<proc_macro2::TokenStream> = nested_fields
-        .iter()
-        .enumerate()
-        .map(|(i, n)| {
-            let ty = &n.ty;
-            let base_expr = static_group_base(i, n);
-            match n.array_len {
-                None => quote! {
-                    {
-                        let __base: u32 = #base_expr;
-                        infos.extend(
-                            <#ty as ::truce::params::Params>::param_infos_static()
-                                .into_iter()
-                                .map(|mut __info| {
-                                    __info.id =
-                                        (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
-                                    __info
-                                }),
-                        );
-                    }
-                },
-                // No elements: emit nothing, not `for __i in 0u32..0u32`
-                // (clippy's deny-by-default `reversed_empty_ranges` fires
-                // on it in the user's crate).
-                Some(0) => quote! {},
-                Some(len) => {
-                    let n_elems = u32::try_from(len).unwrap_or(0);
-                    let layout = array_elem_base(n, base_expr, static_elem_count(ty));
-                    let prelude = &layout.prelude;
-                    let mapped = layout.map_id(&quote! { __info.id });
-                    quote! {
-                        {
-                            #prelude
-                            for __i in 0u32..#n_elems {
+    // Mirrors the runtime `gen_infos_appends` (naming and qualification
+    // included), so the static table matches the live `param_infos()`.
+    let gen_nested_static_calls = |qualify: bool| -> Vec<proc_macro2::TokenStream> {
+        nested_fields
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let ty = &n.ty;
+                let label = &n.label;
+                let base_expr = static_group_base(i, n);
+                match n.array_len {
+                    None => {
+                        let (src, rename) = if qualify {
+                            (
+                                quote! { param_infos_static_qualified },
+                                quote! {
+                                    __info.name = ::truce::params::prefixed_name(
+                                        #label,
+                                        ::core::option::Option::None,
+                                        __info.name,
+                                    );
+                                },
+                            )
+                        } else {
+                            // As the runtime: only names from an array below.
+                            (
+                                quote! { param_infos_static },
+                                quote! {
+                                    if __arr {
+                                        __info.name = ::truce::params::prefixed_name(
+                                            #label,
+                                            ::core::option::Option::None,
+                                            __info.name,
+                                        );
+                                    }
+                                },
+                            )
+                        };
+                        quote! {
+                            {
+                                let __base: u32 = #base_expr;
+                                let __under =
+                                    <#ty as ::truce::params::Params>::param_infos_under_array();
                                 infos.extend(
-                                    <#ty as ::truce::params::Params>::param_infos_static()
+                                    <#ty as ::truce::params::Params>::#src()
                                         .into_iter()
-                                        .map(|mut __info| {
-                                            __info.id = #mapped;
-                                            // Match the runtime path: disambiguate each
-                                            // element's leaf names (`Level` -> `Level 1` ..),
-                                            // name and short_name both, or the static table
-                                            // (what VST3 / AU / VST2 / AAX register from)
-                                            // would show identical short labels.
-                                            __info.name =
-                                                ::truce::params::indexed_name(__info.name, __i);
-                                            __info.short_name =
-                                                ::truce::params::indexed_name(__info.short_name, __i);
+                                        .zip(__under.into_iter().chain(::core::iter::repeat(false)))
+                                        .map(|(mut __info, __arr)| {
+                                            let _ = __arr;
+                                            __info.id = (__info.id + __base)
+                                                & (::truce::params::METER_ID_BASE - 1);
+                                            #rename
                                             __info
                                         }),
                                 );
                             }
                         }
                     }
+                    // No elements: emit nothing, not `for __i in 0u32..0u32`
+                    // (clippy's deny-by-default `reversed_empty_ranges` fires
+                    // on it in the user's crate).
+                    Some(0) => quote! {},
+                    Some(len) => {
+                        let n_elems = u32::try_from(len).unwrap_or(0);
+                        let layout = array_elem_base(n, base_expr, static_elem_count(ty));
+                        let prelude = &layout.prelude;
+                        let mapped = layout.map_id(&quote! { __info.id });
+                        quote! {
+                            {
+                                #prelude
+                                for __i in 0u32..#n_elems {
+                                    infos.extend(
+                                        <#ty as ::truce::params::Params>::param_infos_static_qualified()
+                                            .into_iter()
+                                            .map(|mut __info| {
+                                                __info.id = #mapped;
+                                                // Match the runtime path's element names
+                                                // (`Step 1 Level`, short `Lv 1`), or the
+                                                // static table (what VST3 / AU / VST2 /
+                                                // AAX register from) would disagree.
+                                                __info.name = ::truce::params::prefixed_name(
+                                                    #label,
+                                                    ::core::option::Option::Some(__i),
+                                                    __info.name,
+                                                );
+                                                __info.short_name =
+                                                    ::truce::params::indexed_name(__info.short_name, __i);
+                                                __info
+                                            }),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
+            })
+            .collect()
+    };
+    let static_body = |calls: &[proc_macro2::TokenStream]| {
+        if nested_fields.is_empty() {
+            quote! { vec![#(#own_info_literals),*] }
+        } else {
+            quote! {
+                {
+                    let mut infos: Vec<::truce::params::ParamInfo> = vec![#(#own_info_literals),*];
+                    #(#calls)*
+                    infos
+                }
+            }
+        }
+    };
+    let static_infos_body = static_body(&gen_nested_static_calls(false));
+    let static_infos_qualified_body = static_body(&gen_nested_static_calls(true));
+    // Which of `param_infos_static()`'s entries sit under a `#[nested]`
+    // array (array-qualified names): a parent single group prefixes its
+    // label onto exactly those (see `gen_infos_appends`).
+    let own_param_count = param_fields.len();
+    let under_array_parts: Vec<proc_macro2::TokenStream> = nested_fields
+        .iter()
+        .map(|n| {
+            let ty = &n.ty;
+            match n.array_len {
+                None => quote! {
+                    __v.extend(<#ty as ::truce::params::Params>::param_infos_under_array());
+                },
+                Some(len) => quote! {
+                    __v.extend(::core::iter::repeat_n(
+                        true,
+                        #len * <#ty as ::truce::params::Params>::param_infos_static_qualified().len(),
+                    ));
+                },
             }
         })
         .collect();
-    let static_infos_body = if nested_fields.is_empty() {
-        quote! { vec![#(#own_info_literals),*] }
+    let any_under_array_terms: Vec<proc_macro2::TokenStream> = nested_fields
+        .iter()
+        .map(|n| {
+            let ty = &n.ty;
+            if n.array_len.is_some() {
+                quote! { true }
+            } else {
+                quote! { <#ty as ::truce::params::Params>::param_infos_any_under_array() }
+            }
+        })
+        .collect();
+    let under_array_impl = if nested_fields.is_empty() {
+        quote! {}
     } else {
         quote! {
+            fn param_infos_any_under_array() -> bool
+            where
+                Self: ::std::marker::Sized,
             {
-                let mut infos: Vec<::truce::params::ParamInfo> = vec![#(#own_info_literals),*];
-                #(#nested_static_calls)*
-                infos
+                false #(|| #any_under_array_terms)*
+            }
+
+            fn param_infos_under_array() -> Vec<bool>
+            where
+                Self: ::std::marker::Sized,
+            {
+                static FLAGS: ::std::sync::LazyLock<Vec<bool>> = ::std::sync::LazyLock::new(|| {
+                    let mut __v = vec![false; #own_param_count];
+                    #(#under_array_parts)*
+                    __v
+                });
+                FLAGS.clone()
+            }
+        }
+    };
+    let qualified_static_impl = if nested_fields.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            fn param_infos_static_qualified() -> Vec<::truce::params::ParamInfo>
+            where
+                Self: ::std::marker::Sized,
+            {
+                static INFOS: ::std::sync::LazyLock<Vec<::truce::params::ParamInfo>> =
+                    ::std::sync::LazyLock::new(|| #static_infos_qualified_body);
+                INFOS.clone()
             }
         }
     };
@@ -2712,6 +2957,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 ::std::sync::LazyLock::new(|| #static_infos_body);
             INFOS.clone()
         }
+
+        #qualified_static_impl
+
+        #under_array_impl
     };
 
     // --- meter_ids ---
@@ -3195,7 +3444,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             let ty = &n.ty;
             let len = n.array_len.expect("filtered to array fields");
             let base_expr = static_group_base(i, n);
-            let fn_name = syn::Ident::new(&format!("{}_id", n.ident), n.ident.span());
+            let fn_name = syn::Ident::new(&format!("{}_id", n.ident.unraw()), n.ident.span());
             let layout = array_elem_base(n, base_expr, static_elem_count(ty));
             let prelude = layout.prelude.clone();
             let mapped = layout.map_id(&quote! { sub.into() });
