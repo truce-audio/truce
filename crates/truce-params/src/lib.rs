@@ -22,6 +22,50 @@ pub use types::{
 #[doc(hidden)]
 pub const METER_ID_BASE: u32 = 1 << 24;
 
+/// `fmix64` (`MurmurHash3`'s 64-bit finalizer): a bijection on `u64`
+/// with full avalanche, so distinct inputs give distinct, well-spread
+/// outputs.
+const fn fmix64(mut h: u64) -> u64 {
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    h ^= h >> 33;
+    h
+}
+
+/// Implementation detail of `#[derive(Params)]`: the salt for element
+/// `index` of a hash-scheme `#[nested] field: [T; N]` array, from the
+/// full 32-bit FNV-1a of the field name. `fmix64` is a bijection and its
+/// input is unique per index, so every element of an array gets a
+/// distinct salt by construction.
+#[doc(hidden)]
+#[must_use]
+pub const fn nested_elem_salt(field_hash: u32, index: u32) -> u64 {
+    fmix64(((field_hash as u64) << 32) | index as u64)
+}
+
+/// Implementation detail of `#[derive(Params)]`: the id a hash-scheme
+/// `#[nested]` array element exposes for the child param whose id (after
+/// the element's own nested rebasing) is `id`. Mixes rather than adds:
+/// an additive `salt + id` fold over masked FNV ids collided on ordinary
+/// names (`step: [T; 32]` with children `max` / `mix`) because a
+/// difference between two salts often equals one between two child ids.
+/// Within one element `salt ^ id` is unique per id, and across elements
+/// two salts would have to agree in their high 40 bits (ids live in the
+/// low 24) to repeat an input - about 2^-40 per element pair; `fmix64`
+/// keeps inputs unique before the mask. So ids collide at the random
+/// 24-bit birthday rate, the same as a flat struct with as many params
+/// (unlike the additive layout, that includes two ids within one
+/// element), and any collision is caught at construction. Shared with the LV2 sidecar
+/// aggregator so the TTL matches the runtime.
+#[doc(hidden)]
+#[must_use]
+#[allow(clippy::cast_possible_truncation)] // the mask is the point
+pub const fn mix_nested_id(id: u32, salt: u64) -> u32 {
+    (fmix64(salt ^ id as u64) as u32) & (METER_ID_BASE - 1)
+}
+
 /// Sealing module: external crates cannot implement [`Params`] or
 /// [`ParamEnum`] directly because they can't name `Sealed`. The
 /// `#[derive(Params)]` and `#[derive(ParamEnum)]` macros emit the

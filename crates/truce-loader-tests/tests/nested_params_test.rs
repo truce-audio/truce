@@ -712,7 +712,7 @@ fn ordinal_array_span_offsets_following_groups() {
     assert_eq!(p.tail.gain.id(), 5);
 }
 
-// Hash scheme: each element bases at its own `hash("bands[i]")`.
+// Hash scheme: each element's ids are mixed with its own salt for `bands[i]`.
 #[derive(Params)]
 struct HashArray {
     #[nested]
@@ -771,7 +771,7 @@ struct HashArrayGrown {
 fn hash_array_ids_survive_element_growth() {
     // Packing at `base + i * element_count` would move element 1's gain
     // onto element 0's grown range (and so on) once `freq` is added;
-    // per-element hashed bases keep every existing param put.
+    // per-element salted ids keep every existing param put.
     let a = HashArray::new();
     let b = HashArrayGrown::new();
     for i in 0..3 {
@@ -826,4 +826,146 @@ fn zero_length_arrays_contribute_nothing() {
     assert_eq!(EmptyHashArray::param_infos_static().len(), 1);
     assert_eq!(EmptyOrdinalArray::new().count(), 1);
     assert_eq!(EmptyOrdinalArray::param_infos_static().len(), 1);
+}
+
+// The collisions the additive `hash("field[i]") + hash(child)` layout hit
+// on ordinary names: masked FNV mixes weakly, so a difference between two
+// element bases often equalled one between two child ids, and
+// construction panicked with a duplicate id.
+#[derive(Params)]
+struct MaxMix {
+    #[param(name = "Max", default = 0.0)]
+    max: FloatParam,
+    #[param(name = "Mix", default = 0.0)]
+    mix: FloatParam,
+}
+
+#[derive(Params)]
+struct MaxMixSteps {
+    #[nested]
+    step: [MaxMix; 32],
+}
+
+#[derive(Params)]
+struct OnA2 {
+    #[param(name = "On", default = 0.0)]
+    on: FloatParam,
+    #[param(name = "A2", default = 0.0)]
+    a2: FloatParam,
+}
+
+#[derive(Params)]
+struct OnA2Steps {
+    #[nested]
+    step: [OnA2; 16],
+}
+
+#[test]
+fn hash_arrays_of_common_child_names_construct() {
+    // Construction asserts no duplicate ids; these used to panic.
+    let a = MaxMixSteps::new();
+    assert_eq!(a.count(), 64);
+    let b = OnA2Steps::new();
+    assert_eq!(b.count(), 32);
+    for (p, stat) in [
+        (a.param_infos(), MaxMixSteps::param_infos_static()),
+        (b.param_infos(), OnA2Steps::param_infos_static()),
+    ] {
+        let live: Vec<u32> = p.iter().map(|i| i.id).collect();
+        let st: Vec<u32> = stat.iter().map(|i| i.id).collect();
+        assert_eq!(live, st, "static table must match the live ids");
+    }
+    for (i, s) in a.step.iter().enumerate() {
+        assert_eq!(MaxMixSteps::step_id(i, MaxMixParamId::Max), s.max.id());
+        assert_eq!(MaxMixSteps::step_id(i, MaxMixParamId::Mix), s.mix.id());
+    }
+}
+
+// A hash array inside a group that is itself nested (with a pinned base):
+// the element mix happens first, then the ancestor's additive fold, the
+// same order in the live tree, the static table and the `_id` helper.
+#[derive(Params)]
+struct Lane {
+    #[param(name = "Lane Gain", default = 0.0)]
+    lane_gain: FloatParam,
+    #[nested]
+    step: [MaxMix; 4],
+}
+
+#[derive(Params)]
+struct TwoLanes {
+    #[param(name = "Master", default = 0.0)]
+    master: FloatParam,
+    #[nested(base = 1000)]
+    left: Lane,
+    #[nested]
+    right: Lane,
+}
+
+#[test]
+fn hash_array_inside_nested_group_agrees_live_and_static() {
+    let p = TwoLanes::new();
+    assert_eq!(p.count(), 1 + 2 * (1 + 4 * 2));
+    let live: Vec<u32> = p.param_infos().iter().map(|i| i.id).collect();
+    let stat: Vec<u32> = TwoLanes::param_infos_static()
+        .iter()
+        .map(|i| i.id)
+        .collect();
+    assert_eq!(live, stat);
+    let mut sorted = live.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted.len(), live.len(), "ids must be distinct");
+    // Inside its own struct, `Lane::step_id` gives the pre-fold id; the
+    // left lane then adds its pinned base 1000.
+    for (i, s) in p.left.step.iter().enumerate() {
+        let local = Lane::step_id(i, MaxMixParamId::Mix);
+        assert_eq!(
+            (local + 1000) & (truce_params::METER_ID_BASE - 1),
+            s.mix.id()
+        );
+    }
+}
+
+/// The layout's collision rate is the random 24-bit birthday rate, not the
+/// weak additive one: a 64 x 16 grid of common child names (1024 ids)
+/// stays distinct for this fixed set, where the additive layout collided
+/// for a large share of such structs.
+#[test]
+fn mixed_element_ids_spread_like_random_ids() {
+    let children = [
+        "gain", "mix", "max", "min", "on", "a2", "level", "pan", "freq", "q", "attack", "decay",
+        "sustain", "release", "drive", "tone",
+    ];
+    let mut ids = std::collections::HashSet::new();
+    for field in ["step", "band", "voice", "lane"] {
+        let fh = fnv1a32(field);
+        for i in 0..64u32 {
+            let salt = truce_params::nested_elem_salt(fh, i);
+            for c in children {
+                ids.insert((field, truce_params::mix_nested_id(fnv1a24(c), salt)));
+            }
+        }
+    }
+    for field in ["step", "band", "voice", "lane"] {
+        let per_field = ids.iter().filter(|(f, _)| *f == field).count();
+        assert_eq!(
+            per_field,
+            64 * children.len(),
+            "{field}: collision in 1024 ids"
+        );
+    }
+}
+
+fn fnv1a32(s: &str) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in s.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+fn fnv1a24(s: &str) -> u32 {
+    fnv1a32(s) & (truce_params::METER_ID_BASE - 1)
 }
