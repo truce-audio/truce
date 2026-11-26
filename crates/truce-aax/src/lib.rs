@@ -325,7 +325,9 @@ struct AaxInstance<P: PluginExport> {
     /// of copying multi-KB Vec contents per call. The snapshot generation is
     /// part of the key because the off-thread snapshot lane (a GUI sample
     /// load) changes the serialized `save_extra` bytes without moving
-    /// `state_revision`.
+    /// `state_revision`, and because the first publish of a just-applied
+    /// state load lands after the drain's revision bump (the drain arms
+    /// `mark_on_next_publish`).
     state_cache: Mutex<Option<StateCacheEntry>>,
     /// Monotonically-incrementing counter bumped by `_set_param` (audio
     /// thread) and `_load_state` (main thread). `_save_state` snapshots
@@ -1203,6 +1205,12 @@ pub unsafe fn _process<P: PluginExport>(
         if let Some(state) = inst.pending_state.pop() {
             state::apply_state(&mut *plugin, &state);
             inst.state_revision.fetch_add(1, Ordering::Release);
+            // A save between this bump and the first publish of the loaded
+            // state can cache the pre-load snapshot under the new revision;
+            // bump the snapshot generation when that publish lands (a reader
+            // can make this block's `try_lock` publish skip, so not merely
+            // when the block ends).
+            inst.snapshot.mark_on_next_publish();
         }
 
         // Paranoid allocation check (the `rt-paranoid` feature): guard the
@@ -1814,18 +1822,38 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
 /// `state_changed` hook - the same division of labor as the CLAP / VST3
 /// `republish_snapshot`, which also drives only the inline lane.
 fn republish_loaded_snapshot(slot: &SnapshotSlot, extra: Option<&[u8]>) {
+    /// The audio thread holds the slot only while it copies a block's
+    /// snapshot in, so a short retry lands the loaded bytes.
+    const PUBLISH_ATTEMPTS: u32 = 64;
     let Some(bytes) = extra.filter(|b| !b.is_empty()) else {
         return;
     };
-    slot.publish(|buf| {
-        buf.extend_from_slice(bytes);
-        true
-    });
-    // Bump the snapshot generation so the save-blob cache (keyed on it)
-    // re-serializes the loaded bytes on the next `_save_state`, even before
-    // the audio thread drains the load queue and bumps `state_revision`
-    // (an inactive recall may never render).
-    slot.mark_published();
+    for _ in 0..PUBLISH_ATTEMPTS {
+        let landed = slot.publish(|buf| {
+            buf.extend_from_slice(bytes);
+            true
+        });
+        if landed {
+            // Known window: if this lands while a block is in flight, that
+            // block's own publish can rewrite the pre-load custom state (an
+            // unversioned plug-in, or one whose `snapshot_version` moved), so
+            // a save before the drain that applies the load returns the
+            // loaded params with the old extra. That drain fixes it; it only
+            // sticks if rendering stops before the drain.
+            //
+            // Bump the snapshot generation so the save-blob cache (keyed on
+            // it) re-serializes the loaded bytes on the next `_save_state`,
+            // even before the audio thread drains the load queue and bumps
+            // `state_revision` (an inactive recall may never render).
+            slot.mark_published();
+            return;
+        }
+        std::thread::yield_now();
+    }
+    // Still contended (the audio thread publishing, or another reader):
+    // the block that applies the load republishes it and bumps the
+    // generation when that publish lands. Don't bump for bytes that never
+    // landed - a save would cache the pre-load snapshot under the new key.
 }
 
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
