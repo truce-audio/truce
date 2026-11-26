@@ -57,7 +57,12 @@ pub struct StateExampleParams {
     /// literals. It exercises the const-range build path end-to-end
     /// through `truce::plugin!` (default `0.0` is in `[-60, 0]`). The
     /// pass-through DSP ignores it; it's here purely for build coverage.
-    #[param(name = "Level", unit = "dB", range = "linear(LEVEL_MIN, LEVEL_MAX)", default = 0.0)]
+    #[param(
+        name = "Level",
+        unit = "dB",
+        range = "linear(LEVEL_MIN, LEVEL_MAX)",
+        default = 0.0
+    )]
     pub level: FloatParam,
 
     #[persist = "memo"]
