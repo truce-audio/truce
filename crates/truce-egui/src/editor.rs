@@ -367,6 +367,16 @@ const RESIZE_DEBOUNCE_CAP: std::time::Duration = std::time::Duration::from_milli
 /// while keeping the post-resize repaint prompt.
 const RESIZE_SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
 
+/// Backoff before retrying a frame the surface couldn't take (occluded /
+/// transient acquire failure). Without it a hidden or minimized editor
+/// whose `force_paint` stays armed re-runs the full egui pass +
+/// tessellation on every `on_frame` tick, defeating the idle gate. ~10
+/// retries/sec recovers promptly once the surface is back without busy-
+/// looping the host GUI thread meanwhile. It paces an otherwise idle UI
+/// only: an egui repaint request (animation, `request_repaint_after`)
+/// still runs the pass every tick through `should_paint`.
+const SURFACE_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(100);
+
 struct EguiWindowHandler<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     context: PluginContext<P>,
@@ -580,8 +590,8 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     // Owned args match the Windows variant, which moves them into the
     // render thread's `FramePacket`; this inline variant only borrows.
     /// Paints the frame, returning whether it reached the surface. A
-    /// `false` (surface not ready) keeps `force_paint` armed so the next
-    /// tick retries instead of leaving the editor stale.
+    /// `false` (surface not ready) makes the caller schedule a backed-off
+    /// retry (see `SURFACE_RETRY_BACKOFF`) rather than leave it stale.
     #[allow(clippy::needless_pass_by_value)]
     #[cfg(not(target_os = "windows"))]
     fn painter_paint(
@@ -608,9 +618,10 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
                 pixels_per_point,
             });
         }
-        // The render thread paints asynchronously and reconfigures a
-        // stale surface on its own; from the GUI thread the submit always
-        // lands in the latest-wins mailbox.
+        // The render thread paints asynchronously, so the submit always
+        // "succeeds" from here; a frame it later skips (stale / occluded
+        // surface) is reported back via `take_frame_skipped`, which
+        // schedules a backed-off retry on a following tick.
         true
     }
 
@@ -678,7 +689,7 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
     /// whether the frame reached the surface. The delay folds into the
     /// idle gate: `ZERO` means animate next frame, a finite delay
     /// schedules one, and `Duration::MAX` means idle. A `false` paint
-    /// (surface not ready) tells the caller to keep `force_paint` armed.
+    /// (surface not ready) tells the caller to schedule a backed-off retry.
     #[allow(clippy::cast_precision_loss)]
     fn run_frame(&mut self, window: &mut Window) -> (Option<std::time::Duration>, bool) {
         if !self.painter_ready() {
@@ -985,6 +996,25 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             if GUI_THREAD_BLOCKS_ON_GPU && self.pacer.should_hold() {
                 return;
             }
+            // The render thread paints asynchronously, so `painter_paint`
+            // can't report a skipped frame inline the way the macOS /
+            // Linux renderers do; it comes back here as a flag. Retry after
+            // `SURFACE_RETRY_BACKOFF`, not next tick - re-arming
+            // `force_paint` here re-ran the full egui pass every tick for
+            // as long as the surface stayed occluded. `force_paint` is left
+            // alone: the skipped frame didn't use it (the async submit
+            // already cleared it), so if it's set now a later resize asked
+            // for that paint, and it must not wait out the backoff. A real
+            // change or an egui repaint request still paints via
+            // `should_paint`, so this only paces an otherwise idle UI.
+            #[cfg(target_os = "windows")]
+            if self
+                .render_thread
+                .as_ref()
+                .is_some_and(RenderThread::take_frame_skipped)
+            {
+                self.next_paint_at = Some(std::time::Instant::now() + SURFACE_RETRY_BACKOFF);
+            }
             // Idle gate: skip the whole frame (no egui run, no present)
             // when nothing needs redrawing. This is what keeps the host
             // responsive - an idle editor stops doing per-tick work on
@@ -993,24 +1023,31 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 return;
             }
             let (repaint_delay, painted) = self.run_frame(window);
-            // Keep `force_paint` armed when the surface couldn't take the
-            // frame (reconfigured / transient), so an idle editor retries
-            // next tick instead of staying stale after the recovery.
+            self.pacer.record_acquire(self.painter_acquire_wait());
             if painted {
                 self.force_paint = false;
+                // Schedule the next forced paint from egui's reported delay:
+                // `ZERO` -> paint next frame (animating), a finite delay ->
+                // paint then, and anything very large (egui's idle
+                // `Duration::MAX`) -> idle until input / automation. Cap
+                // guards `Instant + Duration` against overflow.
+                self.next_paint_at = match repaint_delay {
+                    Some(d) if d <= std::time::Duration::from_hours(1) => {
+                        Some(std::time::Instant::now() + d)
+                    }
+                    _ => None,
+                };
+            } else {
+                // The surface couldn't take the frame (occluded / transient /
+                // mid-reconfigure). Leaving `force_paint` armed would re-run
+                // the full egui pass + tessellation on every tick, so instead
+                // clear it and retry after a short backoff. A real change
+                // (param / event / repaint request) still paints at once via
+                // `should_paint`; the backed-off retry repaints the latest
+                // content once the surface recovers.
+                self.force_paint = false;
+                self.next_paint_at = Some(std::time::Instant::now() + SURFACE_RETRY_BACKOFF);
             }
-            self.pacer.record_acquire(self.painter_acquire_wait());
-            // Schedule the next forced paint from egui's reported delay:
-            // `ZERO` -> paint next frame (animating), a finite delay ->
-            // paint then, and anything very large (egui's idle
-            // `Duration::MAX`) -> idle until input / automation. Cap
-            // guards `Instant + Duration` against overflow.
-            self.next_paint_at = match repaint_delay {
-                Some(d) if d <= std::time::Duration::from_hours(1) => {
-                    Some(std::time::Instant::now() + d)
-                }
-                _ => None,
-            };
         }));
         if let Err(e) = frame_result {
             let msg = e

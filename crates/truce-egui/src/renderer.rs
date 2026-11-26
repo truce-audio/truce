@@ -285,8 +285,9 @@ impl EguiRenderer {
 
     /// Paint a frame of egui output to the surface. Returns `false` when
     /// the frame was skipped (the surface couldn't give a texture), so
-    /// the caller keeps `force_paint` armed and retries next tick instead
-    /// of leaving the editor stale.
+    /// the caller schedules a backed-off retry (`SURFACE_RETRY_BACKOFF`)
+    /// instead of leaving the editor stale or re-running the UI every
+    /// tick.
     pub fn render(
         &mut self,
         textures_delta: &mut egui::TexturesDelta,
