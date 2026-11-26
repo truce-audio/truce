@@ -1688,7 +1688,7 @@ fn const_range_checks(range: &str, name: &str) -> Option<ConstRangeChecks> {
             pre: empty(),
             min: f64_slot(parts.first()?)?,
             max: f64_slot(parts.get(1)?)?,
-            post: quote! { assert!(__min > 0.0 && __max > 0.0, #msg); },
+            post: quote! { assert!(__min > 0.0 && __max > 0.0, "{}", #msg); },
         });
     }
     if let Some(parts) = args("skewed(") {
@@ -1701,7 +1701,7 @@ fn const_range_checks(range: &str, name: &str) -> Option<ConstRangeChecks> {
             // `> 0.0` also rejects NaN.
             post: quote! {
                 let __factor: f64 = #factor;
-                assert!(__factor > 0.0, #msg);
+                assert!(__factor > 0.0, "{}", #msg);
             },
         });
     }
@@ -1718,9 +1718,9 @@ fn const_range_checks(range: &str, name: &str) -> Option<ConstRangeChecks> {
             max: f64_slot(parts.get(1)?)?,
             post: quote! {
                 let __factor: f64 = #factor;
-                assert!(__factor > 0.0, #factor_msg);
+                assert!(__factor > 0.0, "{}", #factor_msg);
                 let __center: f64 = #center;
-                assert!(__center > __min && __center < __max, #center_msg);
+                assert!(__center > __min && __center < __max, "{}", #center_msg);
             },
         });
     }
@@ -1743,7 +1743,7 @@ fn const_range_checks(range: &str, name: &str) -> Option<ConstRangeChecks> {
         return Some(ConstRangeChecks {
             pre: quote! {
                 let __count: usize = #count;
-                assert!(__count >= 2, #msg);
+                assert!(__count >= 2, "{}", #msg);
             },
             min: quote! { 0.0 },
             max: quote! { (__count - 1) as f64 },
@@ -1818,17 +1818,17 @@ fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
         let shape_assert = match f.kind {
             ParamKind::Int | ParamKind::Enum => {
                 let msg = format!("param `{name}`: default must be an integer");
-                quote! { assert!(__def as i64 as f64 == __def, #msg); }
+                quote! { assert!(__def as i64 as f64 == __def, "{}", #msg); }
             }
             ParamKind::Bool => {
                 let msg = format!("param `{name}`: default must be 0 or 1");
-                quote! { assert!(__def == 0.0 || __def == 1.0, #msg); }
+                quote! { assert!(__def == 0.0 || __def == 1.0, "{}", #msg); }
             }
             ParamKind::Float => quote! {},
         };
         quote! {
             let __def: f64 = #d;
-            assert!(__def >= __min && __def <= __max, #range_msg);
+            assert!(__def >= __min && __def <= __max, "{}", #range_msg);
             #shape_assert
         }
     };
@@ -1837,8 +1837,8 @@ fn gen_const_range_assert(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             #pre
             let __min: f64 = #min;
             let __max: f64 = #max;
-            assert!(__min.is_finite() && __max.is_finite(), #finite_msg);
-            assert!(__min < __max, #order_msg);
+            assert!(__min.is_finite() && __max.is_finite(), "{}", #finite_msg);
+            assert!(__min < __max, "{}", #order_msg);
             #post
             #default_assert
         };
@@ -3483,10 +3483,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                  If `index >= {len}` (the array length).",
                 field = n.ident,
             );
-            let oob_msg = format!(
-                "{}: index {{index}} out of bounds for array of length {len}",
-                n.ident
-            );
+            let oob_field = n.ident.to_string();
             quote! {
                 impl #struct_name {
                     #[doc = #doc]
@@ -3495,7 +3492,13 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                     // cast cannot truncate in practice.
                     #[allow(clippy::cast_possible_truncation)]
                     pub fn #fn_name(index: usize, sub: impl ::core::convert::Into<u32>) -> u32 {
-                        assert!(index < #len, #oob_msg);
+                        assert!(
+                            index < #len,
+                            "{}: index {} out of bounds for array of length {}",
+                            #oob_field,
+                            index,
+                            #len,
+                        );
                         #prelude
                         let __i = index as u32;
                         #mapped
