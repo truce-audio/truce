@@ -225,7 +225,9 @@ Build / Install / Package:
       --user       Only uninstall bundles in the per-user directories
       --system     Only uninstall bundles in the system directories
       --stale      Uninstall vendor bundles NOT in the current project
-                   (renamed/deleted plugins still on the system)
+                   (renamed/deleted plugins still on the system; a
+                   bundle is the vendor's if its name starts with the
+                   vendor name)
       --dry-run    Show what would be uninstalled without deleting
       --yes        Skip confirmation prompt
 

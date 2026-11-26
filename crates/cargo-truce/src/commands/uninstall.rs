@@ -96,16 +96,29 @@ fn external_roots(e: &ExternalFormat, scopes: &[InstallScope]) -> Vec<(PathBuf, 
     roots
 }
 
-/// Whether `file_name`, found in one format's install directory, is a
-/// `--stale` candidate: a `.<ext>` bundle whose name contains
-/// `vendor_token` and whose stem names none of the project's plugins.
+/// Whether a bundle or app name is the vendor's, by the convention truce
+/// plugin names follow: the name starts with the vendor name as a whole
+/// word (`Truce Gain.clap`, `truce-gain.lv2`, `Truce Gain (AUv3).app`).
 ///
-/// An empty `vendor_token` matches nothing. `contains("")` is true of
-/// every name, and a slug-cased format turns a vendor name with no ASCII
-/// letters or digits into exactly that - which would queue every bundle
-/// in the directory, other vendors' included.
+/// A plain substring test let a short vendor name claim other vendors'
+/// bundles - `Ab` matched `Fabulous.clap` and `Abyss.vst3`, `Audio`
+/// matched `Acme Audio Verb.clap` - and `--stale` deletes what matches.
+/// Anchoring at the start of the name and requiring a non-alphanumeric
+/// character after the vendor rules those out. An empty `vendor_token`
+/// matches nothing: a slug-cased format turns a vendor name with no ASCII
+/// letters or digits into `""`, which every name starts with.
+fn is_vendor_bundle(name: &str, vendor_token: &str) -> bool {
+    !vendor_token.is_empty()
+        && name
+            .strip_prefix(vendor_token)
+            .is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()))
+}
+
+/// Whether `file_name`, found in one format's install directory, is a
+/// `--stale` candidate: a `.<ext>` bundle that [`is_vendor_bundle`] and
+/// whose stem names none of the project's plugins.
 fn is_stale_bundle(file_name: &str, ext: &str, vendor_token: &str, known_stems: &[&str]) -> bool {
-    if vendor_token.is_empty() || !file_name.contains(vendor_token) {
+    if !is_vendor_bundle(file_name, vendor_token) {
         return false;
     }
     let Some(stem) = file_name
@@ -386,13 +399,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    // Guard the empty-vendor trap: `contains("")` matches every
-                    // app, so a blank vendor would queue every `.app` in
-                    // /Applications (load_config also rejects it).
-                    if vendor.is_empty()
-                        || !name_str.contains(vendor)
-                        || !name_str.ends_with(".app")
-                    {
+                    if !is_vendor_bundle(&name_str, vendor) || !name_str.ends_with(".app") {
                         continue;
                     }
                     let looks_like_au3 =
@@ -444,7 +451,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                             if !name_str.ends_with(".standalone.app") {
                                 continue;
                             }
-                            if !name_str.contains(vendor) {
+                            if !is_vendor_bundle(&name_str, vendor) {
                                 continue;
                             }
                             let display = name_str.trim_end_matches(".standalone.app");
@@ -793,7 +800,8 @@ Options:
   --system         Only uninstall from system directories.
   -p <crate>       Filter by cargo crate name.
   -n <name>        Filter by display name.
-  --stale          Uninstall vendor bundles NOT in the current project.
+  --stale          Uninstall vendor bundles NOT in the current project
+                   (bundles whose name starts with the vendor name).
   --dry-run        Show what would be uninstalled without deleting.
   --yes, -y        Skip confirmation prompt.
   -h, --help       Show this message"
@@ -802,7 +810,32 @@ Options:
 
 #[cfg(test)]
 mod tests {
-    use super::is_stale_bundle;
+    use super::{is_stale_bundle, is_vendor_bundle};
+
+    /// A short vendor name must not claim other vendors' bundles that
+    /// merely contain it - `--stale` deletes what it matches.
+    #[test]
+    fn a_vendor_name_inside_another_name_is_not_a_match() {
+        for other in [
+            "Fabulous.clap",
+            "Abyss Verb.vst3",
+            "Acme Ab Verb.clap",
+            "fab-verb.lv2",
+        ] {
+            assert!(!is_vendor_bundle(other, "Ab"), "{other}");
+            assert!(!is_stale_bundle(other, "clap", "Ab", &[]), "{other}");
+        }
+        assert!(!is_vendor_bundle("Acme Audio Verb.clap", "Audio"));
+    }
+
+    /// The vendor's own spellings across formats still match.
+    #[test]
+    fn a_name_led_by_the_vendor_word_is_a_match() {
+        assert!(is_vendor_bundle("Ab Verb.clap", "Ab"));
+        assert!(is_vendor_bundle("ab-verb.lv2", "ab"));
+        assert!(is_vendor_bundle("Truce Gain (AUv3).app", "Truce"));
+        assert!(is_vendor_bundle("Truce.clap", "Truce"));
+    }
 
     #[test]
     fn a_vendor_bundle_not_in_the_project_is_stale() {
