@@ -34,8 +34,8 @@ pub fn home_dir() -> Option<PathBuf> {
 /// via `.expect()` because routing the error through every `_dir`
 /// helper would be a large refactor.
 ///
-/// Windows callers go through `require_local_appdata` / `require_appdata`
-/// instead; gate accordingly so the function isn't dead-code on Windows.
+/// Windows callers go through `require_local_appdata` instead; gate
+/// accordingly so the function isn't dead-code on Windows.
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn require_home_dir() -> Result<PathBuf, crate::CargoTruceError> {
     home_dir().ok_or_else(|| -> crate::CargoTruceError {
@@ -55,16 +55,4 @@ pub(crate) fn require_local_appdata() -> Result<PathBuf, crate::CargoTruceError>
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .ok_or_else(|| "LOCALAPPDATA env var not set".into())
-}
-
-/// Windows `APPDATA` (`%APPDATA%`, e.g.
-/// `C:\Users\alice\AppData\Roaming`) - used as the user-scope LV2
-/// install root on Windows. Distinct from `LOCALAPPDATA`: roaming
-/// data follows the user across machines via Active Directory,
-/// matching the LV2 convention of bundle-relative resources.
-#[cfg(target_os = "windows")]
-pub(crate) fn require_appdata() -> Result<PathBuf, crate::CargoTruceError> {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| "APPDATA env var not set".into())
 }

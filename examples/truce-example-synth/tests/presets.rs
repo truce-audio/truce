@@ -11,16 +11,20 @@ use truce_example_synth::SynthParams;
 use truce_params::Params;
 use truce_utils::state::deserialize_state;
 
+/// This crate's slice of the metadata tree `derive(Params)` filled
+/// during its own build - the same tree `cargo truce` resolves names
+/// and ids from.
+fn meta_dir() -> std::path::PathBuf {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    truce_build::meta::meta_dir(
+        &truce_build::target_dir(&workspace_root),
+        "truce-example-synth",
+    )
+}
+
 fn library() -> Vec<truce_build::presets::AuthoredPreset> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
-    // The same sidecar-derived name map `cargo truce install` uses;
-    // written by `derive(Params)` during this crate's own build.
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let annotations = read_param_annotations(
-        &truce_build::target_dir(&workspace_root)
-            .join("lv2-meta")
-            .join("truce-example-synth"),
-    );
+    let annotations = read_param_annotations(&meta_dir());
     let names = ParamNameMap::from_annotations(&annotations);
     assert!(
         !names.is_empty(),
@@ -93,12 +97,7 @@ fn nested_preset_names_resolve_to_exact_runtime_ids() {
     // `offset_ids` disagreed, a preset would silently drive the wrong
     // (but still valid) nested parameter. `cutoff`/`resonance` live in
     // the nested `filter`, `attack` in the nested `envelope`.
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let annotations = read_param_annotations(
-        &truce_build::target_dir(&dir)
-            .join("lv2-meta")
-            .join("truce-example-synth"),
-    );
+    let annotations = read_param_annotations(&meta_dir());
     let names = ParamNameMap::from_annotations(&annotations);
     let p = SynthParams::default();
 

@@ -154,12 +154,11 @@ pub(crate) fn extract_suite_selection(
 
 /// Parsed format flags for the package command.
 /// Used by both `cmd_package_macos` and `windows::cmd_package_windows`.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum PkgFormat {
     Clap,
     Vst3,
     Vst2,
-    Lv2,
     Au2,
     Au3,
     Aax,
@@ -168,37 +167,54 @@ pub(crate) enum PkgFormat {
     /// `%PROGRAMFILES%\<Vendor>\<Plugin>\` on Windows, `/usr/bin/` (or
     /// user equivalent) on Linux.
     Standalone,
+    /// A format packaged through its `truce-format-<name>` helper.
+    External(&'static crate::external::ExternalFormat),
 }
 
 impl std::str::FromStr for PkgFormat {
     type Err = CargoTruceError;
 
+    /// Parse one `--formats` token. A token that isn't a compiled-in
+    /// format is looked up as a helper, so `--formats lv2` keeps
+    /// working and `--formats <anything-installed>` starts working -
+    /// with [`crate::external::missing`]'s install hint for a
+    /// [`crate::external::KNOWN`] format whose helper is absent.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "clap" => Ok(PkgFormat::Clap),
             "vst3" => Ok(PkgFormat::Vst3),
             "vst2" => Ok(PkgFormat::Vst2),
-            "lv2" => Ok(PkgFormat::Lv2),
             "au2" => Ok(PkgFormat::Au2),
             "au3" => Ok(PkgFormat::Au3),
             "aax" => Ok(PkgFormat::Aax),
             "standalone" => Ok(PkgFormat::Standalone),
-            other => Err(format!("unknown format: {other}").into()),
+            other => match crate::external::describe(other)? {
+                Some(e) => Ok(PkgFormat::External(e)),
+                None if crate::external::KNOWN.contains(&other) => {
+                    Err(crate::external::missing(other))
+                }
+                None => Err(format!("unknown format: {other}").into()),
+            },
         }
     }
 }
 
-/// Per-format static metadata. One row per `PkgFormat` variant; adding
-/// a new format means adding one row to [`PKG_FORMAT_META`] plus a
-/// matching enum variant + `FromStr` arm.
+/// One format's `pkgbuild` / `productbuild` row - the macOS packaging
+/// pipeline's whole view of a format. One row per compiled-in
+/// `PkgFormat` variant in [`PKG_FORMAT_META`]; [`PkgFormat::External`]
+/// supplies the same fields from its `describe` output's `macos_pkg`
+/// table, so adding a format out-of-tree needs no row here.
 ///
-/// Cross-platform rows. `extension`, `install_location`, etc. are
-/// macOS-specific values (the `pkgbuild` / `productbuild` pipeline);
-/// they're harmless string literals on Linux / Windows and the methods
-/// that read them are gated on `cfg(target_os = "macos")`.
+/// Every field is `&'static str` on both paths: the rows below are
+/// literals, and an `ExternalFormat` handle is itself `'static`, so its
+/// `String` fields borrow for exactly as long.
+///
+/// The rows compile everywhere - they're harmless string literals on
+/// Linux / Windows - but every method that reads one is gated on
+/// `cfg(target_os = "macos")`.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Clone, Copy)]
 struct PkgFormatMeta {
-    label: &'static str,
     pkg_id_suffix: &'static str,
     extension: &'static str,
     install_location: &'static str,
@@ -206,11 +222,14 @@ struct PkgFormatMeta {
     choice_description: &'static str,
 }
 
-const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
+// Read only by the macOS-gated `PkgFormat::meta` below; the table
+// itself is plain data and stays compiled everywhere so a typo in it
+// fails on any host.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 7] = [
     (
         PkgFormat::Clap,
         PkgFormatMeta {
-            label: "CLAP",
             pkg_id_suffix: "clap",
             extension: "clap",
             install_location: "/Library/Audio/Plug-Ins/CLAP/",
@@ -225,7 +244,6 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
     (
         PkgFormat::Vst3,
         PkgFormatMeta {
-            label: "VST3",
             pkg_id_suffix: "vst3",
             extension: "vst3",
             install_location: "/Library/Audio/Plug-Ins/VST3/",
@@ -236,7 +254,6 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
     (
         PkgFormat::Vst2,
         PkgFormatMeta {
-            label: "VST2",
             pkg_id_suffix: "vst2",
             extension: "vst",
             install_location: "/Library/Audio/Plug-Ins/VST/",
@@ -245,27 +262,8 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
         },
     ),
     (
-        PkgFormat::Lv2,
-        PkgFormatMeta {
-            label: "LV2",
-            pkg_id_suffix: "lv2",
-            extension: "lv2",
-            // macOS LV2 plugins live alongside the other formats in
-            // the Audio Plug-Ins root; the bundle itself is a
-            // directory with the `.lv2` extension. Reaper, Ardour,
-            // Bitwig pick them up from here.
-            install_location: "/Library/Audio/Plug-Ins/LV2/",
-            // LV2 bundles are plain directories (not macOS-style
-            // bundle blobs with `Info.plist`) - `pkgbuild` should
-            // recurse into them like any other folder of files.
-            is_native_bundle: false,
-            choice_description: "For Ardour, Bitwig, Reaper, and Linux DAWs",
-        },
-    ),
-    (
         PkgFormat::Au2,
         PkgFormatMeta {
-            label: "AU2",
             pkg_id_suffix: "au2",
             extension: "component",
             install_location: "/Library/Audio/Plug-Ins/Components/",
@@ -276,7 +274,6 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
     (
         PkgFormat::Au3,
         PkgFormatMeta {
-            label: "AU3",
             pkg_id_suffix: "au3",
             extension: "app",
             install_location: "/Applications/",
@@ -287,7 +284,6 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
     (
         PkgFormat::Aax,
         PkgFormatMeta {
-            label: "AAX",
             pkg_id_suffix: "aax",
             extension: "aaxplugin",
             install_location: "/Library/Application Support/Avid/Audio/Plug-Ins/",
@@ -298,7 +294,6 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
     (
         PkgFormat::Standalone,
         PkgFormatMeta {
-            label: "Standalone",
             pkg_id_suffix: "standalone",
             extension: "app",
             install_location: "/Applications/",
@@ -318,17 +313,36 @@ impl PkgFormat {
         s.split(',').map(|t| t.trim().parse()).collect()
     }
 
-    fn meta(&self) -> &'static PkgFormatMeta {
-        &PKG_FORMAT_META
-            .iter()
-            .find(|(f, _)| f == self)
-            .expect("PKG_FORMAT_META is exhaustive over PkgFormat")
-            .1
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Clap => "CLAP",
+            Self::Vst3 => "VST3",
+            Self::Vst2 => "VST2",
+            Self::Au2 => "AU2",
+            Self::Au3 => "AU3",
+            Self::Aax => "AAX",
+            Self::Standalone => "Standalone",
+            Self::External(e) => &e.label,
+        }
     }
 
-    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-    pub(crate) fn label(&self) -> &'static str {
-        self.meta().label
+    /// The cdylib build this format's bundle is staged from. `None` for
+    /// the two formats that aren't one plugin cdylib per bundle: AU v3
+    /// wraps the AU v2 build in an appex, and the standalone host is a
+    /// binary rather than a plug-in.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(crate) fn build_format(self) -> Option<crate::commands::build_dylibs::BuildFormat> {
+        use crate::commands::build_dylibs::BuildFormat;
+        match self {
+            Self::Clap => Some(BuildFormat::Clap),
+            Self::Vst3 => Some(BuildFormat::Vst3),
+            Self::Vst2 => Some(BuildFormat::Vst2),
+            Self::Au2 => Some(BuildFormat::Au2),
+            Self::Aax => Some(BuildFormat::Aax),
+            Self::External(e) => Some(BuildFormat::External(e)),
+            Self::Au3 | Self::Standalone => None,
+        }
     }
 }
 
@@ -336,26 +350,50 @@ impl PkgFormat {
 // drives Inno Setup directly and doesn't need any of this.
 #[cfg(target_os = "macos")]
 impl PkgFormat {
-    pub(crate) fn extension(&self) -> &'static str {
+    /// This format's `pkgbuild` row, from the static table for a
+    /// compiled-in format and from `describe` for an external one.
+    ///
+    /// `resolve_formats` drops an external format with no `macos_pkg`
+    /// table before packaging gets here, so both paths always have a
+    /// row to hand back.
+    fn meta(self) -> PkgFormatMeta {
+        if let Self::External(e) = self {
+            let pkg = e.require_macos_pkg();
+            return PkgFormatMeta {
+                pkg_id_suffix: &pkg.pkg_id_suffix,
+                extension: &pkg.extension,
+                install_location: &pkg.install_location,
+                is_native_bundle: pkg.is_native_bundle,
+                choice_description: &pkg.choice_description,
+            };
+        }
+        PKG_FORMAT_META
+            .iter()
+            .find(|(f, _)| *f == self)
+            .expect("PKG_FORMAT_META is exhaustive over the compiled-in PkgFormats")
+            .1
+    }
+
+    pub(crate) fn extension(self) -> &'static str {
         self.meta().extension
     }
 
-    pub(crate) fn install_location(&self) -> &'static str {
+    pub(crate) fn install_location(self) -> &'static str {
         self.meta().install_location
     }
 
-    pub(crate) fn pkg_id_suffix(&self) -> &'static str {
+    pub(crate) fn pkg_id_suffix(self) -> &'static str {
         self.meta().pkg_id_suffix
     }
 
     /// Whether pkgbuild recognizes this as a native macOS bundle type.
     /// If false, we use --root instead of --component.
-    pub(crate) fn is_native_bundle(&self) -> bool {
+    pub(crate) fn is_native_bundle(self) -> bool {
         self.meta().is_native_bundle
     }
 
     /// Bundle directory name for a given plugin.
-    pub(crate) fn bundle_name(&self, plugin: &PluginDef) -> String {
+    pub(crate) fn bundle_name(self, plugin: &PluginDef) -> String {
         match self {
             PkgFormat::Au3 => format!("{}.app", plugin.au3_app_name()),
             // Plain `<Plugin>.app` so Spotlight / Launch Services index
@@ -367,16 +405,15 @@ impl PkgFormat {
             // the separate Standalone format whenever AU v3 is present -
             // they never coexist at this path.
             PkgFormat::Standalone => format!("{}.app", plugin.file_stem()),
-            // LV2 bundle names follow the spec's lowercase-hyphenated
-            // convention (the same slug `derive(Params)` bakes into
-            // `manifest.ttl` / `plugin.ttl`). Anything else and hosts
-            // can't resolve the bundle from the TTL's binary URI.
-            PkgFormat::Lv2 => format!("{}.lv2", stage::lv2_slug(&plugin.name)),
+            // An external format names its own bundles: LV2's have to be
+            // the spec's lowercase-hyphenated slug, since that's what the
+            // TTL's binary URI resolves against.
+            PkgFormat::External(e) => e.bundle_name_for(plugin),
             _ => format!("{}.{}", plugin.file_stem(), self.extension()),
         }
     }
 
-    pub(crate) fn choice_description(&self) -> &'static str {
+    pub(crate) fn choice_description(self) -> &'static str {
         self.meta().choice_description
     }
 

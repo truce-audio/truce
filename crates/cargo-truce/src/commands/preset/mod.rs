@@ -77,11 +77,13 @@ USAGE:
   cargo truce preset pull    [--category <c>] [--new] [--watch] [-p <crate>]
 
 FORMATS (by extension): .preset (authored TOML), .trucepreset,
-  .vstpreset, .aupreset, .ttl (LV2)
+  .vstpreset, .aupreset - plus the container of every installed
+  `truce-format-<name>` helper that implements a preset codec
+  (`.ttl` once truce-format-lv2 is on PATH)
 
 `pull` scans the OS preset locations hosts save into (Library/Audio/
-Presets, VST3 Presets, ~/.lv2, the truce user root) for presets
-belonging to the plugin, and converts them into the authored library.
+Presets, VST3 Presets, the truce user root, and the directories each
+installed helper declares) for presets belonging to the plugin, and converts them into the authored library.
 A library preset with the same display name is updated in place
 (keeping its uuid; regenerating the file drops hand-written
 comments); pass --new to always create instead, or --watch to
@@ -115,20 +117,25 @@ impl PluginCtx<'_> {
     }
 
     fn annotations(&self) -> BTreeMap<u32, ParamAnnotation> {
-        let sidecars = truce_build::target_dir(&self.root)
-            .join("lv2-meta")
-            .join(&self.p.crate_name);
-        truce_build::presets::read_param_annotations(&sidecars)
+        truce_build::presets::read_param_annotations(&self.meta_dir())
     }
 
-    /// `id -> lv2:symbol` from the build sidecar, for LV2 preset
-    /// `pset:value` port entries. Empty when the plugin hasn't been
-    /// built since `symbols.toml` landed.
-    fn symbols(&self) -> BTreeMap<u32, String> {
-        let sidecars = truce_build::target_dir(&self.root)
-            .join("lv2-meta")
-            .join(&self.p.crate_name);
-        truce_build::presets::read_param_symbols(&sidecars)
+    /// Write `fmt`'s filtered view of `truce.toml` into the metadata
+    /// tree and return its path.
+    ///
+    /// A helper never reads `truce.toml` itself - it declares the keys
+    /// it wants and gets only those - so encoding a preset through one
+    /// means handing it this file alongside the metadata dir.
+    fn config_view(
+        &self,
+        fmt: &crate::external::ExternalFormat,
+    ) -> Result<PathBuf, crate::CargoTruceError> {
+        let version = crate::plugin_version(self.p, &self.root)?;
+        crate::external::write_config_view(fmt, &self.meta_dir(), self.config, self.p, &version)
+    }
+
+    fn meta_dir(&self) -> PathBuf {
+        crate::plugin_meta_dir(&self.root, self.p)
     }
 
     fn store(&self) -> PresetStore {
@@ -307,7 +314,7 @@ fn cmd_convert(args: &[String]) -> Res {
 /// Decode any supported input into `(meta, params, extra)`, with the
 /// envelope validated against the plugin's identity hash.
 fn read_native(ctx: &PluginCtx<'_>, path: &Path) -> Result<PresetParts, crate::CargoTruceError> {
-    let format = PresetFormat::from_path(path)
+    let format = PresetFormat::from_path(path)?
         .ok_or_else(|| format!("unsupported preset extension: {}", path.display()))?;
 
     if format == PresetFormat::AuthoredToml {
@@ -317,20 +324,26 @@ fn read_native(ctx: &PluginCtx<'_>, path: &Path) -> Result<PresetParts, crate::C
     }
 
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let decoded = decode(format, &bytes)
+    let decoded = decode(format, &bytes)?
         .ok_or_else(|| format!("{}: not a recognisable preset container", path.display()))?;
     let (params, extra) = blob_to_parts(ctx, &decoded.blob, path)?;
     let mut meta = decoded.meta.unwrap_or_default();
     if meta.name.is_empty() {
         meta.name = if decoded.name.is_empty() {
-            path.file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default()
+            file_stem_of(path)
         } else {
             decoded.name
         };
     }
     Ok((meta, params, extra))
+}
+
+/// A path's file stem as an owned `String`, empty when it has none -
+/// the fallback display name for a container that embeds none.
+fn file_stem_of(path: &Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn blob_to_parts(
@@ -357,7 +370,7 @@ fn encode_native(
     params: &[(u32, f64)],
     extra: &[u8],
 ) -> Result<Vec<u8>, crate::CargoTruceError> {
-    let format = PresetFormat::from_path(output)
+    let format = PresetFormat::from_path(output)?
         .ok_or_else(|| format!("unsupported preset extension: {}", output.display()))?;
     let ids: Vec<u32> = params.iter().map(|(id, _)| *id).collect();
     let values: Vec<f64> = params.iter().map(|(_, v)| *v).collect();
@@ -379,23 +392,19 @@ fn encode_native(
             let manufacturer = fourcc_int(&ctx.config.vendor.au_manufacturer)?;
             aupreset_xml(au_type, subtype, manufacturer, &meta.name, &blob).into_bytes()
         }
-        PresetFormat::Lv2 => {
-            let uri = truce_build::lv2::plugin_uri(
-                ctx.config.vendor.url.as_deref().unwrap_or(""),
-                &ctx.p.bundle_id,
+        PresetFormat::External(e) => {
+            // Keyed by truce's own param ids: the helper maps them onto
+            // whatever its container calls them (`lv2:symbol`, say), so
+            // this side of the conversion stays format-neutral.
+            let payload = crate::external::Preset::new(
+                &meta.uuid,
+                &meta.name,
+                &meta.category,
+                &file_stem_of(output),
+                &blob,
+                params,
             );
-            let label = if meta.category.is_empty() {
-                meta.name.clone()
-            } else {
-                format!("{}/{}", meta.category, meta.name)
-            };
-            let symbols = ctx.symbols();
-            let ports: Vec<(String, f64)> = params
-                .iter()
-                .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
-                .collect();
-            truce_build::lv2::render_preset_ttl(&uri, &meta.uuid, &label, &blob, &ports)
-                .into_bytes()
+            crate::external::preset_encode(e, &ctx.meta_dir(), &ctx.config_view(e)?, &payload)?
         }
         PresetFormat::AuthoredToml => {
             render_preset_toml(&meta, params, extra, &ctx.annotations()).into_bytes()
@@ -629,9 +638,22 @@ fn cmd_export(args: &[String]) -> Res {
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default();
     let zip_err = |e: zip::result::ZipError| format!("{out}: {e}");
-    // `id -> lv2:symbol` for the LV2 presets' `pset:value` port entries
-    // (read once for the whole pack).
-    let symbols = ctx.symbols();
+
+    // Containers only a helper can write. Each installed helper that
+    // implements a preset codec gets its own directory in the pack,
+    // named for the format - so a pack built where more helpers are
+    // installed is a superset of one built where fewer are, rather
+    // than a differently-shaped archive. Config views are written once
+    // for the whole pack rather than per preset.
+    let externals: Vec<&'static crate::external::ExternalFormat> = crate::external::installed()?
+        .into_iter()
+        .filter(|e| e.has(crate::external::Capability::PresetCodec))
+        .collect();
+    let external_views: Vec<PathBuf> = externals
+        .iter()
+        .map(|e| ctx.config_view(e))
+        .collect::<Result<_, _>>()?;
+    let meta_dir = ctx.meta_dir();
 
     for preset in &presets {
         let blob = preset.state_blob(ctx.plugin_id_hash);
@@ -666,33 +688,35 @@ fn cmd_export(args: &[String]) -> Res {
         );
         zip.write_all(au.as_bytes())?;
 
-        zip.start_file(format!("lv2/{}.ttl", preset.stem), options)
-            .map_err(zip_err)?;
-        let uri = truce_build::lv2::plugin_uri(
-            ctx.config.vendor.url.as_deref().unwrap_or(""),
-            &ctx.p.bundle_id,
-        );
-        let label = if preset.meta.category.is_empty() {
-            preset.meta.name.clone()
-        } else {
-            format!("{}/{}", preset.meta.category, preset.meta.name)
-        };
-        let ports: Vec<(String, f64)> =
-            deserialize_state(&blob, ctx.plugin_id_hash).map_or_else(Vec::new, |s| {
-                s.params
-                    .iter()
-                    .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
-                    .collect()
-            });
-        zip.write_all(
-            truce_build::lv2::render_preset_ttl(&uri, &preset.meta.uuid, &label, &blob, &ports)
-                .as_bytes(),
-        )?;
+        if !externals.is_empty() {
+            let params: Vec<(u32, f64)> =
+                deserialize_state(&blob, ctx.plugin_id_hash).map_or_else(Vec::new, |s| s.params);
+            let payload = crate::external::Preset::new(
+                &preset.meta.uuid,
+                &preset.meta.name,
+                &preset.meta.category,
+                &preset.stem,
+                &blob,
+                &params,
+            );
+            for (e, view) in externals.iter().zip(&external_views) {
+                // A codec without a declared extension would be a
+                // helper contradicting itself; fall back to its token
+                // rather than writing an extensionless entry.
+                let ext = e.preset_extension.as_deref().unwrap_or(&e.format);
+                zip.start_file(format!("{}/{dir}{}.{ext}", e.format, preset.stem), options)
+                    .map_err(zip_err)?;
+                zip.write_all(&crate::external::preset_encode(
+                    e, &meta_dir, view, &payload,
+                )?)?;
+            }
+        }
     }
     zip.finish().map_err(zip_err)?;
     eprintln!(
-        "{} preset(s) x 4 formats -> {}",
+        "{} preset(s) x {} formats -> {}",
         presets.len(),
+        3 + externals.len(),
         out_path.display()
     );
     Ok(())
@@ -751,25 +775,23 @@ fn pull_once(
     always_new: bool,
 ) -> Result<u32, crate::CargoTruceError> {
     let mut imported = 0u32;
-    for path in host_preset_files(ctx) {
-        let Some(format) = PresetFormat::from_path(&path) else {
+    for path in host_preset_files(ctx)? {
+        let Some(format) = PresetFormat::from_path(&path)? else {
             continue;
         };
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        let Some(decoded) = decode(format, &bytes) else {
+        let Some(decoded) = decode(format, &bytes)? else {
             continue;
         };
-        // The identity hash is the gate: shared directories (and the
-        // ~/.lv2 sweep) hold other plugins' presets.
+        // The identity hash is the gate: the shared directories and the
+        // helper-declared scan dirs hold other plugins' presets.
         let Some(state) = deserialize_state(&decoded.blob, ctx.plugin_id_hash) else {
             continue;
         };
         let name = if decoded.name.is_empty() {
-            path.file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default()
+            file_stem_of(&path)
         } else {
             decoded.name.clone()
         };
@@ -796,7 +818,7 @@ fn pull_once(
 /// Candidate preset files in every location hosts save into. The
 /// per-file identity check in `pull_once` filters out other
 /// plugins' presets, so over-collection here is harmless.
-fn host_preset_files(ctx: &PluginCtx<'_>) -> Vec<PathBuf> {
+fn host_preset_files(ctx: &PluginCtx<'_>) -> Result<Vec<PathBuf>, crate::CargoTruceError> {
     let mut files = Vec::new();
     let vendor = safe_filename(&ctx.config.vendor.name);
 
@@ -817,9 +839,6 @@ fn host_preset_files(ctx: &PluginCtx<'_>) -> Vec<PathBuf> {
                 &mut files,
             );
         }
-        // Host-saved LV2 user presets (lilv writes one bundle per
-        // preset); plugin-agnostic dir, the hash check filters.
-        collect_files(&home.join(".lv2"), 2, &mut files);
     }
     #[cfg(target_os = "windows")]
     if let Some(profile) = std::env::var_os("USERPROFILE") {
@@ -845,7 +864,16 @@ fn host_preset_files(ctx: &PluginCtx<'_>) -> Vec<PathBuf> {
                 &mut files,
             );
         }
-        collect_files(&home.join(".lv2"), 2, &mut files);
+    }
+
+    // Directories an installed helper declares its hosts save user
+    // presets into (lilv writes one LV2 bundle per preset). They are
+    // plugin-agnostic, so the per-file identity check is what narrows
+    // them down to this plugin's.
+    for e in crate::external::installed()? {
+        for dir in e.preset_scan_dirs_here() {
+            collect_files(&dir, 2, &mut files);
+        }
     }
 
     // The truce user root: presets saved through the CRUD API /
@@ -856,9 +884,13 @@ fn host_preset_files(ctx: &PluginCtx<'_>) -> Vec<PathBuf> {
 
     files.sort();
     files.dedup();
-    files
+    Ok(files)
 }
 
+/// Every regular file under `dir`, to `depth` levels. Deliberately
+/// unfiltered: `pull_once` classifies each path by extension, which
+/// depends on which helpers are installed, and over-collection here
+/// costs one cheap `from_path` per file.
 fn collect_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     if depth == 0 {
         return;
@@ -870,7 +902,7 @@ fn collect_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect_files(&path, depth - 1, out);
-        } else if PresetFormat::from_path(&path).is_some_and(|f| f != PresetFormat::AuthoredToml) {
+        } else {
             out.push(path);
         }
     }

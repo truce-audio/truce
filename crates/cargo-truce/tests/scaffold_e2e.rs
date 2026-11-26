@@ -1150,12 +1150,12 @@ fn scan_diagnostics_strips_ansi_color() {
 
 #[test]
 fn rewrite_leaves_commented_lines_alone() {
-    let input = r#"# truce-lv2 = { git = "https://github.com/truce-audio/truce" }
+    let input = r#"# truce-vst2 = { git = "https://github.com/truce-audio/truce" }
 #   truce-au = { git = "https://github.com/truce-audio/truce" }
 truce = { git = "https://github.com/truce-audio/truce" }
 "#;
     let got = rewrite_git_refs(input, "/abs/crates");
-    assert!(got.contains(r#"# truce-lv2 = { git = "https://github.com/truce-audio/truce" }"#));
+    assert!(got.contains(r#"# truce-vst2 = { git = "https://github.com/truce-audio/truce" }"#));
     assert!(got.contains(r#"#   truce-au = { git = "https://github.com/truce-audio/truce" }"#));
     assert!(got.contains(r#"truce = { path = "/abs/crates/truce" }"#));
 }

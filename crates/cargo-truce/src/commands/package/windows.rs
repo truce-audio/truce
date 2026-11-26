@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::PkgFormat;
+use super::stage::stage_external_packaged;
+use crate::commands::build_dylibs::BuildFormat;
+use crate::external::ExternalFormat;
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
     Config, PluginDef, Res, build_aax_template, cargo_build, detect_default_features, load_config,
@@ -213,13 +216,13 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
 
         let mut all_signable: Vec<PathBuf> = Vec::new();
         for &arch in &archs {
-            let staged = stage_plugin(&root, p, &formats, &staging, arch)?;
+            let staged = stage_plugin(&root, p, &config, &formats, &staging, arch)?;
             all_signable.extend(staged.signable);
         }
         // Factory presets (arch-independent, not signed). Staged here
         // so all output modes carry them; the per-plugin `render_iss`
         // below references them via the returned flags.
-        let presets = stage_windows_presets(&root, &config, p, &formats, &archs, &staging)?;
+        let presets = stage_windows_presets(&root, &config, p, &formats, &staging)?;
 
         if !opts.no_sign {
             // PACE-sign every AAX bundle (one per arch). PACE wraps the binary;
@@ -441,15 +444,17 @@ fn resolve_formats(
         if available.contains("vst2") {
             fmts.push(PkgFormat::Vst2);
         }
-        if available.contains("lv2") {
-            fmts.push(PkgFormat::Lv2);
-        }
         if available.contains("aax") {
             fmts.push(PkgFormat::Aax);
         }
         if available.contains("standalone") {
             fmts.push(PkgFormat::Standalone);
         }
+        fmts.extend(
+            crate::external::defaults_for(&available)?
+                .into_iter()
+                .map(PkgFormat::External),
+        );
         fmts
     };
 
@@ -478,125 +483,80 @@ fn resolve_plugins<'a>(
 // Build
 // ---------------------------------------------------------------------------
 
+/// Build one format's cdylib for one architecture, then park the
+/// result under its format-suffixed name.
+///
+/// Every format build for an arch writes the same
+/// `target/{triple}/release/{stem}.dll`, so each one is copied aside
+/// the moment it lands - otherwise the next format's link step
+/// clobbers it before staging gets to read it. Archs have separate
+/// `target/{triple}/` trees and so never collide with each other.
+fn build_format_arch(
+    plugins: &[&PluginDef],
+    root: &Path,
+    arch: TargetArch,
+    format: BuildFormat,
+) -> Res {
+    eprintln!("Building {} ({})...", format.label(), arch.tag());
+    let triple = arch.triple();
+    let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
+    for p in plugins {
+        build_args.push("-p".into());
+        build_args.push(p.crate_name.clone());
+    }
+    build_args.extend_from_slice(&[
+        "--no-default-features".into(),
+        "--features".into(),
+        format.feature().into(),
+    ]);
+    let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
+    // MACOSX_DEPLOYMENT_TARGET is ignored on Windows.
+    cargo_build(&[], &arg_refs, "")?;
+    for p in plugins {
+        let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
+        let dst = release_lib_for_target(
+            root,
+            &format!("{}{}", p.dylib_stem(), format.dylib_suffix()),
+            Some(triple),
+        );
+        // A plugin can legitimately produce no output for a format its
+        // own feature set doesn't enable; staging reports the gap.
+        if src.exists() {
+            fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
 /// Run the cargo builds for each selected format x arch. One
 /// `cargo build` per format with distinct `--features` so the
 /// format-specific code paths can't cross-contaminate, plus an outer
 /// loop over architectures.
-///
-/// Within a single arch the dylib at `target/{triple}/release/{stem}.dll` is
-/// overwritten by successive format builds, so we save per-format copies
-/// (`{stem}_clap`, `{stem}_vst3`, `{stem}_vst2`, `{stem}_aax`) after each
-/// build. Archs have separate `target/{triple}/` directories so they don't
-/// clash with each other.
 fn build_all_formats(
     plugins: &[&PluginDef],
     formats: &[PkgFormat],
     archs: &[TargetArch],
     root: &Path,
 ) -> Res {
-    let dt = ""; // MACOSX_DEPLOYMENT_TARGET is ignored on Windows
-
-    let has_clap = formats.iter().any(|f| matches!(f, PkgFormat::Clap));
-    let has_vst3 = formats.iter().any(|f| matches!(f, PkgFormat::Vst3));
-    let has_vst2 = formats.iter().any(|f| matches!(f, PkgFormat::Vst2));
-    let has_lv2 = formats.iter().any(|f| matches!(f, PkgFormat::Lv2));
     let has_aax = formats.iter().any(|f| matches!(f, PkgFormat::Aax));
     let has_standalone = formats.iter().any(|f| matches!(f, PkgFormat::Standalone));
+
+    // Every format staged from one plugin cdylib, in `formats` order.
+    // `build_format` hands back `None` for the two that aren't - the
+    // standalone host is a `[[bin]]`, AU v3 wraps the AU v2 build -
+    // and AAX comes last below because it is host-arch-only.
+    let cdylib_formats: Vec<BuildFormat> = formats
+        .iter()
+        .filter(|f| !matches!(f, PkgFormat::Aax))
+        .filter_map(|f| f.build_format())
+        .collect();
 
     for &arch in archs {
         eprintln!("Building for {}", arch.tag());
         let triple = arch.triple();
 
-        if has_clap {
-            eprintln!("Building CLAP ({})...", arch.tag());
-            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
-            for p in plugins {
-                build_args.push("-p".into());
-                build_args.push(p.crate_name.clone());
-            }
-            build_args.extend_from_slice(&[
-                "--no-default-features".into(),
-                "--features".into(),
-                "clap".into(),
-            ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
-            cargo_build(&[], &arg_refs, dt)?;
-            for p in plugins {
-                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let saved =
-                    release_lib_for_target(root, &format!("{}_clap", p.dylib_stem()), Some(triple));
-                if src.exists() {
-                    fs::copy(&src, &saved)?;
-                }
-            }
-        }
-
-        if has_vst3 {
-            eprintln!("Building VST3 ({})...", arch.tag());
-            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
-            for p in plugins {
-                build_args.push("-p".into());
-                build_args.push(p.crate_name.clone());
-            }
-            build_args.extend_from_slice(&[
-                "--no-default-features".into(),
-                "--features".into(),
-                "vst3".into(),
-            ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
-            cargo_build(&[], &arg_refs, dt)?;
-            for p in plugins {
-                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let saved =
-                    release_lib_for_target(root, &format!("{}_vst3", p.dylib_stem()), Some(triple));
-                if src.exists() {
-                    fs::copy(&src, &saved)?;
-                }
-            }
-        }
-
-        if has_vst2 {
-            eprintln!("Building VST2 ({})...", arch.tag());
-            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
-            for p in plugins {
-                build_args.push("-p".into());
-                build_args.push(p.crate_name.clone());
-            }
-            build_args.extend_from_slice(&[
-                "--no-default-features".into(),
-                "--features".into(),
-                "vst2".into(),
-            ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
-            cargo_build(&[], &arg_refs, dt)?;
-            for p in plugins {
-                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let dst =
-                    release_lib_for_target(root, &format!("{}_vst2", p.dylib_stem()), Some(triple));
-                fs::copy(&src, &dst)?;
-            }
-        }
-
-        if has_lv2 {
-            eprintln!("Building LV2 ({})...", arch.tag());
-            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
-            for p in plugins {
-                build_args.push("-p".into());
-                build_args.push(p.crate_name.clone());
-            }
-            build_args.extend_from_slice(&[
-                "--no-default-features".into(),
-                "--features".into(),
-                "lv2".into(),
-            ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
-            cargo_build(&[], &arg_refs, dt)?;
-            for p in plugins {
-                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let dst =
-                    release_lib_for_target(root, &format!("{}_lv2", p.dylib_stem()), Some(triple));
-                fs::copy(&src, &dst)?;
-            }
+        for &format in &cdylib_formats {
+            build_format_arch(plugins, root, arch, format)?;
         }
 
         if has_standalone {
@@ -664,25 +624,7 @@ fn build_all_formats(
         // compiles fine - we're just avoiding orphan binaries that would
         // have nothing to pair with in the installer.
         if has_aax && arch == TargetArch::host() {
-            eprintln!("Building AAX ({})...", arch.tag());
-            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
-            for p in plugins {
-                build_args.push("-p".into());
-                build_args.push(p.crate_name.clone());
-            }
-            build_args.extend_from_slice(&[
-                "--no-default-features".into(),
-                "--features".into(),
-                "aax".into(),
-            ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
-            cargo_build(&[], &arg_refs, dt)?;
-            for p in plugins {
-                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let dst =
-                    release_lib_for_target(root, &format!("{}_aax", p.dylib_stem()), Some(triple));
-                fs::copy(&src, &dst)?;
-            }
+            build_format_arch(plugins, root, arch, BuildFormat::Aax)?;
         }
     }
 
@@ -704,6 +646,7 @@ struct StagedPlugin {
 fn stage_plugin(
     root: &Path,
     p: &PluginDef,
+    config: &Config,
     formats: &[PkgFormat],
     staging: &Path,
     arch: TargetArch,
@@ -721,8 +664,19 @@ fn stage_plugin(
             PkgFormat::Vst2 => {
                 signable.push(stage_vst2(root, p, staging, arch)?);
             }
-            PkgFormat::Lv2 => {
-                signable.push(stage_lv2(root, p, staging, arch)?);
+            PkgFormat::External(e) => {
+                signable.extend(stage_external_packaged(
+                    e,
+                    root,
+                    p,
+                    config,
+                    &staging.join(&e.format).join(arch.tag()),
+                    // Authenticode signing is a batched `signtool`
+                    // pass over `signable` later; the macOS codesign
+                    // identity has no meaning here.
+                    "",
+                    Some(arch.triple()),
+                )?);
             }
             PkgFormat::Aax => {
                 if let Some((wrapper, dylib)) = stage_aax(root, p, staging, arch)? {
@@ -864,61 +818,6 @@ fn stage_vst2(
     Ok(dst)
 }
 
-/// Stage an LV2 bundle for one Windows architecture. LV2 bundles are
-/// plain directories with the `.lv2` extension holding the plugin
-/// DLL plus a `manifest.ttl` + `plugin.ttl` describing parameter
-/// shape - the same files `truce::plugin!` writes during the
-/// cdylib's compile via `derive(Params)`.
-fn stage_lv2(
-    root: &Path,
-    p: &PluginDef,
-    staging: &Path,
-    arch: TargetArch,
-) -> std::result::Result<PathBuf, crate::CargoTruceError> {
-    use super::stage::lv2_slug;
-
-    let dll = release_lib_for_target(
-        root,
-        &format!("{}_lv2", p.dylib_stem()),
-        Some(arch.triple()),
-    );
-    if !dll.exists() {
-        return Err(format!("Missing: {}", dll.display()).into());
-    }
-    let target_dir = truce_build::target_dir(root);
-    let sidecar_dir = target_dir.join("lv2-meta").join(&p.crate_name);
-    let manifest_ttl = sidecar_dir.join("manifest.ttl");
-    let plugin_ttl = sidecar_dir.join("plugin.ttl");
-    if !manifest_ttl.exists() || !plugin_ttl.exists() {
-        return Err(format!(
-            "no LV2 metadata sidecar at {} for {}. \
-             `derive(Params)` writes this during the cdylib's compile; \
-             missing it means either the params struct uses `#[nested]` \
-             (unsupported for the compile-time TTL path) or the plugin \
-             crate isn't listed under `[[plugin]]` in truce.toml.",
-            sidecar_dir.display(),
-            p.name,
-        )
-        .into());
-    }
-
-    let slug = lv2_slug(&p.name);
-    let bundle = staging
-        .join("lv2")
-        .join(arch.tag())
-        .join(format!("{slug}.lv2"));
-    let _ = fs::remove_dir_all(&bundle);
-    fs::create_dir_all(&bundle)?;
-    let dst_dll = bundle.join(format!("{slug}.dll"));
-    fs::copy(&dll, &dst_dll)?;
-    fs::copy(&manifest_ttl, bundle.join("manifest.ttl"))?;
-    fs::copy(&plugin_ttl, bundle.join("plugin.ttl"))?;
-    // Inno Setup signs/copies whatever path we return; the DLL is the
-    // signable artifact here (manifest.ttl / plugin.ttl are plain text
-    // and don't need Authenticode).
-    Ok(dst_dll)
-}
-
 /// Which factory-preset payloads were staged, to drive the extra
 /// `[Files]` entries in `render_iss`.
 #[derive(Default, Clone, Copy)]
@@ -934,8 +833,7 @@ struct WindowsPresets {
 
 /// Emit `p`'s factory presets into the Windows staging tree, once
 /// (presets are arch-independent). CLAP gets a `<stem>.presets/`
-/// sibling, LV2 presets go inside each arch's staged bundle, VST3
-/// presets stage as a loose `<Vendor>/<Plugin>/` tree the installer
+/// sibling, VST3 presets stage as a loose `<Vendor>/<Plugin>/` tree the installer
 /// merges into the shared VST3 Presets folder, and the standalone gets
 /// a `<bin_stem>.presets/` sibling the installer drops next to its
 /// `.exe`. No-op when the plugin ships no preset library.
@@ -944,7 +842,6 @@ fn stage_windows_presets(
     config: &Config,
     p: &PluginDef,
     formats: &[PkgFormat],
-    archs: &[TargetArch],
     staging: &Path,
 ) -> std::result::Result<WindowsPresets, crate::CargoTruceError> {
     use crate::commands::install::presets;
@@ -960,20 +857,6 @@ fn stage_windows_presets(
             .join(format!("{}.presets", p.file_stem()));
         presets::emit_trucepreset_tree(&fp, &dir, false, &format!("{}-clap", p.bundle_id))?;
         out.clap = true;
-    }
-    if formats.contains(&PkgFormat::Lv2) {
-        let slug = super::stage::lv2_slug(&p.name);
-        let uri =
-            truce_build::lv2::plugin_uri(config.vendor.url.as_deref().unwrap_or(""), &p.bundle_id);
-        for arch in archs {
-            let bundle = staging
-                .join("lv2")
-                .join(arch.tag())
-                .join(format!("{slug}.lv2"));
-            if bundle.is_dir() {
-                presets::emit_lv2_presets(&fp, &bundle, &uri)?;
-            }
-        }
     }
     if formats.contains(&PkgFormat::Vst3) {
         let payload = presets::vst3_preset_payload(&fp, p, config);
@@ -1026,8 +909,8 @@ fn detect_windows_presets(p: &PluginDef, staging: &Path) -> WindowsPresets {
 
 /// `[Files]` entries for the staged presets: the CLAP `<stem>.presets/`
 /// sibling, the VST3 preset tree, and the standalone
-/// `<bin_stem>.presets/` sibling. LV2 presets ride inside the
-/// `.lv2` bundle's own entry, so they need none here. Inno `[Files]`
+/// `<bin_stem>.presets/` sibling. An external format's presets ride
+/// inside its own bundle entry, so they need none here. Inno `[Files]`
 /// merges into the destination (it never wipes), so dropping the VST3
 /// tree into the shared preset folder leaves user presets intact.
 /// `component_prefix` namespaces the `Components:` clause for suite
@@ -1838,7 +1721,8 @@ fn render_suite_iss(
             }
         }
         // Factory presets staged for this member (CLAP sibling + VST3
-        // tree); LV2 presets ride inside the `.lv2` bundle above.
+        // tree); an external format's presets ride inside the bundle
+        // its helper staged above.
         let presets = detect_windows_presets(plugin, &plugin_staging);
         setup.push_str(&iss_preset_files(
             plugin,
@@ -2115,22 +1999,18 @@ fn component_install_size(
             })
             .max()
             .unwrap_or(0),
-        PkgFormat::Lv2 => {
-            use super::stage::lv2_slug;
-            let slug = lv2_slug(&p.name);
-            archs
-                .iter()
-                .map(|a| {
-                    dir_size_recursive(
-                        &staging
-                            .join("lv2")
-                            .join(a.tag())
-                            .join(format!("{slug}.lv2")),
-                    )
-                })
-                .max()
-                .unwrap_or(0)
-        }
+        PkgFormat::External(e) => archs
+            .iter()
+            .map(|a| {
+                dir_size_recursive(
+                    &staging
+                        .join(&e.format)
+                        .join(a.tag())
+                        .join(e.bundle_name_for(p)),
+                )
+            })
+            .max()
+            .unwrap_or(0),
         PkgFormat::Vst3 => {
             let contents = staging
                 .join("vst3")
@@ -2189,11 +2069,15 @@ fn files_all_check_gated(fmt: &PkgFormat, universal: bool, scope: PkgScope) -> b
         // arch-gated when universal. In `--system`/`--user` the iss_admin_only
         // emitter drops the IsAdminInstallMode check, so single-arch is bare.
         PkgFormat::Vst2 => universal || matches!(scope, PkgScope::Ask),
-        // LV2 is a bundle (directory). Arch-gated when universal, and in
-        // `--ask` every entry also carries an `IsAdminInstallMode` check
-        // (admin → `{commoncf}\LV2`, per-user → `{userappdata}\LV2`), so
-        // like VST2 it's fully check-gated in that mode too.
-        PkgFormat::Lv2 => universal || matches!(scope, PkgScope::Ask),
+        // An external format's bundle is a directory, arch-gated when
+        // universal. Whether it is *also* admin-gated depends on what
+        // its helper declares, so ask the emitter rather than restate
+        // its rule here - the two drifting apart is exactly what makes
+        // the installer's size hint wrong.
+        PkgFormat::External(e) => {
+            let dests = iss_external_dests(e, "", scope);
+            universal || (!dests.is_empty() && dests.iter().all(|(_, gate)| gate.is_some()))
+        }
         // Host-arch only (single arch dir staged), so no per-arch Check.
         // Only gated in `--ask` (on IsAdminInstallMode).
         PkgFormat::Aax => matches!(scope, PkgScope::Ask),
@@ -2230,7 +2114,9 @@ fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static 
         PkgFormat::Clap => ("clap", "CLAP", "full"),
         PkgFormat::Vst3 => ("vst3", "VST3", "full"),
         PkgFormat::Vst2 => ("vst2", "VST2 (legacy)", "full"),
-        PkgFormat::Lv2 => ("lv2", "LV2", "full"),
+        // A helper's strings are leaked once at discovery, so its own
+        // token and label are `'static` like the compiled-in ones.
+        PkgFormat::External(e) => (&e.format, &e.label, "full"),
         PkgFormat::Aax => ("aax", "AAX", "full"),
         PkgFormat::Standalone => ("standalone", "Standalone app", "full"),
         PkgFormat::Au2 | PkgFormat::Au3 => unreachable!("AU is filtered out on Windows"),
@@ -2340,21 +2226,36 @@ fn iss_files_block(
                 /* is_dir = */ false,
             )
         }
-        PkgFormat::Lv2 => {
-            use super::stage::lv2_slug;
-            let slug = lv2_slug(&p.name);
+        PkgFormat::External(e) => {
+            let bundle = e.bundle_name_for(p);
             let src_glob = staging
-                .join("lv2")
+                .join(&e.format)
                 .join(arch.tag())
-                .join(format!("{slug}.lv2"))
+                .join(&bundle)
                 .join("*");
-            iss_lv2_files(
-                &iss_escape_path(&src_glob),
-                &slug,
-                &comp("lv2"),
-                scope,
-                arch_check,
-            )
+            let src_quoted = iss_escape_path(&src_glob);
+            let component = comp(&e.format);
+            iss_external_dests(e, &iss_escape_quoted(&bundle), scope)
+                .into_iter()
+                .map(|(dest, admin_gate)| {
+                    // Combine the install-mode gate with the per-arch
+                    // `Check:` (if any) so a universal install still
+                    // drops only the matching arch.
+                    let check = match (admin_gate, arch_check) {
+                        (Some(g), Some(a)) => Some(format!("{g} and {a}")),
+                        (Some(g), None) => Some(g.to_string()),
+                        (None, Some(a)) => Some(a.to_string()),
+                        (None, None) => None,
+                    };
+                    iss_dual_dest(
+                        &src_quoted,
+                        &dest,
+                        &component,
+                        check.as_deref(),
+                        /* is_dir = */ true,
+                    )
+                })
+                .collect()
         }
         PkgFormat::Aax => {
             // AAX bundle: arch subdir + arch-tagged resource DLL. Non-host
@@ -2468,48 +2369,82 @@ fn scoped_programs(scope: PkgScope) -> &'static str {
     }
 }
 
-/// `[Files]` entries for an LV2 bundle's `<slug>.lv2/` directory.
+/// Translate a helper's `%VAR%`-rooted Windows directory into the
+/// equivalent Inno Setup constant, or `None` when it is rooted at
+/// something this table doesn't know.
 ///
-/// LV2's filesystem spec puts system installs in `%COMMONPROGRAMFILES%\LV2`
-/// (`{commoncf}`) and per-user installs in `%APPDATA%\LV2`
-/// (`{userappdata}`). Those CROSS Inno's auto* pairing
-/// (`commoncf`↔`usercf`, `commonappdata`↔`userappdata`), so there's no
-/// single `{auto*}` constant for "commoncf when admin, userappdata when
-/// per-user". `{autoappdata}` is the trap: in admin mode it resolves to
-/// `{commonappdata}` = `C:\ProgramData\LV2`, which no LV2 host scans
-/// (REAPER's default is `%APPDATA%\LV2` + `%COMMONPROGRAMFILES%\LV2`), so
-/// the plugin would install but never show up. In `--ask` mode we
-/// therefore emit two `IsAdminInstallMode`-gated entries rather than
-/// trust one constant. `cargo truce uninstall --lv2` and
-/// [`iss_uninstall_lines`] mirror these roots.
-fn iss_lv2_files(
-    src_quoted: &str,
-    slug: &str,
-    component: &str,
+/// The mapping is spelled out per variable rather than derived,
+/// because Inno's `{auto*}` pairing crosses the one plugin hosts
+/// actually use: `%APPDATA%` is `{userappdata}`, whose admin
+/// counterpart `{commonappdata}` is `C:\ProgramData` - a location no
+/// host scans. `None` makes the caller skip the format instead of
+/// writing an installer entry to a guessed-at destination.
+fn iss_root_constant(raw: &str) -> Option<String> {
+    const ROOTS: &[(&str, &str)] = &[
+        ("APPDATA", "{userappdata}"),
+        ("LOCALAPPDATA", "{localappdata}"),
+        ("COMMONPROGRAMFILES", "{commoncf}"),
+        ("PROGRAMFILES", "{commonpf}"),
+        ("PROGRAMDATA", "{commonappdata}"),
+        ("USERPROFILE", "{userprofile}"),
+    ];
+    let path = raw.replace('/', "\\");
+    let (var, tail) = path.strip_prefix('%')?.split_once('%')?;
+    let root = ROOTS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(var))?
+        .1;
+    let tail = tail.trim_matches('\\');
+    Some(if tail.is_empty() {
+        root.to_string()
+    } else {
+        format!("{root}\\{tail}")
+    })
+}
+
+/// Where an external format's `bundle` installs to, as
+/// `(destination, install-mode gate)` pairs.
+///
+/// One pair for the pinned scopes. Under `--ask` a helper that
+/// declares both a user and a machine-wide root gets two
+/// `IsAdminInstallMode`-gated entries rather than a single `{auto*}`
+/// constant, since the roots plugin hosts scan don't line up with
+/// Inno's auto pairing (see [`iss_root_constant`]). A helper with no
+/// machine-wide root installs to its user root in every mode, which
+/// is how [`crate::external::ExternalFormat::dir`] resolves the same
+/// question for `install` and `uninstall`.
+///
+/// Empty means "this format can't be expressed as an installer
+/// destination" - no Windows row at all, or one rooted somewhere
+/// unrecognised. [`files_all_check_gated`] and [`iss_uninstall_lines`]
+/// both read these same pairs, so the `[Files]`, `[UninstallDelete]`,
+/// and per-component size entries can't disagree about where a bundle
+/// went.
+fn iss_external_dests(
+    e: &ExternalFormat,
+    bundle: &str,
     scope: PkgScope,
-    arch_check: Option<&str>,
-) -> String {
-    let dest_in = |root: &str| format!("{root}\\LV2\\{slug}.lv2");
-    let entry = |dest: &str, check: Option<&str>| {
-        iss_dual_dest(src_quoted, dest, component, check, /* is_dir = */ true)
+) -> Vec<(String, Option<&'static str>)> {
+    let Some(dirs) = e.install_dir.windows.as_ref() else {
+        return Vec::new();
     };
+    let Some(user) = iss_root_constant(&dirs.user) else {
+        return Vec::new();
+    };
+    let system = dirs
+        .system
+        .as_deref()
+        .and_then(iss_root_constant)
+        .unwrap_or_else(|| user.clone());
+    let dest = |root: &str| format!("{root}\\{bundle}");
     match scope {
-        PkgScope::System => entry(&dest_in("{commoncf}"), arch_check),
-        PkgScope::User => entry(&dest_in("{userappdata}"), arch_check),
-        PkgScope::Ask => {
-            // Combine the admin-mode gate with the per-arch `Check:` (if
-            // any) so universal installs still drop only the matching arch.
-            let gate = |base: &str| match arch_check {
-                Some(c) => format!("{base} and {c}"),
-                None => base.to_string(),
-            };
-            let admin = entry(&dest_in("{commoncf}"), Some(&gate("IsAdminInstallMode")));
-            let user = entry(
-                &dest_in("{userappdata}"),
-                Some(&gate("not IsAdminInstallMode")),
-            );
-            format!("{admin}{user}")
-        }
+        PkgScope::System => vec![(dest(&system), None)],
+        PkgScope::User => vec![(dest(&user), None)],
+        PkgScope::Ask if system == user => vec![(dest(&user), None)],
+        PkgScope::Ask => vec![
+            (dest(&system), Some("IsAdminInstallMode")),
+            (dest(&user), Some("not IsAdminInstallMode")),
+        ],
     }
 }
 
@@ -2606,33 +2541,26 @@ fn iss_uninstall_lines(
                 "Type: filesandordirs; Name: \"{path}\"; Components: {component}"
             )]
         }
-        PkgFormat::Lv2 => {
-            // LV2 bundle is a directory; the individual files inside
-            // are tracked by Inno's `[Files]` block and removed on
-            // uninstall, but the empty `{slug}.lv2` dir would be left
-            // behind. Mirror the install root (per-LV2-spec `APPDATA`
-            // for user scope, `COMMONPROGRAMFILES` for system) so the
-            // sweep hits the same path the install wrote to. `lv2_slug`
-            // already handles non-ASCII / separator chars, so the raw
-            // `plugin_name` is the right input here.
-            use super::stage::lv2_slug;
-            let slug = lv2_slug(plugin_name);
-            let component = comp("lv2");
-            let sweep = |root: &str| {
-                format!(
-                    "Type: filesandordirs; Name: \"{root}\\LV2\\{slug}.lv2\"; Components: {component}"
-                )
-            };
-            match scope {
-                PkgScope::System => vec![sweep("{commoncf}")],
-                PkgScope::User => vec![sweep("{userappdata}")],
-                // Mirror the two-rooted `--ask` install: the bundle
-                // lands in `{commoncf}` (admin) or `{userappdata}`
-                // (per-user). Sweep both - a non-existent path is a
-                // harmless no-op, and it spares us threading
-                // `IsAdminInstallMode` through `[UninstallDelete]`.
-                PkgScope::Ask => vec![sweep("{commoncf}"), sweep("{userappdata}")],
-            }
+        PkgFormat::External(e) => {
+            // The bundle is a directory; the files inside it are
+            // tracked by Inno's `[Files]` block and removed on
+            // uninstall, but the now-empty bundle dir would be left
+            // behind. Sweep every root the install could have written
+            // to - under `--ask` that is both, since a non-existent
+            // path is a harmless no-op and it spares us threading
+            // `IsAdminInstallMode` through `[UninstallDelete]`.
+            //
+            // `spell` is how `bundle_name_for` derives the same name
+            // at install time (LV2's is slug-cased), so matching and
+            // generating stay in step by construction.
+            let bundle = iss_escape_quoted(&format!("{}{}", e.spell(plugin_name), e.bundle_suffix));
+            let component = comp(&e.format);
+            iss_external_dests(e, &bundle, scope)
+                .into_iter()
+                .map(|(path, _)| {
+                    format!("Type: filesandordirs; Name: \"{path}\"; Components: {component}")
+                })
+                .collect()
         }
         PkgFormat::Aax => {
             // AAX is system-rooted regardless of scope (`iss_admin_only`

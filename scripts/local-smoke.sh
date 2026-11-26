@@ -42,7 +42,7 @@ PROJ="$WORK/smoketest"
 [ -f "$PROJ/Cargo.toml" ] || die "scaffold produced no Cargo.toml"
 
 # 3. patch every local truce-* crate (+ optional baseview) into the project.
-#    Unused-patch warnings for non-dep crates (aax, lv2, ...) are expected.
+#    Unused-patch warnings for non-dep crates (aax, au, ...) are expected.
 {
   echo ""
   echo "[patch.crates-io]"

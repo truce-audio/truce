@@ -59,11 +59,12 @@ case "$OS" in
       || fail "no tarball in $DIST"
     list=$(tar tzf "$tar")
     grep -q "clap/$PLUGIN.presets/.*\.trucepreset" <<<"$list" || fail "no CLAP presets in tarball"
-    grep -q 'lv2/.*\.lv2/presets/.*\.ttl'          <<<"$list" || fail "no LV2 preset TTLs in tarball"
     grep -q "vst3-presets/$VENDOR/$PLUGIN/.*\.vstpreset" <<<"$list" || fail "no VST3 presets in tarball"
     grep -q "standalone/$STANDALONE_BIN.presets/.*\.trucepreset" <<<"$list" \
       || fail "no standalone presets in tarball"
-    pass "Linux tarball carries CLAP + LV2 + VST3 + standalone presets"
+    # LV2 is an out-of-tree format now (truce-extensions); its
+    # `presets/*.ttl` are covered by that repo's own packaging check.
+    pass "Linux tarball carries CLAP + VST3 + standalone presets"
 
     # Layer B: install into a throwaway HOME with a pre-seeded user
     # preset to prove the VST3 merge never wipes the user's own files.

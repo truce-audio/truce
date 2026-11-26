@@ -115,7 +115,9 @@ Build / Install / Package:
       Defaults to whichever formats are in the plugin's Cargo.toml
       default features (typically clap + vst3). VST2, LV2, AU, and AAX
       are opt-in and must be enabled explicitly via these flags or by
-      adding them to the plugin's default features.
+      adding them to the plugin's default features. LV2 also needs its
+      `truce-format-lv2` helper on PATH; see `doctor` for which format
+      helpers this machine has.
 
       Per-format scope is per-user by default on every platform; pass
       `--system` to install into the shared system directories (sudo
@@ -125,7 +127,7 @@ Build / Install / Package:
       --clap         CLAP only (no sudo)
       --vst3         VST3 only
       --vst2         VST2 only (legacy format)
-      --lv2          LV2 only
+      --lv2          LV2 only (needs the truce-format-lv2 helper)
       --au2          AU v2 only (.component, macOS only)
       --au3          AU v3 only (.appex, requires Xcode, macOS only)
       --aax          AAX only (requires pre-built template)
@@ -164,7 +166,7 @@ Build / Install / Package:
       --clap         CLAP only
       --vst3         VST3 only
       --vst2         VST2 only
-      --lv2          LV2 only
+      --lv2          LV2 only (needs the truce-format-lv2 helper)
       --au2          AU v2 only (.component, macOS only)
       --au3          AU v3 only (.appex inside .app, macOS only)
       --aax          AAX only (requires pre-built SDK + template)
@@ -255,7 +257,8 @@ Validation / Inspection:
       registry check use `cargo truce validate --auval`).
 
   doctor
-      Check development environment and installed plugins.
+      Check development environment, format helpers, and installed
+      plugins.
 
 Maintenance:
   reset-au [--yes]

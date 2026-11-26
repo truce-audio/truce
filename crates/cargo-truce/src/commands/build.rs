@@ -1,15 +1,16 @@
 //! `cargo truce build` - produce per-format bundles in `target/bundles/`
 //! without installing.
 //!
-//! Every format flag (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2`
-//! / `--au3` / `--aax`) produces a self-contained, signed bundle in
+//! Every format flag (`--clap` / `--vst3` / `--vst2` / `--au2`
+//! / `--au3` / `--aax`, plus `--<name>` for each installed
+//! `truce-format-<name>` helper) produces a self-contained, signed bundle in
 //! `target/bundles/`; `cargo truce install` then copies those bundles
 //! to system paths.
 
 use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
 #[cfg(target_os = "macos")]
 use crate::commands::package::stage::stage_au2;
-use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
+use crate::commands::package::stage::{stage_clap, stage_external, stage_vst2, stage_vst3};
 use crate::util::{fs_ctx, parse_target_cpu_arg};
 use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
 use std::path::PathBuf;
@@ -28,7 +29,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut clap = false;
     let mut vst3 = false;
     let mut vst2 = false;
-    let mut lv2 = false;
+    // Formats selected by a `--<name>` flag that names an installed
+    // `truce-format-<name>` helper rather than a compiled-in format.
+    let mut externals: Vec<&'static crate::external::ExternalFormat> = Vec::new();
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
@@ -46,7 +49,6 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--clap" => clap = true,
             "--vst3" => vst3 = true,
             "--vst2" => vst2 = true,
-            "--lv2" => lv2 = true,
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
@@ -72,7 +74,11 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 print_help();
                 return Ok(());
             }
-            other => return Err(format!("unknown flag: {other}").into()),
+            // An unrecognised `--<name>` is a format flag before it is
+            // a mistake: `--lv2` reaches this arm now and resolves to
+            // the `truce-format-lv2` helper. `external::select` reports
+            // the unknown-flag error when it isn't one.
+            other => crate::external::select(other, &mut externals)?,
         }
         i += 1;
     }
@@ -84,12 +90,12 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     // No format flags → enable every format in the project's default
     // features, mirroring `install`'s discovery rule.
-    if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
+    if !clap && !vst3 && !vst2 && externals.is_empty() && !au2 && !au3 && !aax {
         let available = detect_default_features();
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
-        lv2 = available.contains("lv2");
+        externals = crate::external::defaults_for(&available)?;
         // AU is macOS-only at runtime, but flip the flags on every platform
         // so the build path can emit per-plugin skip lines for Linux /
         // Windows users with `"au"` in their `[features].default`.
@@ -174,14 +180,19 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // path (`_clap`, `_vst3`, `_vst2`, ...) that the stage/install
     // steps read from. Platform gates (AU is macOS-only, AAX is
     // macOS/Windows + SDK-configured) live inside the helper.
-    let format_selection: &[(bool, BuildFormat)] = &[
+    // An external format's cdylib is the same cargo invocation as a
+    // compiled-in one - only the staging afterwards differs - so it
+    // joins the same selection list.
+    let format_selection: Vec<(bool, BuildFormat)> = [
         (clap, BuildFormat::Clap),
         (vst3, BuildFormat::Vst3),
         (vst2, BuildFormat::Vst2),
-        (lv2, BuildFormat::Lv2),
         (au2, BuildFormat::Au2),
         (aax, BuildFormat::Aax),
-    ];
+    ]
+    .into_iter()
+    .chain(externals.iter().map(|e| (true, BuildFormat::External(e))))
+    .collect();
 
     let identity = crate::application_identity();
     let entry = |p: &crate::PluginDef, format: &str, filename: String| BundleEntry {
@@ -195,7 +206,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     for plan in &target_plans {
         fs_ctx::create_dir_all(&plan.stage_dir)?;
 
-        for &(selected, format) in format_selection {
+        for &(selected, format) in &format_selection {
             if selected {
                 build_format_dylibs(
                     format,
@@ -210,8 +221,8 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         }
 
         // Shell mode: also build the per-plugin logic dylibs the shells
-        // dlopen at runtime. Host-only - shell relies on dlopen of a
-        // freshly built binary, same constraint as LV2.
+        // dlopen at runtime. Host-only - a shell dlopens the binary it
+        // just built, which a cross build's output can't satisfy.
         if shell_mode && plan.target.is_none() {
             build_logic_dylibs(&plugins, logic_profile, dt)?;
         }
@@ -253,21 +264,32 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 );
                 produced.push(entry(p, "vst2", filename));
             }
-            if lv2 {
-                stage_lv2(
+            for &e in &externals {
+                // The helper writes its own presets during `stage`, so
+                // unlike the compiled-in formats there is nothing to
+                // layer on afterwards.
+                let payload = if e.has(crate::external::Capability::Presets) {
+                    crate::commands::install::presets::external_payload_for(&root, p, &config)?
+                } else {
+                    Vec::new()
+                };
+                stage_external(
+                    e,
                     &root,
                     p,
+                    &config,
                     &plan.stage_dir,
-                    &crate::application_identity(),
+                    &identity,
                     plan.target,
+                    &payload,
                 )?;
-                let slug = lv2_slug(&p.name);
-                let filename = format!("{slug}.lv2");
+                let filename = e.bundle_name_for(p);
                 crate::log_output(format!(
-                    "LV2:  {}",
+                    "{}:  {}",
+                    e.label,
                     plan.stage_dir.join(&filename).display()
                 ));
-                produced.push(entry(p, "lv2", filename));
+                produced.push(entry(p, &e.format, filename));
             }
             if au2 {
                 #[cfg(target_os = "macos")]
@@ -404,7 +426,8 @@ fn write_bundle_manifest(
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
+Usage: cargo truce build [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
+                         [--<helper format>]
                          [-p <crate>] [--target <triple>]... [--shell] [--debug]
                          [--target-cpu <value>]
 
@@ -428,7 +451,9 @@ Options:
   --clap           CLAP only
   --vst3           VST3 only
   --vst2           VST2 only
-  --lv2            LV2 only
+  --lv2            LV2 only (needs the `truce-format-lv2` helper on PATH;
+                   any other installed `truce-format-<name>` helper takes
+                   a `--<name>` flag the same way)
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.appex inside .app, macOS only)
   --aax            AAX only (requires pre-built SDK + template)

@@ -35,6 +35,43 @@ const fn fmix64(mut h: u64) -> u64 {
     h
 }
 
+/// Full 32-bit FNV-1a of a field name - the keyed `#[derive(State)]`
+/// codec's per-field key, and the input to [`nested_elem_salt`].
+/// Unmasked (unlike [`param_id_hash`], which folds into the param-id
+/// space) to minimize collisions; the derive rejects a same-hash pair
+/// at compile time.
+///
+/// Pure integer arithmetic over the name bytes, so the value is
+/// identical across toolchains, targets, and runs - the property a
+/// persisted parameter id needs. This crate is the one definition: the
+/// derive emits ids from it, `truce-build`'s metadata aggregator
+/// flattens nested ids with it, and the runtime rebases with it, so
+/// none of the three can drift.
+#[doc(hidden)]
+#[must_use]
+pub const fn field_hash(name: &str) -> u32 {
+    const FNV_OFFSET: u32 = 0x811c_9dc5;
+    const FNV_PRIME: u32 = 0x0100_0193;
+    let bytes = name.as_bytes();
+    let mut h = FNV_OFFSET;
+    let mut i = 0;
+    while i < bytes.len() {
+        h ^= bytes[i] as u32;
+        h = h.wrapping_mul(FNV_PRIME);
+        i += 1;
+    }
+    h
+}
+
+/// [`field_hash`] folded into the parameter id space
+/// (`0..METER_ID_BASE`) - the id an un-pinned hash-scheme `#[nested]`
+/// group is based at.
+#[doc(hidden)]
+#[must_use]
+pub const fn param_id_hash(name: &str) -> u32 {
+    field_hash(name) & (METER_ID_BASE - 1)
+}
+
 /// Implementation detail of `#[derive(Params)]`: the salt for element
 /// `index` of a hash-scheme `#[nested] field: [T; N]` array - the full
 /// 32-bit FNV-1a of the field name and the index, packed for

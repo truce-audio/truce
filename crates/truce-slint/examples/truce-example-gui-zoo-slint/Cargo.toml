@@ -17,11 +17,10 @@ path = "src/main.rs"
 required-features = ["standalone"]
 
 [features]
-default = ["clap", "vst3", "lv2", "au"]
+default = ["clap", "vst3", "au"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
-lv2 = ["dep:truce-lv2"]
 aax = ["dep:truce-aax"]
 au = ["dep:truce-au"]
 standalone = ["dep:truce-standalone"]
@@ -36,7 +35,6 @@ truce-vst3 = { version = "6.3.0", path = "../../../truce-vst3", optional = true 
 truce-vst2 = { version = "6.3.0", path = "../../../truce-vst2", optional = true }
 truce-aax = { version = "6.3.0", path = "../../../truce-aax", optional = true }
 truce-au = { version = "6.3.0", path = "../../../truce-au", optional = true }
-truce-lv2 = { version = "6.3.0", path = "../../../truce-lv2", optional = true }
 clap-sys = { version = "0.5", optional = true }
 truce-standalone = { version = "6.3.0", path = "../../../truce-standalone", features = ["gui"], optional = true }
 truce-loader = { version = "6.3.0", path = "../../../truce-loader" }

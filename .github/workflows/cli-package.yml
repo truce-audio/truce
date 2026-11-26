@@ -28,10 +28,13 @@ concurrency:
 # location with a pre-seeded *user* preset to prove the VST3 merge
 # never wipes a user's own presets.
 #
-# AAX and AU v3 are skipped via `--formats clap,vst3,vst2,standalone{,au2,lv2}`:
+# AAX and AU v3 are skipped via `--formats clap,vst3,vst2,standalone{,au2}`:
 # AAX needs the Avid SDK + PACE eden, AU v3 needs a real Developer ID
-# for the appex extension sandbox to load. `standalone` is included so
-# the standalone factory-preset packaging is exercised on every OS.
+# for the appex extension sandbox to load. LV2 is skipped because it
+# is out of tree now - truce-extensions packages it through the
+# `truce-format-lv2` helper and verifies it in its own CI.
+# `standalone` is included so the standalone factory-preset packaging
+# is exercised on every OS.
 jobs:
   macos:
     name: package (macos-15)
@@ -102,8 +105,8 @@ jobs:
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
 
-      - name: cargo truce package --formats clap,vst3,vst2,lv2,standalone
-        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,lv2,standalone -p truce-example-synth
+      - name: cargo truce package --formats clap,vst3,vst2,standalone
+        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,standalone -p truce-example-synth
 
       - name: Verify tarball produced
         run: |

@@ -27,14 +27,19 @@ use truce_utils::shell_sidecar::sidecar_path;
 /// One of the per-format cdylib targets the build / install pipelines
 /// produce. Encodes the cargo feature flag, the format-suffix used in
 /// the workspace target dir, and the platform-gate behavior.
+///
+/// A format described by a helper binary contributes the same three
+/// strings from its `describe` output, so building for it is the same
+/// cargo invocation as for a compiled-in format - only the staging
+/// step afterwards differs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuildFormat {
     Clap,
     Vst3,
     Vst2,
-    Lv2,
     Au2,
     Aax,
+    External(&'static crate::external::ExternalFormat),
 }
 
 impl BuildFormat {
@@ -44,9 +49,9 @@ impl BuildFormat {
             BuildFormat::Clap => "clap",
             BuildFormat::Vst3 => "vst3",
             BuildFormat::Vst2 => "vst2",
-            BuildFormat::Lv2 => "lv2",
             BuildFormat::Au2 => "au",
             BuildFormat::Aax => "aax",
+            BuildFormat::External(e) => &e.cargo_feature,
         }
     }
 
@@ -56,9 +61,9 @@ impl BuildFormat {
             BuildFormat::Clap => "CLAP",
             BuildFormat::Vst3 => "VST3",
             BuildFormat::Vst2 => "VST2",
-            BuildFormat::Lv2 => "LV2",
             BuildFormat::Au2 => "AU v2",
             BuildFormat::Aax => "AAX",
+            BuildFormat::External(e) => &e.label,
         }
     }
 
@@ -70,9 +75,9 @@ impl BuildFormat {
             BuildFormat::Clap => "_clap",
             BuildFormat::Vst3 => "_vst3",
             BuildFormat::Vst2 => "_vst2",
-            BuildFormat::Lv2 => "_lv2",
             BuildFormat::Au2 => "_au",
             BuildFormat::Aax => "_aax",
+            BuildFormat::External(e) => e.dylib_suffix(),
         }
     }
 }

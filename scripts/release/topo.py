@@ -104,7 +104,6 @@ main_order = topo_sort(main_pkgs)
 forced_order = [
     "truce-simd",
     "truce-vst2",
-    "truce-lv2",
     "truce-aax",
     "truce-au",
     "truce-standalone",

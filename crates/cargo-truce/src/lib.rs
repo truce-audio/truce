@@ -9,6 +9,7 @@ mod commands;
 mod config;
 pub(crate) mod dirs;
 mod error;
+pub(crate) mod external;
 mod format;
 mod install_scope;
 pub(crate) mod preset_codec;
@@ -43,10 +44,10 @@ pub(crate) use util::tmp_verify;
 pub(crate) use util::{
     apply_extra_features, cargo_build, cargo_build_debug, check_cmd, codesign_bundle,
     confirm_prompt, detect_default_features, find_on_path, is_debug_profile, log_output, log_skip,
-    namespaced_nonformat_defaults, parse_extra_features, project_root, read_standalone_bin_name,
-    release_lib, set_build_profile, set_debug_profile, set_extra_features, set_no_default_features,
-    set_target_cpu, tag_fail, tag_ok, tag_warn, take_outputs, take_skipped,
-    verify_shell_profile_declared, vprintln,
+    namespaced_nonformat_defaults, parse_extra_features, plugin_meta_dir, project_root,
+    read_standalone_bin_name, release_lib, set_build_profile, set_debug_profile,
+    set_extra_features, set_no_default_features, set_target_cpu, tag_fail, tag_ok, tag_warn,
+    take_outputs, take_skipped, verify_shell_profile_declared, vprintln,
 };
 // `run_sudo` shells out to `/usr/bin/sudo`, which only exists on macOS in
 // our supported targets. Windows admin elevation is per-process (UAC, not
@@ -57,7 +58,7 @@ pub(crate) use util::{
 pub(crate) use util::run_sudo;
 // `tmp_dir` is the raw escape hatch - used by `reset_au` (macOS only)
 // to walk every subdir under `tmp/`. Most callers pick the typed
-// helper that matches their purpose (`tmp_manifests`, `tmp_lv2`, …).
+// helper that matches their purpose (`tmp_manifests`, `tmp_format`, …).
 #[cfg(target_os = "macos")]
 pub(crate) use util::tmp_dir;
 // `tmp_manifests` is used on both macOS (codesign / AU / VST plist
@@ -65,12 +66,6 @@ pub(crate) use util::tmp_dir;
 // since the tarball pipeline doesn't shell out to platform tools.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use util::tmp_manifests;
-// `tmp_lv2` is consumed only by `install_lv2`'s macOS sudo-stage
-// path - Windows/Linux installers write straight into the destination
-// without staging, since neither needs the per-command privilege
-// escalation that drives the macOS detour.
-#[cfg(target_os = "macos")]
-pub(crate) use util::tmp_lv2;
 
 // `read_workspace_version` is the release/installer version (package
 // naming, pkg / MSI version, suite-version fallback) - consumed by all
@@ -78,8 +73,9 @@ pub(crate) use util::tmp_lv2;
 pub(crate) use util::read_workspace_version;
 // `plugin_version` is a plug-in's bundle-metadata version, matching what
 // it reports at runtime. Consumed by the macOS bundle / plist writers (and
-// the iOS / AAX staging they drive) and the Windows standalone manifest.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+// the iOS / AAX staging they drive), the Windows standalone manifest, and
+// the LV2 TTL renderer - which runs on every host, so this is
+// unconditional.
 pub(crate) use util::plugin_version;
 // Bundle `Info.plist` version keys, used by every macOS bundle writer.
 #[cfg(target_os = "macos")]

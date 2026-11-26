@@ -6,7 +6,7 @@
 use super::PkgFormat;
 use super::stage::{
     ExtraComponent, build_preset_component, generate_distribution_xml, stage_aax, stage_au2,
-    stage_au3, stage_clap, stage_lv2_packaged, stage_standalone, stage_vst2, stage_vst3,
+    stage_au3, stage_clap, stage_external_packaged, stage_standalone, stage_vst2, stage_vst3,
     write_format_scripts,
 };
 use crate::commands::build_dylibs::BuildFormat;
@@ -292,14 +292,18 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
             ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            PkgFormat::Lv2 => stage_lv2_packaged(
+            // The staged bundle is already codesigned; macOS packaging
+            // has no use for the returned paths.
+            PkgFormat::External(e) => stage_external_packaged(
+                e,
                 root,
                 p,
                 o.config,
                 &staging,
                 &crate::application_identity(),
                 None,
-            ),
+            )
+            .map(|_| ()),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
@@ -735,9 +739,6 @@ fn resolve_formats(
         if available.contains("vst2") {
             fmts.push(PkgFormat::Vst2);
         }
-        if available.contains("lv2") {
-            fmts.push(PkgFormat::Lv2);
-        }
         if available.contains("au") {
             fmts.push(PkgFormat::Au2);
             fmts.push(PkgFormat::Au3);
@@ -748,10 +749,40 @@ fn resolve_formats(
         if available.contains("standalone") {
             fmts.push(PkgFormat::Standalone);
         }
+        fmts.extend(
+            crate::external::defaults_for(&available)?
+                .into_iter()
+                .map(PkgFormat::External),
+        );
         fmts
     };
 
-    Ok(drop_standalone_if_au3(fmts))
+    Ok(drop_unpackageable_externals(drop_standalone_if_au3(fmts)))
+}
+
+/// Drop every external format whose helper declares no `macos_pkg`
+/// layout, noting each as skipped.
+///
+/// Without that row there is no extension, install location or pkg id
+/// to build a `.pkg` component from - a helper that stages bundles but
+/// leaves distribution to someone else, which is a legitimate shape
+/// rather than an error. Dropping them here is what lets everything
+/// downstream read `require_macos_pkg` without an option dance.
+fn drop_unpackageable_externals(mut fmts: Vec<PkgFormat>) -> Vec<PkgFormat> {
+    fmts.retain(|f| {
+        let PkgFormat::External(e) = f else {
+            return true;
+        };
+        if e.macos_pkg.is_none() {
+            crate::log_skip(format!(
+                "{}: its helper declares no macOS .pkg layout, so it can't ship in the installer.",
+                e.label
+            ));
+            return false;
+        }
+        true
+    });
+    fmts
 }
 
 /// AU v3's bundle *is* the standalone `{name}.app` - the host with the
@@ -777,7 +808,7 @@ fn formats_for_plugin(formats: &[PkgFormat], p: &PluginDef) -> Vec<PkgFormat> {
     formats
         .iter()
         .filter(|f| **f != PkgFormat::Standalone || has_standalone)
-        .cloned()
+        .copied()
         .collect()
 }
 
@@ -803,8 +834,10 @@ fn build_all_formats(
     if formats.contains(&PkgFormat::Vst2) {
         build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Vst2)?;
     }
-    if formats.contains(&PkgFormat::Lv2) {
-        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Lv2)?;
+    for f in formats {
+        if let PkgFormat::External(e) = f {
+            build_and_lipo_format(root, plugins, archs, dt, BuildFormat::External(e))?;
+        }
     }
     if formats.contains(&PkgFormat::Au2) {
         build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Au2)?;
@@ -1097,14 +1130,18 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            PkgFormat::Lv2 => stage_lv2_packaged(
+            // The staged bundle is already codesigned; macOS packaging
+            // has no use for the returned paths.
+            PkgFormat::External(e) => stage_external_packaged(
+                e,
                 root,
                 p,
                 o.config,
                 &staging,
                 &crate::application_identity(),
                 None,
-            ),
+            )
+            .map(|_| ()),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),

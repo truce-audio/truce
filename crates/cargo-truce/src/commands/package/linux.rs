@@ -394,7 +394,7 @@ struct PluginSummary {
     /// Bundle directory/file names that the script needs to know about,
     /// e.g. `["My Gain.clap", "My Gain.vst3"]`. Each entry's `format`
     /// names the format-grouped directory in the tarball
-    /// (`clap/`, `vst3/`, `lv2/`, `vst/`).
+    /// (`clap/`, `vst3/`, `vst/`, and one per helper format).
     bundles: Vec<BundleEntry>,
     /// Standalone executable name relative to the tarball's
     /// `standalone/` directory, if any.
@@ -417,7 +417,8 @@ struct PluginSummary {
 
 struct BundleEntry {
     /// Format slug for install path AND for the format-grouped
-    /// directory in the tarball: `"clap"`, `"vst3"`, `"lv2"`, `"vst"`.
+    /// directory in the tarball: `"clap"`, `"vst3"`, `"vst"`, or an
+    /// external format's own token.
     format: &'static str,
     /// Filename inside the tarball's `<format>/` directory.
     name: String,
@@ -442,13 +443,13 @@ fn stage_plugin_payload(
     let mut bundles = Vec::new();
 
     // Tarball layout mirrors the Linux install destinations: bundles
-    // get grouped by format (`clap/`, `vst3/`, `lv2/`, `vst/`) at the
+    // get grouped by format (`clap/`, `vst3/`, `vst/`, …) at the
     // tarball root rather than nested under `plugins/<bundle_id>/`.
     // This makes `tar xf … -C ~/.config/...` viable as a manual
     // alternative to `install.sh` and keeps install.sh's per-plugin
     // case bodies short (one path component to copy from).
     for entry in manifest.bundles_for_plugin(&plugin.crate_name) {
-        let Some(slug) = linux_install_slug(&entry.format) else {
+        let Some(slug) = linux_install_slug(&entry.format)? else {
             // AU2/AU3/AAX would never appear in a host-Linux manifest
             // because they're macOS-only; if one slips in via a copied
             // target/ from another host, the host_triple check above
@@ -482,9 +483,10 @@ fn stage_plugin_payload(
 
     // Factory presets, emitted at stage time (the build manifest only
     // tracks the bundles themselves). CLAP gets a `<stem>.presets/`
-    // sibling, LV2 presets go inside the staged bundle, and VST3
-    // presets stage as a loose tree install.sh merges into the shared
-    // `~/.vst3/presets` folder.
+    // sibling and VST3 presets stage as a loose tree install.sh
+    // merges into the shared `~/.vst3/presets` folder. An external
+    // format's presets are already inside the bundle we just copied -
+    // its helper wrote them during `cargo truce build`.
     let mut clap_presets = None;
     let mut vst3_presets = None;
     if let Some(fp) = presets::load_factory_presets(root, plugin, config)? {
@@ -499,13 +501,6 @@ fn stage_plugin_payload(
                         &format!("{}-clap", plugin.bundle_id),
                     )?;
                     clap_presets = Some(format!("clap/{dir}"));
-                }
-                "lv2" => {
-                    let uri = truce_build::lv2::plugin_uri(
-                        config.vendor.url.as_deref().unwrap_or(""),
-                        &plugin.bundle_id,
-                    );
-                    presets::emit_lv2_presets(&fp, &staging.join("lv2").join(&b.name), &uri)?;
                 }
                 "vst3" => {
                     let payload = presets::vst3_preset_payload(&fp, plugin, config);
@@ -581,25 +576,80 @@ fn build_flag_for_format(f: &PkgFormat) -> Option<&'static str> {
         PkgFormat::Clap => Some("--clap"),
         PkgFormat::Vst3 => Some("--vst3"),
         PkgFormat::Vst2 => Some("--vst2"),
-        PkgFormat::Lv2 => Some("--lv2"),
         PkgFormat::Au2 => Some("--au2"),
         PkgFormat::Au3 => Some("--au3"),
         PkgFormat::Aax => Some("--aax"),
         PkgFormat::Standalone => None,
+        // A helper format answers to `--<its token>`, which is exactly
+        // how `cargo truce build` reads it back.
+        PkgFormat::External(e) => Some(&e.format),
     }
 }
 
 /// Map a manifest format slug (`"vst2"`, `"clap"`, …) to the install
 /// path slug used by `install.sh`'s `dest_dir()` (`"vst"`, `"clap"`,
-/// …). Returns `None` for formats that don't have a Linux install
-/// path (AU, AAX).
-fn linux_install_slug(format: &str) -> Option<&'static str> {
-    match format {
+/// …). Returns `None` for formats that have no Linux install path
+/// (AU, AAX), which the caller skips.
+///
+/// An external format files its bundles under its own token and gets a
+/// matching `dest_dir` arm from [`external_dest_dirs`], so the two
+/// stay in step by construction.
+///
+/// # Errors
+///
+/// A helper on `PATH` answered `describe` with something unreadable.
+fn linux_install_slug(format: &str) -> Result<Option<&'static str>, CargoTruceError> {
+    Ok(match format {
         "clap" => Some("clap"),
         "vst3" => Some("vst3"),
         "vst2" => Some("vst"),
-        "lv2" => Some("lv2"),
-        _ => None,
+        other => crate::external::describe(other)?.map(|e| e.format.as_str()),
+    })
+}
+
+/// Render one `dest_dir` case arm per installed external format that
+/// declares a Linux install location, for the generated `install.sh`.
+///
+/// Paths come from the helper's `describe` output, so `install.sh`
+/// never carries a hard-coded location for a format this tool doesn't
+/// compile in. A helper with no system path reuses its user one -
+/// `--system` then still installs, just not where root would.
+///
+/// # Errors
+///
+/// A helper on `PATH` answered `describe` with something unreadable.
+fn external_dest_dirs() -> Result<String, CargoTruceError> {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    for e in crate::external::installed()? {
+        let Some(dirs) = e.install_dir.linux.as_ref() else {
+            continue;
+        };
+        let user = shell_home_path(&dirs.user);
+        let system = dirs
+            .system
+            .as_deref()
+            .map_or_else(|| user.clone(), shell_home_path);
+        let _ = write!(
+            out,
+            "        {})
+                         [ \"$SCOPE\" = \"system\" ] && echo {system} || echo {user}
+                         ;;
+",
+            e.format,
+        );
+    }
+    Ok(out)
+}
+
+/// Quote a helper-declared install path for `install.sh`, rebasing a
+/// leading `~` onto the script's own `USER_BASE_HOME` so the path
+/// follows the end user's home rather than the build machine's.
+fn shell_home_path(raw: &str) -> String {
+    match raw.strip_prefix("~/") {
+        Some(rest) => format!("\"${{USER_BASE_HOME}}/{}\"", rest.replace('"', "")),
+        None => sh_quote(raw),
     }
 }
 
@@ -726,7 +776,8 @@ fn write_install_sh(
         .replace("{{PROJECT}}", &heredoc_escape(&project_label))
         .replace("{{VENDOR}}", &heredoc_escape(&config.vendor.name))
         .replace("{{PLUGIN_NAMES}}", &plugin_names)
-        .replace("{{PLUGIN_CASES}}", &plugin_cases);
+        .replace("{{PLUGIN_CASES}}", &plugin_cases)
+        .replace("{{EXTERNAL_DEST_DIRS}}", &external_dest_dirs()?);
 
     let path = staging.join("install.sh");
     fs::write(&path, rendered)?;

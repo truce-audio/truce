@@ -28,6 +28,17 @@
 /// | `shell` only                | shell-mode loader (logic dylib loaded at runtime) |
 /// | `shell` + format(s)         | shell-mode cdylib that re-exports the loaded logic to the enabled formats |
 ///
+/// `clap`, `vst3` and `vst2` are features of this crate, so enabling
+/// them pulls the wrapper in. `aax`, `au` and `lv2` are not: `truce-aax`
+/// and `truce-au` are crates in this workspace that this facade doesn't
+/// depend on, and `truce-lv2` lives in the truce-extensions repo. For
+/// those three a plugin crate declares its own feature of that name plus
+/// a direct optional dependency on the wrapper crate
+/// (`aax = ["dep:truce-aax"]`, `lv2 = ["dep:truce-lv2"]`). The macro arm
+/// is just a token path resolved in the plugin crate, which is why
+/// `truce` can emit it without depending on the wrapper - and, for LV2,
+/// without this repo containing it.
+///
 /// `cargo truce build` / `cargo truce install` set the appropriate
 /// features per format on each invocation, so the multi-format case
 /// is the typical end-user shape; `cargo check` without features is
@@ -100,17 +111,17 @@ macro_rules! __plugin_impl {
             // they resolve from inside the synthetic module.
             use super::*;
 
-            // Compile-time LV2 TTL emission. Walks the params type's
-            // sidecar tree (written by `derive(Params)`) and produces
-            // `manifest.ttl` / `plugin.ttl` next to it; cargo-truce's
-            // stage_lv2 reads those at package time - no dlopen. Gated on
-            // the `lv2` feature so a const `range` / `default` (which the
-            // TTL can't encode) only errors when LV2 is actually built -
-            // every other format reads the const at runtime. The `cfg`
-            // lives inside this `#[allow(unexpected_cfgs)]` module so a
-            // downstream crate without an `lv2` feature doesn't warn.
-            #[cfg(feature = "lv2")]
-            $crate::__reexport::__truce_lv2_emit_root!($params);
+            // Name the root params type in the metadata tree that
+            // `derive(Params)` has been filling (`target/truce-meta/`),
+            // so `cargo truce` can resolve this plugin's parameters at
+            // package time and render whatever formats it was asked
+            // for. Expands to nothing, and is deliberately un-gated:
+            // the tree carries no format vocabulary, and which formats
+            // get built isn't known until packaging. A const `range` /
+            // `default` is recorded here as a fact and only refused by
+            // a format that can't encode it (LV2), rather than
+            // failing the compile of every plugin with the feature on.
+            $crate::__reexport::__truce_meta_root!($params);
 
             // --- Static mode (default, and always under `cfg(test)`) ---
             // Embed the logic directly. Zero overhead.
@@ -140,7 +151,15 @@ macro_rules! __plugin_impl {
         #[doc(hidden)]
         pub use __truce_runtime::__HotShellWrapper;
 
-        /// Type alias for use in tests and external references.
+        /// The plugin type this macro built, under a name a human
+        /// wrote.
+        ///
+        /// This is the supported entry point for anything outside the
+        /// macro: the crate's own tests, and an out-of-tree format
+        /// wrapper's `export_*!` macro, which needs a type to hang its
+        /// `extern "C"` symbols off. `__HotShellWrapper` is an
+        /// implementation detail and may be renamed; this alias is
+        /// not.
         pub type Plugin = __HotShellWrapper;
 
         /// FFI export driven by `cargo truce screenshot`. Renders
