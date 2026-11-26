@@ -831,6 +831,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         // baseview drives its own frame loop via on_frame().
     }
 
+    fn wants_idle(&self) -> bool {
+        false
+    }
+
     fn can_resize(&self) -> bool {
         self.can_resize
     }

@@ -105,8 +105,9 @@ pub struct AuParamDescriptor {
 /// v2: `output_ump_count` / `output_ump_at` gained the `protocol`
 /// argument. v3: appended `latency_samples` / `tail_samples`. v4:
 /// appended `set_render_mode`. v5: appended `param_parse_value`. v6:
-/// appended `gui_idle`. v7: appended `gui_has_aspect_lock`.
-pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7507;
+/// appended `gui_idle`. v7: appended `gui_has_aspect_lock`. v8: appended
+/// `gui_wants_idle`.
+pub const TRUCE_AU_ABI_VERSION: u32 = 0x5441_7508;
 
 /// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
@@ -310,6 +311,9 @@ pub struct AuCallbacks {
     /// free aspect (v7). The AU v3 Swift shim only refuses an off-aspect
     /// host resize for a locked editor.
     pub gui_has_aspect_lock: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
+    /// [`truce_core::editor::Editor::wants_idle`] for the open editor (1 if
+    /// none yet). The v2 view skips its idle `NSTimer` on 0. v8.
+    pub gui_wants_idle: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

@@ -2443,6 +2443,16 @@ unsafe extern "C" fn cb_gui_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     });
 }
 
+unsafe extern "C" fn cb_gui_wants_idle<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+    run_extern_callback_with::<P, i32>("vst3", "gui_wants_idle", 1, || unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        // Busy cell or no editor yet: assume it wants idle (the safe side).
+        inst.gui.try_enter().map_or(1, |gui| {
+            i32::from(gui.editor.as_ref().is_none_or(|e| e.wants_idle()))
+        })
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -2735,6 +2745,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_check_size_constraint: cb_gui_check_size_constraint::<P>,
         gui_set_size: cb_gui_set_size::<P>,
         gui_idle: cb_gui_idle::<P>,
+        gui_wants_idle: cb_gui_wants_idle::<P>,
         midi_mapping_get_param_id: cb_midi_mapping_get_param_id::<P>,
         get_output_param_count: cb_get_output_param_count::<P>,
         get_output_param: cb_get_output_param::<P>,
