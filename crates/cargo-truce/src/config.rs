@@ -607,9 +607,9 @@ pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
         return Err("No [[plugin]] entries in truce.toml".into());
     }
     // An empty / whitespace `[vendor].name` is dangerous, not just wrong:
-    // the vendor-scoped cleanup scans (`reset-aax`, `reset-au`,
-    // `uninstall --stale`) match cache/bundle names with
-    // `str::contains(&vendor.name)`, and `contains("")` is always true - so
+    // the vendor-scoped cleanup scans match cache / bundle names against
+    // it (`reset-aax`, `reset-au` with `str::contains`, `uninstall --stale`
+    // as a leading word), and every name contains and starts with "" - so
     // an empty name would delete every file in the AAX cache and every
     // bundle in the plug-in dirs. Reject it up front.
     if config.vendor.name.trim().is_empty() {
