@@ -70,6 +70,10 @@ pub fn map_source_to_param(infos: &[ParamInfo], channel: u8, source: MidiSource)
 /// array element's infos through this, turning `Level` into `Level 1` ..
 /// `Level 8`.
 ///
+/// Arrays nested in arrays suffix innermost first: the inner array names
+/// its elements, then each outer element appends its own index, so
+/// `Level 2 1` is outer element 1's inner element 2 (both 1-based).
+///
 /// [`ParamInfo::name`] is `&'static str`, so a suffixed name must live for
 /// the program's lifetime. A plugin has a bounded, tiny set of
 /// `(base, index)` pairs, so results are memoized and the backing string

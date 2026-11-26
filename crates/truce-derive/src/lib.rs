@@ -437,12 +437,12 @@ pub(crate) struct NestedField {
     /// group right after the preceding params (own params, then each
     /// earlier nested group's span). Pin it for wire stability the same
     /// way you pin a param `id`. Arrays: under the hash scheme each
-    /// element gets its own hashed base and a pinned `base` is rejected;
+    /// element's ids are mixed with its own salt and a pinned `base` is rejected;
     /// under ordinal element `i` packs at `base + i * element_count`.
     pub(crate) base: Option<u32>,
     /// `Some(N)` for a fixed-size array `#[nested] f: [T; N]`; `None`
     /// for a single nested field. Each array element is its own group,
-    /// based per [`Self::base`]'s rules (hashed per element, or packed
+    /// laid out per [`Self::base`]'s rules (salted per element, or packed
     /// contiguously under ordinal).
     pub(crate) array_len: Option<usize>,
 }
@@ -942,14 +942,47 @@ pub(crate) fn name_hash_id(name: &str) -> u32 {
     h & (METER_ID_BASE - 1)
 }
 
-/// Hash-scheme base of element `index` in a `#[nested] field: [T; N]`
-/// array: [`name_hash_id`] of `"field[index]"`. Each element is salted
-/// on its own, not packed at `base + index * element_count`, so adding
-/// a param to `T` doesn't shift every later element onto its
-/// neighbour's old ids. `[` can't appear in an ident, so the key never
-/// aliases a plain field's. Shared with `lv2_emit`.
-pub(crate) fn nested_elem_hash_base(field: &str, index: usize) -> u32 {
-    name_hash_id(&format!("{field}[{index}]"))
+/// Hash-scheme salt of element `index` in a `#[nested] field: [T; N]`
+/// array ([`truce_params::nested_elem_salt`] over the field name's full
+/// FNV-1a). Each element's ids are mixed with its own salt
+/// ([`truce_params::mix_nested_id`]) rather than packed at
+/// `base + index * element_count` or offset by a per-element hash, so
+/// growing `T` moves no element and ordinary child names don't collide
+/// across elements. Shared with `lv2_emit`.
+pub(crate) fn nested_elem_salt(field: &str, index: usize) -> u64 {
+    truce_params::nested_elem_salt(
+        state_field_hash(field),
+        u32::try_from(index).unwrap_or(u32::MAX),
+    )
+}
+
+/// How a `#[nested]` array lays out its elements' ids, for every site that
+/// must agree (static table, runtime rebase, `<field>_id` helper; the LV2
+/// aggregator mirrors it). `prelude` binds what the other parts read, with
+/// `__i: u32` the element index in scope.
+pub(crate) struct ArrayLayout {
+    prelude: proc_macro2::TokenStream,
+    /// `None`: hash scheme (`__SALTS[__i]`). `Some(base)`: ordinal,
+    /// element `__i` packed at `base`.
+    ordinal_base: Option<proc_macro2::TokenStream>,
+}
+
+impl ArrayLayout {
+    /// The id element `__i` exposes for child id `id`.
+    fn map_id(&self, id: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        match &self.ordinal_base {
+            None => quote! { ::truce::params::mix_nested_id(#id, __SALTS[__i as usize]) },
+            Some(base) => quote! { ((#id + #base) & (::truce::params::METER_ID_BASE - 1)) },
+        }
+    }
+
+    /// Rebase a live element (bound to `elem`) to its ids.
+    fn rebase(&self, elem: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+        match &self.ordinal_base {
+            None => quote! { #elem.remix_ids(__SALTS[__i as usize]); },
+            Some(base) => quote! { #elem.offset_ids(#base); },
+        }
+    }
 }
 
 /// Full 32-bit FNV-1a of a field name - the keyed `#[derive(State)]`
@@ -2229,7 +2262,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // A pinned base on a hash-scheme array would still pack elements at
     // `base + i * element_count`, so growing the element type silently
     // remaps every element after the first. Reject it while arrays are
-    // new; each element's hashed base is already stable.
+    // new; each element's salted ids are already stable.
     if scheme == IdScheme::Hash
         && let Some(n) = nested_fields
             .iter()
@@ -2240,7 +2273,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             "`#[nested(base = N)]` isn't supported on an array under the hash id scheme: \
              elements would pack at `base + i * element_count`, so adding a param to the \
              element type would shift every later element's ids. Drop `base`; each \
-             element already gets a stable hashed base.",
+             element's ids are already stable (salted per element).",
         )
         .to_compile_error()
         .into();
@@ -2565,34 +2598,34 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             }
         }
     };
-    // An array element's base as `(prelude, expr)`, `expr` reading
-    // `__i: u32` plus whatever `prelude` binds. Hash scheme: a const
-    // table of per-element hashes (`nested_elem_hash_base`), so growing
-    // the element type moves no element. Ordinal: contiguous from
-    // `group_base`, `count` being one element's param count in the
-    // caller's context (static table vs. live instance).
+    // An array's element layout (see `ArrayLayout`). Hash scheme: a const
+    // table of per-element salts, ids mixed per element (`mix_nested_id`),
+    // so growing the element type moves no element and child names don't
+    // collide across elements. Ordinal: contiguous from `group_base`,
+    // `count` being one element's param count in the caller's context
+    // (static table vs. live instance).
     let array_elem_base = |n: &NestedField,
                            group_base: proc_macro2::TokenStream,
                            count: proc_macro2::TokenStream|
-     -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+     -> ArrayLayout {
         let len = n
             .array_len
             .expect("array_elem_base called on a non-array field");
         if scheme == IdScheme::Hash {
             let field = n.ident.to_string();
-            let bases: Vec<u32> = (0..len).map(|k| nested_elem_hash_base(&field, k)).collect();
-            (
-                quote! { const __BASES: [u32; #len] = [#(#bases),*]; },
-                quote! { __BASES[__i as usize] },
-            )
+            let salts: Vec<u64> = (0..len).map(|k| nested_elem_salt(&field, k)).collect();
+            ArrayLayout {
+                prelude: quote! { const __SALTS: [u64; #len] = [#(#salts),*]; },
+                ordinal_base: None,
+            }
         } else {
-            (
-                quote! {
+            ArrayLayout {
+                prelude: quote! {
                     let __group_base: u32 = #group_base;
                     let __c: u32 = #count;
                 },
-                quote! { __group_base + __i * __c },
-            )
+                ordinal_base: Some(quote! { (__group_base + __i * __c) }),
+            }
         }
     };
     let static_elem_count = |ty: &syn::Type| quote! { <#ty as ::truce::params::Params>::param_infos_static().len() as u32 };
@@ -2623,18 +2656,18 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 Some(0) => quote! {},
                 Some(len) => {
                     let n_elems = u32::try_from(len).unwrap_or(0);
-                    let (prelude, elem_base) = array_elem_base(n, base_expr, static_elem_count(ty));
+                    let layout = array_elem_base(n, base_expr, static_elem_count(ty));
+                    let prelude = &layout.prelude;
+                    let mapped = layout.map_id(&quote! { __info.id });
                     quote! {
                         {
                             #prelude
                             for __i in 0u32..#n_elems {
-                                let __base: u32 = #elem_base;
                                 infos.extend(
                                     <#ty as ::truce::params::Params>::param_infos_static()
                                         .into_iter()
                                         .map(|mut __info| {
-                                            __info.id =
-                                                (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
+                                            __info.id = #mapped;
                                             // Match the runtime path: disambiguate each
                                             // element's leaf names (`Level` -> `Level 1` ..),
                                             // name and short_name both, or the static table
@@ -3004,7 +3037,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         // Rebase each nested group by its base, after construction (the
         // child built itself at its own local ids). The base is explicit
         // or auto-assigned by scheme. An array rebases each element by
-        // `array_elem_base` (hashed per element, or contiguous under
+        // `array_elem_base` (salted per element, or contiguous under
         // ordinal), mirroring the static table's layout.
         let offset_stmts: Vec<_> = nested_fields
             .iter()
@@ -3038,16 +3071,18 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                     None => quote! { me.#ident.offset_ids(#base_expr); },
                     Some(0) => quote! {},
                     Some(_) => {
-                        let (prelude, elem_base) = array_elem_base(
+                        let layout = array_elem_base(
                             n,
                             base_expr,
                             quote! { ::truce::params::Params::count(&me.#ident[0]) as u32 },
                         );
+                        let prelude = &layout.prelude;
+                        let rebase = layout.rebase(&quote! { __elem });
                         quote! {
                             {
                                 #prelude
                                 for (__i, __elem) in (0u32..).zip(&mut me.#ident) {
-                                    __elem.offset_ids(#elem_base);
+                                    #rebase
                                 }
                             }
                         }
@@ -3111,6 +3146,21 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             }
         })
         .collect();
+    // `remix_ids`: what a parent's hash-scheme `#[nested]` array applies to
+    // each element - every leaf id in this subtree (own params, and nested
+    // groups already rebased by their own bases) goes through
+    // `mix_nested_id` with the element's salt, matching the static table.
+    let nested_remix_recurse: Vec<_> = nested_fields
+        .iter()
+        .map(|n| {
+            let ident = &n.ident;
+            if n.array_len.is_some() {
+                quote! { for __n in &mut self.#ident { __n.remix_ids(salt); } }
+            } else {
+                quote! { self.#ident.remix_ids(salt); }
+            }
+        })
+        .collect();
     let offset_ids_impl = quote! {
         impl #struct_name {
             #[doc(hidden)]
@@ -3119,6 +3169,13 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                     (self.#own_param_idents.info.id + id_base)
                         & (::truce::params::METER_ID_BASE - 1);)*
                 #(#nested_offset_recurse)*
+            }
+
+            #[doc(hidden)]
+            pub fn remix_ids(&mut self, salt: u64) {
+                #(self.#own_param_idents.info.id =
+                    ::truce::params::mix_nested_id(self.#own_param_idents.info.id, salt);)*
+                #(#nested_remix_recurse)*
             }
         }
     };
@@ -3138,7 +3195,9 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             let len = n.array_len.expect("filtered to array fields");
             let base_expr = static_group_base(i, n);
             let fn_name = syn::Ident::new(&format!("{}_id", n.ident), n.ident.span());
-            let (prelude, elem_base) = array_elem_base(n, base_expr, static_elem_count(ty));
+            let layout = array_elem_base(n, base_expr, static_elem_count(ty));
+            let prelude = layout.prelude.clone();
+            let mapped = layout.map_id(&quote! { sub.into() });
             // Ordinal needs element counts from `param_infos_static()` (a
             // `Vec` clone each); compute the layout once and cache it so
             // later calls are a load. Hash bases are a const table already.
@@ -3163,11 +3222,16 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 )
             };
             let doc = format!(
-                "Global parameter id of element `index`'s `sub` param in the `{}` array.\n\n\
+                "Parameter id of element `index`'s `sub` param in the `{field}` array, in \
+                 `{struct_name}`'s own id space.\n\n\
+                 That's the id hosts see when `{struct_name}` is the plug-in's root params. \
+                 When `{struct_name}` is itself `#[nested]` in another struct, the parent \
+                 folds its own layout on top (a group base, or an array element's salt), so \
+                 this is not the host-facing id - read the live param's `id()` instead.\n\n\
                  {alloc_note}\n\n\
                  # Panics\n\n\
                  If `index >= {len}` (the array length).",
-                n.ident
+                field = n.ident,
             );
             let oob_msg = format!(
                 "{}: index {{index}} out of bounds for array of length {len}",
@@ -3184,7 +3248,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         assert!(index < #len, #oob_msg);
                         #prelude
                         let __i = index as u32;
-                        (#elem_base + sub.into()) & (::truce::params::METER_ID_BASE - 1)
+                        #mapped
                     }
                 }
             }
