@@ -102,6 +102,11 @@ where
     S: Sample,
     P: PluginRuntime<Sample = S>,
 {
+    // FTZ/DAZ for the whole chunked walk. The format wrappers already hold
+    // one for their entire callback (`run_audio_block`); this covers the
+    // hosts that call in directly - the standalone app and the offline
+    // driver. Nested guards restore in order, so doubling up is harmless.
+    let _denormal_guard = crate::denormal::DenormalGuard::new();
     let ChunkedProcess {
         events,
         sub_event_scratch,

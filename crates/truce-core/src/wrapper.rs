@@ -24,6 +24,7 @@ use std::sync::Arc;
 use truce_params::ParamInfo;
 
 use crate::bus::BusLayout;
+use crate::denormal::DenormalGuard;
 use crate::export::PluginExport;
 
 pub use plugin_cell::{PluginCell, PluginGuard};
@@ -435,8 +436,16 @@ pub fn run_register<P>(format: &str, body: impl FnOnce()) {
 ///
 /// Panic logging is one short `eprintln!` per occurrence; the audio
 /// thread should never panic, so the I/O is rare and acceptable.
+///
+/// Also holds a [`DenormalGuard`] (FTZ/DAZ, or FZ on `aarch64`) for the
+/// whole callback, not only the plug-in's own `process()`: the wrapper's
+/// work around it - f32 <-> f64 conversion, sub-block slicing, meter
+/// peaks, output narrowing - runs on the same samples, and with denormal
+/// input each of those ops takes a microcode assist on x86. A validator
+/// feeding denormal buffers measured that as a ~2.4x slowdown.
 #[must_use]
 pub fn run_audio_block<P>(format: &str, body: impl FnOnce()) -> bool {
+    let _denormal_guard = DenormalGuard::new();
     let result = catch_unwind(AssertUnwindSafe(body));
     if let Err(payload) = result {
         eprintln!(
@@ -453,7 +462,11 @@ pub fn run_audio_block<P>(format: &str, body: impl FnOnce()) -> bool {
 /// code. Returns `body`'s value on a clean exit, `fallback` if the
 /// body panicked. Used by the CLAP wrapper, whose process callback
 /// returns a `clap_process_status` `i32`.
+///
+/// Holds a [`DenormalGuard`] for the whole callback, like
+/// [`run_audio_block`].
 pub fn run_audio_block_with<P, R>(format: &str, fallback: R, body: impl FnOnce() -> R) -> R {
+    let _denormal_guard = DenormalGuard::new();
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(r) => r,
         Err(payload) => {
@@ -696,5 +709,41 @@ mod copy_c_str_tests {
         let (n, s) = run(text, 32);
         assert_eq!(n, text.len());
         assert_eq!(s, text);
+    }
+}
+
+#[cfg(all(test, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod denormal_tests {
+    use super::{run_audio_block, run_audio_block_with};
+    use std::hint::black_box;
+
+    /// `f32::MIN_POSITIVE * 0.5` is a denormal. Flushed under FTZ / FZ.
+    fn halve_min_normal() -> f32 {
+        black_box(f32::MIN_POSITIVE) * black_box(0.5f32)
+    }
+
+    /// The whole process callback - the wrapper's own conversions and
+    /// metering, not just the plug-in body - runs with denormals flushed,
+    /// and the host's FPU state is back afterwards.
+    #[test]
+    fn audio_block_runs_flushed_and_restores() {
+        assert!(
+            halve_min_normal() > 0.0,
+            "test thread must start without FTZ"
+        );
+        let mut inside = f32::NAN;
+        assert!(run_audio_block::<()>("test", || inside = halve_min_normal()));
+        assert_eq!(
+            inside, 0.0,
+            "denormal result must flush to zero in the block"
+        );
+        assert!(
+            halve_min_normal() > 0.0,
+            "caller's FPU state must be restored"
+        );
+
+        let inside = run_audio_block_with::<(), f32>("test", f32::NAN, halve_min_normal);
+        assert_eq!(inside, 0.0);
+        assert!(halve_min_normal() > 0.0);
     }
 }
