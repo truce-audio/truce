@@ -35,7 +35,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
    -let id = egui::Id::new("my_widget");
    +let id = egui::Id::unique("my_widget");
    -egui::SidePanel::left("p").show_inside(ui, |ui| { /* ... */ });
-   +egui::SidePanel::left("p").show(ui, |ui| { /* ... */ });
+   +egui::Panel::left("p").show(ui, |ui| { /* ... */ });
    ```
 
    **slint 1.15 → 1.19** — bump `slint` and `slint-build` to `=1.19.1`:
@@ -72,7 +72,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 
 #### Editors and GUI
 
-- **`idle()` everywhere.** `Editor::idle` is now driven on CLAP, VST3, VST2, AU v2, LV2 and the standalone host (#233); AAX already drove it, and the AU v3 app-extension view still does not. A side-effecting `idle()` now fires on the newly covered formats. The `dt` clock resets when an editor opens, so the first tick after a reopen doesn't report the whole closed interval, and `dt` is capped at 100 ms so a GUI-thread stall can't make animation jump. VST3 ticks `idle()` at ~60 fps only while an editor is open; with none open, only a slow restart poll runs (Windows). See the new `idle-anim` example.
+- **`idle()` everywhere.** `Editor::idle` is now driven on CLAP, VST3, VST2, AU v2, LV2 and the standalone host (#233); AAX already drove it, and the AU v3 app-extension view still does not. A side-effecting `idle()` now fires on the newly covered formats. The `dt` clock resets when an editor opens, so the first tick after a reopen doesn't report the whole closed interval, and `dt` is capped at 100 ms so a GUI-thread stall can't make animation jump. VST3 ticks `idle()` at ~60 fps only while an editor is open; with none open, only a slow restart poll runs (Windows). On CLAP, `idle()` rides the host's `clap.timer-support` extension — a host that doesn't offer it won't tick `idle()` (baseview editors still repaint through their own loop). See the new `idle-anim` example.
 - **Keyboard forwarding.** With the editor focused, a key it doesn't use goes back to the host (Space, Return, arrange shortcuts), so DAW commands keep working. egui, iced and slint all report unused keys, and a focused text field keeps every key. egui's `claim_keys` / `claim_shortcuts` and iced's `IcedPlugin::keeps_key` opt-ins are breaking for plug-ins that read keys directly (see Breaking). Claims made in one frame add up, so each panel can claim its own keys. A claim covers only the frame that made it, so a UI that stops claiming (say, a panel closes) hands those keys back on the next rendered frame. Keys held when the window loses focus are released instead of staying claimed.
 - `truce-egui`: recovers from a failed surface acquire instead of staying black, fixing a freeze and a GPU / host memory leak (#248). A frame dropped unrendered at shutdown or during a render panic no longer trips egui's texture-delta assert, which could abort the host in debug builds.
 - `truce-egui`: bundles Noto Music (`truce_font::NOTO_MUSIC`, SIL OFL 1.1) as a symbol fallback, so glyphs like `♩` render instead of tofu now that egui 0.37 makes its own symbol fonts opt-in.
@@ -87,7 +87,7 @@ This release updates the GUI stack and raises the minimum Rust version: `truce-e
 #### Formats
 
 - CLAP: requests a parameter rescan after state / preset load, fixing clap-validator's state-reproducibility tests on scaffolded plug-ins (#232). The main-thread drain requests a restart only while active (#238), and `activate` now calls the host's `latency.changed()` so a host's delay compensation can't go stale.
-- VST3: correct Steinberg interface IDs for `IUnitInfo`, `IEditControllerHostEditing` and `IProcessContextRequirements`. All three were wrong, so hosts never found these interfaces. `IProcessContextRequirements` now asks only for the fields the wrapper reads (continuous time, project / bar position, cycle, tempo, time signature, transport state) and no longer requests samples-to-next-clock, chord or frame rate.
+- VST3: correct Steinberg interface IDs for `IUnitInfo`, `IEditControllerHostEditing` and `IProcessContextRequirements`. All three were wrong, so hosts never found these interfaces. `IProcessContextRequirements` now asks only for the fields the wrapper reads (project / bar position, cycle, tempo, time signature, transport state) and no longer requests continuous-time samples, samples-to-next-clock, chord or frame rate.
 - VST2: restored the legacy macOS entry alias.
 - AU v3: Logic sizes the window from the editor's `preferredContentSize` instead of accepting every host view config (a 4:3 box); iOS still accepts all so GarageBand can resize. On macOS an aspect-locked editor ignores an off-aspect host resize (which would letterbox it), while a free-aspect editor still follows any resize. A `gui_close` that re-enters during another editor callback is now run once that callback finishes, instead of being lost and leaving the editor open after the host drops its container.
 - AAX: makes fewer host transport-API calls per block. The sample-location and bar / beat queries run only while the transport is rolling. The tick position is still read while stopped so `position_beats` tracks the edit cursor, as it does on the other formats.
