@@ -477,12 +477,55 @@ static int g_num_units = 0;
 // Maps param index → unit ID
 static int32 g_param_unit_id[4096];
 
+// Copy a unit (parameter group) name into a fixed-size buffer: at most
+// `N - 1` bytes, always NUL-terminated, cut back to a UTF-8 sequence start
+// so a long name never ends in a dangling lead byte. `strncpy(dst, src, N)`
+// left a 128+ byte name unterminated, so the unit lookup's `strcmp` and
+// `getUnitInfo`'s `str_to_char16` read past the buffer.
+template <int N>
+static constexpr void copy_unit_name(char (&dst)[N], const char* src) {
+    int n = 0;
+    while (n < N - 1 && src[n] != 0) n++;
+    // `src[n]` is the first byte not copied; if it continues a multi-byte
+    // sequence, that sequence started inside the copy - drop it whole.
+    if (src[n] != 0) {
+        while (n > 0 && ((unsigned char)src[n] & 0xC0) == 0x80) n--;
+    }
+    for (int i = 0; i < n; i++) dst[i] = src[i];
+    dst[n] = 0;
+}
+
+namespace {
+constexpr bool test_copy_unit_name() {
+    char dst[128] = {};
+    copy_unit_name(dst, "Filter");
+    const char* filter = "Filter";
+    for (int i = 0; i <= 6; i++) {
+        if (dst[i] != filter[i]) return false;
+    }
+    // A 200-byte name keeps 127 bytes and a terminator.
+    char src[201] = {};
+    for (int i = 0; i < 200; i++) src[i] = 'a';
+    copy_unit_name(dst, src);
+    if (dst[126] != 'a' || dst[127] != 0) return false;
+    // A two-byte sequence straddling the cut (lead at 126, continuation
+    // at 127) is dropped whole rather than split.
+    src[126] = '\xC3';
+    src[127] = '\xA9';
+    src[128] = 0;
+    copy_unit_name(dst, src);
+    if (dst[125] != 'a' || dst[126] != 0) return false;
+    return true;
+}
+static_assert(test_copy_unit_name(), "copy_unit_name must truncate and terminate");
+}  // namespace
+
 static void build_unit_map() {
     // Unit 0 = root (always exists)
     g_num_units = 1;
     g_units[0].id = 0;
     g_units[0].parentId = -1; // kNoParentUnitId
-    strncpy(g_units[0].name, "Root", sizeof(g_units[0].name));
+    copy_unit_name(g_units[0].name, "Root");
 
     for (uint32_t i = 0; i < g_num_params && i < 4096; i++) {
         const char* group = g_params[i].group;
@@ -490,10 +533,14 @@ static void build_unit_map() {
             g_param_unit_id[i] = 0; // root unit
             continue;
         }
-        // Find or create unit for this group
+        // Find or create unit for this group. Compare the name as it's
+        // stored (truncated), or every param of a group whose name is too
+        // long to store would miss its own unit and create another.
+        char name[sizeof(g_units[0].name)];
+        copy_unit_name(name, group);
         int32 unitId = -1;
         for (int u = 1; u < g_num_units; u++) {
-            if (strcmp(g_units[u].name, group) == 0) {
+            if (strcmp(g_units[u].name, name) == 0) {
                 unitId = g_units[u].id;
                 break;
             }
@@ -502,7 +549,7 @@ static void build_unit_map() {
             unitId = g_num_units;
             g_units[g_num_units].id = unitId;
             g_units[g_num_units].parentId = 0; // parent = root
-            strncpy(g_units[g_num_units].name, group, sizeof(g_units[0].name));
+            copy_unit_name(g_units[g_num_units].name, name);
             g_num_units++;
         }
         g_param_unit_id[i] = (unitId >= 0) ? unitId : 0;
