@@ -121,3 +121,87 @@ fn int_bool_const_defaults_resolve() {
     assert_eq!(p.get_plain(infos[0].id), Some(12.0));
     assert_eq!(p.get_plain(infos[1].id), Some(1.0));
 }
+
+// Every range shape with const slots. Each shape's literal-only checks
+// (positive `log` bounds, positive skew factor, `sym_skewed` center inside
+// the range, ordered `discrete` bounds, `enum` with >= 2 variants) are
+// re-applied to consts by the generated `const` assertion; these valid
+// declarations must keep compiling and resolve to the const values.
+const LOG_MIN: f64 = 20.0;
+const LOG_MAX: f64 = 20_000.0;
+const SKEW: f64 = 0.3;
+const PAN_MIN: f64 = -1.0;
+const PAN_MAX: f64 = 1.0;
+const PAN_CENTER: f64 = 0.0;
+const STEPS_MIN: i64 = 1;
+const STEPS_MAX: i64 = 16;
+const MODES: usize = 3;
+
+#[derive(Params)]
+struct ConstShapeParams {
+    #[param(name = "Freq", range = "log(LOG_MIN, LOG_MAX)", default = 440.0)]
+    freq: FloatParam,
+    #[param(name = "Drive", range = "skewed(0.0, 10.0, SKEW)", default = 1.0)]
+    drive: FloatParam,
+    #[param(
+        name = "Pan",
+        range = "sym_skewed(PAN_MIN, PAN_MAX, SKEW, PAN_CENTER)",
+        default = 0.0
+    )]
+    pan: FloatParam,
+    #[param(
+        name = "Steps",
+        range = "discrete(STEPS_MIN, STEPS_MAX)",
+        default = 8.0
+    )]
+    steps: IntParam,
+    #[param(name = "Mode", range = "enum(MODES)", default = 1.0)]
+    mode: IntParam,
+}
+
+#[test]
+fn const_slots_in_every_range_shape_resolve() {
+    let infos = ConstShapeParams::new().param_infos();
+    let bounds: Vec<(f64, f64)> = infos
+        .iter()
+        .map(|i| (i.range.min(), i.range.max()))
+        .collect();
+    assert_eq!(
+        bounds,
+        [
+            (20.0, 20_000.0),
+            (0.0, 10.0),
+            (-1.0, 1.0),
+            (1.0, 16.0),
+            (0.0, 2.0)
+        ]
+    );
+}
+
+// Consts whose names `str::parse::<f64>` reads as non-finite floats
+// (`inf`, `infinity`, `nan` in any case). They used to be taken for float
+// literals, and the derive panicked on proc_macro2's finite-literal assert.
+const NAN: f64 = -6.0;
+const INF: f64 = 6.0;
+const INFINITY: f64 = 3.0;
+
+#[derive(Params)]
+struct NonFiniteNamedConsts {
+    #[param(
+        name = "Trim",
+        range = "linear(NAN, INF)",
+        smooth = "exp(INFINITY)",
+        default = 0.0
+    )]
+    trim: FloatParam,
+}
+
+#[test]
+fn consts_named_inf_or_nan_are_consts_not_literals() {
+    let p = NonFiniteNamedConsts::new();
+    let info = &p.param_infos()[0];
+    assert_eq!(info.range.min(), -6.0);
+    assert_eq!(info.range.max(), 6.0);
+    let stat = &NonFiniteNamedConsts::param_infos_static()[0];
+    assert_eq!((stat.range.min(), stat.range.max()), (-6.0, 6.0));
+}
