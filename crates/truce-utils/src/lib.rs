@@ -64,10 +64,15 @@ pub fn slugify(name: &str) -> String {
 }
 
 /// Leading ASCII-decimal value of `part`, 0 when it has no leading
-/// digits. `"3-beta"` → 3, `"beta"` → 0.
+/// digits, saturating at `u32::MAX` when the digits overflow (so a huge
+/// component clamps like any other out-of-range one, never reading as 0).
+/// `"3-beta"` → 3, `"beta"` → 0.
 fn leading_u32(part: &str) -> u32 {
     let len = part.bytes().take_while(u8::is_ascii_digit).count();
-    part[..len].parse().unwrap_or(0)
+    if len == 0 {
+        return 0;
+    }
+    part[..len].parse().unwrap_or(u32::MAX)
 }
 
 /// Pack a `"major.minor.patch"` string into the single version word
@@ -172,6 +177,9 @@ mod version_tests {
         assert_eq!(version_word("1.2.3-beta"), (1 << 16) | (2 << 8) | 3);
         // Out-of-range components saturate, never wrap into a neighbour.
         assert_eq!(version_word("0.300.1"), (0xFF << 8) | 1);
+        // Past u32 too: still saturates, not 0.
+        assert_eq!(version_word("1.4294967296.5"), (1 << 16) | (0xFF << 8) | 5);
+        assert_eq!(version_word("99999999999.0.0"), 0xFFFF << 16);
         assert_eq!(version_word(""), 0);
     }
 
