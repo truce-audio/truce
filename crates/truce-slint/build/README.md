@@ -22,7 +22,7 @@ time, and configures `slint-build` so the imports above resolve.
 
 ```toml
 [build-dependencies]
-truce-slint-build = "6.1"
+truce-slint-build = "7.0"
 ```
 
 `build.rs`:
