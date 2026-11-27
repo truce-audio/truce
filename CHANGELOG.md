@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 7.0.2
+
+- Params: a `#[nested]` array's length can be a const (`[CompParams; MAX_BANDS]`), not only a literal (#229). Ids, names and saved state come out as for the same literal length. LV2 still needs a literal: it renders its ports from build metadata without running the plug-in, so `truce-format-lv2` refuses a const length when packaging and names the field.
+
 ## 7.0.1
 
 - CLI: `cargo truce uninstall` removes AAX bundles on Windows; it looked only in the macOS Avid folder.

@@ -964,6 +964,132 @@ fn zero_length_arrays_contribute_nothing() {
     assert_eq!(EmptyOrdinalArray::param_infos_static().len(), 1);
 }
 
+// --- const array lengths: `#[nested] f: [T; LEN]` (#229) ----------------
+
+const THREE_BANDS: usize = 3;
+const NO_BANDS: usize = 0;
+
+// Twins of `HashArray` / `BandArray` with the length behind a const: same
+// field names, so the layout must come out identical.
+#[derive(Params)]
+struct ConstHashArray {
+    #[nested]
+    bands: [HashBand; THREE_BANDS],
+}
+
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct ConstBandArray {
+    #[param(id = 0, name = "Master", range = "linear(0, 1)", default = 0.5)]
+    master: FloatParam,
+    #[nested(base = 1, label = "Band")]
+    bands: [Band; THREE_BANDS],
+}
+
+#[derive(Params)]
+struct ConstEmptyHashArray {
+    #[param(name = "Mix", default = 1.0)]
+    mix: FloatParam,
+    #[nested]
+    bands: [HashBand; NO_BANDS],
+}
+
+#[derive(Params)]
+#[params(id_scheme = "ordinal")]
+struct ConstEmptyOrdinalArray {
+    #[param(name = "Mix", default = 1.0)]
+    mix: FloatParam,
+    #[nested]
+    bands: [Band; NO_BANDS],
+}
+
+/// What hosts see of a params table: ids and both names, in order.
+fn layout(infos: &[truce_params::ParamInfo]) -> Vec<(u32, &'static str, &'static str)> {
+    infos.iter().map(|i| (i.id, i.name, i.short_name)).collect()
+}
+
+#[test]
+fn const_length_arrays_lay_out_like_literal_ones() {
+    assert_eq!(
+        layout(&ConstHashArray::new().param_infos()),
+        layout(&HashArray::new().param_infos()),
+    );
+    assert_eq!(
+        layout(&ConstHashArray::param_infos_static()),
+        layout(&HashArray::param_infos_static()),
+    );
+    assert_eq!(
+        layout(&ConstBandArray::new().param_infos()),
+        layout(&BandArray::new().param_infos()),
+    );
+    assert_eq!(
+        layout(&ConstBandArray::param_infos_static()),
+        layout(&BandArray::param_infos_static()),
+    );
+    for i in 0..THREE_BANDS {
+        assert_eq!(
+            ConstHashArray::bands_id(i, HashBandParamId::Gain),
+            HashArray::bands_id(i, HashBandParamId::Gain),
+        );
+        assert_eq!(
+            ConstBandArray::bands_id(i, BandParamId::Q),
+            BandArray::bands_id(i, BandParamId::Q),
+        );
+    }
+}
+
+#[test]
+fn const_zero_length_arrays_contribute_nothing() {
+    assert_eq!(ConstEmptyHashArray::new().count(), 1);
+    assert_eq!(ConstEmptyHashArray::param_infos_static().len(), 1);
+    assert_eq!(ConstEmptyOrdinalArray::new().count(), 1);
+    assert_eq!(ConstEmptyOrdinalArray::param_infos_static().len(), 1);
+}
+
+// Persisted config inside array elements: each element saves under its
+// own `voice[i]` key, whatever form the length takes.
+#[derive(Params)]
+struct PersistVoice {
+    #[param(name = "Level", default = 1.0)]
+    level: FloatParam,
+    #[persist]
+    note: std::sync::Mutex<u32>,
+}
+
+const TWO_VOICES: usize = 2;
+
+#[derive(Params)]
+struct ConstPersistVoices {
+    #[nested]
+    voice: [PersistVoice; TWO_VOICES],
+}
+
+#[derive(Params)]
+struct PersistVoices {
+    #[nested]
+    voice: [PersistVoice; 2],
+}
+
+#[test]
+fn array_elements_round_trip_persisted_state() {
+    let saved = ConstPersistVoices::new();
+    *saved.voice[1].note.lock().unwrap() = 7;
+    let blob = saved.serialize_persist();
+
+    let restored = ConstPersistVoices::new();
+    restored.load_persist(&blob);
+    assert_eq!(*restored.voice[0].note.lock().unwrap(), 0);
+    assert_eq!(*restored.voice[1].note.lock().unwrap(), 7);
+
+    // The literal-length twin writes the same blob and reads this one.
+    let twin = PersistVoices::new();
+    *twin.voice[1].note.lock().unwrap() = 7;
+    assert_eq!(twin.serialize_persist(), blob);
+    let twin_restored = PersistVoices::new();
+    twin_restored.load_persist(&blob);
+    assert_eq!(*twin_restored.voice[1].note.lock().unwrap(), 7);
+}
+
 // The collisions the additive `hash("field[i]") + hash(child)` layout hit
 // on ordinary names: masked FNV mixes weakly, so a difference between two
 // element bases often equalled one between two child ids, and

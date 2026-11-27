@@ -38,18 +38,18 @@
 //!   fails: the walk just produces the wrong ports and names, which
 //!   for LV2 are persisted in host sessions. Rename one of the types.
 
-use crate::{MeterField, ParamField};
+use crate::{ArrayLen, MeterField, ParamField};
 use proc_macro::TokenStream;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use syn::Type;
 
 /// One `#[nested]` field as the sidecar records it.
-pub(crate) struct SidecarNested {
+pub(crate) struct SidecarNested<'a> {
     pub(crate) field: syn::Ident,
     pub(crate) ty: Type,
     pub(crate) base: Option<u32>,
-    pub(crate) array_len: Option<usize>,
+    pub(crate) array_len: Option<&'a ArrayLen>,
     /// Name prefix where the group's params need disambiguating.
     pub(crate) label: String,
 }
@@ -171,9 +171,21 @@ pub(crate) fn write_struct_sidecar(
             }
             // An array group is walked `array_len` times, each element
             // placed by `mix_nested_id` (hash scheme) or packed after
-            // the one before it (ordinal).
-            if let Some(n) = array_len {
-                let _ = writeln!(buf, "array_len = {n}");
+            // the one before it (ordinal). A const length can't be
+            // evaluated here, so it's recorded as written and the walk
+            // refuses it with that name.
+            match array_len {
+                Some(ArrayLen::Literal(n)) => {
+                    let _ = writeln!(buf, "array_len = {n}");
+                }
+                Some(len @ ArrayLen::Const(_)) => {
+                    let _ = writeln!(
+                        buf,
+                        "array_len_const = \"{}\"",
+                        truce_build::toml_escape(&len.display())
+                    );
+                }
+                None => {}
             }
             buf.push('\n');
         }

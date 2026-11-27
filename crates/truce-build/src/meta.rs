@@ -300,6 +300,18 @@ fn walk(
                 .unwrap_or(auto_base);
             // A single `#[nested]` writes no `array_len` and walks once;
             // an array writes its literal length (`0` walks zero times).
+            // A const length (`[T; MAX_BANDS]`) is recorded as written:
+            // the derive can't evaluate it, and neither can this walk, which
+            // runs without the plugin.
+            if let Some(len) = entry.get("array_len_const").and_then(toml::Value::as_str) {
+                return Err(format!(
+                    "`{struct_name}.{}` is a #[nested] array of const length `{len}`, which \
+                     build metadata can't evaluate without running the plugin. The plugin \
+                     works on every format that reads its parameters at runtime; to package \
+                     it for one that needs them at build time, write the length as a literal.",
+                    slot_field.unwrap_or(child),
+                ));
+            }
             let array = entry
                 .get("array_len")
                 .and_then(toml::Value::as_integer)
@@ -487,7 +499,7 @@ mod tests {
     use super::{ResolvedRoot, resolve_root};
 
     /// Write a throwaway metadata tree and resolve it.
-    fn resolve(name: &str, files: &[(&str, &str)]) -> ResolvedRoot {
+    fn try_resolve(name: &str, files: &[(&str, &str)]) -> Result<ResolvedRoot, String> {
         let dir = std::env::temp_dir().join(format!("truce-meta-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for (ty, body) in files {
@@ -495,7 +507,11 @@ mod tests {
         }
         let out = resolve_root(&dir, "Root");
         let _ = std::fs::remove_dir_all(&dir);
-        out.unwrap()
+        out
+    }
+
+    fn resolve(name: &str, files: &[(&str, &str)]) -> ResolvedRoot {
+        try_resolve(name, files).unwrap()
     }
 
     const STEP: &str = "scheme = \"ordinal\"\n\
@@ -610,6 +626,30 @@ mod tests {
             })
             .collect();
         assert_eq!(ids, want);
+    }
+
+    /// A const array length can't be walked - ordinal ids after it, and
+    /// the element count itself, depend on its value - so the walk names
+    /// the field and the const instead of guessing a length.
+    #[test]
+    fn const_nested_array_length_is_refused_by_name() {
+        let err = try_resolve(
+            "const-array",
+            &[
+                (
+                    "Root",
+                    "scheme = \"hash\"\n\
+                     [[nested]]\ntype = \"Step\"\nfield = \"step\"\n\
+                     array_len_const = \"MAX_STEPS\"\n",
+                ),
+                ("Step", STEP),
+            ],
+        )
+        .expect_err("a const length must not resolve");
+        assert!(
+            err.contains("`Root.step`") && err.contains("`MAX_STEPS`"),
+            "{err}"
+        );
     }
 
     /// A cycle through `#[nested]` is rejected rather than recursed
