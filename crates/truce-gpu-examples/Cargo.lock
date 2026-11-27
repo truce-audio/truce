@@ -1727,7 +1727,7 @@ checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
 name = "truce"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "truce-core",
  "truce-derive",
@@ -1739,7 +1739,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "crossbeam-queue",
  "truce-aax-bridge",
@@ -1749,11 +1749,11 @@ dependencies = [
 
 [[package]]
 name = "truce-aax-bridge"
-version = "7.0.0"
+version = "7.0.1"
 
 [[package]]
 name = "truce-au"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -1764,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "base64",
  "serde",
@@ -1775,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "truce-clap"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -1786,7 +1786,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
@@ -1797,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "tiny-skia",
  "truce-core",
@@ -1807,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "truce-derive"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1820,7 +1820,7 @@ dependencies = [
 
 [[package]]
 name = "truce-driver"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "hound",
  "truce-core",
@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-gpu"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -1849,7 +1849,7 @@ dependencies = [
 
 [[package]]
 name = "truce-font"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "skrifa",
  "tiny-skia",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gpu"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "baseview-truce",
  "bytemuck",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "baseview-truce",
  "log",
@@ -1897,7 +1897,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-types"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "objc2",
  "truce-core",
@@ -1905,7 +1905,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-utils"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
@@ -1914,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "crc32fast",
  "libloading 0.9.0",
@@ -1928,14 +1928,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "bitflags 2.13.0",
 ]
 
 [[package]]
 name = "truce-plugin"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -1944,11 +1944,11 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "7.0.0"
+version = "7.0.1"
 
 [[package]]
 name = "truce-standalone"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "baseview-truce",
  "cpal",
@@ -1971,7 +1971,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "png",
  "toml",
@@ -1984,11 +1984,11 @@ dependencies = [
 
 [[package]]
 name = "truce-utils"
-version = "7.0.0"
+version = "7.0.1"
 
 [[package]]
 name = "truce-vst2"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "7.0.0"
+version = "7.0.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
