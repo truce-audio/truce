@@ -31,27 +31,38 @@ use std::sync::{Arc, Mutex, PoisonError};
 /// touches this buffer.
 pub const SNAPSHOT_PREALLOC: usize = 256;
 
+/// The inline lane's two buffers. `current` holds the published bytes; a
+/// publish serializes into `scratch`, and the two swap only when they
+/// differ, so the slot knows whether the bytes changed. Swapping keeps both
+/// allocations, so a steady state stays allocation-free.
+struct InlineLane {
+    current: Vec<u8>,
+    scratch: Vec<u8>,
+}
+
 /// Shared handle to the published custom-state bytes. Held by the shell
 /// (producer, audio thread) and the format wrapper (consumer, host /
 /// GUI thread), both cloned from one `Arc`.
 pub struct SnapshotSlot {
     /// Inline lane: the audio thread copies serialized bytes here each
     /// dirty block via `try_lock` (see [`Self::publish`]).
-    bytes: Mutex<Vec<u8>>,
+    inline: Mutex<InlineLane>,
     /// Off-thread lane: a background thread swaps a whole pre-serialized
     /// buffer in (see [`Self::store_arc`]). `read` prefers this over
-    /// `bytes`. The audio thread never touches this lock.
+    /// `inline`. The audio thread never touches this lock.
     swapped: Mutex<Option<Arc<Vec<u8>>>>,
     /// Set once *either* lane publishes for the first time. Until then a
     /// reader falls back to the locked `save_state()` path.
     supported: AtomicBool,
     /// Publish generation, folded into a consumer's save-blob cache key.
     /// Bumped every time the off-thread lane swaps in new bytes
-    /// ([`Self::store_arc`]), on a wrapper's [`Self::mark_published`], and
-    /// on the first landed inline publish after [`Self::mark_on_next_publish`].
-    /// A GUI-driven state change (a sample load, a wavetable swap) publishes
-    /// on the off-thread lane without going through the wrapper's param /
-    /// state-load revision, so a cache keyed only on that revision would
+    /// ([`Self::store_arc`]), on every inline [`Self::publish`] whose bytes
+    /// differ from the previous ones, on a wrapper's
+    /// [`Self::mark_published`], and on the first landed inline publish
+    /// after [`Self::mark_on_next_publish`]. Custom state can change without
+    /// going through the wrapper's param / state-load revision - a GUI
+    /// sample load on the off-thread lane, an editor message or MIDI learn
+    /// on the inline one - so a cache keyed only on that revision would
     /// return stale bytes.
     generation: AtomicU64,
     /// Set by [`Self::mark_on_next_publish`]: the next inline publish that
@@ -79,7 +90,10 @@ impl SnapshotSlot {
     #[must_use]
     pub fn with_capacity(cap: usize) -> Arc<Self> {
         let slot = Self {
-            bytes: Mutex::new(Vec::with_capacity(cap)),
+            inline: Mutex::new(InlineLane {
+                current: Vec::with_capacity(cap),
+                scratch: Vec::with_capacity(cap),
+            }),
             swapped: Mutex::new(None),
             supported: AtomicBool::new(false),
             generation: AtomicU64::new(0),
@@ -90,7 +104,7 @@ impl SnapshotSlot {
         // mutex on first lock, which would otherwise land on the first
         // `publish` from the audio thread. Locking here forces that
         // one-time init at construction instead.
-        drop(slot.bytes.lock().unwrap_or_else(PoisonError::into_inner));
+        drop(slot.inline.lock().unwrap_or_else(PoisonError::into_inner));
         drop(slot.swapped.lock().unwrap_or_else(PoisonError::into_inner));
         Arc::new(slot)
     }
@@ -104,25 +118,39 @@ impl SnapshotSlot {
     /// lock contention with a reader the publish is skipped and the
     /// previous snapshot stands.
     ///
+    /// `write` fills a scratch buffer, which replaces the published bytes
+    /// only when it differs from them; that is also when the generation
+    /// moves. So a save-blob cache keyed on the generation (AAX's) sees a
+    /// custom-state change however it happened - a parameter-free editor
+    /// message or MIDI learn included - while a plugin re-publishing the
+    /// same bytes every block (the unversioned default) leaves the cache
+    /// warm. The check is one compare of the bytes just written.
+    ///
     /// Returns whether the write **landed** (the lock was acquired and
     /// `write` ran). A `false` return means a reader held the lock and the
     /// publish was skipped, so the caller should not advance its
     /// last-published generation - the block must be retried.
     pub fn publish(&self, write: impl FnOnce(&mut Vec<u8>) -> bool) -> bool {
-        if let Ok(mut guard) = self.bytes.try_lock() {
-            guard.clear();
-            if write(&mut guard) {
-                self.supported.store(true, Ordering::Release);
-            }
-            // Under the lock, so a reader that sees the bumped generation
-            // reads these bytes.
-            if self.mark_pending.swap(false, Ordering::AcqRel) {
-                self.generation.fetch_add(1, Ordering::Release);
-            }
-            true
-        } else {
-            false
+        let Ok(mut guard) = self.inline.try_lock() else {
+            return false;
+        };
+        let InlineLane { current, scratch } = &mut *guard;
+        scratch.clear();
+        if write(scratch) {
+            self.supported.store(true, Ordering::Release);
         }
+        let changed = scratch != current;
+        if changed {
+            std::mem::swap(current, scratch);
+        }
+        // Under the lock, so a reader that sees the bumped generation reads
+        // these bytes, and one that serialized the previous bytes sees the
+        // generation move when it re-checks.
+        let armed = self.mark_pending.swap(false, Ordering::AcqRel);
+        if changed || armed {
+            self.generation.fetch_add(1, Ordering::Release);
+        }
+        true
     }
 
     /// Off-thread lane: swap a whole pre-serialized snapshot in. Called
@@ -156,8 +184,9 @@ impl SnapshotSlot {
     }
 
     /// The publish generation (see the `generation` field). Starts at 0;
-    /// each [`Self::store_arc`] / [`Self::mark_published`] / armed landed
-    /// publish ([`Self::mark_on_next_publish`]) bumps it. A save-blob cache
+    /// each [`Self::store_arc`] / inline publish that changed the bytes /
+    /// [`Self::mark_published`] / armed landed publish
+    /// ([`Self::mark_on_next_publish`]) bumps it. A save-blob cache
     /// keyed partly on this re-serializes after a GUI-driven off-thread
     /// state change (a sample load) even when no parameter moved.
     #[must_use]
@@ -178,7 +207,7 @@ impl SnapshotSlot {
     /// the plugin doesn't publish snapshots (nothing ever written) so
     /// the caller can fall back to the locked `save_state()` path. The
     /// off-thread lane wins over the inline lane - a plugin publishing
-    /// large state there never touches `bytes`.
+    /// large state there never touches the inline lane.
     #[must_use]
     pub fn read(&self) -> Option<Vec<u8>> {
         if !self.supported.load(Ordering::Acquire) {
@@ -193,9 +222,10 @@ impl SnapshotSlot {
             return Some((**arc).clone());
         }
         Some(
-            self.bytes
+            self.inline
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
+                .current
                 .clone(),
         )
     }
@@ -266,7 +296,7 @@ mod tests {
         let g0 = slot.generation();
         slot.mark_on_next_publish();
         {
-            let _reader = slot.bytes.lock().unwrap();
+            let _reader = slot.inline.lock().unwrap();
             assert!(!slot.publish(|_| true), "contended publish skips");
         }
         assert_eq!(
@@ -279,8 +309,40 @@ mod tests {
             true
         }));
         assert_eq!(slot.generation(), g0 + 1);
-        assert!(slot.publish(|_| true));
+        assert!(slot.publish(|buf| {
+            buf.push(1);
+            true
+        }));
         assert_eq!(slot.generation(), g0 + 1, "one bump per mark");
+    }
+
+    /// The generation moves exactly when a landed publish changes the
+    /// bytes: re-publishing the same bytes (an unversioned plugin's every
+    /// block) leaves it, so a cache keyed on it stays warm, and a skipped
+    /// (contended) publish leaves it because nothing reached the slot.
+    #[test]
+    fn the_generation_moves_when_the_bytes_change() {
+        let slot = SnapshotSlot::new();
+        let g0 = slot.generation();
+        let publish = |byte: u8| {
+            slot.publish(|buf| {
+                buf.push(byte);
+                true
+            })
+        };
+        assert!(publish(1));
+        assert_eq!(slot.generation(), g0 + 1, "new bytes bump");
+        assert!(publish(1));
+        assert!(publish(1));
+        assert_eq!(slot.generation(), g0 + 1, "the same bytes don't");
+        assert!(publish(2));
+        assert_eq!(slot.generation(), g0 + 2);
+        {
+            let _reader = slot.inline.lock().unwrap();
+            assert!(!publish(3), "contended publish skips");
+        }
+        assert_eq!(slot.generation(), g0 + 2, "a skipped publish doesn't bump");
+        assert_eq!(slot.read(), Some(vec![2]));
     }
 
     #[test]
@@ -368,7 +430,7 @@ mod tests {
             buf.push(1);
             true
         });
-        let held = slot.bytes.lock().unwrap();
+        let held = slot.inline.lock().unwrap();
         let landed = slot.publish(|buf| {
             buf.clear();
             buf.push(2);

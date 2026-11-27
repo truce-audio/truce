@@ -330,6 +330,11 @@ pub(crate) fn publish_snapshot<S, L>(
 /// skipped - no lock, no copy, O(1). `None` re-serializes every block
 /// (the historical behavior). `last_version` advances only on a landed
 /// write, so a block skipped on reader contention retries next time.
+///
+/// The slot bumps its generation when a publish changes the bytes, which
+/// is what invalidates AAX's save cache when custom state changes with no
+/// parameter move and no state load (an editor message, MIDI learn) -
+/// versioned or not.
 pub(crate) fn publish_snapshot_with(
     slot: &SnapshotSlot,
     try_snapshot: &mut bool,
@@ -673,6 +678,57 @@ mod tests {
         publish(9, &mut try_snapshot, &mut last);
         assert_eq!(calls.get(), 2);
         assert_eq!(slot.read(), Some(vec![9]));
+    }
+
+    /// Custom state that changes with no parameter move and no state load
+    /// (an editor message, MIDI learn) moves only `snapshot_version`. Each
+    /// such publish must bump the slot generation, or AAX's save cache -
+    /// keyed on (state revision, generation) - hands Pro Tools the old blob.
+    #[test]
+    fn a_new_version_bumps_the_generation() {
+        let slot = SnapshotSlot::new();
+        let mut try_snapshot = true;
+        let mut last = None;
+        let publish = |ver: u64, try_s: &mut bool, last: &mut Option<u64>| {
+            publish_snapshot_with(&slot, try_s, last, Some(ver), |buf| {
+                buf.push(u8::try_from(ver).unwrap_or(0));
+                true
+            });
+        };
+
+        publish(1, &mut try_snapshot, &mut last);
+        let g1 = slot.generation();
+        publish(1, &mut try_snapshot, &mut last);
+        assert_eq!(slot.generation(), g1, "an unchanged version doesn't bump");
+        publish(2, &mut try_snapshot, &mut last);
+        assert_eq!(slot.generation(), g1 + 1, "a new version bumps");
+        assert_eq!(slot.read(), Some(vec![2]));
+    }
+
+    /// The default configuration: an unversioned plugin (one overriding
+    /// only `save_state`) re-publishes every block. A change with no
+    /// parameter move must still bump the generation, or AAX hands Pro
+    /// Tools the old blob; re-publishing the same bytes must not, or the
+    /// save cache never hits.
+    #[test]
+    fn an_unversioned_publish_bumps_only_when_the_bytes_change() {
+        let slot = SnapshotSlot::new();
+        let mut try_snapshot = true;
+        let mut last = None;
+        let mut publish = |byte: u8| {
+            publish_snapshot_with(&slot, &mut try_snapshot, &mut last, None, |buf| {
+                buf.push(byte);
+                true
+            });
+        };
+        publish(1);
+        let g1 = slot.generation();
+        publish(1);
+        publish(1);
+        assert_eq!(slot.generation(), g1, "unchanged bytes keep the cache warm");
+        publish(2);
+        assert_eq!(slot.generation(), g1 + 1, "changed bytes bump");
+        assert_eq!(slot.read(), Some(vec![2]));
     }
 
     #[test]
