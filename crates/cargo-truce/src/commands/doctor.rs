@@ -15,7 +15,7 @@ use crate::{
     tag_info, tag_ok, tag_warn,
 };
 #[cfg(target_os = "windows")]
-use crate::{common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, which_exe};
+use crate::{locate_cmake, locate_msvc_cl, locate_ninja, which_exe};
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -422,33 +422,24 @@ fn show_scope_paths() {
 
     // AAX is system-only; AU v3 is system-only and lives in
     // /Applications/. Both have a single canonical location.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    report_fixed(
+        "AAX",
+        "system",
+        true,
+        &crate::util::aax_plugins_dir(),
+        "aaxplugin",
+    );
     #[cfg(target_os = "macos")]
-    {
-        report_fixed(
-            "AAX",
-            "system",
-            true,
-            Path::new("/Library/Application Support/Avid/Audio/Plug-Ins"),
-            "aaxplugin",
-        );
-        report_fixed(
-            "AU v3",
-            "system",
-            true,
-            Path::new("/Applications"),
-            // /Applications/ also holds every non-plug-in Mac app,
-            // so a count by ".app" would be meaningless - skip it.
-            "",
-        );
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let aax_dir = common_program_files()
-            .join("Avid")
-            .join("Audio")
-            .join("Plug-Ins");
-        report_fixed("AAX", "system", true, &aax_dir, "aaxplugin");
-    }
+    report_fixed(
+        "AU v3",
+        "system",
+        true,
+        Path::new("/Applications"),
+        // /Applications/ also holds every non-plug-in Mac app,
+        // so a count by ".app" would be meaningless - skip it.
+        "",
+    );
 }
 
 fn report_scope_line(f: &PathFormat, scope_label: &str, scope: InstallScope, path: &Path) {

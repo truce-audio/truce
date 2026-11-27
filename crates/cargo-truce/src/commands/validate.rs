@@ -35,7 +35,7 @@ fn validator_command(program: impl AsRef<OsStr>) -> Command {
     }
     cmd
 }
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -802,7 +802,7 @@ fn validate_aax_dsh(dsh: &str, plugins: &[&PluginDef], tests: AaxTestSet) -> usi
     let mut installed: Vec<(&&PluginDef, String)> = Vec::new();
     let mut failures = 0;
     for p in plugins {
-        let bundle = aax_install_dir().join(format!("{}.aaxplugin", p.file_stem()));
+        let bundle = crate::util::aax_plugins_dir().join(format!("{}.aaxplugin", p.file_stem()));
         if bundle.exists() {
             installed.push((p, bundle.to_string_lossy().into_owned()));
         } else {
@@ -1011,7 +1011,7 @@ fn validate_aax_pluginrunner(runner: &str, plugins: &[&PluginDef]) -> usize {
     eprintln!("  pluginrunner (load check)");
     let mut failures = 0;
     for p in plugins {
-        let bundle = aax_install_dir().join(format!("{}.aaxplugin", p.file_stem()));
+        let bundle = crate::util::aax_plugins_dir().join(format!("{}.aaxplugin", p.file_stem()));
         if !bundle.exists() {
             eprintln!("  {} ... SKIP (not installed)", p.name);
             continue;
@@ -1047,16 +1047,6 @@ fn validate_aax_pluginrunner(runner: &str, plugins: &[&PluginDef]) -> usize {
         }
     }
     failures
-}
-
-#[cfg(target_os = "macos")]
-fn aax_install_dir() -> PathBuf {
-    PathBuf::from("/Library/Application Support/Avid/Audio/Plug-Ins")
-}
-
-#[cfg(target_os = "windows")]
-fn aax_install_dir() -> PathBuf {
-    PathBuf::from("C:\\Program Files\\Common Files\\Avid\\Audio\\Plug-Ins")
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]

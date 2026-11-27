@@ -22,7 +22,7 @@ use crate::{Config, PluginDef, Res, release_lib, resolve_aax_sdk_path, tmp_aax_t
 #[cfg(target_os = "macos")]
 use crate::{codesign_bundle, run_sudo};
 #[cfg(target_os = "windows")]
-use crate::{common_program_files, locate_cmake, locate_ninja, locate_vcvars64};
+use crate::{locate_cmake, locate_ninja, locate_vcvars64};
 #[cfg(target_os = "macos")]
 use std::ffi::OsStr;
 use std::fs;
@@ -587,18 +587,19 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     // Pro Tools / Media Composer presence check. The Avid root is
     // installed by those products and shared across every AAX plug-in;
     // its absence is the cheapest proxy for "no host on this machine".
-    if !avid_root().exists() {
+    let aax_dir = crate::util::aax_plugins_dir();
+    let avid_root = crate::util::avid_root();
+    if !avid_root.exists() {
         crate::log_skip(format!(
             "AAX: skipped {} - Pro Tools / Media Composer not detected at {}.",
             p.name,
-            avid_root().display(),
+            avid_root.display(),
         ));
         return Ok(());
     }
 
     #[cfg(target_os = "macos")]
     {
-        let aax_dir = Path::new("/Library/Application Support/Avid/Audio/Plug-Ins");
         let dst = aax_dir.join(bundle_name);
         run_sudo("rm", &[OsStr::new("-rf"), dst.as_os_str()])?;
         run_sudo("ditto", &[built.as_os_str(), dst.as_os_str()])?;
@@ -607,10 +608,6 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
 
     #[cfg(target_os = "windows")]
     {
-        let aax_dir = common_program_files()
-            .join("Avid")
-            .join("Audio")
-            .join("Plug-Ins");
         fs_ctx::create_dir_all(&aax_dir)?;
         let dst = aax_dir.join(&bundle_name);
         let _ = fs::remove_dir_all(&dst);
@@ -619,17 +616,4 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     }
 
     Ok(())
-}
-
-/// Root of an Avid host install (Pro Tools / Media Composer). Used as
-/// the existence probe before [`install_aax`] writes a `.aaxplugin`
-/// into the shared `Audio/Plug-Ins/` subdir below it.
-#[cfg(target_os = "macos")]
-fn avid_root() -> std::path::PathBuf {
-    std::path::PathBuf::from("/Library/Application Support/Avid")
-}
-
-#[cfg(target_os = "windows")]
-fn avid_root() -> std::path::PathBuf {
-    common_program_files().join("Avid")
 }
