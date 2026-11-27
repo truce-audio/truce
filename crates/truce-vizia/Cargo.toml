@@ -46,7 +46,7 @@ baseview = { git = "https://github.com/truce-audio/baseview.git", branch = "base
 
 [package]
 name = "truce-vizia"
-version = "7.0.0"
+version = "7.0.1"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.95"
@@ -58,8 +58,8 @@ homepage = "https://truce.audio"
 crate-type = ["rlib"]
 
 [dependencies]
-truce-core = { version = "7.0.0", path = "../truce-core" }
-truce-params = { version = "7.0.0", path = "../truce-params" }
+truce-core = { version = "7.0.1", path = "../truce-core" }
+truce-params = { version = "7.0.1", path = "../truce-params" }
 
 # vizia 0.4.0 on crates.io ships the winit backend only; the
 # `baseview` feature (and the vizia_baseview crate) live in vizia's
@@ -86,7 +86,7 @@ log = "0.4"
 # scoping the dep to the platforms that use it keeps cargo's
 # `unused_dependencies` lint quiet there. Doesn't drag in any renderer.
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
-truce-gui-utils = { version = "7.0.0", path = "../truce-gui-utils" }
+truce-gui-utils = { version = "7.0.1", path = "../truce-gui-utils" }
 
 [lints]
 workspace = true
