@@ -123,15 +123,15 @@ pub fn publish_loaded_extra(slot: &crate::snapshot::SnapshotSlot, extra: Option<
         return;
     };
     for _ in 0..PUBLISH_ATTEMPTS {
+        // Bytes that differ from the published ones bump the snapshot
+        // generation under the slot lock, so a save-blob cache keyed on it
+        // (AAX's) re-serializes the loaded bytes on the next save, even
+        // before the audio thread drains the load.
         let landed = slot.publish(|buf| {
             buf.extend_from_slice(bytes);
             true
         });
         if landed {
-            // Bump the snapshot generation so a save-blob cache keyed on it
-            // (AAX's) re-serializes the loaded bytes on the next save, even
-            // before the audio thread drains the load.
-            slot.mark_published();
             return;
         }
         std::thread::yield_now();
