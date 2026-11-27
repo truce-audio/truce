@@ -9,6 +9,7 @@ Notable changes per release.
 - CLI: `cargo truce uninstall --stale` finds Linux VST2 plug-ins (`.so`, not `.vst`) and lists each Linux bundle once.
 - CLI: `cargo truce uninstall` exits non-zero when a bundle can't be removed and points Windows users at an Administrator prompt rather than `sudo`; a bundle already gone counts as removed.
 - CLI: `cargo truce uninstall` keeps the shell-mode sidecar while any copy of the plug-in stays installed, after a failed removal or with `--user` / `--system`.
+- CLI: Windows builds find the MSVC toolchain in a Build Tools-only install (`vswhere -products *`).
 
 ## 7.0.0
 

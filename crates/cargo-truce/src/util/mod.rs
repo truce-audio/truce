@@ -559,6 +559,17 @@ pub(crate) fn program_files() -> PathBuf {
     }
 }
 
+/// Return the Windows `%PROGRAMFILES(X86)%` directory (typically
+/// `C:\Program Files (x86)`), where the Visual Studio Installer lives.
+#[cfg(target_os = "windows")]
+pub(crate) fn program_files_x86() -> PathBuf {
+    if let Ok(v) = env::var("ProgramFiles(x86)") {
+        PathBuf::from(v)
+    } else {
+        PathBuf::from(r"C:\Program Files (x86)")
+    }
+}
+
 /// Read the version from `Cargo.toml`.
 /// Checks `[workspace.package] version` first, then `[package] version`.
 /// Consumed by the package pipelines (macOS .pkg, Windows .exe, Linux
