@@ -261,9 +261,9 @@ dependencies = [
 
 [[package]]
 name = "baseview-truce"
-version = "0.1.1-truce.14"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edbfdca945c40d6e0d4a748ccf8544e8ae7dd85d897a3e9f6c684c3b18b242f5"
+checksum = "6fb4cbfd2de5ff4ca35d9f59fc16019c3d3b5b1b429bf5af75eb14c4f26fb1c6"
 dependencies = [
  "keyboard-types",
  "nix",
@@ -694,7 +694,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1906,7 +1906,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2184,7 +2184,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

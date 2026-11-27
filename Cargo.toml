@@ -166,13 +166,14 @@ wgpu = { version = "30", default-features = false, features = ["wgsl"] }
 # crates.io as `baseview-truce`; the `package =` rename keeps every
 # `use baseview::*` in the GUI crates compiling unchanged. GUI crates
 # consume this via `baseview = { workspace = true }` so the registry
-# pin lives in exactly one place.
+# pin lives in exactly one place. A caret requirement: the fork follows
+# plain semver, so its fix releases arrive through `cargo update`.
 #
 # Vizia's git-pinned baseview rev lives outside this workspace in
 # `crates/truce-vizia/` (its own Cargo workspace). Whatever patch
 # wiring vizia ends up needing belongs there, not here - keeping the
 # parent lockfile + iOS bake free of the vizia mess.
-baseview = { package = "baseview-truce", version = "0.1.1-truce.14" }
+baseview = { package = "baseview-truce", version = "0.2" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features
