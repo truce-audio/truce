@@ -111,47 +111,47 @@ impl std::fmt::Display for StateLoadError {
 
 impl std::error::Error for StateLoadError {}
 
-/// Apply a deserialized state to a plugin: write parameter values,
-/// snap smoothers, then hand the optional extra blob to
-/// [`crate::plugin::PluginRuntime::load_state`].
+/// Apply a deserialized state to a plugin on the host thread: write
+/// parameter values, snap smoothers, then hand the custom state to
+/// [`load_custom_state`]. For a full load where the caller owns the plugin
+/// outright, like the standalone host's presets.
 ///
-/// Format wrappers call this from the audio thread after popping a
-/// pending load off their per-instance handoff queue. The reason it
-/// must run on the audio thread (and not on the host's main thread,
-/// where state-load callbacks are typically invoked): `load_state`
-/// takes `&mut P`, which would alias the audio thread's `&mut P`
-/// inside `process()` and produce a data race. The audio thread is
-/// the single thread that already owns `&mut P` between blocks, so
-/// running the load there sidesteps the race entirely.
-///
-/// `restore_values` and `snap_smoothers` go through the param
-/// struct's interior atomics, so they don't strictly need to run on
-/// the audio thread - but applying them here keeps the param values and
-/// the user's extra-state blob coherent for any observer reading after
-/// this returns.
+/// Format wrappers don't use this for a host or editor load: they apply
+/// the parameters at once on the host thread ([`apply_params`]) and queue
+/// the custom state, which the plugin's next owner applies with
+/// [`load_custom_state`].
 ///
 /// `#[persist]` fields are **not** applied here - `load_persist` takes a
-/// lock per field that a GUI reader can hold, so it would risk blocking
-/// the audio thread. [`apply_params`] applies persist on the host thread;
-/// the deferred wrappers call it before queueing, and a host-thread full
-/// load (the standalone host, an inactive-plugin load) calls it alongside
-/// this.
+/// lock per field that a GUI reader can hold; [`apply_params`] applies
+/// them.
 pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &DeserializedState) {
     use truce_params::Params;
     plugin.params().restore_values(&state.params);
     plugin.params().snap_smoothers();
+    load_custom_state(plugin, state);
+}
+
+/// Hand a queued load's custom state to the plugin's `load_state` - only
+/// the custom state. Every queued load had its parameters applied on the
+/// host thread when it was queued ([`apply_params`]), and an editor's
+/// `set_state` carries none, so restoring them again where the queue
+/// drains - the top of a block, or an activate - would revert any
+/// parameter change made in between (a host flush, `setParamNormalized`,
+/// a GUI knob) without the host hearing of it.
+///
+/// Runs on the audio thread when a block drains the queue, so a
+/// `load_state` failure is only a debug breadcrumb: the host already got a
+/// success return from the load callback, and envelope-level failures are
+/// reported synchronously in `parse_or_migrate` before the handoff.
+pub fn load_custom_state<P: crate::plugin::PluginRuntime + ?Sized>(
+    plugin: &mut P,
+    state: &DeserializedState,
+) {
     if let Some(extra) = &state.extra
         && let Err(e) = plugin.load_state(extra)
     {
-        // Debug-only breadcrumb: this can run on the audio thread (the
-        // deferred load pops off the handoff queue at the top of
-        // `process()`), and `eprintln!` locks stderr and allocates - so
-        // it must never fire in a release / shipped build. By the time
-        // this runs the host already got a success return from the
-        // wrapper's setChunk, so there's no user-facing report left,
-        // only a dev diagnostic. Envelope-level failures the host can
-        // act on are logged synchronously in `parse_or_migrate` before
-        // the queue handoff.
+        // `eprintln!` locks stderr and allocates, so never in a release /
+        // shipped build.
         #[cfg(debug_assertions)]
         eprintln!("truce: load_state failed: {e}");
         #[cfg(not(debug_assertions))]

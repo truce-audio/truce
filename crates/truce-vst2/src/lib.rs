@@ -35,7 +35,8 @@ use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
     ParamCStrings, PluginCell, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
     log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, publish_loaded_extra,
-    run_audio_block, run_extern_callback_with, run_register, save_extra, shared_plugin,
+    queue_host_state, run_audio_block, run_extern_callback_with, run_register, save_extra,
+    shared_plugin,
 };
 use truce_core::{Float, Sample};
 use truce_params::{ParamFlags, ParamInfo, Params};
@@ -555,7 +556,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // entire block. See `pending_state` field comment for the
         // queue-overflow policy.
         if let Some(state) = inst.pending_state.pop() {
-            state::apply_state(&mut *plugin, &state);
+            state::load_custom_state(&mut *plugin, &state);
         }
 
         // Paranoid allocation check (the `rt-paranoid` feature): guard the
@@ -1063,11 +1064,10 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
                 // restored values without waiting for `cb_process`
                 // to pop the queue.
                 state::apply_params(&*inst.params_arc, &deserialized);
-                // Publish the loaded custom state now so an
-                // `effGetChunk` before the block that applies it doesn't
-                // pair the restored params with the pre-load state.
-                publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
-                let _ = inst.pending_state.force_push(deserialized);
+                // The custom state goes to the audio thread, published at
+                // once so an `effGetChunk` before the block that applies
+                // it carries it.
+                queue_host_state(&inst.snapshot, &inst.pending_state, deserialized);
                 true
             } else {
                 false

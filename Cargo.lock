@@ -4783,6 +4783,7 @@ dependencies = [
 name = "truce-loader-tests"
 version = "6.3.0"
 dependencies = [
+ "crossbeam-queue",
  "reload-fixture-common",
  "truce",
  "truce-core",

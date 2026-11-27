@@ -76,6 +76,55 @@ pub fn enter_plugin<P>(plugin: &PluginCell<P>) -> PluginGuard<'_, P> {
     plugin.enter()
 }
 
+/// Hand a host state load (a session restore, a preset) to the plugin.
+/// The caller has applied its parameters on the host thread
+/// ([`crate::state::apply_params`]), so host queries see them at once; this
+/// queues the custom state.
+///
+/// The host thread never takes the plugin for it ([`PluginCell`]): the
+/// custom state waits in `pending` for the plugin's next owner - the next
+/// block, or [`apply_queued_state`] in an activate or deactivate callback.
+/// It goes into the snapshot slot right away ([`publish_loaded_extra`]), so
+/// a save before then carries it.
+///
+/// The queue holds one load, newest winning. A load with no custom state
+/// means "keep the current custom state", so it has nothing to hand the
+/// plugin and isn't queued. That matters when an earlier load is still
+/// queued: the custom state to keep is that load's (a save in between
+/// already returned it), and displacing it would revert the plugin to what
+/// it had before both.
+pub fn queue_host_state(
+    snapshot: &crate::snapshot::SnapshotSlot,
+    pending: &crossbeam_queue::ArrayQueue<crate::state::DeserializedState>,
+    mut state: crate::state::DeserializedState,
+) {
+    // Only the custom state is applied from the queue.
+    state.params.clear();
+    state.persist.clear();
+    if state.extra.is_none() {
+        return;
+    }
+    publish_loaded_extra(snapshot, state.extra.as_deref());
+    let _ = pending.force_push(state);
+}
+
+/// Apply the custom state of a load queued by [`queue_host_state`] (or an
+/// editor's `set_state`), if any ([`crate::state::load_custom_state`]), and
+/// republish the snapshot. For the lifecycle callbacks that own the plugin
+/// on the host thread - activate and deactivate - so a load queued while
+/// inactive runs `load_state` there rather than on the audio thread, and
+/// the snapshot reflects any state the callback itself changed (an
+/// activate's `reset`).
+pub fn apply_queued_state<P: crate::plugin::PluginRuntime + ?Sized>(
+    instance: &mut P,
+    pending: &crossbeam_queue::ArrayQueue<crate::state::DeserializedState>,
+) {
+    if let Some(state) = pending.pop() {
+        crate::state::load_custom_state(instance, &state);
+    }
+    instance.republish_snapshot();
+}
+
 /// Read the plugin's custom-state blob for a host state save.
 ///
 /// Reads the lock-free [`SnapshotSlot`](crate::snapshot::SnapshotSlot)
@@ -109,12 +158,15 @@ pub fn save_extra(snapshot: &crate::snapshot::SnapshotSlot) -> Vec<u8> {
 /// Empty bytes are skipped too: they say nothing about what `load_state`
 /// will build from them, so the block that applies the load publishes.
 ///
+/// A plugin that publishes on the off-thread lane (large sampler state) has
+/// its saves read that lane, so the loaded bytes replace its contents
+/// there; the plugin republishes from its own `state_changed` hook once the
+/// load is applied.
+///
 /// Known window: if this lands while a block is in flight, that block's own
 /// publish can rewrite the pre-load custom state (an unversioned plugin, or
 /// one whose `snapshot_version` moved). The block that applies the load
 /// republishes, so it only sticks if rendering stops before then.
-/// Off-thread-lane plugins (large sampler state) republish from their own
-/// `state_changed` hook.
 pub fn publish_loaded_extra(slot: &crate::snapshot::SnapshotSlot, extra: Option<&[u8]>) {
     /// The audio thread holds the slot only while it copies a block's
     /// snapshot in, so a short retry lands the loaded bytes.
@@ -122,6 +174,11 @@ pub fn publish_loaded_extra(slot: &crate::snapshot::SnapshotSlot, extra: Option<
     let Some(bytes) = extra.filter(|b| !b.is_empty()) else {
         return;
     };
+    // Never the audio thread here, so the off-thread lane is fair game.
+    if slot.uses_offthread_lane() {
+        slot.store_arc(bytes.to_vec());
+        return;
+    }
     for _ in 0..PUBLISH_ATTEMPTS {
         // Bytes that differ from the published ones bump the snapshot
         // generation under the slot lock, so a save-blob cache keyed on it
@@ -152,18 +209,29 @@ mod plugin_cell {
     use std::cell::UnsafeCell;
     use std::marker::PhantomData;
     use std::ops::{Deref, DerefMut};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    #[cfg(debug_assertions)]
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
+    /// The plugin's ownership cell. The rule every format wrapper follows:
+    /// the audio thread enters it for each block, and the host thread only
+    /// in lifecycle callbacks (init, activate, deactivate, reset), which a
+    /// host never runs alongside `process` - active or not, including a
+    /// host that processes without activating (pluginval). Nothing else
+    /// takes it: saves read the snapshot slot, and loads queue for the next
+    /// owner ([`queue_host_state`](super::queue_host_state)). So the two
+    /// threads never contend for it, and the audio thread never waits or
+    /// yields to host work.
     pub struct PluginCell<T> {
         data: UnsafeCell<T>,
-        /// Release-acquire handoff counter. Each owner `Acquire`s on
-        /// entry (observing the previous owner's writes) and `Release`s
-        /// on exit (publishing its own), carrying the happens-before edge
-        /// between the audio thread and the host thread. Mutual exclusion
-        /// comes from the host contract - `process` never overlaps a
-        /// lifecycle callback - not from this counter.
-        handoff: AtomicU64,
-        /// Whether the cell is currently held. Tracked in every build (not
+        /// Whether the cell is currently held, and the release-acquire edge
+        /// between owners: each claims it with an `Acquire` (observing the
+        /// previous owner's writes to the data) and frees it with a
+        /// `Release` store (publishing its own). The edge has to be on this
+        /// flag, the one a claim reads, or two threads that `try_enter` in
+        /// turn with nothing else ordering them - an inactive block against
+        /// a host-thread save - would touch the data unsynchronized even
+        /// though they never hold it together. Tracked in every build (not
         /// just debug) so [`Self::try_enter`] can decline re-entry in
         /// release rather than hand out a second aliasing `&mut`. `enter`
         /// still trusts the host contract (it asserts free only in debug);
@@ -201,7 +269,6 @@ mod plugin_cell {
         pub fn new(value: T) -> Self {
             Self {
                 data: UnsafeCell::new(value),
-                handoff: AtomicU64::new(0),
                 held: AtomicBool::new(false),
                 #[cfg(debug_assertions)]
                 owner: AtomicU64::new(0),
@@ -216,8 +283,7 @@ mod plugin_cell {
             reason = "the only panic is the debug-only overlap detector, compiled out in release"
         )]
         pub fn enter(&self) -> PluginGuard<'_, T> {
-            self.handoff.load(Ordering::Acquire);
-            let was_held = self.held.swap(true, Ordering::Relaxed);
+            let was_held = self.held.swap(true, Ordering::Acquire);
             #[cfg(debug_assertions)]
             {
                 let me = thread_token();
@@ -258,17 +324,17 @@ mod plugin_cell {
         /// [`Self::enter`] swaps `held` to `true` unconditionally and ignores
         /// the prior value (it trusts the host contract), so an `enter` that
         /// overlapped a `try_enter` on another thread would barge in past a
-        /// live guard with no signal. Every owner of a given cell must
-        /// therefore run on one logical thread of control: today the `audio`
-        /// cell uses only `enter` (audio thread, host-serialized) and the
-        /// `gui` cell uses `enter` + `try_enter` only on the host GUI thread.
-        /// Do not mix `enter` on one thread with `try_enter` on another for
-        /// the same cell.
+        /// live guard with no signal. So a cell is either entered from one
+        /// logical thread of control - the `audio` cell uses only `enter`
+        /// (audio thread, host-serialized), the `gui` cell `enter` +
+        /// `try_enter` only on the host GUI thread - or, where two threads
+        /// can reach it, only with `try_enter` while they can: the plugin
+        /// cell's rule, on [`PluginCell`]. Do not mix `enter` on one thread
+        /// with `try_enter` on another for the same cell.
         pub fn try_enter(&self) -> Option<PluginGuard<'_, T>> {
-            self.handoff.load(Ordering::Acquire);
             if self
                 .held
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                 .is_err()
             {
                 return None;
@@ -282,12 +348,12 @@ mod plugin_cell {
         }
     }
 
-    /// Guard handing out the exclusive `&mut T`; releases the handoff on
-    /// drop so the next owner's `Acquire` sees this owner's writes.
+    /// Guard handing out the exclusive `&mut T`; frees the cell on drop with
+    /// a `Release`, so the next owner's `Acquire` sees this owner's writes.
     pub struct PluginGuard<'a, T> {
         cell: &'a PluginCell<T>,
-        /// The acquiring thread must also release, for the handoff edge
-        /// to mean anything - so the guard can't cross threads.
+        /// The acquiring thread must also release, for the release-acquire
+        /// edge to mean anything - so the guard can't cross threads.
         _not_send: PhantomData<*const ()>,
     }
 
@@ -312,9 +378,8 @@ mod plugin_cell {
         fn drop(&mut self) {
             #[cfg(debug_assertions)]
             self.cell.owner.store(0, Ordering::Relaxed);
-            self.cell.held.store(false, Ordering::Relaxed);
-            // Release: publish this owner's writes to the next `Acquire`.
-            self.cell.handoff.fetch_add(1, Ordering::Release);
+            // Release: publish this owner's writes to the next claim.
+            self.cell.held.store(false, Ordering::Release);
         }
     }
 }
@@ -611,7 +676,90 @@ pub unsafe fn copy_c_str(out: *mut c_char, out_len: usize, text: &str) -> usize 
 mod plugin_cell_tests {
     use std::sync::Arc;
 
-    use super::{PluginCell, enter_plugin, shared_plugin};
+    use super::{PluginCell, enter_plugin, publish_loaded_extra, save_extra, shared_plugin};
+    use crate::snapshot::{SnapshotPublisher, SnapshotSlot};
+
+    /// A load is queued, not applied, so until the plugin's next owner runs
+    /// `load_state` a save carries the loaded bytes only if they reach the
+    /// lane the save reads - the off-thread one, once a plugin publishes
+    /// there (large sampler state).
+    #[test]
+    fn a_loaded_state_reaches_the_lane_saves_read() {
+        let inline = SnapshotSlot::new();
+        assert!(inline.publish(|buf| {
+            buf.extend_from_slice(b"old");
+            true
+        }));
+        publish_loaded_extra(&inline, Some(b"loaded"));
+        assert_eq!(save_extra(&inline), b"loaded");
+
+        let offthread = SnapshotSlot::new();
+        SnapshotPublisher::new(&offthread).publish(b"old sample".to_vec());
+        let before = offthread.generation();
+        publish_loaded_extra(&offthread, Some(b"loaded sample"));
+        assert_eq!(save_extra(&offthread), b"loaded sample");
+        assert!(
+            offthread.generation() > before,
+            "a cached save re-serializes"
+        );
+    }
+
+    /// Two threads claiming the cell with `try_enter`, nothing else ordering
+    /// them, never hold it together - checked directly, and through the
+    /// data's counter, which a simultaneous `&mut` would lose increments of.
+    /// Under Miri this also checks the release-acquire edge on `held`: each
+    /// owner's writes must be visible to the next, with no data race.
+    #[test]
+    fn two_try_enter_threads_never_hold_the_cell_together() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        // Miri checks every interleaving it runs for races, but slowly.
+        const ROUNDS: u64 = if cfg!(miri) { 300 } else { 20_000 };
+        let cell = Arc::new(PluginCell::new(0u64));
+        let inside = Arc::new(AtomicBool::new(false));
+        let overlaps = Arc::new(AtomicU64::new(0));
+        let entries = Arc::new(AtomicU64::new(0));
+        let hold = {
+            let (inside, overlaps, entries) = (inside.clone(), overlaps.clone(), entries.clone());
+            move |n: &mut u64| {
+                if inside.swap(true, Ordering::AcqRel) {
+                    overlaps.fetch_add(1, Ordering::Relaxed);
+                }
+                let before = *n;
+                for _ in 0..50 {
+                    std::hint::spin_loop();
+                }
+                *n = before + 1;
+                entries.fetch_add(1, Ordering::Relaxed);
+                inside.store(false, Ordering::Release);
+            }
+        };
+        let audio = {
+            let (cell, hold) = (cell.clone(), hold.clone());
+            std::thread::spawn(move || {
+                for _ in 0..ROUNDS {
+                    if let Some(mut guard) = cell.try_enter() {
+                        hold(&mut guard);
+                    }
+                }
+            })
+        };
+        for _ in 0..ROUNDS {
+            if let Some(mut guard) = cell.try_enter() {
+                hold(&mut guard);
+            }
+        }
+        audio.join().expect("the audio thread doesn't panic");
+        assert_eq!(
+            overlaps.load(Ordering::Relaxed),
+            0,
+            "both held the plugin at once"
+        );
+        assert_eq!(
+            *cell.enter(),
+            entries.load(Ordering::Relaxed),
+            "an increment was lost"
+        );
+    }
 
     #[test]
     fn try_enter_declines_while_held_then_accepts_when_free() {

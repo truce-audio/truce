@@ -70,9 +70,12 @@ use truce_core::ump::{
 use truce_core::wrapper::{
     ParamCStrings, PluginCell, PluginGuard, SharedPlugin, copy_c_str, default_io_channels,
     enter_plugin, log_midi_ports_clamped, log_missing_bus_layout, max_io_channels,
-    publish_loaded_extra, run_audio_block, run_extern_callback_with, run_register, save_extra,
+    queue_host_state, run_audio_block, run_extern_callback_with, run_register, save_extra,
     shared_plugin,
 };
+// Only the Apple editor path publishes an editor's `set_state` directly.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use truce_core::wrapper::publish_loaded_extra;
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
 use ffi::{
@@ -901,7 +904,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // entire block. See `pending_state` field comment for the
         // queue-overflow policy.
         if let Some(state) = inst.pending_state.pop() {
-            state::apply_state(&mut *plugin, &state);
+            state::load_custom_state(&mut *plugin, &state);
         }
 
         // Paranoid allocation check (the `rt-paranoid` feature): guard the
@@ -1377,15 +1380,10 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             // `setFullState:` see the restored values without first
             // running a render block.
             state::apply_params(&*inst.params_arc, &deserialized);
-            // Publish the loaded custom state now so a save before the
-            // render block that applies it doesn't pair the restored
-            // params with the pre-load state (an idle AU may not render).
-            publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
-            // Hand the deserialized state to the audio thread for
-            // application. `force_push` overwrites any older pending
-            // blob - see the `pending_state` field comment for why
-            // newest-wins is the right policy.
-            let _ = inst.pending_state.force_push(deserialized);
+            // The custom state goes to the audio thread, published into
+            // the snapshot slot at once so a save before the render block
+            // that applies it carries it (an idle AU may not render).
+            queue_host_state(&inst.snapshot, &inst.pending_state, deserialized);
             notify_state_changed(inst);
         }
     });
@@ -1438,8 +1436,7 @@ unsafe extern "C" fn cb_state_load_foreign<P: PluginExport>(
         };
         let deserialized = state::with_default_extra::<P>(migrated.into());
         state::apply_params(&*inst.params_arc, &deserialized);
-        publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
-        let _ = inst.pending_state.force_push(deserialized);
+        queue_host_state(&inst.snapshot, &inst.pending_state, deserialized);
         notify_state_changed(inst);
         1
     })
@@ -1603,8 +1600,7 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
         // the host thread, the custom state published and handed to
         // the audio thread, editor notified.
         state::apply_params(&*inst.params_arc, &deserialized);
-        publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
-        let _ = inst.pending_state.force_push(deserialized);
+        queue_host_state(&inst.snapshot, &inst.pending_state, deserialized);
         notify_state_changed(inst);
         1
     })

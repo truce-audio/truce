@@ -37,9 +37,10 @@ use truce_core::snapshot::SnapshotSlot;
 use truce_core::state;
 use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
-    ParamCStrings, PluginCell, SharedPlugin, copy_c_str, default_io_channels, enter_plugin,
-    find_bus_layout, log_missing_bus_layout, max_io_channels, publish_loaded_extra,
-    run_audio_block, run_extern_callback_with, run_register, save_extra, shared_plugin,
+    ParamCStrings, PluginCell, SharedPlugin, apply_queued_state, copy_c_str, default_io_channels,
+    enter_plugin, find_bus_layout, log_missing_bus_layout, max_io_channels, publish_loaded_extra,
+    queue_host_state, run_audio_block, run_extern_callback_with, run_register, save_extra,
+    shared_plugin,
 };
 use truce_params::MidiSource;
 use truce_params::sample::{Float, Sample};
@@ -47,7 +48,7 @@ use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper
@@ -103,15 +104,6 @@ struct Vst3Instance<P: PluginExport> {
     /// `chunked_process::process_chunked` every block.
     min_subblock_samples: u32,
     plugin_id_hash: u64,
-    /// `true` between `setActive(true)` and `setActive(false)`.
-    /// `cb_state_load` and `cb_state_save` read it to decide whether the
-    /// audio thread will drain `pending_state`: if inactive, no
-    /// `cb_process` runs, so the host thread applies the custom-state
-    /// blob synchronously rather than leaving it stranded (which would
-    /// let a following `getState` re-serialize stale extra state).
-    /// Written only from `cb_set_active` (main thread); unlike
-    /// `prepared`, it tracks deactivation too.
-    active: AtomicBool,
     /// Cached `(id, range)` pairs sorted by id. Built once in
     /// `cb_create` from `params().param_infos()`. Hosts call
     /// `cb_param_normalize` / `cb_param_denormalize` extremely often
@@ -131,11 +123,10 @@ struct Vst3Instance<P: PluginExport> {
     /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
     /// and editor (`set_state` callback) deserialize on their thread
     /// and push the result; the audio thread pops at the top of
-    /// `cb_process` and calls [`state::apply_state`]
-    /// under its exclusive `&mut plugin`. While inactive no `cb_process`
-    /// runs, so the host thread drains it in `cb_state_save` /
-    /// `cb_set_active` - the editor pushes unconditionally rather than
-    /// entering the cell from its own (possibly third) thread.
+    /// `cb_process` and calls [`state::load_custom_state`] under its
+    /// exclusive `&mut plugin`; `cb_set_active` drains it too, on the host
+    /// thread, so a load made while inactive applies there. Pushers never
+    /// enter the cell themselves (see `PluginCell`).
     pending_state: Arc<StateLoadQueue>,
     /// Atomic snapshots of the plugin's most recent `latency()` /
     /// `tail()` reports. Updated by the audio thread (or `cb_reset`)
@@ -361,7 +352,6 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
                 param_infos,
                 min_subblock_samples: info.automation.min_subblock_samples,
                 plugin_id_hash: state::shared_plugin_state_hash(&info),
-                active: AtomicBool::new(false),
                 param_ranges,
                 midi_maps,
                 transport_slot: TransportSlot::new(),
@@ -481,27 +471,19 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     });
 }
 
-/// `IComponent::setActive`. Tracks activation so `cb_state_load` knows
-/// whether the audio thread will drain the pending-state queue.
-unsafe extern "C" fn cb_set_active<P: PluginExport>(ctx: *mut std::ffi::c_void, active: i32) {
-    // The deactivation drain runs author `load_state` via `apply_state`;
-    // firewall it so a panic can't unwind across the C ABI.
+/// `IComponent::setActive`, on activation and deactivation alike: applies
+/// a queued state load (see below).
+unsafe extern "C" fn cb_set_active<P: PluginExport>(ctx: *mut std::ffi::c_void, _active: i32) {
+    // The drain runs author `load_state` via `apply_state`; firewall it so
+    // a panic can't unwind across the C ABI.
     run_extern_callback_with::<P, ()>("vst3", "set_active", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        inst.active.store(active != 0, Ordering::Relaxed);
-        if active == 0 {
-            // Deactivating: the audio thread stops draining `pending_state`,
-            // so a load queued (by the host or the editor) while active would
-            // strand and a following `getState` would re-serialize stale extra
-            // state - silently losing the load. Apply it now under the plugin
-            // lock (uncontended: the host serializes lifecycle calls with
-            // `process`) and refresh the snapshot.
-            if let Some(state) = inst.pending_state.pop() {
-                let mut plugin = enter_plugin(&inst.plugin);
-                state::apply_state(&mut *plugin, &state);
-                plugin.republish_snapshot();
-            }
-        }
+        // Either way the host thread owns the plugin here (the host never
+        // runs `setActive` alongside `process`), so a queued load runs
+        // `load_state` now: one queued while inactive before the first
+        // block, one a deactivated audio thread never drained so the
+        // plugin is current while inactive.
+        apply_queued_state(&mut *enter_plugin(&inst.plugin), &inst.pending_state);
     });
 }
 
@@ -721,21 +703,15 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // running DSP would feed garbage out of un-snapped smoothers.
         // Zero outputs and bail.
         if !audio.prepared {
-            for ch in 0..num_output_channels as usize {
-                let ptr = *outputs.add(ch);
-                if !ptr.is_null() {
-                    std::ptr::write_bytes(ptr, 0, num_frames);
-                }
-            }
+            zero_outputs(outputs, num_output_channels, num_frames);
             audio.event_list.clear();
             audio.sysex_inputs_pending = false;
             return;
         }
 
         // Take ownership of the plugin for the whole block: an
-        // uncontended `Acquire`, never a wait, since the host contract
-        // keeps `process` from overlapping a lifecycle callback and host
-        // saves read the snapshot instead of the plugin.
+        // uncontended `Acquire`, never a wait, since the host thread takes
+        // the plugin only in lifecycle callbacks (`PluginCell`).
         let mut plugin = enter_plugin(&inst.plugin);
 
         // Apply any pending state-load before per-block work so the
@@ -743,7 +719,7 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // entire block. See `pending_state` field comment for the
         // queue-overflow policy.
         if let Some(state) = inst.pending_state.pop() {
-            state::apply_state(&mut *plugin, &state);
+            state::load_custom_state(&mut *plugin, &state);
         }
 
         // Paranoid allocation check (the `rt-paranoid` feature): guard the
@@ -998,13 +974,20 @@ unsafe fn process_block<P: PluginExport, H: Sample>(
         // Panic in plugin.process() - zero outputs so the host
         // doesn't keep playing whatever stale samples were in the
         // buffer when DSP died.
-        unsafe {
-            for ch in 0..num_output_channels as usize {
-                let ptr = *outputs.add(ch);
-                if !ptr.is_null() {
-                    std::ptr::write_bytes(ptr, 0, nf);
-                }
-            }
+        unsafe { zero_outputs(outputs, num_output_channels, nf) };
+    }
+}
+
+/// Write `num_frames` of silence to each non-null output channel.
+///
+/// # Safety
+/// `outputs` must point to `num_channels` channel pointers, each null or
+/// valid for `num_frames` writes.
+unsafe fn zero_outputs<H: Sample>(outputs: *mut *mut H, num_channels: u32, num_frames: usize) {
+    for ch in 0..num_channels as usize {
+        let ptr = unsafe { *outputs.add(ch) };
+        if !ptr.is_null() {
+            unsafe { std::ptr::write_bytes(ptr, 0, num_frames) };
         }
     }
 }
@@ -1228,22 +1211,6 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     }
     run_extern_callback_with::<P, ()>("vst3", "save_state", (), || unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        // While inactive the audio thread never runs, so the snapshot below
-        // is whatever the last block published - stale if state changed
-        // since (an `activate` that reset it, a hot reload), and a state
-        // edit the editor queued through `set_state` sits undrained in
-        // `pending_state`. The host thread owns the plugin while inactive,
-        // so apply any queued edit here and always republish before
-        // reading. While active the audio thread owns the plugin and keeps
-        // the snapshot current itself, so we must not touch it here (read
-        // the snapshot only).
-        if !inst.active.load(Ordering::Relaxed) {
-            let mut plugin = enter_plugin(&inst.plugin);
-            if let Some(deserialized) = inst.pending_state.pop() {
-                state::apply_state(&mut *plugin, &deserialized);
-            }
-            plugin.republish_snapshot();
-        }
         let (ids, values) = inst.params_arc.collect_values();
         // Read the custom state from the lock-free snapshot the audio
         // thread publishes each block. Never touches the plugin, so it
@@ -1301,26 +1268,9 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // running a process block. pluginval / DAW preset reload
         // both observe this.
         state::apply_params(&*inst.params_arc, &deserialized);
-        if inst.active.load(Ordering::Relaxed) {
-            // Active: the audio thread drains `pending_state` at the top
-            // of the next block and applies the custom-state blob under
-            // its exclusive `&mut plugin`. `force_push` overwrites any
-            // older pending blob - see the `pending_state` field comment
-            // for why newest-wins is right.
-            publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
-            let _ = inst.pending_state.force_push(deserialized);
-        } else {
-            // Inactive: no `cb_process` will run, so apply the full
-            // state (params + extra) synchronously under the plugin
-            // lock - uncontended here since no audio thread is
-            // processing. Otherwise a `getState` before the next
-            // activate would re-serialize stale custom state.
-            let mut plugin = enter_plugin(&inst.plugin);
-            state::apply_state(&mut *plugin, &deserialized);
-            // No `cb_process` will publish, so refresh the snapshot slot
-            // now - a `getState` while still inactive reads live state.
-            plugin.republish_snapshot();
-        }
+        // Custom state: queued for the plugin's next owner, with its bytes
+        // in the snapshot slot at once (see `queue_host_state`).
+        queue_host_state(&inst.snapshot, &inst.pending_state, deserialized);
         // `try_enter`, not `enter`: a host can deliver `setState`
         // synchronously from a component-handler callback while an outer
         // GUI callback (e.g. `cb_gui_open`, which holds the cell across the
@@ -2373,11 +2323,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // run on the editor's own thread (baseview drives a
                         // separate thread on Linux), and the plugin cell must
                         // only ever be entered from the audio thread (active)
-                        // or the host main thread (inactive) - never a third.
-                        // The audio thread drains the queue while active; while
-                        // inactive the main thread drains it in `cb_state_save`
-                        // / `cb_set_active`, so an edit made in that window is
-                        // neither lost nor stranded. Publishing touches only
+                        // or the host main thread in a lifecycle callback -
+                        // never a third. A block drains the queue, or
+                        // `cb_set_active` does, so an edit made while
+                        // inactive is neither lost nor stranded. Publishing touches only
                         // the snapshot slot, which any thread may write, so a
                         // `get_state` or save before the drain sees the edit.
                         publish_loaded_extra(&snapshot_for_set, Some(&bytes));
