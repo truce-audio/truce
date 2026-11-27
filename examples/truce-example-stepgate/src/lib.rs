@@ -27,11 +27,9 @@ use truce::prelude::*;
 use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, section, toggle};
 
-/// Steps in the pattern. The `#[nested]` array length must be an integer
-/// literal (the derive needs the count at expansion time), so this const
-/// is asserted against it rather than used in the type.
+/// Steps in the pattern: the `#[nested]` array's length, and the count
+/// the DSP and editor index by.
 const NUM_STEPS: usize = 8;
-const _: () = assert!(NUM_STEPS == 8);
 
 /// Internal LFO tempo when the host reports no transport, so the gate
 /// stays audibly active standalone.
@@ -82,7 +80,7 @@ pub struct StepParams {
 #[derive(Params)]
 pub struct GateParams {
     #[nested]
-    pub step: [StepParams; 8],
+    pub step: [StepParams; NUM_STEPS],
 
     #[param(name = "Rate")]
     pub rate: EnumParam<Rate>,
