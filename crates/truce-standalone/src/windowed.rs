@@ -1014,9 +1014,12 @@ fn is_mod_pressed(mods: Modifiers) -> bool {
     }
 }
 
-/// Build a minimal `PluginContext` that routes parameter reads /
-/// writes / meter reads through the live plugin instance. Transport
-/// closure reads from the shared `Transport` the audio thread writes.
+/// Build a minimal `PluginContext` for the windowed editor. Parameter
+/// reads and writes go to the plugin's shared params and meter reads to
+/// its lock-free meter store, neither taking the plugin lock; state
+/// reads take the lock and state writes queue for the audio thread. The
+/// transport closure reads the shared `Transport` the audio thread
+/// writes.
 fn synthesize_editor_context<P: PluginExport>(
     plugin: &Arc<Mutex<P>>,
     transport: &Transport,
@@ -1026,14 +1029,21 @@ fn synthesize_editor_context<P: PluginExport>(
 where
     P::Params: 'static,
 {
-    // Poison-tolerant: if the audio thread panicked, the editor
-    // context still needs the params Arc to function. Recovering
-    // the inner guard is safe because params_arc only clones an
-    // Arc<P::Params> - it doesn't read mutable state.
-    let params: Arc<P::Params> = plugin
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .params_arc();
+    // One lock for the handles the closures below keep, all shared
+    // `Arc`s the editor reads without the plugin lock afterwards.
+    // Poison-tolerant: if the audio thread panicked, the editor context
+    // still needs them, and recovering the guard is safe because these
+    // only clone `Arc`s - nothing reads the plugin's mutable state.
+    let (params, task_spawner, meter_store): (Arc<P::Params>, Option<AnyTaskSpawner>, _) = {
+        let plugin = plugin
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            plugin.params_arc(),
+            plugin.task_spawner(),
+            plugin.meter_store(),
+        )
+    };
     let transport_read = transport.clone();
 
     let params_read = Arc::clone(&params);
@@ -1041,14 +1051,6 @@ where
     let params_plain = Arc::clone(&params);
     let params_format = Arc::clone(&params);
     let params_for_ctx = Arc::clone(&params);
-    let task_spawner: Option<AnyTaskSpawner> = plugin
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .task_spawner();
-    let meter_store = plugin
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .meter_store();
     let plugin_save = Arc::clone(plugin);
 
     PluginContext::from_closures(
