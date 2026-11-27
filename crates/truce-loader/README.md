@@ -62,11 +62,11 @@ Enable the dynamic shell (hot-reload) during development:
 
 ```toml
 [dependencies]
-truce = { version = "6.1", features = ["shell"] }
+truce = { version = "7.0", features = ["shell"] }
 ```
 
-(Cargo's caret resolver expands `"6.1"` to `>=6.1.0, <7.0.0`,
-so you'll pick up every `6.1.x` patch release without re-editing.
+(Cargo's caret resolver expands `"7.0"` to `>=7.0.0, <8.0.0`,
+so you'll pick up every 7.x release without re-editing.
 To track an unreleased checkout, swap for
 `git = "https://github.com/truce-audio/truce", branch = "main"`.)
 

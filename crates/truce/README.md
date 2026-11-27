@@ -57,11 +57,11 @@ the conventional pattern.
 
 ```toml
 [dependencies]
-truce = { version = "6.1", features = ["clap"] }
+truce = { version = "7.0", features = ["clap"] }
 ```
 
-(Cargo's caret resolver expands `"6.1"` to `>=6.1.0, <7.0.0`, so
-you'll pick up every `6.1.x` patch release without re-editing. To
+(Cargo's caret resolver expands `"7.0"` to `>=7.0.0, <8.0.0`, so
+you'll pick up every 7.x release without re-editing. To
 track an unreleased checkout, swap the line for
 `truce = { git = "https://github.com/truce-audio/truce", branch = "main", features = ["clap"] }`.
 Or just run `cargo truce new` and let the scaffolder write the
