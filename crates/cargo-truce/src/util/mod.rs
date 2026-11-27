@@ -499,6 +499,46 @@ pub(crate) fn release_bundle_bin(root: &Path, stem: &str, format_suffix: &str) -
         .join(format!("{stem}{format_suffix}.bundle-bin"))
 }
 
+/// Root of an Avid host install (Pro Tools / Media Composer), where the
+/// shared AAX plug-in folder lives - see [`aax_plugins_dir`].
+#[cfg(target_os = "macos")]
+pub(crate) fn avid_root() -> PathBuf {
+    PathBuf::from("/Library/Application Support/Avid")
+}
+
+/// Root of an Avid host install (Pro Tools / Media Composer), where the
+/// shared AAX plug-in folder lives - see [`aax_plugins_dir`].
+#[cfg(target_os = "windows")]
+pub(crate) fn avid_root() -> PathBuf {
+    common_program_files().join("Avid")
+}
+
+/// The folder Pro Tools scans for `.aaxplugin` bundles - system-wide only.
+/// `install`, `uninstall`, `validate` and `doctor` all take it from here,
+/// so they can't disagree about where a bundle lives (uninstall used to
+/// look only at the macOS path, so on Windows it never found one).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn aax_plugins_dir() -> PathBuf {
+    avid_root().join("Audio").join("Plug-Ins")
+}
+
+/// [`aax_plugins_dir`] for code that runs on every platform: `None` where
+/// AAX doesn't exist (Linux).
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "always Some on macOS / Windows, None on Linux"
+)]
+pub(crate) fn aax_plugins_dir_if_supported() -> Option<PathBuf> {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        Some(aax_plugins_dir())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
 /// Return the Windows `%COMMONPROGRAMFILES%` directory (typically `C:\Program Files\Common Files`).
 #[cfg(target_os = "windows")]
 pub(crate) fn common_program_files() -> PathBuf {
@@ -1335,6 +1375,28 @@ pub(crate) fn check_cmd(cmd: &str, args: &[&OsStr], label: &str) {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
+
+    /// Every AAX command finds bundles through this one folder, so it has
+    /// to be the platform's own: uninstall once used the macOS path
+    /// everywhere and never found a Windows bundle.
+    #[test]
+    fn aax_plugins_dir_is_the_platforms_avid_folder() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            aax_plugins_dir(),
+            PathBuf::from("/Library/Application Support/Avid/Audio/Plug-Ins")
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            aax_plugins_dir(),
+            common_program_files()
+                .join("Avid")
+                .join("Audio")
+                .join("Plug-Ins")
+        );
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        assert_eq!(aax_plugins_dir_if_supported(), None);
+    }
 
     #[test]
     fn extra_features_split_on_comma_and_space() {

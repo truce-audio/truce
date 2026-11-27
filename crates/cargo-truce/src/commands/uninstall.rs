@@ -13,9 +13,20 @@ use crate::run_sudo;
 #[cfg(target_os = "macos")]
 use std::ffi::OsStr;
 use std::fs;
+#[cfg(windows)]
+use std::os::windows::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use truce_utils::shell_sidecar::sidecar_path;
+
+/// The extension `install` gives a VST2 bundle on this platform.
+const VST2_EXT: &str = if cfg!(target_os = "macos") {
+    "vst"
+} else if cfg!(target_os = "windows") {
+    "dll"
+} else {
+    "so"
+};
 
 struct RemoveTarget {
     format: &'static str,
@@ -114,20 +125,71 @@ fn is_vendor_bundle(name: &str, vendor_token: &str) -> bool {
             .is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()))
 }
 
-/// Whether `file_name`, found in one format's install directory, is a
-/// `--stale` candidate: a `.<ext>` bundle that [`is_vendor_bundle`] and
-/// whose stem names none of the project's plugins.
-fn is_stale_bundle(file_name: &str, ext: &str, vendor_token: &str, known_stems: &[&str]) -> bool {
-    if !is_vendor_bundle(file_name, vendor_token) {
-        return false;
+/// The vendor and the project's plugins spelled the way one format
+/// spells them in bundle names, which is what `--stale` matches on disk.
+/// The raw names stop matching once a format rewrites them: the built-in
+/// formats replace reserved characters (`A/B Audio Dry/Wet` installs as
+/// `A-B Audio Dry-Wet.clap`), LV2 slug-cases. Compared raw, the vendor
+/// side finds nothing and the plugin side offers a live bundle for
+/// deletion.
+struct DiskNames {
+    vendor: String,
+    plugins: Vec<String>,
+}
+
+impl DiskNames {
+    fn new(vendor: &str, plugins: &[PluginDef], spell: impl Fn(&str) -> String) -> Self {
+        Self {
+            vendor: spell(vendor),
+            plugins: plugins.iter().map(|p| spell(&p.name)).collect(),
+        }
     }
-    let Some(stem) = file_name
-        .strip_suffix(ext)
-        .and_then(|rest| rest.strip_suffix('.'))
-    else {
-        return false;
-    };
-    !known_stems.contains(&stem)
+
+    /// The built-in formats' spelling, [`PluginDef::file_stem`]'s.
+    fn builtin(vendor: &str, plugins: &[PluginDef]) -> Self {
+        Self::new(vendor, plugins, truce_utils::safe_filename)
+    }
+
+    /// Whether `file_name`, found in one format's install directory, is
+    /// a `--stale` candidate: a `.<ext>` bundle that [`is_vendor_bundle`]
+    /// and whose stem names none of the project's plugins.
+    fn is_stale(&self, file_name: &str, ext: &str) -> bool {
+        if !is_vendor_bundle(file_name, &self.vendor) {
+            return false;
+        }
+        let Some(stem) = file_name
+            .strip_suffix(ext)
+            .and_then(|rest| rest.strip_suffix('.'))
+        else {
+            return false;
+        };
+        !self.plugins.iter().any(|p| p == stem)
+    }
+}
+
+/// `--stale -n <name>`: the name as each format spells it on disk, as
+/// [`DiskNames`] does - `Truce Dry/Wet` is `Truce Dry-Wet.clap` for the
+/// built-ins and `truce-dry-wet.lv2` for LV2 - lowercased.
+fn name_filter_spellings(name: &str, externals: &[&ExternalFormat]) -> Vec<String> {
+    std::iter::once(truce_utils::safe_filename(name))
+        .chain(externals.iter().map(|e| e.spell(name)))
+        .map(|s| s.to_lowercase())
+        .collect()
+}
+
+/// Whether the bundle at `path` is the plugin named by one of
+/// [`name_filter_spellings`], ignoring case, the AU v3 app suffix
+/// (legacy ` v3`, current ` (AUv3)`) and the legacy `.standalone`.
+fn is_named_bundle(path: &Path, spellings: &[String]) -> bool {
+    let stem = path
+        .file_stem()
+        .map(|f| f.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let stem = stem
+        .trim_end_matches(" v3")
+        .trim_end_matches(" (auv3)")
+        .trim_end_matches(".standalone");
+    spellings.iter().any(|s| s == stem)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -241,7 +303,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     }
 
     let vendor = &config.vendor.name;
-    let known_names: Vec<&str> = config.plugin.iter().map(|p| p.name.as_str()).collect();
+    let builtin = DiskNames::builtin(vendor, &config.plugin);
 
     let mut targets: Vec<RemoveTarget> = Vec::new();
     // Collected in the non-stale branch below; used after the
@@ -256,23 +318,22 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         let scan = |dir: &Path,
                     ext: &str,
                     format: &'static str,
-                    match_token: &str,
-                    known_stems: &[&str],
+                    names: &DiskNames,
                     needs_sudo: bool,
                     targets: &mut Vec<RemoveTarget>| {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
-                    if !is_stale_bundle(
-                        &entry.file_name().to_string_lossy(),
-                        ext,
-                        match_token,
-                        known_stems,
-                    ) {
+                    // Linux's scopes share one directory per format, so
+                    // the second scope would list each bundle again.
+                    let path = entry.path();
+                    if !names.is_stale(&entry.file_name().to_string_lossy(), ext)
+                        || targets.iter().any(|t| t.path == path)
+                    {
                         continue;
                     }
                     targets.push(RemoveTarget {
                         format,
-                        path: entry.path(),
+                        path,
                         needs_sudo,
                     });
                 }
@@ -286,8 +347,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                     &s.clap_dir(),
                     "clap",
                     "CLAP",
-                    vendor,
-                    &known_names,
+                    &builtin,
                     s.needs_sudo(),
                     &mut targets,
                 );
@@ -299,8 +359,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                     &s.vst3_dir(),
                     "vst3",
                     "VST3",
-                    vendor,
-                    &known_names,
+                    &builtin,
                     s.needs_sudo(),
                     &mut targets,
                 );
@@ -310,10 +369,9 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             for s in &scopes_to_scan {
                 scan(
                     &s.vst2_dir(),
-                    "vst",
+                    VST2_EXT,
                     "VST2",
-                    vendor,
-                    &known_names,
+                    &builtin,
                     s.needs_sudo(),
                     &mut targets,
                 );
@@ -323,10 +381,9 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             // the same path for both scopes.
             scan(
                 &InstallScope::System.vst2_dir(),
-                "dll",
+                VST2_EXT,
                 "VST2",
-                vendor,
-                &known_names,
+                &builtin,
                 InstallScope::System.needs_sudo(),
                 &mut targets,
             );
@@ -336,8 +393,8 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             // bundle names - LV2's are slug-cased (`Truce Analyzer` ->
             // `truce-analyzer.lv2`), so neither the raw vendor name nor
             // a raw display name would match on disk.
-            let vendor_spelled = e.spell(vendor);
-            if vendor_spelled.is_empty() {
+            let names = DiskNames::new(vendor, &config.plugin, |name| e.spell(name));
+            if names.vendor.is_empty() {
                 note_once(&format!(
                     "{}: vendor name {vendor:?} has no ASCII letters or digits, so it can't \
                      identify {} bundles by name; skipping {} for --stale",
@@ -345,15 +402,12 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 ));
                 continue;
             }
-            let known: Vec<String> = config.plugin.iter().map(|p| e.spell(&p.name)).collect();
-            let known_refs: Vec<&str> = known.iter().map(String::as_str).collect();
             for (dir, needs_sudo) in external_roots(e, &scopes_to_scan) {
                 scan(
                     &dir,
                     e.bundle_extension(),
                     &e.label,
-                    &vendor_spelled,
-                    &known_refs,
+                    &names,
                     needs_sudo,
                     &mut targets,
                 );
@@ -366,8 +420,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                     &s.au_v2_dir(),
                     "component",
                     "AU v2",
-                    vendor,
-                    &known_names,
+                    &builtin,
                     s.needs_sudo(),
                     &mut targets,
                 );
@@ -399,7 +452,8 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    if !is_vendor_bundle(&name_str, vendor) || !name_str.ends_with(".app") {
+                    if !is_vendor_bundle(&name_str, &builtin.vendor) || !name_str.ends_with(".app")
+                    {
                         continue;
                     }
                     let looks_like_au3 =
@@ -421,16 +475,11 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 }
             }
         }
-        if aax && scan_system {
-            scan(
-                Path::new("/Library/Application Support/Avid/Audio/Plug-Ins"),
-                "aaxplugin",
-                "AAX",
-                vendor,
-                &known_names,
-                true,
-                &mut targets,
-            );
+        if aax
+            && scan_system
+            && let Some(aax_dir) = crate::util::aax_plugins_dir_if_supported()
+        {
+            scan(&aax_dir, "aaxplugin", "AAX", &builtin, true, &mut targets);
         }
         // `--stale --standalone` cleans up legacy `<Name>.standalone.app`
         // bundles only - the historical convention `cargo truce package`
@@ -446,16 +495,9 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 |dir: &Path, needs_sudo: bool, targets: &mut Vec<RemoveTarget>| {
                     if let Ok(entries) = fs::read_dir(dir) {
                         for entry in entries.flatten() {
-                            let name = entry.file_name();
-                            let name_str = name.to_string_lossy();
-                            if !name_str.ends_with(".standalone.app") {
-                                continue;
-                            }
-                            if !is_vendor_bundle(&name_str, vendor) {
-                                continue;
-                            }
-                            let display = name_str.trim_end_matches(".standalone.app");
-                            if known_names.contains(&display) {
+                            if !builtin
+                                .is_stale(&entry.file_name().to_string_lossy(), "standalone.app")
+                            {
                                 continue;
                             }
                             targets.push(RemoveTarget {
@@ -480,17 +522,8 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                     .is_some_and(|f| f.to_string_lossy().to_lowercase().contains(&filter_lower))
             });
         } else if let Some(ref filter) = name_filter {
-            let filter_lower = filter.to_lowercase();
-            targets.retain(|t| {
-                let fname = t
-                    .path
-                    .file_stem()
-                    .map(|f| f.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
-                // Strip AU v3 suffixes: legacy " v3" and the new " (auv3)".
-                let display = fname.trim_end_matches(" v3").trim_end_matches(" (auv3)");
-                display == filter_lower
-            });
+            let spellings = name_filter_spellings(filter, &externals);
+            targets.retain(|t| is_named_bundle(&t.path, &spellings));
         }
     } else {
         // Normal mode: remove bundles for plugins in the project
@@ -539,7 +572,10 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             config.plugin.iter().collect()
         };
 
-        if all_formats_default {
+        // Only when every copy goes: `--user` / `--system` leave the
+        // other scope's bundles installed, and `--user` skips the
+        // system-only formats (AAX, AU v3, Windows VST2) altogether.
+        if all_formats_default && cli_scope.is_none() {
             crate_names_for_sidecar_cleanup.extend(plugins.iter().map(|p| p.crate_name.clone()));
         }
 
@@ -571,21 +607,21 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 #[cfg(target_os = "macos")]
                 {
                     for s in &scopes_to_scan {
-                        let path = s.vst2_dir().join(format!("{}.vst", p.file_stem()));
+                        let path = s.vst2_dir().join(format!("{}.{VST2_EXT}", p.file_stem()));
                         push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                     }
                 }
                 #[cfg(target_os = "windows")]
                 if scan_system {
                     let s = InstallScope::System;
-                    let path = s.vst2_dir().join(format!("{}.dll", p.file_stem()));
+                    let path = s.vst2_dir().join(format!("{}.{VST2_EXT}", p.file_stem()));
                     push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                 }
                 #[cfg(target_os = "linux")]
                 {
                     // Linux VST2 is `~/.vst/<name>.so` for both scopes.
                     let s = InstallScope::User;
-                    let path = s.vst2_dir().join(format!("{}.so", p.file_stem()));
+                    let path = s.vst2_dir().join(format!("{}.{VST2_EXT}", p.file_stem()));
                     push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                 }
             }
@@ -607,11 +643,11 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 let path = PathBuf::from(format!("/Applications/{}.app", p.au3_app_name()));
                 push_if_exists("AU v3", path, true, &mut targets);
             }
-            if aax && scan_system {
-                let path = PathBuf::from(format!(
-                    "/Library/Application Support/Avid/Audio/Plug-Ins/{}.aaxplugin",
-                    p.file_stem()
-                ));
+            if aax
+                && scan_system
+                && let Some(aax_dir) = crate::util::aax_plugins_dir_if_supported()
+            {
+                let path = aax_dir.join(format!("{}.aaxplugin", p.file_stem()));
                 push_if_exists("AAX", path, true, &mut targets);
             }
             if standalone {
@@ -677,6 +713,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     // Remove bundles
     let mut removed_au = false;
     let mut errors = 0u32;
+    let mut system_scope_failed = false;
 
     for t in &targets {
         // AU v3 special handling: unregister before deleting (macOS-only).
@@ -706,28 +743,23 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             removed_au = true;
         }
 
-        // `needs_sudo` only drives the macOS path: on Linux every
+        // `needs_sudo` picks `sudo` only on macOS: on Linux every
         // scope is per-user, and on Windows the cargo-truce process
         // is either elevated (direct fs ops succeed) or it isn't
-        // (the OS returns EACCES from `remove_*` and that surfaces
-        // unchanged).
+        // (the OS error from `remove_*` surfaces unchanged, and the
+        // summary says to elevate).
         let result: Res = {
             #[cfg(target_os = "macos")]
             {
                 if t.needs_sudo {
                     run_sudo("rm", &[OsStr::new("-rf"), t.path.as_os_str()])
                 } else {
-                    fs::remove_dir_all(&t.path)
-                        .or_else(|_| fs::remove_file(&t.path))
-                        .map_err(Into::into)
+                    remove_bundle(&t.path).map_err(Into::into)
                 }
             }
             #[cfg(not(target_os = "macos"))]
             {
-                let _ = t.needs_sudo;
-                fs::remove_dir_all(&t.path)
-                    .or_else(|_| fs::remove_file(&t.path))
-                    .map_err(Into::into)
+                remove_bundle(&t.path).map_err(Into::into)
             }
         };
 
@@ -737,6 +769,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             Err(e) => {
                 eprintln!("  \u{2717} {:<5} {} ({})", t.format, name, e);
                 errors += 1;
+                system_scope_failed |= t.needs_sudo;
             }
         }
     }
@@ -748,13 +781,19 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     }
 
     // Clean up `~/.truce/shell/<crate>.path` sidecars for plugins
-    // whose entire format set is being uninstalled. Skipped on
-    // partial uninstalls (`--clap`, `-p` etc. without all formats)
-    // since the sidecar is shared across format wrappers and
-    // removing it would break shell-mode for any still-installed
-    // formats. Skipped on `--stale` because we don't have crate
-    // names there.
-    for crate_name in &crate_names_for_sidecar_cleanup {
+    // whose every bundle is being uninstalled. Skipped on partial
+    // uninstalls (`--clap`, `-p` etc. without all formats, or `--user`
+    // / `--system`) since the sidecar is shared across format wrappers
+    // and scopes, and removing it would break shell-mode for any
+    // still-installed copies. Skipped on `--stale` because we don't
+    // have crate names there, and when any bundle failed to go: those
+    // bundles are still installed and still read the sidecar.
+    let sidecar_crates = if errors == 0 {
+        crate_names_for_sidecar_cleanup.as_slice()
+    } else {
+        &[]
+    };
+    for crate_name in sidecar_crates {
         if let Some(path) = sidecar_path(crate_name)
             && path.exists()
         {
@@ -766,11 +805,66 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     }
 
     if errors > 0 {
-        eprintln!("\n{errors} error(s). Check permissions or run with sudo.");
-    } else {
-        eprintln!("\nDone. Restart your DAW to rescan.");
+        eprintln!();
+        return Err(format!(
+            "{errors} bundle(s) could not be removed. {}",
+            removal_hint(system_scope_failed)
+        )
+        .into());
     }
+    eprintln!("\nDone. Restart your DAW to rescan.");
     Ok(())
+}
+
+/// Remove one bundle. One already gone counts as removed, so uninstall
+/// stays idempotent: a bundle removed after it was listed doesn't fail
+/// the run.
+fn remove_bundle(path: &Path) -> std::io::Result<()> {
+    match remove_existing_bundle(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
+/// Remove a directory, a single file (Windows VST2 `.dll`, Linux `.so`),
+/// or a link to either, which loses only the link. Picking the call by
+/// kind keeps the error the user sees the real one; trying `remove_file`
+/// after a failed `remove_dir_all` replaced it with the file call's
+/// error.
+fn remove_existing_bundle(path: &Path) -> std::io::Result<()> {
+    let kind = fs::symlink_metadata(path)?.file_type();
+    if kind.is_dir() {
+        fs::remove_dir_all(path)
+    } else if is_directory_link(kind) {
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
+    }
+}
+
+/// A Windows directory symlink or junction, which only `remove_dir`
+/// removes (`remove_file` fails on it). Unix removes every symlink with
+/// `remove_file`.
+#[cfg(windows)]
+fn is_directory_link(kind: fs::FileType) -> bool {
+    kind.is_symlink_dir()
+}
+
+#[cfg(not(windows))]
+fn is_directory_link(_kind: fs::FileType) -> bool {
+    false
+}
+
+/// What to suggest when bundles couldn't be removed. Windows elevation
+/// is per process, so a system folder there needs the whole command run
+/// from an Administrator prompt; macOS already removed system bundles
+/// through `sudo`, and Linux installs are per-user.
+fn removal_hint(system_scope_failed: bool) -> &'static str {
+    if cfg!(target_os = "windows") && system_scope_failed {
+        "Removing from system folders needs an Administrator command prompt."
+    } else {
+        "Check the folders' permissions."
+    }
 }
 
 fn print_help() {
@@ -810,7 +904,17 @@ Options:
 
 #[cfg(test)]
 mod tests {
-    use super::{is_stale_bundle, is_vendor_bundle};
+    use super::{DiskNames, is_named_bundle, is_vendor_bundle, name_filter_spellings};
+    use crate::config::test_plugin;
+    use std::path::Path;
+
+    /// Names already spelled as on disk, for the matching rules alone.
+    fn names(vendor: &str, plugins: &[&str]) -> DiskNames {
+        DiskNames {
+            vendor: vendor.into(),
+            plugins: plugins.iter().map(|&p| p.into()).collect(),
+        }
+    }
 
     /// A short vendor name must not claim other vendors' bundles that
     /// merely contain it - `--stale` deletes what it matches.
@@ -823,7 +927,7 @@ mod tests {
             "fab-verb.lv2",
         ] {
             assert!(!is_vendor_bundle(other, "Ab"), "{other}");
-            assert!(!is_stale_bundle(other, "clap", "Ab", &[]), "{other}");
+            assert!(!names("Ab", &[]).is_stale(other, "clap"), "{other}");
         }
         assert!(!is_vendor_bundle("Acme Audio Verb.clap", "Audio"));
     }
@@ -839,44 +943,64 @@ mod tests {
 
     #[test]
     fn a_vendor_bundle_not_in_the_project_is_stale() {
-        assert!(is_stale_bundle(
-            "truce-old.lv2",
-            "lv2",
-            "truce",
-            &["truce-gain"]
-        ));
+        assert!(names("truce", &["truce-gain"]).is_stale("truce-old.lv2", "lv2"));
     }
 
     #[test]
     fn a_project_plugin_is_not_stale() {
-        assert!(!is_stale_bundle(
-            "truce-gain.lv2",
-            "lv2",
-            "truce",
-            &["truce-gain"]
-        ));
+        assert!(!names("truce", &["truce-gain"]).is_stale("truce-gain.lv2", "lv2"));
+    }
+
+    /// The built-in formats' names are spelled as install writes their
+    /// bundles: a reserved character in the plugin's name must not make
+    /// its live bundle look stale, nor one in the vendor's hide the
+    /// vendor's stale bundles.
+    #[test]
+    fn builtin_names_match_the_bundles_install_writes() {
+        let plugin = test_plugin("A/B Audio Dry/Wet", "drywet");
+        let names = DiskNames::builtin("A/B Audio", std::slice::from_ref(&plugin));
+        let installed = format!("{}.aaxplugin", plugin.file_stem());
+        assert_eq!(installed, "A-B Audio Dry-Wet.aaxplugin");
+        assert!(!names.is_stale(&installed, "aaxplugin"));
+        assert!(names.is_stale("A-B Audio Old.aaxplugin", "aaxplugin"));
+    }
+
+    /// `-n` takes the display name; the bundles carry it as install
+    /// spelled it.
+    #[test]
+    fn the_name_filter_matches_bundles_by_their_on_disk_names() {
+        let spellings = name_filter_spellings("Truce Dry/Wet", &[]);
+        for bundle in [
+            "Truce Dry-Wet.clap",
+            "truce dry-wet.vst3",
+            "Truce Dry-Wet (AUv3).app",
+            "Truce Dry-Wet.standalone.app",
+        ] {
+            assert!(is_named_bundle(Path::new(bundle), &spellings), "{bundle}");
+        }
+        assert!(!is_named_bundle(Path::new("Truce Dry.clap"), &spellings));
     }
 
     #[test]
     fn another_vendors_bundle_is_not_stale() {
-        assert!(!is_stale_bundle("acme-verb.lv2", "lv2", "truce", &[]));
+        assert!(!names("truce", &[]).is_stale("acme-verb.lv2", "lv2"));
     }
 
     /// The trap: a vendor name with no ASCII letters or digits slugs to
     /// "", and `contains("")` would make every bundle on disk stale.
     #[test]
     fn an_empty_vendor_token_matches_nothing() {
-        assert!(!is_stale_bundle("acme-verb.lv2", "lv2", "", &[]));
-        assert!(!is_stale_bundle("anything", "lv2", "", &[]));
+        assert!(!names("", &[]).is_stale("acme-verb.lv2", "lv2"));
+        assert!(!names("", &[]).is_stale("anything", "lv2"));
     }
 
     /// The scan walks a whole install directory, which can hold more
     /// than bundles of the format it's looking for.
     #[test]
     fn a_file_without_the_format_extension_is_not_stale() {
-        assert!(!is_stale_bundle("truce-old.lv2.bak", "lv2", "truce", &[]));
-        assert!(!is_stale_bundle("truce-notes.txt", "lv2", "truce", &[]));
+        assert!(!names("truce", &[]).is_stale("truce-old.lv2.bak", "lv2"));
+        assert!(!names("truce", &[]).is_stale("truce-notes.txt", "lv2"));
         // The extension is matched whole, not as a bare suffix.
-        assert!(!is_stale_bundle("truce-oldlv2", "lv2", "truce", &[]));
+        assert!(!names("truce", &[]).is_stale("truce-oldlv2", "lv2"));
     }
 }

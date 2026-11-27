@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 7.0.1
+
+- CLI: `cargo truce uninstall` removes AAX bundles on Windows; it looked only in the macOS Avid folder.
+- CLI: `cargo truce uninstall --stale` and `-n` match bundles by their on-disk names, so a name with a character a file name can't hold (`Truce Dry/Wet` installs as `Truce Dry-Wet.clap`) no longer makes a live plug-in look stale or hides a vendor's stale ones.
+- CLI: `cargo truce uninstall --stale` finds Linux VST2 plug-ins (`.so`, not `.vst`) and lists each Linux bundle once.
+- CLI: `cargo truce uninstall` exits non-zero when a bundle can't be removed and points Windows users at an Administrator prompt rather than `sudo`; a bundle already gone counts as removed.
+- CLI: `cargo truce uninstall` keeps the shell-mode sidecar while any copy of the plug-in stays installed, after a failed removal or with `--user` / `--system`.
+
 ## 7.0.0
 
 truce 7.0 moves LV2 into [truce-extensions](https://github.com/truce-audio/truce-extensions), updates the GUI stack (egui 0.37, slint 1.19, wgpu 30) and raises the minimum Rust version to 1.95. A plug-in on a built-in editor that doesn't ship LV2 usually needs only a rebuild.
