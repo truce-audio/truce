@@ -446,13 +446,49 @@ pub(crate) struct NestedField {
     /// for a single nested field. Each array element is its own group,
     /// laid out per [`Self::base`]'s rules (placed per element by `mix_nested_id`, or packed
     /// contiguously under ordinal).
-    pub(crate) array_len: Option<usize>,
+    pub(crate) array_len: Option<ArrayLen>,
     /// Label prefixed onto this group's param names where they need
     /// disambiguating (array elements, groups inside them, and a group's
     /// names that come from an array below it): the
     /// `#[nested(label = "...")]` override, else the field name in title
     /// case (`bands` -> `Bands`).
     pub(crate) label: String,
+}
+
+/// A `#[nested]` array's length, as written: `[T; 8]` or `[T; MAX_BANDS]`.
+///
+/// The derive can't evaluate a const, so the generated code never needs
+/// the number at expansion time: every site reads [`Self::tokens`], which
+/// rustc evaluates. Only the package-time metadata walk needs a number up
+/// front, so the sidecar records a const length as written and the walk
+/// refuses it there (see `truce_build::meta`).
+pub(crate) enum ArrayLen {
+    Literal(usize),
+    Const(syn::Expr),
+}
+
+impl ArrayLen {
+    /// The length as a `usize` expression in generated code.
+    fn tokens(&self) -> proc_macro2::TokenStream {
+        match self {
+            Self::Literal(n) => quote! { #n },
+            Self::Const(e) => quote! { (#e) },
+        }
+    }
+
+    /// Whether the array is known to have no elements.
+    fn is_empty_literal(&self) -> bool {
+        matches!(self, Self::Literal(0))
+    }
+
+    /// The length as written, for docs and the sidecar.
+    fn display(&self) -> String {
+        match self {
+            Self::Literal(n) => n.to_string(),
+            // `quote` spaces every token; keep paths readable.
+            Self::Const(e) => quote! { #e }.to_string().replace(" :: ", "::"),
+        }
+    }
 }
 
 /// A meter slot field.
@@ -974,25 +1010,17 @@ pub(crate) fn name_hash_id(name: &str) -> u32 {
     truce_params::param_id_hash(name)
 }
 
-/// Hash-scheme salt of element `index` in a `#[nested] field: [T; N]`
-/// array ([`truce_params::nested_elem_salt`] over the field name's full
-/// FNV-1a). Each element's ids go through [`truce_params::mix_nested_id`]
-/// (a hashed start per child, plus the index times a fixed odd stride)
-/// rather than packed at `base + index * element_count` or offset by a
-/// per-element hash, so growing the array or `T` moves no element and a
-/// child's elements never collide. `truce_build::meta`'s walk places
-/// them the same way, off the sidecar tree.
-pub(crate) fn nested_elem_salt(field: &str, index: usize) -> u64 {
-    truce_params::nested_elem_salt(
-        state_field_hash(field),
-        u32::try_from(index).unwrap_or(u32::MAX),
-    )
-}
-
 /// How a `#[nested]` array lays out its elements' ids, for every site that
 /// must agree (static table, runtime rebase, `<field>_id` helper;
 /// `truce_build::meta`'s walk mirrors it). `prelude` binds what the other parts read, with
 /// `__i: u32` the element index in scope.
+///
+/// Under the hash scheme element `i`'s salt is
+/// [`truce_params::nested_elem_salt`] over the field name's full FNV-1a
+/// and `i`, and each id goes through [`truce_params::mix_nested_id`] (a
+/// hashed start per child, plus the index times a fixed odd stride) rather
+/// than being packed at `base + index * element_count`, so growing the
+/// array or `T` moves no element and a child's elements never collide.
 pub(crate) struct ArrayLayout {
     prelude: proc_macro2::TokenStream,
     /// `None`: hash scheme (`__SALTS[__i]`). `Some(base)`: ordinal,
@@ -1115,24 +1143,19 @@ fn std_f64_const(path: &syn::Path) -> Option<f64> {
 
 /// Split a `#[nested]` field's type into its element `Params` type and
 /// optional array length. `[T; N]` yields `(T, Some(N))`; any other
-/// type yields `(ty, None)`. A non-literal array length (`[T; SOME_CONST]`)
-/// is a hard error because the derive needs the count at expansion time
-/// to lay out the per-element id ranges.
-fn nested_elem_and_len(ty: &syn::Type) -> Result<(syn::Type, Option<usize>), syn::Error> {
+/// type yields `(ty, None)`. The length is a literal or any const
+/// expression (`[T; MAX_BANDS]`); see [`ArrayLen`].
+fn nested_elem_and_len(ty: &syn::Type) -> Result<(syn::Type, Option<ArrayLen>), syn::Error> {
     let syn::Type::Array(arr) = ty else {
         return Ok((ty.clone(), None));
     };
-    let syn::Expr::Lit(syn::ExprLit {
-        lit: syn::Lit::Int(lit),
-        ..
-    }) = &arr.len
-    else {
-        return Err(syn::Error::new_spanned(
-            &arr.len,
-            "#[nested] array length must be an integer literal, e.g. `[T; 10]`",
-        ));
+    let len = match &arr.len {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(lit),
+            ..
+        }) => ArrayLen::Literal(lit.base10_parse::<usize>()?),
+        other => ArrayLen::Const(other.clone()),
     };
-    let len = lit.base10_parse::<usize>()?;
     Ok(((*arr.elem).clone(), Some(len)))
 }
 
@@ -2473,7 +2496,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             field: n.ident.clone(),
             ty: n.ty.clone(),
             base: n.base,
-            array_len: n.array_len,
+            array_len: n.array_len.as_ref(),
             label: n.label.clone(),
         })
         .collect();
@@ -2689,10 +2712,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             IdScheme::Ordinal => {
                 let prev = nested_fields[..i].iter().map(|p| {
                     let pty = &p.ty;
-                    if let Some(len) = p.array_len {
-                        let mult = u32::try_from(len).unwrap_or(0);
+                    if let Some(len) = &p.array_len {
+                        let len = len.tokens();
                         quote! {
-                            (#mult * <#pty as ::truce::params::Params>::param_infos_static().len() as u32)
+                            (u32::try_from(#len).unwrap_or(0)
+                                * <#pty as ::truce::params::Params>::param_infos_static().len() as u32)
                         }
                     } else {
                         quote! {
@@ -2721,12 +2745,26 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
      -> ArrayLayout {
         let len = n
             .array_len
-            .expect("array_elem_base called on a non-array field");
+            .as_ref()
+            .expect("array_elem_base called on a non-array field")
+            .tokens();
         if scheme == IdScheme::Hash {
-            let field = n.ident.to_string();
-            let salts: Vec<u64> = (0..len).map(|k| nested_elem_salt(&field, k)).collect();
+            let field_hash = state_field_hash(&n.ident.to_string());
             ArrayLayout {
-                prelude: quote! { const __SALTS: [u64; #len] = [#(#salts),*]; },
+                // Filled by rustc rather than listed here, so a const
+                // length the derive can't evaluate works too.
+                prelude: quote! {
+                    #[allow(clippy::cast_possible_truncation)]
+                    const __SALTS: [u64; #len] = {
+                        let mut __s = [0u64; #len];
+                        let mut __k = 0usize;
+                        while __k < #len {
+                            __s[__k] = ::truce::params::nested_elem_salt(#field_hash, __k as u32);
+                            __k += 1;
+                        }
+                        __s
+                    };
+                },
                 ordinal_base: None,
             }
         } else {
@@ -2750,7 +2788,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 let ty = &n.ty;
                 let label = &n.label;
                 let base_expr = static_group_base(i, n);
-                match n.array_len {
+                match &n.array_len {
                     None => {
                         let (src, rename) = if qualify {
                             (
@@ -2798,19 +2836,19 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                             }
                         }
                     }
-                    // No elements: emit nothing, not `for __i in 0u32..0u32`
-                    // (clippy's deny-by-default `reversed_empty_ranges` fires
-                    // on it in the user's crate).
-                    Some(0) => quote! {},
+                    Some(len) if len.is_empty_literal() => quote! {},
                     Some(len) => {
-                        let n_elems = u32::try_from(len).unwrap_or(0);
+                        let len = len.tokens();
                         let layout = array_elem_base(n, base_expr, static_elem_count(ty));
                         let prelude = &layout.prelude;
                         let mapped = layout.map_id(&quote! { __info.id });
+                        // `take` rather than `0..len`: a const length of 0
+                        // would make that a range clippy's deny-by-default
+                        // `reversed_empty_ranges` flags in the user's crate.
                         quote! {
                             {
                                 #prelude
-                                for __i in 0u32..#n_elems {
+                                for __i in (0u32..).take(#len) {
                                     infos.extend(
                                         <#ty as ::truce::params::Params>::param_infos_static_qualified()
                                             .into_iter()
@@ -2861,16 +2899,19 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .iter()
         .map(|n| {
             let ty = &n.ty;
-            match n.array_len {
+            match &n.array_len {
                 None => quote! {
                     __v.extend(<#ty as ::truce::params::Params>::param_infos_under_array());
                 },
-                Some(len) => quote! {
-                    __v.extend(::core::iter::repeat_n(
-                        true,
-                        #len * <#ty as ::truce::params::Params>::param_infos_static_qualified().len(),
-                    ));
-                },
+                Some(len) => {
+                    let len = len.tokens();
+                    quote! {
+                        __v.extend(::core::iter::repeat_n(
+                            true,
+                            #len * <#ty as ::truce::params::Params>::param_infos_static_qualified().len(),
+                        ));
+                    }
+                }
             }
         })
         .collect();
@@ -3296,14 +3337,18 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         }
                     }
                 };
-                match n.array_len {
+                match &n.array_len {
                     None => quote! { me.#ident.offset_ids(#base_expr); },
-                    Some(0) => quote! {},
+                    Some(len) if len.is_empty_literal() => quote! {},
                     Some(_) => {
                         let layout = array_elem_base(
                             n,
                             base_expr,
-                            quote! { ::truce::params::Params::count(&me.#ident[0]) as u32 },
+                            quote! {
+                                me.#ident
+                                    .first()
+                                    .map_or(0, |__e| ::truce::params::Params::count(__e) as u32)
+                            },
                         );
                         let prelude = &layout.prelude;
                         let rebase = layout.rebase(&quote! { __elem });
@@ -3418,10 +3463,16 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .iter()
         .enumerate()
         // `[T; 0]` has no element to address.
-        .filter(|(_, n)| n.array_len.is_some_and(|len| len > 0))
+        .filter(|(_, n)| {
+            n.array_len
+                .as_ref()
+                .is_some_and(|len| !len.is_empty_literal())
+        })
         .map(|(i, n)| {
             let ty = &n.ty;
-            let len = n.array_len.expect("filtered to array fields");
+            let array_len = n.array_len.as_ref().expect("filtered to array fields");
+            let len = array_len.tokens();
+            let len_doc = array_len.display();
             let base_expr = static_group_base(i, n);
             let fn_name = syn::Ident::new(&format!("{}_id", n.ident.unraw()), n.ident.span());
             let layout = array_elem_base(n, base_expr, static_elem_count(ty));
@@ -3459,7 +3510,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                  this is not the host-facing id - read the live param's `id()` instead.\n\n\
                  {alloc_note}\n\n\
                  # Panics\n\n\
-                 If `index >= {len}` (the array length).",
+                 If `index >= {len_doc}` (the array length).",
                 field = n.ident,
             );
             let oob_field = n.ident.to_string();
@@ -3586,68 +3637,52 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // sub-struct's own `serialize_persist` blob, so it recurses. Each
     // array element is its own keyed entry (`field[i]`) so loads route
     // back to the matching element.
-    let nested_persist_entries: Vec<(String, proc_macro2::TokenStream)> = nested_fields
-        .iter()
-        .flat_map(|n| {
-            let ident = &n.ident;
-            match n.array_len {
-                None => vec![(
-                    ident.to_string(),
-                    quote! { __buf.extend_from_slice(&self.#ident.serialize_persist()); },
-                )],
-                Some(len) => (0..len)
-                    .map(|i| {
-                        (
-                            format!("{ident}[{i}]"),
-                            quote! { __buf.extend_from_slice(&self.#ident[#i].serialize_persist()); },
-                        )
-                    })
-                    .collect(),
-            }
-        })
-        .collect();
-    let nested_persist_read_arms: Vec<proc_macro2::TokenStream> = nested_fields
-        .iter()
-        .flat_map(|n| {
-            let ident = &n.ident;
-            match n.array_len {
-                None => {
-                    let key = ident.to_string();
-                    vec![quote! { #key => self.#ident.load_persist(__value), }]
-                }
-                Some(len) => (0..len)
-                    .map(|i| {
-                        let key = format!("{ident}[{i}]");
-                        quote! { #key => self.#ident[#i].load_persist(__value), }
-                    })
-                    .collect(),
-            }
-        })
-        .collect();
+    //
+    // One keyed entry: the key, a length prefix, then what `write`
+    // appends.
+    let write_entry = |key: proc_macro2::TokenStream, write: proc_macro2::TokenStream| {
+        quote! {
+            <::std::string::String as ::truce::core::custom_state::StateField>::write_field(
+                &#key, &mut __buf,
+            );
+            let __start = __buf.len();
+            __buf.extend_from_slice(&0u32.to_le_bytes());
+            #write
+            #[allow(clippy::cast_possible_truncation)]
+            let __len = (__buf.len() - __start - 4) as u32;
+            __buf[__start..__start + 4].copy_from_slice(&__len.to_le_bytes());
+        }
+    };
     let persist_write_stmts: Vec<proc_macro2::TokenStream> = persist_fields
         .iter()
         .map(|(ident, key)| {
-            (
-                key.clone(),
+            write_entry(
+                quote! { #key.to_string() },
                 quote! {
                     ::truce::core::custom_state::PersistField::persist_write(&self.#ident, &mut __buf);
                 },
             )
         })
-        .chain(nested_persist_entries.iter().cloned())
-        .map(|(key, write)| {
-            quote! {
-                <::std::string::String as ::truce::core::custom_state::StateField>::write_field(
-                    &#key.to_string(), &mut __buf,
+        .chain(nested_fields.iter().map(|n| {
+            let ident = &n.ident;
+            let name = ident.to_string();
+            if n.array_len.is_some() {
+                let entry = write_entry(
+                    quote! { ::std::format!("{}[{}]", #name, __i) },
+                    quote! { __buf.extend_from_slice(&__e.serialize_persist()); },
                 );
-                let __start = __buf.len();
-                __buf.extend_from_slice(&0u32.to_le_bytes());
-                #write
-                #[allow(clippy::cast_possible_truncation)]
-                let __len = (__buf.len() - __start - 4) as u32;
-                __buf[__start..__start + 4].copy_from_slice(&__len.to_le_bytes());
+                quote! {
+                    for (__i, __e) in self.#ident.iter().enumerate() {
+                        #entry
+                    }
+                }
+            } else {
+                write_entry(
+                    quote! { #name.to_string() },
+                    quote! { __buf.extend_from_slice(&self.#ident.serialize_persist()); },
+                )
             }
-        })
+        }))
         .collect();
 
     let persist_read_arms: Vec<proc_macro2::TokenStream> = persist_fields
@@ -3660,11 +3695,52 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 ),
             }
         })
-        .chain(nested_persist_read_arms.iter().cloned())
+        .chain(
+            nested_fields
+                .iter()
+                .filter(|n| n.array_len.is_none())
+                .map(|n| {
+                    let ident = &n.ident;
+                    let key = ident.to_string();
+                    quote! { #key => self.#ident.load_persist(__value), }
+                }),
+        )
+        .collect();
+    // An array element's key is `field[i]`; route it back to element `i`,
+    // ignoring an index past the array's end.
+    let persist_read_array_elems: Vec<proc_macro2::TokenStream> = nested_fields
+        .iter()
+        .filter(|n| n.array_len.is_some())
+        .map(|n| {
+            let ident = &n.ident;
+            let prefix = format!("{ident}[");
+            quote! {
+                if let ::core::option::Option::Some(__e) = __key
+                    .strip_prefix(#prefix)
+                    .and_then(|__r| __r.strip_suffix(']'))
+                    .and_then(|__r| __r.parse::<usize>().ok())
+                    .and_then(|__ix| self.#ident.get(__ix))
+                {
+                    __e.load_persist(__value);
+                    continue;
+                }
+            }
+        })
         .collect();
 
-    #[allow(clippy::cast_possible_truncation)]
-    let persist_count = (persist_fields.len() + nested_persist_entries.len()) as u32;
+    // Entries written: one per `#[persist]` field and single group, one
+    // per array element.
+    let persist_single_count = persist_fields.len()
+        + nested_fields
+            .iter()
+            .filter(|n| n.array_len.is_none())
+            .count();
+    let persist_array_lens = nested_fields
+        .iter()
+        .filter_map(|n| n.array_len.as_ref().map(ArrayLen::tokens));
+    let persist_count = quote! {
+        u32::try_from(#persist_single_count #(+ #persist_array_lens)*).unwrap_or(u32::MAX)
+    };
 
     // Nothing to carry: leave the empty-`Vec` trait default so a plugin
     // without persisted config adds no bytes to its saved state.
@@ -3674,7 +3750,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! {
         fn serialize_persist(&self) -> ::std::vec::Vec<u8> {
             let mut __buf: ::std::vec::Vec<u8> = ::std::vec::Vec::new();
-            <u32 as ::truce::core::custom_state::StateField>::write_field(&#persist_count, &mut __buf);
+            let __count: u32 = #persist_count;
+            <u32 as ::truce::core::custom_state::StateField>::write_field(&__count, &mut __buf);
             #(#persist_write_stmts)*
             __buf
         }
@@ -3701,6 +3778,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 let ::core::option::Option::Some(__value) = __cursor.read_bytes(__len) else {
                     return;
                 };
+                #(#persist_read_array_elems)*
                 match __key.as_str() {
                     #(#persist_read_arms)*
                     _ => {}
