@@ -40,7 +40,8 @@ use truce_core::tasks::AnyTaskSpawner;
 use truce_core::wrapper::{
     ParamCStrings, PluginCell, SharedPlugin, copy_c_str, enter_plugin, first_bus_layout,
     log_midi_ports_clamped, log_missing_bus_layout, max_io_channels, publish_loaded_extra,
-    run_audio_block, run_extern_callback_with, run_register, save_extra, shared_plugin,
+    queue_host_state, run_audio_block, run_extern_callback_with, run_register, save_extra,
+    shared_plugin,
 };
 use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
@@ -1203,7 +1204,7 @@ pub unsafe fn _process<P: PluginExport>(
         // re-captures the restored values rather than handing back the
         // stale cache.
         if let Some(state) = inst.pending_state.pop() {
-            state::apply_state(&mut *plugin, &state);
+            state::load_custom_state(&mut *plugin, &state);
             inst.state_revision.fetch_add(1, Ordering::Release);
             // A save between this bump and the first publish of the loaded
             // state can cache the pre-load snapshot under the new revision;
@@ -1825,19 +1826,14 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             // state load see the restored values without first running a
             // process block.
             state::apply_params(&*inst.params_arc, &deserialized);
-            // Refresh the snapshot slot now so a save before the next
-            // render block sees the loaded custom state rather than the
-            // pre-load snapshot (an inactive recall may never render).
-            publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
-            // Hand the deserialized state to the audio thread for
-            // application. `force_push` overwrites any older pending blob
-            // - see the `pending_state` field comment for why
-            // newest-wins is the right policy. The audio thread's drain
-            // bumps `state_revision`, so the cache invalidation is
-            // covered there; we still drop the cached `Arc<[u8]>` here
-            // so the multi-KB blob isn't pinned across the gap before
-            // the next `_save_state` would replace it.
-            let _ = inst.pending_state.force_push(deserialized);
+            // The custom state goes to the audio thread, published into the
+            // snapshot slot at once so a save before the next render block
+            // carries it (an inactive recall may never render). The audio
+            // thread's drain bumps `state_revision`, so the cache
+            // invalidation is covered there; we still drop the cached
+            // `Arc<[u8]>` here so the multi-KB blob isn't pinned across the
+            // gap before the next `_save_state` would replace it.
+            queue_host_state(&inst.snapshot, &inst.pending_state, deserialized);
             if let Ok(mut guard) = inst.state_cache.lock() {
                 *guard = None;
             }
@@ -1883,10 +1879,9 @@ pub unsafe fn _load_state_foreign<P: PluginExport>(
         };
         let deserialized = state::with_default_extra::<P>(migrated.into());
         state::apply_params(&*inst.params_arc, &deserialized);
-        // Same inactive-load republish as `_load_state`: keep a save
-        // before the next render consistent with the migrated custom state.
-        publish_loaded_extra(&inst.snapshot, deserialized.extra.as_deref());
-        let _ = inst.pending_state.force_push(deserialized);
+        // Queued as in `_load_state`, so a save before the next render
+        // carries the migrated custom state.
+        queue_host_state(&inst.snapshot, &inst.pending_state, deserialized);
         if let Ok(mut guard) = inst.state_cache.lock() {
             *guard = None;
         }

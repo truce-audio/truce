@@ -194,6 +194,17 @@ impl SnapshotSlot {
         self.generation.load(Ordering::Acquire)
     }
 
+    /// Whether the off-thread lane holds a snapshot - so [`Self::read`]
+    /// serves that lane, and a writer that wants a save to see its bytes
+    /// must replace them there.
+    #[must_use]
+    pub fn uses_offthread_lane(&self) -> bool {
+        self.swapped
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
     /// Whether the plugin has ever published a snapshot on either lane.
     /// Cheap atomic read (no lock). Once true it stays true: a plugin's
     /// decision to publish snapshots is a static capability, latched on

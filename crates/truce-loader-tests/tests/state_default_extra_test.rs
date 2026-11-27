@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use crossbeam_queue::ArrayQueue;
 use truce::prelude::{Editor, PluginContext};
 use truce_core::buffer::AudioBuffer;
 use truce_core::custom_state::State;
@@ -19,12 +20,12 @@ use truce_core::editor::RawWindowHandle;
 use truce_core::events::EventList;
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_core::state::{DeserializedState, StateLoadError, with_default_extra};
-use truce_core::wrapper::{publish_loaded_extra, save_extra};
+use truce_core::state::{DeserializedState, StateLoadError, apply_params, with_default_extra};
+use truce_core::wrapper::{apply_queued_state, publish_loaded_extra, queue_host_state, save_extra};
 use truce_derive::{Params, State};
 use truce_gui::PluginLogic;
 use truce_loader::static_shell::StaticShell;
-use truce_params::FloatParam;
+use truce_params::{FloatParam, Params};
 
 #[derive(Params)]
 struct PatchParams {
@@ -186,4 +187,92 @@ fn a_save_before_the_queued_load_applies_keeps_a_keeping_plugins_state() {
 #[test]
 fn derived_state_rejects_empty_bytes() {
     assert!(Patch::deserialize(&[]).is_none());
+}
+
+/// A full load queued while the plugin is inactive (as a host recall
+/// before activation is) must not revert a parameter changed before the
+/// queue drains. The load's parameters were applied on the host thread
+/// when it was queued; the drain - here an activate's - applies only the
+/// custom state.
+#[test]
+fn draining_a_queued_load_keeps_later_parameter_changes() {
+    let params = Arc::new(PatchParams::new());
+    let mut plugin = Shell::<KeepingSynth>::from_parts(params.clone(), None);
+    let slot = plugin.snapshot_slot();
+    let pending = ArrayQueue::new(1);
+
+    let load = DeserializedState {
+        params: vec![(0, 0.25)],
+        extra: Some(Patch { cables: vec![7] }.serialize()),
+        persist: Vec::new(),
+    };
+    apply_params(&*params, &load);
+    queue_host_state(&slot, &pending, load);
+    assert_eq!(
+        params.get_plain(0),
+        Some(0.25),
+        "applied on the host thread"
+    );
+
+    // The host moves the parameter before anything drains the queue.
+    params.set_plain(0, 0.75);
+    apply_queued_state(&mut plugin, &pending);
+
+    assert_eq!(
+        params.get_plain(0),
+        Some(0.75),
+        "the drain kept the later change"
+    );
+    assert_eq!(
+        plugin.state_ref().cables,
+        vec![7],
+        "the custom state applied"
+    );
+}
+
+/// Load A queued, then a parameter-only load B before anything drains A.
+/// Newest wins in the single-slot queue, but B's "keep the current custom
+/// state" means A's, which a save in between already returned - so B
+/// carries A's custom state instead of discarding it.
+#[test]
+fn a_parameter_only_load_keeps_an_undrained_loads_custom_state() {
+    let mut plugin = Shell::<KeepingSynth>::from_parts(Arc::new(PatchParams::new()), None);
+    let slot = plugin.snapshot_slot();
+    let pending = ArrayQueue::new(1);
+
+    queue_host_state(
+        &slot,
+        &pending,
+        DeserializedState {
+            params: Vec::new(),
+            extra: Some(Patch { cables: vec![42] }.serialize()),
+            persist: Vec::new(),
+        },
+    );
+    let b = preset_b::<KeepingSynth>();
+    assert!(b.extra.is_none(), "B carries no custom state");
+    queue_host_state(&slot, &pending, b);
+    assert_eq!(save_extra(&slot), Patch { cables: vec![42] }.serialize());
+
+    apply_queued_state(&mut plugin, &pending);
+    assert_eq!(
+        plugin.state_ref().cables,
+        vec![42],
+        "A's custom state survived B"
+    );
+    assert_eq!(save_extra(&slot), Patch { cables: vec![42] }.serialize());
+}
+
+/// With nothing queued, a load without custom state has nothing to hand
+/// the plugin, so it isn't queued.
+#[test]
+fn a_parameter_only_load_with_nothing_queued_queues_nothing() {
+    let plugin = Shell::<KeepingSynth>::from_parts(Arc::new(PatchParams::new()), None);
+    let pending = ArrayQueue::new(1);
+    queue_host_state(
+        &plugin.snapshot_slot(),
+        &pending,
+        preset_b::<KeepingSynth>(),
+    );
+    assert!(pending.is_empty());
 }
