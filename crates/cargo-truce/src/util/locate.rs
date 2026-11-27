@@ -134,61 +134,67 @@ pub(crate) fn locate_msvc_cl() -> Option<PathBuf> {
     candidates.into_iter().next().map(|(_, p)| p)
 }
 
-/// Enumerate all VS installation roots known to `vswhere.exe`. Returned in
-/// the order vswhere produces (latest first when called with `-latest`, or
-/// all installs otherwise). We pass no filter here so we also pick up the old
-/// VS 2022 install that's useful for CMake/Ninja even when its C++ workload
-/// is broken.
+/// `vswhere.exe` with `args`, always scoped to every product.
+///
+/// `-products *` because vswhere otherwise reports only the full Visual
+/// Studio products (Community / Professional / Enterprise) and misses a
+/// Build Tools-only install - the usual setup on CI and build machines,
+/// which then built only with a hand-set `LIB`. `-utf8` because its
+/// output is otherwise in the console code page, which [`vswhere`]'s
+/// UTF-8 decoding would mangle for a non-ASCII install path.
 #[cfg(target_os = "windows")]
-pub(crate) fn vs_install_paths() -> Vec<PathBuf> {
-    let vswhere =
-        PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
-    if !vswhere.exists() {
-        return Vec::new();
-    }
-    let out = Command::new(&vswhere)
-        .args(["-all", "-property", "installationPath", "-format", "value"])
-        .output();
-    match out {
+fn vswhere_command(args: &[&str]) -> Command {
+    let exe = super::program_files_x86()
+        .join("Microsoft Visual Studio")
+        .join("Installer")
+        .join("vswhere.exe");
+    let mut cmd = Command::new(exe);
+    cmd.args(["-products", "*", "-utf8"]).args(args);
+    cmd
+}
+
+/// Run [`vswhere_command`] and return its non-empty output lines, or none
+/// if vswhere isn't installed or fails.
+#[cfg(target_os = "windows")]
+fn vswhere(args: &[&str]) -> Vec<String> {
+    match vswhere_command(args).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
-            .map(PathBuf::from)
+            .map(str::to_owned)
             .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Enumerate all VS installation roots known to `vswhere.exe`, Build Tools
+/// included, in the order vswhere produces. No component filter, so we also
+/// pick up an older VS install that's useful for CMake/Ninja even when its
+/// C++ workload is broken.
+#[cfg(target_os = "windows")]
+pub(crate) fn vs_install_paths() -> Vec<PathBuf> {
+    vswhere(&["-all", "-property", "installationPath", "-format", "value"])
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
 }
 
 /// Locate `vcvars64.bat` via `vswhere.exe`. Returns `None` if VS isn't
 /// installed with the C++ tools component.
 #[cfg(target_os = "windows")]
 pub(crate) fn locate_vcvars64() -> Option<PathBuf> {
-    let vswhere =
-        PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
-    if !vswhere.exists() {
-        return None;
-    }
-    let out = Command::new(&vswhere)
-        .args([
-            "-latest",
-            "-requires",
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-            "-property",
-            "installationPath",
-            "-format",
-            "value",
-        ])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let install = String::from_utf8(out.stdout).ok()?;
-    let install = install.trim();
-    if install.is_empty() {
-        return None;
-    }
+    let install = vswhere(&[
+        "-latest",
+        "-requires",
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "-property",
+        "installationPath",
+        "-format",
+        "value",
+    ])
+    .into_iter()
+    .next()?;
     let vcvars = PathBuf::from(install).join(r"VC\Auxiliary\Build\vcvars64.bat");
     vcvars.exists().then_some(vcvars)
 }
@@ -206,4 +212,18 @@ pub(crate) fn locate_vcvarsall() -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod vswhere_tests {
+    use super::vswhere_command;
+
+    /// Without `-products *` vswhere skips a Build Tools-only install, and
+    /// without `-utf8` a non-ASCII install path comes back mangled.
+    #[test]
+    fn every_vswhere_query_covers_build_tools_in_utf8() {
+        let cmd = vswhere_command(&["-latest"]);
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(&args[..3], ["-products", "*", "-utf8"]);
+    }
 }
