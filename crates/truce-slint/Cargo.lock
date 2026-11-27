@@ -4911,7 +4911,7 @@ dependencies = [
 
 [[package]]
 name = "truce"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "truce-core",
  "truce-derive",
@@ -4923,7 +4923,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "crossbeam-queue",
  "truce-aax-bridge",
@@ -4933,11 +4933,11 @@ dependencies = [
 
 [[package]]
 name = "truce-aax-bridge"
-version = "6.3.0"
+version = "7.0.0"
 
 [[package]]
 name = "truce-au"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -4948,17 +4948,18 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
  "toml",
+ "truce-params",
  "truce-utils",
 ]
 
 [[package]]
 name = "truce-clap"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -4969,7 +4970,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "crossbeam-queue",
  "crossbeam-utils",
@@ -4980,7 +4981,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "tiny-skia",
  "truce-core",
@@ -4990,7 +4991,7 @@ dependencies = [
 
 [[package]]
 name = "truce-derive"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5003,7 +5004,7 @@ dependencies = [
 
 [[package]]
 name = "truce-driver"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "truce-core",
  "truce-params",
@@ -5011,7 +5012,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-slint"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "clap-sys",
  "slint",
@@ -5021,7 +5022,6 @@ dependencies = [
  "truce-clap",
  "truce-core",
  "truce-loader",
- "truce-lv2",
  "truce-params",
  "truce-slint",
  "truce-slint-build",
@@ -5033,7 +5033,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-slint"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "clap-sys",
  "i-slint-core",
@@ -5044,7 +5044,6 @@ dependencies = [
  "truce-clap",
  "truce-core",
  "truce-loader",
- "truce-lv2",
  "truce-params",
  "truce-slint",
  "truce-slint-build",
@@ -5056,7 +5055,7 @@ dependencies = [
 
 [[package]]
 name = "truce-font"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "skrifa 0.43.2",
  "tiny-skia",
@@ -5064,7 +5063,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gpu"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "baseview-truce",
  "bytemuck",
@@ -5081,7 +5080,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "baseview-truce",
  "log",
@@ -5103,7 +5102,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-types"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "objc2 0.6.5",
  "truce-core",
@@ -5111,7 +5110,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-utils"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
@@ -5120,7 +5119,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "crc32fast",
  "libloading 0.9.1",
@@ -5133,27 +5132,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-lv2"
-version = "6.3.0"
-dependencies = [
- "base64 0.22.1",
- "objc",
- "truce-build",
- "truce-core",
- "truce-params",
- "x11-dl",
-]
-
-[[package]]
 name = "truce-params"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "bitflags 2.13.2",
 ]
 
 [[package]]
 name = "truce-plugin"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -5162,11 +5149,11 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "6.3.0"
+version = "7.0.0"
 
 [[package]]
 name = "truce-slint"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "baseview-truce",
  "bytemuck",
@@ -5188,7 +5175,7 @@ dependencies = [
 
 [[package]]
 name = "truce-slint-build"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "slint-build",
  "truce-font",
@@ -5196,7 +5183,7 @@ dependencies = [
 
 [[package]]
 name = "truce-standalone"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "baseview-truce",
  "cpal",
@@ -5216,7 +5203,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "png",
  "toml",
@@ -5229,11 +5216,11 @@ dependencies = [
 
 [[package]]
 name = "truce-utils"
-version = "6.3.0"
+version = "7.0.0"
 
 [[package]]
 name = "truce-vst2"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -5243,7 +5230,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "6.3.0"
+version = "7.0.0"
 dependencies = [
  "cc",
  "crossbeam-queue",
