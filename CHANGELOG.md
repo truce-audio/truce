@@ -10,6 +10,7 @@ Notable changes per release.
 - macOS: the standalone, AU v2 and AU v3 call `Editor::open` once the parent `NSView` is in its window. They called it on a view outside any window, so an editor that builds a native child needing the window, such as a `wry` webview, panicked or had to defer its own setup (#234). CLAP, VST3, VST2 and AAX hosts already pass a view that is in its window.
 - AU v3: the app extension drives `Editor::idle` ~60 times a second while the editor is open, as AU v2 and the other formats do; it never called it, so a raw-window-handle editor under AU v3 had to run its own timer.
 - CLAP: a reversed discrete or enum parameter is reported stepped (and an enum as an enum); the flags matched the range itself, so a `Reversed` wrapper hid its shape.
+- Examples: `truce-example-webview`, a sine synth whose editor is a web page in a native webview (`wry`) built in `Editor::open` - a raw-window-handle editor with no truce GUI backend (macOS and Windows).
 
 ## 7.0.1
 

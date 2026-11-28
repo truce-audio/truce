@@ -68,6 +68,7 @@ members = [
     "examples/truce-example-multiport",
     "examples/truce-example-midi-inspector",
     "examples/truce-example-idle-anim",
+    "examples/truce-example-webview",
     "examples/truce-example-stepgate",
 ]
 

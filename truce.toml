@@ -613,6 +613,22 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
+name = "Truce Webview"
+bundle_id = "webview"
+crate = "truce-example-webview"
+# A raw-window-handle editor: a web page in a native webview (wry) built
+# as a child of the host's parent view, with no truce GUI backend. A sine
+# synth, so it loads where the instrument host tests do.
+category = "instrument"
+fourcc = "TWbv"
+au3_subtype = "TWb3"
+au_tag = "Synthesizer"
+vst3_subcategory = "Synth"
+au3_name = "Truce Webview (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+
+[[plugin]]
 name = "Truce Step Gate"
 bundle_id = "stepgate"
 crate = "truce-example-stepgate"
