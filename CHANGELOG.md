@@ -4,6 +4,7 @@ Notable changes per release.
 
 ## 7.0.2
 
+- CLI: Windows `cargo truce package` PACE-signs AAX bundles again. The signing step looked for the AAX wrapper at `<staging>/<Name>.aaxplugin` while staging writes it under `aax/`, so it never found one and the installer shipped AAX without PACE wrapping. Staging, signing and the `.iss` now take every staged path from one place.
 - Params: a `#[nested]` array's length can be a const (`[CompParams; MAX_BANDS]`), not only a literal (#229). Ids, names and saved state come out as for the same literal length. LV2 still needs a literal: it renders its ports from build metadata without running the plug-in, so `truce-format-lv2` refuses a const length when packaging and names the field.
 - macOS: the standalone, AU v2 and AU v3 call `Editor::open` once the parent `NSView` is in its window. They called it on a view outside any window, so an editor that builds a native child needing the window, such as a `wry` webview, panicked or had to defer its own setup (#234). CLAP, VST3, VST2 and AAX hosts already pass a view that is in its window.
 - AU v3: the app extension drives `Editor::idle` ~60 times a second while the editor is open, as AU v2 and the other formats do; it never called it, so a raw-window-handle editor under AU v3 had to run its own timer.
