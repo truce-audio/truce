@@ -1099,6 +1099,24 @@ class TruceAUAudioUnit: AUAudioUnit {
     }
 }
 
+#if os(macOS)
+/// The editor's container view. It calls `onWindow` once, the first time
+/// it is in a window: the editor opens there rather than while the view is
+/// still windowless, so an editor that builds native children needing the
+/// window (a WKWebView reads its backing scale from it) can.
+final class TruceEditorContainer: NSView {
+    var onWindow: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, let open = onWindow {
+            onWindow = nil
+            open()
+        }
+    }
+}
+#endif
+
 // MARK: - Factory
 
 // `@objc(AudioUnitFactory)` pins the runtime class name to
@@ -1219,6 +1237,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     private func setupGUIIfReady() {
         logger.info("setupGUIIfReady: guiSetUp=\(self.guiSetUp) auInstance=\(self.auInstance != nil)")
         guard !guiSetUp,
+              guiContainer == nil,
               let ctx = myCtx,
               let cb = g_callbacks,
               cb.pointee.gui_has_editor(ctx) != 0 else { return }
@@ -1232,13 +1251,38 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         guiPtSize = NSSize(width: CGFloat(w), height: CGFloat(h))
         logger.info("setupGUI: \(w)x\(h) view=\(self.view.frame.width)x\(self.view.frame.height)")
 
+        #if os(macOS)
+        let container = TruceEditorContainer(frame: NSRect(origin: .zero, size: guiPtSize))
+        #else
         let container = NSView(frame: NSRect(origin: .zero, size: guiPtSize))
-        cb.pointee.gui_open(ctx, Unmanaged.passUnretained(container).toOpaque())
+        #endif
 
         for sub in self.view.subviews { sub.removeFromSuperview() }
         self.view.addSubview(container)
         guiContainer = container
         self.preferredContentSize = guiPtSize
+        #if os(macOS)
+        // Open the editor once the container is in a window: the host adds
+        // our view to its window only after this point.
+        if container.window != nil {
+            openGUI(ctx, cb, container)
+        } else {
+            container.onWindow = { [weak self, weak container] in
+                guard let self, let container, self.guiContainer === container,
+                      let ctx = self.myCtx, let cb = g_callbacks else { return }
+                self.openGUI(ctx, cb, container)
+            }
+        }
+        #else
+        openGUI(ctx, cb, container)
+        #endif
+    }
+
+    /// Open the editor in `container` and start the GUI-side machinery
+    /// that needs it.
+    private func openGUI(_ ctx: UnsafeMutableRawPointer, _ cb: UnsafePointer<AuCallbacks>, _ container: NSView) {
+        guard !guiSetUp else { return }
+        cb.pointee.gui_open(ctx, Unmanaged.passUnretained(container).toOpaque())
         guiSetUp = true
         #if os(iOS)
         // Fit the editor to the host's safe-area frame so its responsive
@@ -1393,6 +1437,9 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         if guiSetUp, let ctx = myCtx, let cb = g_callbacks {
             cb.pointee.gui_close(ctx)
         }
+        #if os(macOS)
+        (guiContainer as? TruceEditorContainer)?.onWindow = nil
+        #endif
         guiContainer?.removeFromSuperview()
         guiContainer = nil
         guiSetUp = false
