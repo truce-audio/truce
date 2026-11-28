@@ -102,8 +102,20 @@ impl TargetArch {
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelection) -> Res {
+pub(crate) fn cmd_package_windows(
+    args: &[String],
+    selection: &super::SuiteSelection,
+    assemble_from: Option<&Path>,
+) -> Res {
     let opts = parse_args(args)?;
+    if assemble_from.is_some() {
+        if opts.no_installer {
+            return Err("--assemble-from makes the installer; drop --no-installer".into());
+        }
+        if opts.target_cpu_arg.is_some() {
+            return Err("--assemble-from doesn't build, so --target-cpu has no effect".into());
+        }
+    }
 
     // Fail fast: `cargo truce package` ends with an Inno Setup run,
     // and dual-arch builds can spend 20+ minutes before reaching it.
@@ -190,6 +202,12 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
     }
 
     // Warn about missing signing credentials unless --no-sign was passed.
+    if assemble_from.is_some() {
+        eprintln!(
+            "Assembling from already-built bundles: no build, and the bundles are \
+             packaged as found (not re-signed); only the installer is signed."
+        );
+    }
     if !opts.no_sign && !WindowsSigningEnv::from_env().is_configured() {
         eprintln!(
             "WARNING: no Windows signing credentials configured. Binaries and \
@@ -200,47 +218,63 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
         );
     }
 
-    build_all_formats(&plugins, &formats, &archs, &root)?;
+    if assemble_from.is_none() {
+        build_all_formats(&plugins, &formats, &archs, &root)?;
+    }
 
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
+    // Assembled trees get a staging root of their own, so a `<DIR>` that
+    // is a previous run's `plugin/` staging is never the copy's target.
+    let plugins_root = truce_build::target_dir(&root).join(if assemble_from.is_some() {
+        "package/windows/assemble"
+    } else {
+        "package/windows/plugin"
+    });
 
     for p in &plugins {
         eprintln!("\nPackaging: {} ({})", p.name, archs_label(&archs));
 
-        let staging = truce_build::target_dir(&root)
-            .join("package/windows/plugin")
-            .join(&p.bundle_id);
-        let _ = fs::remove_dir_all(&staging);
-        fs::create_dir_all(&staging)?;
+        let staging = plugins_root.join(&p.bundle_id);
+        let presets = if let Some(from) = assemble_from {
+            let src = super::assemble::plugin_dir(from, p)?;
+            check_assembled(&root, p, &formats, &archs, &src)?;
+            super::assemble::copy_into_staging(&src, &staging)?;
+            // The build that staged the tree staged its presets too.
+            detect_windows_presets(p, &staging)
+        } else {
+            let _ = fs::remove_dir_all(&staging);
+            fs::create_dir_all(&staging)?;
 
-        let mut all_signable: Vec<PathBuf> = Vec::new();
-        for &arch in &archs {
-            let staged = stage_plugin(&root, p, &config, &formats, &staging, arch)?;
-            all_signable.extend(staged.signable);
-        }
-        // Factory presets (arch-independent, not signed). Staged here
-        // so all output modes carry them; the per-plugin `render_iss`
-        // below references them via the returned flags.
-        let presets = stage_windows_presets(&root, &config, p, &formats, &staging)?;
+            let mut all_signable: Vec<PathBuf> = Vec::new();
+            for &arch in &archs {
+                let staged = stage_plugin(&root, p, &config, &formats, &staging, arch)?;
+                all_signable.extend(staged.signable);
+            }
+            // Factory presets (arch-independent, not signed). Staged here
+            // so all output modes carry them; the per-plugin `render_iss`
+            // below references them via the returned flags.
+            let presets = stage_windows_presets(&root, &config, p, &formats, &staging)?;
 
-        if !opts.no_sign {
-            // PACE-sign every AAX bundle (one per arch). PACE wraps the
-            // binary; Authenticode signs the wrapped result - so PACE
-            // first. `--no-pace-sign` (or `--no-sign`) skips the
-            // wraptool round-trip while keeping Authenticode for smoke
-            // tests.
-            if !opts.no_pace_sign && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
-                let staged = Staged { dir: &staging, p };
-                for &arch in &archs {
-                    let wrapper = staged.aax_wrapper(arch);
-                    if wrapper.exists() {
-                        pace_sign_aax(&wrapper)?;
+            if !opts.no_sign {
+                // PACE-sign every AAX bundle (one per arch). PACE wraps the
+                // binary; Authenticode signs the wrapped result - so PACE
+                // first. `--no-pace-sign` (or `--no-sign`) skips the
+                // wraptool round-trip while keeping Authenticode for smoke
+                // tests.
+                if !opts.no_pace_sign && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
+                    let staged = Staged { dir: &staging, p };
+                    for &arch in &archs {
+                        let wrapper = staged.aax_wrapper(arch);
+                        if wrapper.exists() {
+                            pace_sign_aax(&wrapper)?;
+                        }
                     }
                 }
+                sign_files(&all_signable)?;
             }
-            sign_files(&all_signable)?;
-        }
+            presets
+        };
 
         if opts.no_installer {
             eprintln!(
@@ -294,7 +328,6 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
 
     if !suites.is_empty() {
         eprintln!("\nSuite installers");
-        let plugins_root = truce_build::target_dir(&root).join("package/windows/plugin");
         let suite_root = truce_build::target_dir(&root).join("package/windows/suite");
         for suite in &suites {
             package_one_suite(
@@ -719,6 +752,49 @@ impl Staged<'_> {
             .join(arch.tag())
             .join(format!("{bin_stem}.exe"))
     }
+
+    /// The file or bundle a staged `fmt` has for `arch`, or `None` where
+    /// `fmt` isn't staged for that arch (AAX off the host arch, see
+    /// [`stage_aax`]).
+    fn expected(&self, fmt: PkgFormat, arch: TargetArch) -> Option<PathBuf> {
+        match fmt {
+            PkgFormat::Clap => Some(self.clap(arch)),
+            PkgFormat::Vst3 => Some(self.vst3(arch)),
+            PkgFormat::Vst2 => Some(self.vst2(arch)),
+            PkgFormat::External(e) => Some(self.external(e, arch)),
+            PkgFormat::Aax => (arch == TargetArch::host()).then(|| self.aax_wrapper(arch)),
+            PkgFormat::Standalone => Some(self.standalone(arch)),
+            PkgFormat::Au2 | PkgFormat::Au3 => None,
+        }
+    }
+}
+
+/// `--assemble-from`: fail unless `src` (one plugin's tree under `<DIR>`)
+/// has every selected format for every arch it's staged for, and - when
+/// the plugin ships factory presets - the preset payloads
+/// [`stage_windows_presets`] stages for them.
+fn check_assembled(
+    root: &Path,
+    p: &PluginDef,
+    formats: &[PkgFormat],
+    archs: &[TargetArch],
+    src: &Path,
+) -> Res {
+    let staged = Staged { dir: src, p };
+    for &fmt in formats {
+        for &arch in archs {
+            if let Some(path) = staged.expected(fmt, arch)
+                && !path.exists()
+            {
+                let label = format!("{} ({})", fmt.label(), arch.tag());
+                return Err(super::assemble::missing(p, &label, &path));
+            }
+        }
+        if let Some(presets) = staged_presets_dir(p, fmt, src) {
+            super::assemble::require_staged_presets(root, p, &presets)?;
+        }
+    }
+    Ok(())
 }
 
 /// Stage a single plugin for one architecture. Multi-arch packaging calls
@@ -927,18 +1003,18 @@ fn stage_windows_presets(
     };
     let mut out = WindowsPresets::default();
 
+    let dir_for = |fmt| staged_presets_dir(p, fmt, staging).expect("a format with staged presets");
     if formats.contains(&PkgFormat::Clap) {
-        let dir = staging
-            .join("clap-presets")
-            .join(format!("{}.presets", p.file_stem()));
+        let dir = dir_for(PkgFormat::Clap);
         presets::emit_trucepreset_tree(&fp, &dir, false, &format!("{}-clap", p.bundle_id))?;
         out.clap = true;
     }
     if formats.contains(&PkgFormat::Vst3) {
         let payload = presets::vst3_preset_payload(&fp, p, config);
         out.vst3 = !payload.is_empty();
+        let vst3_dir = dir_for(PkgFormat::Vst3);
         for (rel, bytes) in &payload {
-            let dst = staging.join("vst3-presets").join(rel);
+            let dst = vst3_dir.join(rel);
             if let Some(parent) = dst.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -953,33 +1029,45 @@ fn stage_windows_presets(
         // what `emit_standalone_factory` writes for `cargo truce run`
         // and the macOS bundle - the installer then drops it into
         // `{app}` beside the real `.exe`.
-        let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
-            .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
-        let placeholder_exe = staging
-            .join("standalone-presets")
-            .join(format!("{bin_stem}.exe"));
+        let placeholder_exe = dir_for(PkgFormat::Standalone).with_extension("exe");
         presets::emit_standalone_factory(root, p, config, &placeholder_exe)?;
         out.standalone = true;
     }
     Ok(out)
 }
 
+/// Where [`stage_windows_presets`] stages `fmt`'s factory presets in a
+/// plugin's tree, for the formats that carry them outside the bundle.
+fn staged_presets_dir(p: &PluginDef, fmt: PkgFormat, staging: &Path) -> Option<PathBuf> {
+    match fmt {
+        PkgFormat::Clap => Some(
+            staging
+                .join("clap-presets")
+                .join(format!("{}.presets", p.file_stem())),
+        ),
+        PkgFormat::Vst3 => Some(staging.join("vst3-presets")),
+        PkgFormat::Standalone => {
+            let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+                .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+            Some(
+                staging
+                    .join("standalone-presets")
+                    .join(format!("{bin_stem}.presets")),
+            )
+        }
+        _ => None,
+    }
+}
+
 /// Whether a plugin's CLAP / VST3 preset payloads are present in its
 /// staging dir (emitted by [`stage_windows_presets`]). Lets the suite
 /// renderer pick them up without threading per-plugin flags through.
 fn detect_windows_presets(p: &PluginDef, staging: &Path) -> WindowsPresets {
-    let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
-        .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+    let staged = |fmt| staged_presets_dir(p, fmt, staging).is_some_and(|d| d.is_dir());
     WindowsPresets {
-        clap: staging
-            .join("clap-presets")
-            .join(format!("{}.presets", p.file_stem()))
-            .is_dir(),
-        vst3: staging.join("vst3-presets").is_dir(),
-        standalone: staging
-            .join("standalone-presets")
-            .join(format!("{bin_stem}.presets"))
-            .is_dir(),
+        clap: staged(PkgFormat::Clap),
+        vst3: staged(PkgFormat::Vst3),
+        standalone: staged(PkgFormat::Standalone),
     }
 }
 
@@ -1005,11 +1093,9 @@ fn iss_preset_files(
         }
     };
     let mut out = String::new();
+    let dir_for = |fmt| staged_presets_dir(p, fmt, staging).expect("a format with staged presets");
     if presets.clap {
-        let src = staging
-            .join("clap-presets")
-            .join(format!("{}.presets", p.file_stem()))
-            .join("*");
+        let src = dir_for(PkgFormat::Clap).join("*");
         let name = iss_escape_quoted(&p.file_stem());
         let dest = format!("{}\\CLAP\\{name}.presets", scoped_cf(scope));
         out.push_str(&iss_dual_dest(
@@ -1021,7 +1107,7 @@ fn iss_preset_files(
         ));
     }
     if presets.vst3 {
-        let src = staging.join("vst3-presets").join("*");
+        let src = dir_for(PkgFormat::Vst3).join("*");
         // System scope -> %PROGRAMDATA%, otherwise the user's Documents,
         // mirroring the runtime VST3 preset root.
         let dest = if matches!(scope, PkgScope::System) {
@@ -1045,10 +1131,7 @@ fn iss_preset_files(
         // drops its presets.
         let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
             .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
-        let src = staging
-            .join("standalone-presets")
-            .join(format!("{bin_stem}.presets"))
-            .join("*");
+        let src = dir_for(PkgFormat::Standalone).join("*");
         let dest = format!("{{app}}\\{}.presets", iss_escape_quoted(&bin_stem));
         out.push_str(&iss_dual_dest(
             &iss_escape_path(&src),

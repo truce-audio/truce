@@ -167,35 +167,23 @@ pub(crate) fn stage_external_packaged(
     stage_external(fmt, root, p, config, staging, identity, target, &payload)
 }
 
-/// Build a standalone pkg component for an out-of-bundle preset
-/// payload: stage `payload` (relative path -> bytes) under a private
-/// pkgroot, then `pkgbuild` it with `install_location` as the target.
+/// Build a standalone pkg component for an out-of-bundle preset tree:
+/// `pkgbuild` the staged `root` with `install_location` as the target.
 /// Used for VST3 presets, which install to the OS preset folder rather
 /// than the plugin bundle. Produces `<file_stem>-<label>.pkg` in
 /// `components_dir`. No `--scripts`: the preset dir is shared with
 /// user / host presets, so the component only adds its own files (BOM
 /// removal on upgrade leaves user presets untouched) and never wipes.
 #[cfg(target_os = "macos")]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_preset_component(
-    staging: &Path,
+    root: &Path,
     components_dir: &Path,
     file_stem: &str,
     pkg_id: &str,
     label: &str,
     install_location: &str,
     version: &str,
-    payload: &[(PathBuf, Vec<u8>)],
 ) -> Res {
-    let root = staging.join(format!("_presetroot_{label}"));
-    let _ = fs::remove_dir_all(&root);
-    for (rel, bytes) in payload {
-        let dst = root.join(rel);
-        if let Some(parent) = dst.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&dst, bytes)?;
-    }
     let component_pkg = components_dir.join(format!("{file_stem}-{label}.pkg"));
     let status = Command::new("pkgbuild")
         .args([

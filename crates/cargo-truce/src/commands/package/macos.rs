@@ -83,12 +83,19 @@ fn packaging_workers() -> usize {
         .min(8)
 }
 
-pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelection) -> Res {
+pub(crate) fn cmd_package_macos(
+    args: &[String],
+    selection: &super::SuiteSelection,
+    assemble_from: Option<&Path>,
+) -> Res {
     let config = load_config()?;
     let root = project_root();
     let dt = &deployment_target();
 
     let parsed = parse_package_args(args)?;
+    if assemble_from.is_some() && parsed.target_cpu_arg.is_some() {
+        return Err("--assemble-from doesn't build, so --target-cpu has no effect".into());
+    }
 
     let target_cpu = parsed
         .target_cpu_arg
@@ -194,7 +201,15 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
         narrowed
     };
 
-    build_all_formats(&root, &config, &plugins, &archs, dt, &formats, universal)?;
+    if let Some(from) = assemble_from {
+        eprintln!(
+            "Assembling from already-built bundles in {}: no build, and the bundles are \
+             packaged as found (not re-signed).",
+            from.display()
+        );
+    } else {
+        build_all_formats(&root, &config, &plugins, &archs, dt, &formats, universal)?;
+    }
 
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
@@ -213,6 +228,15 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
         no_notarize: parsed.no_notarize,
         no_pace_sign: parsed.no_pace_sign,
         universal,
+        assemble_from,
+        // Assembled trees get a staging root of their own, so a `<DIR>`
+        // that is a previous run's `plugin/` staging is never the copy's
+        // target.
+        staging_root: truce_build::target_dir(&root).join(if assemble_from.is_some() {
+            "package/macos/assemble"
+        } else {
+            "package/macos/plugin"
+        }),
     };
     let need_components_only = !selection.want_per_plugin() && !suites.is_empty();
     let workers = packaging_workers();
@@ -256,6 +280,76 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     Ok(())
 }
 
+/// Fill `staging` with `p`'s signed bundles, one per format: staged from
+/// the build, or with `--assemble-from` copied as found from
+/// `<DIR>/<bundle_id>/` after checking every format is there.
+fn stage_plugin_formats(
+    root: &Path,
+    p: &PluginDef,
+    o: &PackageOpts,
+    staging: &Path,
+    plugin_formats: &[PkgFormat],
+) -> Res {
+    if let Some(from) = o.assemble_from {
+        let src = super::assemble::plugin_dir(from, p)?;
+        for fmt in plugin_formats {
+            let bundle = src.join(fmt.bundle_name(p));
+            if !bundle.exists() {
+                return Err(super::assemble::missing(p, fmt.label(), &bundle));
+            }
+        }
+        if plugin_formats.contains(&PkgFormat::Vst3) {
+            super::assemble::require_staged_presets(root, p, &src.join(VST3_PRESETS_DIR))?;
+        }
+        return super::assemble::copy_into_staging(&src, staging);
+    }
+
+    let _ = fs::remove_dir_all(staging);
+    fs::create_dir_all(staging)?;
+    for fmt in plugin_formats {
+        eprintln!("  Staging {}...", fmt.label());
+        // macOS package staging reads from `target/release/` after lipo
+        // has produced a universal Mach-O at the canonical path; pass
+        // None so `release_lib_for_target` resolves there.
+        let result = match fmt {
+            PkgFormat::Clap => stage_clap(
+                root,
+                p,
+                o.config,
+                staging,
+                &crate::application_identity(),
+                None,
+            ),
+            PkgFormat::Vst3 => stage_vst3(root, p, o.config, staging, None),
+            PkgFormat::Vst2 => stage_vst2(root, p, o.config, staging, None).map(|_| ()),
+            // The staged bundle is already codesigned; macOS packaging
+            // has no use for the returned paths.
+            PkgFormat::External(e) => stage_external_packaged(
+                e,
+                root,
+                p,
+                o.config,
+                staging,
+                &crate::application_identity(),
+                None,
+            )
+            .map(|_| ()),
+            PkgFormat::Au2 => stage_au2(root, p, o.config, staging),
+            PkgFormat::Au3 => stage_au3(root, p, o.config, staging),
+            PkgFormat::Aax => stage_aax(root, p, o.config, staging, o.universal, o.no_pace_sign),
+            PkgFormat::Standalone => stage_standalone(root, p, o.config, staging),
+        };
+        match result {
+            Ok(()) => eprintln!("    ok"),
+            Err(e) => {
+                eprintln!("    FAILED: {e}");
+                return Err(e);
+            }
+        }
+    }
+    stage_vst3_presets(root, p, o, staging)
+}
+
 /// Run only the staging + per-format pkgbuild steps of the
 /// per-plugin pipeline. Used by suite-wrapping when the user has
 /// `--no-per-plugin` set: we still need the component .pkgs as
@@ -268,55 +362,10 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
 fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     eprintln!("\nComponents for: {}", p.name);
 
-    let staging = truce_build::target_dir(root)
-        .join("package/macos/plugin")
-        .join(&p.bundle_id);
-    let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(&staging)?;
+    let staging = o.staging_root.join(&p.bundle_id);
 
     let plugin_formats = formats_for_plugin(o.formats, p);
-
-    for fmt in &plugin_formats {
-        eprintln!("  Staging {}...", fmt.label());
-        // macOS package staging reads from `target/release/` after lipo
-        // has produced a universal Mach-O at the canonical path; pass
-        // None so `release_lib_for_target` resolves there.
-        let result = match fmt {
-            PkgFormat::Clap => stage_clap(
-                root,
-                p,
-                o.config,
-                &staging,
-                &crate::application_identity(),
-                None,
-            ),
-            PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
-            PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            // The staged bundle is already codesigned; macOS packaging
-            // has no use for the returned paths.
-            PkgFormat::External(e) => stage_external_packaged(
-                e,
-                root,
-                p,
-                o.config,
-                &staging,
-                &crate::application_identity(),
-                None,
-            )
-            .map(|_| ()),
-            PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
-            PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
-            PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
-            PkgFormat::Standalone => stage_standalone(root, p, o.config, &staging),
-        };
-        match result {
-            Ok(()) => eprintln!("    ok"),
-            Err(e) => {
-                eprintln!("    FAILED: {e}");
-                return Err(e);
-            }
-        }
-    }
+    stage_plugin_formats(root, p, o, &staging, &plugin_formats)?;
 
     let components_dir = staging.join("components");
     // Wipe the components dir before rebuilding so a previous run's
@@ -335,7 +384,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     }
     // VST3 presets ride as their own component; the suite distribution
     // picks it up via `vst3_preset_descriptor`.
-    build_vst3_preset_component(root, p, o, &staging, &components_dir)?;
+    build_vst3_preset_component(p, o, &staging, &components_dir)?;
     Ok(())
 }
 
@@ -362,10 +411,7 @@ fn package_one_suite(
     fs::create_dir_all(&components_dir)?;
 
     for plugin in &suite.plugins {
-        let plugin_components = truce_build::target_dir(root)
-            .join("package/macos/plugin")
-            .join(&plugin.bundle_id)
-            .join("components");
+        let plugin_components = o.staging_root.join(&plugin.bundle_id).join("components");
         if !plugin_components.exists() {
             return Err(format!(
                 "suite '{}': missing component .pkgs for {} at {}. \
@@ -395,8 +441,12 @@ fn package_one_suite(
     let extras_by_plugin: Vec<Vec<ExtraComponent>> = suite
         .plugins
         .iter()
-        .map(|p| vst3_preset_descriptor(root, p, o).map(|d| d.into_iter().collect()))
-        .collect::<Result<_, _>>()?;
+        .map(|p| {
+            vst3_preset_descriptor(o, &o.staging_root.join(&p.bundle_id))
+                .into_iter()
+                .collect()
+        })
+        .collect();
     let dist_xml = generate_suite_distribution_xml(
         suite,
         &o.config.vendor.id,
@@ -1020,6 +1070,11 @@ struct PackageOpts<'a> {
     no_notarize: bool,
     no_pace_sign: bool,
     universal: bool,
+    /// `--assemble-from <DIR>`: copy each plugin's bundles from
+    /// `<DIR>/<bundle_id>/` instead of staging (and signing) them.
+    assemble_from: Option<&'a Path>,
+    /// Where each plugin's staging tree lives, `<root>/<bundle_id>/`.
+    staging_root: PathBuf,
 }
 
 /// Stage signed bundles, run pkgbuild per format, then productbuild
@@ -1036,68 +1091,67 @@ fn au3_appex_id(config: &Config, p: &PluginDef) -> String {
     format!("{}.{}.v3.ext", config.vendor.id, p.bundle_id)
 }
 
-/// A preset file tree as `(relative path -> bytes)`.
-type PresetPayload = Vec<(PathBuf, Vec<u8>)>;
+/// Where a plugin's out-of-bundle VST3 factory presets are staged:
+/// `<staging>/vst3-presets/<Vendor>/<Plugin>/*.vstpreset`, the tree the
+/// presets component installs under `/Library/Audio/Presets`. Staged
+/// with the bundles (and copied with them by `--assemble-from`), so the
+/// installer is built from the staged tree and never needs the build's
+/// parameter metadata to resolve field-name preset keys.
+const VST3_PRESETS_DIR: &str = "vst3-presets";
 
-/// The VST3 preset payload for `p`, or `None` when VST3 isn't selected
-/// or the plugin ships no presets.
-fn vst3_preset_payload_for(
-    root: &Path,
-    p: &PluginDef,
-    o: &PackageOpts,
-) -> Result<Option<PresetPayload>, crate::CargoTruceError> {
+/// Write `p`'s VST3 preset tree into `staging` when VST3 is selected and
+/// the plugin ships presets.
+fn stage_vst3_presets(root: &Path, p: &PluginDef, o: &PackageOpts, staging: &Path) -> Res {
     if !o.formats.contains(&PkgFormat::Vst3) {
-        return Ok(None);
+        return Ok(());
     }
     let Some(fp) = presets::load_factory_presets(root, p, o.config)? else {
-        return Ok(None);
+        return Ok(());
     };
-    let payload = presets::vst3_preset_payload(&fp, p, o.config);
-    Ok((!payload.is_empty()).then_some(payload))
+    for (rel, bytes) in presets::vst3_preset_payload(&fp, p, o.config) {
+        let dst = staging.join(VST3_PRESETS_DIR).join(rel);
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&dst, bytes)?;
+    }
+    Ok(())
 }
 
-/// The distribution descriptor for `p`'s VST3 preset component (the
-/// pkg itself is built by [`build_vst3_preset_component`] /
-/// `stage_components_only`). `None` when there's nothing to ship.
-fn vst3_preset_descriptor(
-    root: &Path,
-    p: &PluginDef,
-    o: &PackageOpts,
-) -> Result<Option<ExtraComponent>, crate::CargoTruceError> {
-    Ok(
-        vst3_preset_payload_for(root, p, o)?.map(|_| ExtraComponent {
-            suffix: "vst3presets".to_string(),
-            label: "VST3-Presets".to_string(),
-            parent: PkgFormat::Vst3,
-        }),
-    )
+/// The distribution descriptor for `p`'s VST3 preset component, when its
+/// staged tree has one (the pkg itself is built by
+/// [`build_vst3_preset_component`]).
+fn vst3_preset_descriptor(o: &PackageOpts, staging: &Path) -> Option<ExtraComponent> {
+    let staged = staging.join(VST3_PRESETS_DIR);
+    let has_presets = fs::read_dir(&staged).is_ok_and(|mut d| d.next().is_some());
+    (o.formats.contains(&PkgFormat::Vst3) && has_presets).then(|| ExtraComponent {
+        suffix: "vst3presets".to_string(),
+        label: "VST3-Presets".to_string(),
+        parent: PkgFormat::Vst3,
+    })
 }
 
-/// Build the VST3-presets pkg component into `components_dir` and
-/// return its descriptor, or `None` when nothing to ship.
+/// Build the VST3-presets pkg component from the staged tree into
+/// `components_dir` and return its descriptor, or `None` when there's
+/// nothing to ship.
 fn build_vst3_preset_component(
-    root: &Path,
     p: &PluginDef,
     o: &PackageOpts,
     staging: &Path,
     components_dir: &Path,
 ) -> Result<Option<ExtraComponent>, crate::CargoTruceError> {
-    let Some(payload) = vst3_preset_payload_for(root, p, o)? else {
-        return Ok(None);
-    };
-    let Some(ec) = vst3_preset_descriptor(root, p, o)? else {
+    let Some(ec) = vst3_preset_descriptor(o, staging) else {
         return Ok(None);
     };
     let pkg_id = format!("{}.{}.{}", o.config.vendor.id, p.bundle_id, ec.suffix);
     build_preset_component(
-        staging,
+        &staging.join(VST3_PRESETS_DIR),
         components_dir,
         &p.file_stem(),
         &pkg_id,
         &ec.label,
         "/Library/Audio/Presets",
         o.version,
-        &payload,
     )?;
     Ok(Some(ec))
 }
@@ -1105,56 +1159,11 @@ fn build_vst3_preset_component(
 fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOpts) -> Res {
     eprintln!("\nPackaging: {}", p.name);
 
-    let staging = truce_build::target_dir(root)
-        .join("package/macos/plugin")
-        .join(&p.bundle_id);
-    let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(&staging)?;
+    let staging = o.staging_root.join(&p.bundle_id);
 
     let plugin_formats = formats_for_plugin(o.formats, p);
-
     // Step 2: Stage signed bundles
-    for fmt in &plugin_formats {
-        eprintln!("  Staging {}...", fmt.label());
-        // macOS package staging reads from `target/release/` after lipo
-        // has produced a universal Mach-O at the canonical path; pass
-        // None so `release_lib_for_target` resolves there.
-        let result = match fmt {
-            PkgFormat::Clap => stage_clap(
-                root,
-                p,
-                o.config,
-                &staging,
-                &crate::application_identity(),
-                None,
-            ),
-            PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
-            PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            // The staged bundle is already codesigned; macOS packaging
-            // has no use for the returned paths.
-            PkgFormat::External(e) => stage_external_packaged(
-                e,
-                root,
-                p,
-                o.config,
-                &staging,
-                &crate::application_identity(),
-                None,
-            )
-            .map(|_| ()),
-            PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
-            PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
-            PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
-            PkgFormat::Standalone => stage_standalone(root, p, o.config, &staging),
-        };
-        match result {
-            Ok(()) => eprintln!("    ok"),
-            Err(e) => {
-                eprintln!("    FAILED: {e}");
-                return Err(e);
-            }
-        }
-    }
+    stage_plugin_formats(root, p, o, &staging, &plugin_formats)?;
 
     // Step 2.5: Notarization-readiness check.
     // Mirror Apple's notarization-server checks locally - every
@@ -1187,10 +1196,9 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
     // Out-of-bundle VST3 presets ship as their own component.
-    let extras: Vec<ExtraComponent> =
-        build_vst3_preset_component(root, p, o, &staging, &components_dir)?
-            .into_iter()
-            .collect();
+    let extras: Vec<ExtraComponent> = build_vst3_preset_component(p, o, &staging, &components_dir)?
+        .into_iter()
+        .collect();
 
     // Step 4: Generate distribution.xml. Pass the sanitized
     // file stem (not `p.name`) so the `<pkg-ref>` URLs match the
