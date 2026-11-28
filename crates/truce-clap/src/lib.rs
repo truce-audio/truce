@@ -2498,6 +2498,18 @@ unsafe extern "C" fn params_count<P: PluginExport>(plugin: *const clap_plugin) -
     }
 }
 
+/// The CLAP flags a parameter's range implies: stepped for discrete values,
+/// and enum too for a named value list. Decided by the range's shape
+/// ([`ParamRange::base`]), so a reversed enum or discrete range stays
+/// stepped: reversing flips the axis, not what the values are.
+fn range_flags(range: &ParamRange) -> u32 {
+    match range.base() {
+        ParamRange::Enum { .. } => CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM,
+        ParamRange::Discrete { .. } => CLAP_PARAM_IS_STEPPED,
+        _ => 0,
+    }
+}
+
 unsafe extern "C" fn params_get_info<P: PluginExport>(
     plugin: *const clap_plugin,
     param_index: u32,
@@ -2537,15 +2549,7 @@ unsafe extern "C" fn params_get_info<P: PluginExport>(
         if info.flags.contains(ParamFlags::MODULATABLE_PER_NOTE) {
             flags |= CLAP_PARAM_IS_MODULATABLE_PER_NOTE_ID;
         }
-        match &info.range {
-            ParamRange::Enum { .. } => {
-                flags |= CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM;
-            }
-            ParamRange::Discrete { .. } => {
-                flags |= CLAP_PARAM_IS_STEPPED;
-            }
-            _ => {}
-        }
+        flags |= range_flags(&info.range);
         out.flags = flags;
 
         out.min_value = info.range.min();
@@ -4843,5 +4847,42 @@ mod remote_controls_tests {
             remote_controls_page_id("EQ", 0),
             remote_controls_page_id("DYN", 0)
         );
+    }
+}
+
+#[cfg(test)]
+mod range_flag_tests {
+    use super::{CLAP_PARAM_IS_ENUM, CLAP_PARAM_IS_STEPPED, ParamRange, range_flags};
+
+    static ENUM: ParamRange = ParamRange::Enum { count: 4 };
+    static DISCRETE: ParamRange = ParamRange::Discrete { min: 0, max: 3 };
+    static LINEAR: ParamRange = ParamRange::Linear { min: 0.0, max: 1.0 };
+    static REVERSED_ENUM: ParamRange = ParamRange::Reversed(&ENUM);
+
+    #[test]
+    fn stepped_and_enum_follow_the_shape() {
+        assert_eq!(
+            range_flags(&ENUM),
+            CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM
+        );
+        assert_eq!(range_flags(&DISCRETE), CLAP_PARAM_IS_STEPPED);
+        assert_eq!(range_flags(&LINEAR), 0);
+    }
+
+    #[test]
+    fn reversing_keeps_a_range_stepped() {
+        assert_eq!(
+            range_flags(&ParamRange::Reversed(&ENUM)),
+            CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM
+        );
+        assert_eq!(
+            range_flags(&ParamRange::Reversed(&DISCRETE)),
+            CLAP_PARAM_IS_STEPPED
+        );
+        assert_eq!(
+            range_flags(&ParamRange::Reversed(&REVERSED_ENUM)),
+            CLAP_PARAM_IS_STEPPED | CLAP_PARAM_IS_ENUM
+        );
+        assert_eq!(range_flags(&ParamRange::Reversed(&LINEAR)), 0);
     }
 }
