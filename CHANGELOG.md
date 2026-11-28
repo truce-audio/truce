@@ -5,6 +5,7 @@ Notable changes per release.
 ## 7.0.2
 
 - Params: a `#[nested]` array's length can be a const (`[CompParams; MAX_BANDS]`), not only a literal (#229). Ids, names and saved state come out as for the same literal length. LV2 still needs a literal: it renders its ports from build metadata without running the plug-in, so `truce-format-lv2` refuses a const length when packaging and names the field.
+- macOS: the standalone, AU v2 and AU v3 call `Editor::open` once the parent `NSView` is in its window. They called it on a view outside any window, so an editor that builds a native child needing the window, such as a `wry` webview, panicked or had to defer its own setup (#234). CLAP, VST3, VST2 and AAX hosts already pass a view that is in its window.
 
 ## 7.0.1
 

@@ -59,6 +59,9 @@ extern int truce_au_v2_ctx_alive(void *ctx, uint64_t token);
 @property(nonatomic, assign) uint64_t ctxToken;
 @property(nonatomic, assign) const AuCallbacks *callbacks;
 @property(nonatomic, strong) NSTimer *idleTimer;
+/// Whether `gui_open` has run: the editor opens the first time the view
+/// is in a window (see `viewDidMoveToWindow`).
+@property(nonatomic, assign) BOOL editorOpened;
 @end
 
 @implementation TRUCE_AU_FIXED_CONTAINER_NAME
@@ -99,6 +102,15 @@ extern int truce_au_v2_ctx_alive(void *ctx, uint64_t token);
 - (void)viewDidMoveToWindow {
     [super viewDidMoveToWindow];
     if (self.window) {
+        // Open the editor the first time the view is in a window, not
+        // when the host asks for the view: hosts add it to their window
+        // only after `uiViewForAudioUnit` returns, and an editor that
+        // builds native children needing the window (a WKWebView reads
+        // its backing scale from it) can't do that in a windowless view.
+        if (!self.editorOpened && [self ctxLive]) {
+            self.editorOpened = YES;
+            self.callbacks->gui_open(self.rustCtx, (__bridge void *)self);
+        }
         // `gui_idle` is a v6 (append-only) callback; guard the pointer in
         // case a host ever pairs this view with an older core build. An
         // editor whose `idle` no-ops (v8 `gui_wants_idle` == 0: baseview
@@ -179,7 +191,8 @@ extern int truce_au_v2_ctx_alive(void *ctx, uint64_t token);
     container.rustCtx = ctx;
     container.ctxToken = truce_au_v2_ctx_token(ctx);
     container.callbacks = cb;
-    cb->gui_open(ctx, (__bridge void *)container);
+    // `gui_open` runs once the host puts the view in a window
+    // (`viewDidMoveToWindow`).
     return container;
 }
 

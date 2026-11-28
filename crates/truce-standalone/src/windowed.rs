@@ -398,31 +398,32 @@ where
         // and drive scale from the host instead. See
         // `truce_gui::platform::editor_window_scale`.
         editor.set_uses_system_scale(true);
-        editor.open(truce_parent, ctx);
-
-        // After `editor.open()` reparents baseview's child under the
-        // standalone's NSView, give the child flexible margins so
-        // AppKit keeps it centred (not stretched) when the NSWindow
-        // grows past the editor; `on_frame`'s `layout_child_centered`
-        // then drives its actual size. We pass `h.ns_view` (baseview's
-        // standalone view) rather than `h.ns_window`:
-        // `Window::open_blocking` doesn't run `setContentView:` on the
-        // NSWindow until *after* this build closure returns, so
-        // `[ns_window contentView]` here is the NSWindow's default
-        // vanilla view (with no subviews). baseview's view, however,
-        // is already the parent of the editor's child by the time
-        // `editor.open()` returns.
+        // macOS: baseview's view isn't in the NSWindow yet - it runs
+        // `setContentView:` after this closure returns - so the editor
+        // opens from the first frame or event that finds it there
+        // (`StandaloneHandler::open_pending`): an editor that needs the
+        // window at `open` (a webview reads its backing scale from it)
+        // gets a parent that has one. Elsewhere the parent is already a
+        // live window and the editor opens here.
         #[cfg(target_os = "macos")]
-        if editor_can_resize && let RwhHandle::AppKit(h) = window.raw_window_handle() {
-            // SAFETY: `editor.open()` just finished embedding the
-            // child view; we're on the main thread.
-            unsafe { crate::windowed_macos::install_subview_centering(h.ns_view) };
-        }
+        let pending_open = Some(PendingOpen {
+            parent: truce_parent,
+            context: ctx,
+            can_resize: editor_can_resize,
+        });
+        #[cfg(not(target_os = "macos"))]
+        editor.open(truce_parent, ctx);
 
         StandaloneHandler {
             editor,
-            // The editor's window is open for the handler's whole life.
+            // The editor's window is open for the handler's whole life;
+            // on macOS from `open_pending` on.
+            #[cfg(not(target_os = "macos"))]
             idle_clock: IdleClock::opened(),
+            #[cfg(target_os = "macos")]
+            idle_clock: IdleClock::new(),
+            #[cfg(target_os = "macos")]
+            pending_open,
             pending_resize,
             current_size: (lw, lh),
             #[cfg(target_os = "macos")]
@@ -461,6 +462,10 @@ where
     editor: Box<dyn Editor>,
     /// Frame clock for the `dt` passed to `Editor::idle` each `on_frame`.
     idle_clock: IdleClock,
+    /// macOS: the editor's `open` arguments until baseview's view is in
+    /// the window (see `open_pending`).
+    #[cfg(target_os = "macos")]
+    pending_open: Option<PendingOpen>,
     /// Shared with the editor's `request_resize` closure. Polled
     /// every `on_frame` tick; non-zero values are popped and
     /// applied via `Window::resize`.
@@ -532,6 +537,55 @@ where
     _capture: Option<crate::playback::CaptureSink>,
 }
 
+/// What the macOS standalone needs to open the editor once baseview's
+/// view is in its window.
+#[cfg(target_os = "macos")]
+struct PendingOpen {
+    parent: RawWindowHandle,
+    context: PluginContext,
+    can_resize: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl<P: PluginExport + 'static> StandaloneHandler<P>
+where
+    P::Params: 'static,
+{
+    /// Open the editor if it is still waiting and baseview's view is now
+    /// in the window. Returns whether the editor is open.
+    fn open_pending(&mut self, window: &mut Window) -> bool {
+        let Some(p) = &self.pending_open else {
+            return true;
+        };
+        let RwhHandle::AppKit(h) = window.raw_window_handle() else {
+            return false;
+        };
+        // SAFETY: baseview's live view; handler callbacks run on the
+        // main thread.
+        if !unsafe { crate::windowed_macos::view_in_window(h.ns_view) } {
+            return false;
+        }
+        let can_resize = p.can_resize;
+        let Some(PendingOpen {
+            parent, context, ..
+        }) = self.pending_open.take()
+        else {
+            return true;
+        };
+        self.editor.open(parent, context);
+        self.idle_clock.open();
+        // Give the editor's child flexible margins so AppKit keeps it
+        // centred (not stretched) when the window grows past the editor;
+        // `on_frame`'s `layout_child_centered` then drives its size.
+        if can_resize {
+            // SAFETY: `editor.open()` just embedded the child view in
+            // baseview's view; main thread.
+            unsafe { crate::windowed_macos::install_subview_centering(h.ns_view) };
+        }
+        true
+    }
+}
+
 /// Resize the outer standalone window so its client area becomes
 /// `(w, h)` logical points. On Windows the height is padded by the
 /// menu-bar band first: baseview's `Window::resize` is menu-blind and
@@ -555,6 +609,10 @@ where
     P::Params: 'static,
 {
     fn on_frame(&mut self, window: &mut Window) {
+        #[cfg(target_os = "macos")]
+        if !self.open_pending(window) {
+            return;
+        }
         // Drive the documented `Editor::idle` tick. baseview calls
         // `on_frame` on the UI thread at the display refresh, so this is the
         // ~60fps host-UI-thread hook editors expect for repaint/animation
@@ -677,6 +735,8 @@ where
     // from the API name; hence the function-level allow.
     #[allow(clippy::items_after_statements)]
     fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
+        #[cfg(target_os = "macos")]
+        self.open_pending(window);
         // OS-driven resize (user dragged the window edge): forward to
         // the editor so the child surface follows the outer frame.
         // `current_size` suppresses the round-trip when the resize

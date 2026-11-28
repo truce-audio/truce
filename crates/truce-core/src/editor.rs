@@ -266,6 +266,14 @@ pub trait Editor: Send {
     fn size(&self) -> (u32, u32);
 
     /// Create the GUI as a child of the host-provided parent window.
+    ///
+    /// On macOS the parent `NSView` is in its `NSWindow` by the time this
+    /// runs, so an editor can build native children that need the window
+    /// (a `WKWebView` reads its backing scale from it). Where truce makes
+    /// the parent view itself - the standalone, AU v2 and AU v3 - it waits
+    /// for the view to gain its window before calling `open`; under CLAP,
+    /// VST3, VST2 and AAX the host provides a view that is already in its
+    /// window.
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext);
 
     /// Destroy the GUI.

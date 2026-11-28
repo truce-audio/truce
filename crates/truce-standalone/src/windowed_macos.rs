@@ -40,6 +40,25 @@ pub unsafe fn make_resizable(ns_window: *mut std::ffi::c_void) {
     let _: () = unsafe { msg_send![window, setStyleMask: new_mask] };
 }
 
+/// Whether `ns_view` is in an `NSWindow` yet. baseview puts its view in
+/// the standalone's window (`setContentView:`) only after the
+/// `Window::open_blocking` build closure returns, so the editor is
+/// opened from the first frame or event that finds the view there:
+/// editors that build native children needing the window (a `WKWebView`
+/// reads its backing scale from it) get a parent that has one.
+///
+/// # Safety
+///
+/// Must run on the main thread. The caller is responsible for ensuring
+/// `ns_view` is a live Objective-C pointer.
+pub unsafe fn view_in_window(ns_view: *mut std::ffi::c_void) -> bool {
+    if ns_view.is_null() {
+        return false;
+    }
+    let window: *mut Object = unsafe { msg_send![ns_view.cast::<Object>(), window] };
+    !window.is_null()
+}
+
 /// Pin the standalone window to a fixed content size so a non-resizable
 /// editor's window can't be grown. baseview creates the window without
 /// `Resizable` (no edge-drag), but the green zoom button /
