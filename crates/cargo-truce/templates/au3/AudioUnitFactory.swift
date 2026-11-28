@@ -1153,6 +1153,9 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     private var guiContainer: NSView?
     private var guiPtSize: NSSize = .zero
     private var paramSyncTimer: Timer?
+    /// Drives `Editor::idle` ~60 times a second while the editor is open
+    /// (see `startIdle`).
+    private var idleTimer: Timer?
     /// Latch flipped after the host's first `viewDidLayout` pass.
     /// On first layout Logic Pro lays our `view` out at its plug-in
     /// pane size (typically wider than the editor's natural), and
@@ -1284,6 +1287,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         guard !guiSetUp else { return }
         cb.pointee.gui_open(ctx, Unmanaged.passUnretained(container).toOpaque())
         guiSetUp = true
+        startIdle(ctx, cb)
         #if os(iOS)
         // Fit the editor to the host's safe-area frame so its responsive
         // layout reflows to the real device viewport.
@@ -1434,6 +1438,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         // This stops the repaint timer. setupGUIIfReady will
         // re-create the GUI when the window is shown again.
         stopParamSync()
+        stopIdle()
         if guiSetUp, let ctx = myCtx, let cb = g_callbacks {
             cb.pointee.gui_close(ctx)
         }
@@ -1540,6 +1545,37 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     private func stopParamSync() {
         paramSyncTimer?.invalidate()
         paramSyncTimer = nil
+    }
+
+    // MARK: - Editor idle
+
+    /// Drive `Editor::idle` ~60 times a second on the main thread while the
+    /// editor is open, as the AU v2 view's `NSTimer` does: an editor that
+    /// animates or keeps a native view in sync from `idle` (a webview the
+    /// host's automation must reach) needs the tick. Common run-loop modes,
+    /// so it keeps firing through menu and resize tracking. The Rust side
+    /// gates it on the editor being open and skips a tick that lands inside
+    /// another editor call. An editor whose `idle` does nothing
+    /// (`gui_wants_idle` == 0: baseview repaints it) gets no timer.
+    private func startIdle(_ ctx: UnsafeMutableRawPointer, _ cb: UnsafePointer<AuCallbacks>) {
+        let abi = truceAbiTailVersion(cb)
+        guard idleTimer == nil, abi >= 6 else { return }
+        if abi >= 8 && cb.pointee.gui_wants_idle(ctx) == 0 { return }
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            guard self.guiSetUp, let ctx = self.myCtx, let cb = g_callbacks else { return }
+            cb.pointee.gui_idle(ctx)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        idleTimer = t
+    }
+
+    private func stopIdle() {
+        idleTimer?.invalidate()
+        idleTimer = nil
     }
 
     /// Push current Rust param values to the AUParameterTree so the host

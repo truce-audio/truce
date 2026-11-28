@@ -2404,7 +2404,8 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     }
 }
 
-/// Editor idle tick, driven ~60fps by the AU v2 view's `NSTimer`.
+/// Editor idle tick, driven ~60fps by the AU v2 view's `NSTimer` and the
+/// AU v3 view controller's `Timer`.
 /// `editor.idle` is author code reachable across the `ObjC` boundary, so
 /// firewall it. `try_enter`, not `enter`: the timer can fire during an
 /// outer editor callback (the `viewDidLayoutSubviews` re-entry chain) - skip
