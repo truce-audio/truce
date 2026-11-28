@@ -5708,6 +5708,7 @@ name = "truce-example-webview"
 version = "7.0.1"
 dependencies = [
  "clap-sys",
+ "gtk",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

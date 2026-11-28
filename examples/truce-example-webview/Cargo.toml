@@ -40,12 +40,19 @@ clap-sys = { version = "0.5", optional = true }
 truce-standalone = { workspace = true, features = ["gui"], optional = true }
 truce-loader = { workspace = true }
 
-# The webview: WKWebView on macOS, WebView2 on Windows. Linux would need
-# webkit2gtk and a GTK widget tree, which a plug-in's X11 parent window
-# can't host, so the example opens no editor there.
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# The webview: WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux.
+# On Linux wry embeds into the host's X11 parent window (X11 only, which is
+# what plug-in hosts hand editors, XWayland included); building needs
+# libwebkit2gtk-4.1-dev.
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 wry = "0.58"
 raw-window-handle = "0.6"
+
+# Linux: wry's X11 child webview runs on GTK, which the editor starts and
+# pumps itself, since a host's own event loop needn't be GTK's. The same
+# major as wry's.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.19"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -68,6 +68,7 @@ jobs:
             libwayland-dev \
             libasound2-dev libjack-jackd2-dev \
             libfontconfig1-dev libfreetype-dev \
+            libwebkit2gtk-4.1-dev \
             alsa-utils
 
       - name: Point ALSA default PCM at the null device
@@ -433,7 +434,8 @@ jobs:
             libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
             libwayland-dev \
             libasound2-dev libjack-jackd2-dev \
-            libfontconfig1-dev libfreetype-dev
+            libfontconfig1-dev libfreetype-dev \
+            libwebkit2gtk-4.1-dev
 
       - name: check (main workspace)
         run: cargo +1.95.0 check --workspace --all-targets

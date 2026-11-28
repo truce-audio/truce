@@ -1,7 +1,7 @@
 //! A small sine synth whose editor is a web page, rendered by a native
-//! webview (`wry`: `WKWebView` on macOS, `WebView2` on Windows) built as a
-//! child of the host's parent view - the raw-window-handle editor path,
-//! with no truce GUI backend involved.
+//! webview (`wry`: `WKWebView` on macOS, `WebView2` on Windows, `WebKitGTK`
+//! on Linux) built as a child of the host's parent view - the
+//! raw-window-handle editor path, with no truce GUI backend involved.
 //!
 //! The page's slider edits the volume through `wry`'s IPC channel
 //! (begin / set / end edit), and [`Editor::idle`] pushes host-side changes
@@ -11,6 +11,11 @@
 //! builds the webview. If it isn't, the editor says so on screen (a red
 //! panel) and in the log instead of letting `wry` panic, so a host test can
 //! see which formats hand `open()` a windowless view.
+//!
+//! On Linux, `wry` embeds the webview into the host's X11 parent window
+//! through GTK. The editor starts GTK on the UI thread in `open()` and pumps
+//! its pending events in [`Editor::idle`], since the host's own event loop
+//! needn't be GTK's (REAPER's is, a winit standalone's isn't).
 
 use std::f64::consts::TAU;
 use std::sync::Arc;
@@ -137,7 +142,7 @@ impl PluginLogic for WebviewSynth {
 /// `truceInitial` is the value when the page is built, so the first paint
 /// is right without waiting for a tick; `idleRunning` marks that the format
 /// drives `idle` at all (the status line a host test reads).
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const PAGE: &str = r#"<!doctype html>
 <html><head><meta charset="utf-8"><style>
   html, body { margin: 0; height: 100%; background: #1c1d22; color: #e4e6eb;
@@ -187,7 +192,7 @@ unsafe impl<T> Send for UiThread<T> {}
 #[derive(Default)]
 struct WebviewEditor {
     context: Option<PluginContext>,
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     webview: Option<UiThread<wry::WebView>>,
     /// The red "no window" panel, when `open` couldn't build the webview.
     #[cfg(target_os = "macos")]
@@ -224,7 +229,13 @@ impl Editor for WebviewEditor {
             self.context = Some(context);
             return;
         }
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        if let Err(e) = linux::start_gtk() {
+            eprintln!("truce-example-webview: {e}");
+            self.context = Some(context);
+            return;
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             let initial = (
                 context.bridge().get_param(P::Volume.into()),
@@ -238,7 +249,7 @@ impl Editor for WebviewEditor {
                 Err(e) => eprintln!("truce-example-webview: building the webview failed: {e}"),
             }
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
             let _ = parent;
             eprintln!("truce-example-webview: no webview on this platform");
@@ -248,7 +259,7 @@ impl Editor for WebviewEditor {
 
     fn close(&mut self) {
         // Dropping the webview removes it from the parent view.
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             self.webview = None;
         }
@@ -262,7 +273,13 @@ impl Editor for WebviewEditor {
     /// Push the volume into the page whenever it changes on the host side,
     /// and mark the page's status line: `idle` is running.
     fn idle(&mut self, _dt: std::time::Duration) {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        // Let GTK draw the page and deliver its input; a host whose own
+        // loop is GTK's has drained these already.
+        #[cfg(target_os = "linux")]
+        if self.webview.is_some() {
+            linux::pump_gtk();
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             let (Some(ctx), Some(webview)) = (&self.context, &self.webview) else {
                 return;
@@ -296,7 +313,7 @@ impl Editor for WebviewEditor {
 
 /// Build the webview as a child of `parent`, sized to the editor, showing
 /// `initial` (the volume's normalized value and its text) from the start.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn build_webview(
     parent: RawWindowHandle,
     context: PluginContext,
@@ -332,10 +349,10 @@ fn build_webview(
 }
 
 /// truce's parent handle as the `raw-window-handle` 0.6 type `wry` takes.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 struct Parent(raw_window_handle::RawWindowHandle);
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 impl Parent {
     fn new(handle: RawWindowHandle) -> Option<Self> {
         use raw_window_handle as rwh;
@@ -348,12 +365,17 @@ impl Parent {
             RawWindowHandle::Win32(hwnd) => Some(Self(rwh::RawWindowHandle::Win32(
                 rwh::Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd as isize)?),
             ))),
+            // wry's Linux child webview takes an Xlib window (X11 only).
+            #[cfg(target_os = "linux")]
+            RawWindowHandle::X11(window) if window != 0 => Some(Self(rwh::RawWindowHandle::Xlib(
+                rwh::XlibWindowHandle::new(std::ffi::c_ulong::try_from(window).ok()?),
+            ))),
             _ => None,
         }
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 impl raw_window_handle::HasWindowHandle for Parent {
     fn window_handle(
         &self,
@@ -398,6 +420,46 @@ mod macos {
         ));
         view.addSubview(&label);
         Some(label)
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    /// Start GTK on this (the editor's UI) thread, once per process. GTK
+    /// may only be driven from the thread that started it, so a second
+    /// editor opened on another thread gets an error instead of a panic.
+    pub fn start_gtk() -> Result<(), String> {
+        if gtk::is_initialized_main_thread() {
+            return Ok(());
+        }
+        if gtk::is_initialized() {
+            return Err(
+                "GTK was started on another thread; the webview can't be built on this one".into(),
+            );
+        }
+        // GDK has one event handler per process. A host whose UI runs on
+        // GDK without GTK (REAPER's SWELL) has set it to its own, and
+        // `gtk::init` would replace it with GTK's: the host's windows
+        // would stop getting events and stop painting.
+        // SAFETY: a plain query; it doesn't need GDK started.
+        if !unsafe { gtk::gdk::ffi::gdk_display_get_default() }.is_null() {
+            return Err(
+                "the host's UI runs on GDK, and starting GTK would take its events \
+                        from it; no webview in this host"
+                    .into(),
+            );
+        }
+        gtk::init().map_err(|e| format!("starting GTK failed (no X11 display?): {e}"))
+    }
+
+    /// Handle GTK's pending events without blocking.
+    pub fn pump_gtk() {
+        if !gtk::is_initialized_main_thread() {
+            return;
+        }
+        while gtk::events_pending() {
+            gtk::main_iteration_do(false);
+        }
     }
 }
 

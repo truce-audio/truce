@@ -48,7 +48,8 @@ jobs:
             libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
             libwayland-dev \
             libasound2-dev libjack-jackd2-dev \
-            libfontconfig1-dev libfreetype-dev
+            libfontconfig1-dev libfreetype-dev \
+            libwebkit2gtk-4.1-dev
 
       - name: cargo doc
         run: cargo doc --workspace --no-deps
