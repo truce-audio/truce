@@ -823,7 +823,7 @@ fn workspace_mixed_types_tests_pass() {
 // `cargo truce build --clap` on a single-plugin scaffold. Exercises
 // the actual `cargo-truce` binary (not bare `cargo build`), so
 // xtask-side regressions - `project_root` resolution from a child
-// cwd, per-format feature gating in `detect_default_features`,
+// cwd, per-plugin format selection from its default features,
 // bundle staging into `target/bundles/` - surface here. Single
 // plugin + CLAP only to keep the test under a minute. Does not use
 // the shared target dir; see `truce_subcommand` for why.

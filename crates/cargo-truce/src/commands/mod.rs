@@ -26,6 +26,25 @@ use crate::{Config, PluginDef};
 /// Three subcommands (`install`, `build`, `validate`) share this
 /// pattern verbatim; centralizing the lookup keeps the not-found
 /// message phrased identically across them.
+/// The plugins named by `filters` (crate names, each as `-p` takes it), in
+/// `truce.toml` order; every plugin when `filters` is empty.
+pub(crate) fn pick_plugins_many<'a>(
+    config: &'a Config,
+    filters: &[String],
+) -> Result<Vec<&'a PluginDef>, crate::CargoTruceError> {
+    if filters.is_empty() {
+        return pick_plugins(config, None);
+    }
+    for f in filters {
+        pick_plugins(config, Some(f))?;
+    }
+    Ok(config
+        .plugin
+        .iter()
+        .filter(|p| filters.iter().any(|f| *f == p.crate_name))
+        .collect())
+}
+
 pub(crate) fn pick_plugins<'a>(
     config: &'a Config,
     filter: Option<&str>,

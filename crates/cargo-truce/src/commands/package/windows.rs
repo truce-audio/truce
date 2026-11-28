@@ -13,21 +13,21 @@
 //! the installing machine. Pass `--host-only` to skip the cross-arch build
 //! for faster dev iteration (or use `--universal` explicitly as a no-op).
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::PkgFormat;
+use super::formats::PluginFormats;
 use super::stage::stage_external_packaged;
 use crate::commands::build_dylibs::BuildFormat;
 use crate::external::ExternalFormat;
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
-    Config, PluginDef, Res, build_aax_template, cargo_build, detect_default_features, load_config,
-    project_root, read_workspace_version, release_lib_for_target, resolve_aax_sdk_path,
-    rustup_has_target, tag_info, tag_ok, tag_warn, tmp_aax_template, tmp_manifests,
+    Config, PluginDef, Res, build_aax_template, cargo_build, load_config, project_root,
+    read_workspace_version, release_lib_for_target, resolve_aax_sdk_path, rustup_has_target,
+    tag_info, tag_ok, tag_warn, tmp_aax_template, tmp_manifests,
 };
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,6 @@ pub(crate) fn cmd_package_windows(
         "0.0.0".to_string()
     });
 
-    let formats = resolve_formats(&config, opts.format_str.as_deref())?;
     let plugins = resolve_plugins(&config, opts.plugin_filter.as_deref())?;
     let archs = opts.archs();
     let universal = archs.len() > 1;
@@ -162,7 +161,17 @@ pub(crate) fn cmd_package_windows(
             .map(|s| s.resolve(&config.plugin))
             .collect::<std::result::Result<_, _>>()?
     };
+    // With `--suite <name>`, build and package only those suites' members
+    // (and their per-plugin installers) instead of every plugin.
+    let plugins =
+        super::suite_members(selection, opts.plugin_filter.is_some(), &suites).unwrap_or(plugins);
     let need_staging_for_suites = !selection.want_per_plugin() && !suites.is_empty();
+
+    // Each plugin's formats; `formats` is every format any of them ships.
+    let requested = requested_formats(&config, opts.format_str.as_deref())?;
+    let plugin_formats =
+        PluginFormats::resolve(&root, &plugins, requested.as_deref(), windows_formats)?;
+    let formats = plugin_formats.all().to_vec();
 
     // Scope resolution: CLI > truce.toml [packaging] preferred_scope >
     // OS default (`--ask`).
@@ -219,26 +228,32 @@ pub(crate) fn cmd_package_windows(
     }
 
     if assemble_from.is_none() {
-        build_all_formats(&plugins, &formats, &archs, &root)?;
+        build_all_formats(&plugins, &plugin_formats, &archs, &root)?;
     }
 
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
     // Assembled trees get a staging root of their own, so a `<DIR>` that
     // is a previous run's `plugin/` staging is never the copy's target.
-    let plugins_root = truce_build::target_dir(&root).join(if assemble_from.is_some() {
-        "package/windows/assemble"
-    } else {
-        "package/windows/plugin"
-    });
+    // Joined a component at a time: a `/` inside one `join` would print
+    // as `target\package/windows/...` on Windows.
+    let plugins_root = truce_build::target_dir(&root)
+        .join("package")
+        .join("windows")
+        .join(if assemble_from.is_some() {
+            "assemble"
+        } else {
+            "plugin"
+        });
 
     for p in &plugins {
         eprintln!("\nPackaging: {} ({})", p.name, archs_label(&archs));
 
         let staging = plugins_root.join(&p.bundle_id);
+        let formats = plugin_formats.of(p);
         let presets = if let Some(from) = assemble_from {
             let src = super::assemble::plugin_dir(from, p)?;
-            check_assembled(&root, p, &formats, &archs, &src)?;
+            check_assembled(&root, p, formats, &archs, &src)?;
             super::assemble::copy_into_staging(&src, &staging)?;
             // The build that staged the tree staged its presets too.
             detect_windows_presets(p, &staging)
@@ -248,13 +263,13 @@ pub(crate) fn cmd_package_windows(
 
             let mut all_signable: Vec<PathBuf> = Vec::new();
             for &arch in &archs {
-                let staged = stage_plugin(&root, p, &config, &formats, &staging, arch)?;
+                let staged = stage_plugin(&root, p, &config, formats, &staging, arch)?;
                 all_signable.extend(staged.signable);
             }
             // Factory presets (arch-independent, not signed). Staged here
             // so all output modes carry them; the per-plugin `render_iss`
             // below references them via the returned flags.
-            let presets = stage_windows_presets(&root, &config, p, &formats, &staging)?;
+            let presets = stage_windows_presets(&root, &config, p, formats, &staging)?;
 
             if !opts.no_sign {
                 // PACE-sign every AAX bundle (one per arch). PACE wraps the
@@ -295,7 +310,7 @@ pub(crate) fn cmd_package_windows(
         }
 
         let iss = render_iss(
-            &config, p, &formats, &archs, &staging, &version, &dist_dir, scope, presets,
+            &config, p, formats, &archs, &staging, &version, &dist_dir, scope, presets,
         );
         let iss_path = staging.join("installer.iss");
         fs::write(&iss_path, &iss)?;
@@ -328,12 +343,15 @@ pub(crate) fn cmd_package_windows(
 
     if !suites.is_empty() {
         eprintln!("\nSuite installers");
-        let suite_root = truce_build::target_dir(&root).join("package/windows/suite");
+        let suite_root = truce_build::target_dir(&root)
+            .join("package")
+            .join("windows")
+            .join("suite");
         for suite in &suites {
             package_one_suite(
                 &config,
                 suite,
-                &formats,
+                &plugin_formats,
                 &archs,
                 &plugins_root,
                 &suite_root,
@@ -455,48 +473,33 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::CargoTruceErr
     Ok(opts)
 }
 
-fn resolve_formats(
+/// `--formats`, else `[packaging] formats` from truce.toml; `None` when
+/// neither is set, so each plugin takes its own default features.
+fn requested_formats(
     config: &Config,
     format_str: Option<&str>,
-) -> std::result::Result<Vec<PkgFormat>, crate::CargoTruceError> {
-    let raw = if let Some(s) = format_str {
-        PkgFormat::parse_list(s)?
+) -> std::result::Result<Option<Vec<PkgFormat>>, crate::CargoTruceError> {
+    if let Some(s) = format_str {
+        Ok(Some(PkgFormat::parse_list(s)?))
     } else if !config.packaging.formats.is_empty() {
-        PkgFormat::parse_list(&config.packaging.formats.join(","))?
+        Ok(Some(PkgFormat::parse_list(
+            &config.packaging.formats.join(","),
+        )?))
     } else {
-        let available: HashSet<String> = detect_default_features();
-        let mut fmts = Vec::new();
-        if available.contains("clap") {
-            fmts.push(PkgFormat::Clap);
-        }
-        if available.contains("vst3") {
-            fmts.push(PkgFormat::Vst3);
-        }
-        if available.contains("vst2") {
-            fmts.push(PkgFormat::Vst2);
-        }
-        if available.contains("aax") {
-            fmts.push(PkgFormat::Aax);
-        }
-        if available.contains("standalone") {
-            fmts.push(PkgFormat::Standalone);
-        }
-        fmts.extend(
-            crate::external::defaults_for(&available)?
-                .into_iter()
-                .map(PkgFormat::External),
-        );
-        fmts
-    };
+        Ok(None)
+    }
+}
 
-    // AU v2 / v3 are macOS-only. Drop silently: we don't want cross-platform
-    // truce.toml files to error on the Windows runner just because they list
-    // au2/au3 for macOS.
-    let filtered: Vec<PkgFormat> = raw
+/// What a Windows installer can carry of a run's formats. AU v2 / v3 are
+/// macOS-only: dropped silently, so a cross-platform truce.toml listing
+/// them doesn't fail the Windows runner.
+fn windows_formats(
+    formats: Vec<PkgFormat>,
+) -> std::result::Result<Vec<PkgFormat>, crate::CargoTruceError> {
+    let filtered: Vec<PkgFormat> = formats
         .into_iter()
         .filter(|f| !matches!(f, PkgFormat::Au2 | PkgFormat::Au3))
         .collect();
-
     if filtered.is_empty() {
         return Err("no Windows-eligible formats selected (AU is macOS-only)".into());
     }
@@ -565,32 +568,39 @@ fn build_format_arch(
 /// loop over architectures.
 fn build_all_formats(
     plugins: &[&PluginDef],
-    formats: &[PkgFormat],
+    plugin_formats: &PluginFormats,
     archs: &[TargetArch],
     root: &Path,
 ) -> Res {
-    let has_aax = formats.iter().any(|f| matches!(f, PkgFormat::Aax));
-    let has_standalone = formats.iter().any(|f| matches!(f, PkgFormat::Standalone));
+    let formats = plugin_formats.all();
+    let aax_plugins = plugin_formats.plugins_with(plugins, PkgFormat::Aax);
+    let standalone_plugins = plugin_formats.plugins_with(plugins, PkgFormat::Standalone);
 
     // Every format staged from one plugin cdylib, in `formats` order.
     // `build_format` hands back `None` for the two that aren't - the
     // standalone host is a `[[bin]]`, AU v3 wraps the AU v2 build -
     // and AAX comes last below because it is host-arch-only.
-    let cdylib_formats: Vec<BuildFormat> = formats
+    // Each build covers only the plugins packaged in that format.
+    let cdylib_formats: Vec<(PkgFormat, BuildFormat)> = formats
         .iter()
         .filter(|f| !matches!(f, PkgFormat::Aax))
-        .filter_map(|f| f.build_format())
+        .filter_map(|&f| f.build_format().map(|b| (f, b)))
         .collect();
 
     for &arch in archs {
         eprintln!("Building for {}", arch.tag());
         let triple = arch.triple();
 
-        for &format in &cdylib_formats {
-            build_format_arch(plugins, root, arch, format)?;
+        for &(pkg, format) in &cdylib_formats {
+            build_format_arch(
+                &plugin_formats.plugins_with(plugins, pkg),
+                root,
+                arch,
+                format,
+            )?;
         }
 
-        if has_standalone {
+        if !standalone_plugins.is_empty() {
             // Standalone is a `[[bin]]` not a cdylib, so the build
             // outputs land at `target/{triple}/release/{bin_stem}.exe`
             // - no per-format suffix to manage. We just leave the
@@ -643,7 +653,7 @@ fn build_all_formats(
                 "standalone".into(),
             ];
             let base_refs: Vec<&str> = base_args.iter().map(std::string::String::as_str).collect();
-            for p in plugins {
+            for p in &standalone_plugins {
                 let bin_name = crate::read_standalone_bin_name(&p.crate_name)
                     .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
                 crate::cargo_rustc_bin(&[], &base_refs, &p.crate_name, &bin_name, link_args)?;
@@ -654,8 +664,8 @@ fn build_all_formats(
         // AAX Rust cdylib for the host arch. The Rust code itself cross-
         // compiles fine - we're just avoiding orphan binaries that would
         // have nothing to pair with in the installer.
-        if has_aax && arch == TargetArch::host() {
-            build_format_arch(plugins, root, arch, BuildFormat::Aax)?;
+        if !aax_plugins.is_empty() && arch == TargetArch::host() {
+            build_format_arch(&aax_plugins, root, arch, BuildFormat::Aax)?;
         }
     }
 
@@ -1179,7 +1189,9 @@ fn stage_aax(
     }
 
     // Build the template .aaxplugin wrapper if it isn't there yet.
-    let template = tmp_aax_template().join("build/TruceAAXTemplate.aaxplugin");
+    let template = tmp_aax_template()
+        .join("build")
+        .join("TruceAAXTemplate.aaxplugin");
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path() {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
@@ -1747,7 +1759,7 @@ fn write_icons_section(
 fn package_one_suite(
     config: &Config,
     suite: &crate::config::ResolvedSuite<'_>,
-    formats: &[PkgFormat],
+    formats: &PluginFormats,
     archs: &[TargetArch],
     plugins_root: &Path,
     suite_root: &Path,
@@ -1832,7 +1844,7 @@ fn package_one_suite(
 fn render_suite_iss(
     config: &Config,
     suite: &crate::config::ResolvedSuite<'_>,
-    formats: &[PkgFormat],
+    formats: &PluginFormats,
     archs: &[TargetArch],
     staging_root: &Path,
     version: &str,
@@ -1840,9 +1852,25 @@ fn render_suite_iss(
     scope: PkgScope,
 ) -> String {
     let universal = archs.len() > 1;
+    // Every format a member ships; each member's own list decides its
+    // components, files and shortcut.
+    let suite_formats: Vec<PkgFormat> = formats
+        .all()
+        .iter()
+        .copied()
+        .filter(|f| suite.plugins.iter().any(|p| formats.of(p).contains(f)))
+        .collect();
 
     let mut setup = String::new();
-    write_suite_setup_section(&mut setup, config, suite, formats, version, dist_dir, scope);
+    write_suite_setup_section(
+        &mut setup,
+        config,
+        suite,
+        &suite_formats,
+        version,
+        dist_dir,
+        scope,
+    );
     setup.push_str("\r\n");
 
     setup.push_str("[Types]\r\n");
@@ -1860,7 +1888,7 @@ fn render_suite_iss(
     for plugin in &suite.plugins {
         let prefix = sanitize_component_name(&plugin.name);
         let plugin_staging = staging_root.join(&plugin.bundle_id);
-        for fmt in formats {
+        for fmt in formats.of(plugin) {
             for &arch in archs {
                 let block = iss_files_block(
                     fmt,
@@ -1892,10 +1920,11 @@ fn render_suite_iss(
     // host. The component clause keeps each shortcut tied to its
     // `<plugin>\standalone` component, so a partial install only emits
     // shortcuts for the plugins the user actually picked.
-    if formats.contains(&PkgFormat::Standalone) {
+    if suite_formats.contains(&PkgFormat::Standalone) {
         let prefixed_components: Vec<(String, String, String)> = suite
             .plugins
             .iter()
+            .filter(|plugin| formats.of(plugin).contains(&PkgFormat::Standalone))
             .map(|plugin| {
                 let prefix = sanitize_component_name(&plugin.name);
                 let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
@@ -1927,7 +1956,7 @@ fn render_suite_iss(
     setup.push_str("[UninstallDelete]\r\n");
     for plugin in &suite.plugins {
         let prefix = sanitize_component_name(&plugin.name);
-        for fmt in formats {
+        for fmt in formats.of(plugin) {
             for line in iss_uninstall_lines(fmt, &plugin.name, scope, Some(&prefix)) {
                 setup.push_str(&line);
                 setup.push_str("\r\n");
@@ -2061,7 +2090,7 @@ fn write_suite_setup_section(
 fn write_suite_components_section(
     setup: &mut String,
     suite: &crate::config::ResolvedSuite<'_>,
-    formats: &[PkgFormat],
+    formats: &PluginFormats,
     archs: &[TargetArch],
     staging_root: &Path,
     scope: PkgScope,
@@ -2076,7 +2105,7 @@ fn write_suite_components_section(
             iss_escape_quoted(&plugin.name)
         );
         let plugin_staging = staging_root.join(&plugin.bundle_id);
-        for fmt in formats {
+        for fmt in formats.of(plugin) {
             let (suffix, desc, types) = iss_component_spec(fmt);
             let size =
                 component_install_size(fmt, plugin, &plugin_staging, archs, universal, scope);

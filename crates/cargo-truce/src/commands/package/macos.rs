@@ -4,6 +4,7 @@
 #![cfg(target_os = "macos")]
 
 use super::PkgFormat;
+use super::formats::PluginFormats;
 use super::stage::{
     ExtraComponent, build_preset_component, generate_distribution_xml, stage_aax, stage_au2,
     stage_au3, stage_clap, stage_external_packaged, stage_standalone, stage_vst2, stage_vst3,
@@ -16,9 +17,8 @@ use crate::preset_codec::xml_escape;
 use crate::{
     CLAP_EXPORTS, Config, MacArch, PluginDef, Res, VST2_EXPORTS, VST3_EXPORTS,
     cargo_build_multi_arch, cargo_build_multi_arch_with_profile, copy_dir_recursive,
-    deployment_target, detect_default_features, link_macos_bundle, lipo_into, load_config,
-    project_root, read_workspace_version, release_bundle_bin, release_lib_for_target,
-    release_static_for_target,
+    deployment_target, link_macos_bundle, lipo_into, load_config, project_root,
+    read_workspace_version, release_bundle_bin, release_lib_for_target, release_static_for_target,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -127,22 +127,6 @@ pub(crate) fn cmd_package_macos(
     };
     let universal = archs.len() > 1;
 
-    let formats = resolve_formats(parsed.format_str.as_deref(), &config)?;
-    if formats.is_empty() {
-        return Err("no formats to package".into());
-    }
-    // AAX / AU v3 / standalone are system-only on macOS; a `--user`
-    // package that includes one still needs the localSystem domain to
-    // install it, so widen the installer scope to System. The `.pkg`
-    // filename keeps the requested scope's suffix (see `run_productbuild`)
-    // so CI scripts still find it.
-    let effective_scope =
-        if scope == PkgScope::User && formats.iter().any(PkgFormat::is_system_only_on_macos) {
-            PkgScope::System
-        } else {
-            scope
-        };
-
     let all_plugins: Vec<&PluginDef> =
         crate::commands::pick_plugins(&config, parsed.plugin_filter.as_deref())?;
 
@@ -184,22 +168,27 @@ pub(crate) fn cmd_package_macos(
     // With `--suite <name>`, build only that suite's members (and their
     // per-plugin installers) instead of every plugin; without it, build
     // everything.
-    let plugins: Vec<&PluginDef> = if selection.only_suites.is_empty() {
-        all_plugins
-    } else {
-        let mut seen = std::collections::HashSet::new();
-        let narrowed: Vec<&PluginDef> = suites
-            .iter()
-            .flat_map(|s| s.plugins.iter().copied())
-            .filter(|p| seen.insert(p.bundle_id.clone()))
-            .collect();
-        eprintln!(
-            "Limiting to {} plugin{} for the selected suite(s).",
-            narrowed.len(),
-            if narrowed.len() == 1 { "" } else { "s" }
-        );
-        narrowed
-    };
+    let plugins = super::suite_members(selection, parsed.plugin_filter.is_some(), &suites)
+        .unwrap_or(all_plugins);
+
+    // Each plugin's formats; `formats` is every format any of them ships.
+    let plugin_formats =
+        resolve_plugin_formats(&root, &plugins, parsed.format_str.as_deref(), &config)?;
+    let formats = plugin_formats.all().to_vec();
+    if formats.is_empty() {
+        return Err("no formats to package".into());
+    }
+    // AAX / AU v3 / standalone are system-only on macOS; a `--user`
+    // package that includes one still needs the localSystem domain to
+    // install it, so widen the installer scope to System. The `.pkg`
+    // filename keeps the requested scope's suffix (see `run_productbuild`)
+    // so CI scripts still find it.
+    let effective_scope =
+        if scope == PkgScope::User && formats.iter().any(PkgFormat::is_system_only_on_macos) {
+            PkgScope::System
+        } else {
+            scope
+        };
 
     if let Some(from) = assemble_from {
         eprintln!(
@@ -208,7 +197,15 @@ pub(crate) fn cmd_package_macos(
             from.display()
         );
     } else {
-        build_all_formats(&root, &config, &plugins, &archs, dt, &formats, universal)?;
+        build_all_formats(
+            &root,
+            &config,
+            &plugins,
+            &archs,
+            dt,
+            &plugin_formats,
+            universal,
+        )?;
     }
 
     let dist_dir = truce_build::target_dir(&root).join("dist");
@@ -221,7 +218,7 @@ pub(crate) fn cmd_package_macos(
 
     let opts = PackageOpts {
         config: &config,
-        formats: &formats,
+        plugin_formats: &plugin_formats,
         scope,
         effective_scope,
         version: &version,
@@ -364,7 +361,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
 
     let staging = o.staging_root.join(&p.bundle_id);
 
-    let plugin_formats = formats_for_plugin(o.formats, p);
+    let plugin_formats = o.plugin_formats.of(p).to_vec();
     stage_plugin_formats(root, p, o, &staging, &plugin_formats)?;
 
     let components_dir = staging.join("components");
@@ -442,7 +439,7 @@ fn package_one_suite(
         .plugins
         .iter()
         .map(|p| {
-            vst3_preset_descriptor(o, &o.staging_root.join(&p.bundle_id))
+            vst3_preset_descriptor(p, o, &o.staging_root.join(&p.bundle_id))
                 .into_iter()
                 .collect()
         })
@@ -450,7 +447,7 @@ fn package_one_suite(
     let dist_xml = generate_suite_distribution_xml(
         suite,
         &o.config.vendor.id,
-        o.formats,
+        o.plugin_formats,
         &extras_by_plugin,
         suite_version,
         Some(&o.config.macos.packaging),
@@ -517,8 +514,9 @@ fn package_one_suite(
         .plugins
         .iter()
         .flat_map(|plugin| {
-            formats_for_plugin(o.formats, plugin)
-                .into_iter()
+            o.plugin_formats
+                .of(plugin)
+                .iter()
                 .map(move |fmt| format!("{}-{}.pkg", plugin.file_stem(), fmt.label()))
         })
         .collect();
@@ -546,7 +544,7 @@ fn package_one_suite(
 fn generate_suite_distribution_xml(
     suite: &crate::config::ResolvedSuite<'_>,
     vendor_id: &str,
-    formats: &[PkgFormat],
+    formats: &PluginFormats,
     extras_by_plugin: &[Vec<ExtraComponent>],
     version: &str,
     resources: Option<&crate::config::MacosPackagingConfig>,
@@ -564,16 +562,16 @@ fn generate_suite_distribution_xml(
     // the top level. Nesting them silently drops the inner pkg-refs and
     // productbuild produces an empty (~2 KB) installer with no payload.
     for (plugin, extras) in suite.plugins.iter().zip(extras_by_plugin) {
-        // A binless plugin has no Standalone component; keep it out of
-        // this member's outline + pkg-refs so productbuild doesn't
-        // reference a `.pkg` that was never built.
-        let member_formats = formats_for_plugin(formats, plugin);
+        // Only this member's formats: a binless plugin has no Standalone
+        // component, so productbuild mustn't reference a `.pkg` that was
+        // never built.
+        let member_formats = formats.of(plugin);
         // AU v3's app is the standalone host when this member ships a
         // standalone bin (the Standalone format is collapsed into it).
         let au3_is_standalone_host = crate::read_standalone_bin_name(&plugin.crate_name).is_some();
         let outer_id = sanitize_id(&plugin.bundle_id);
         let _ = writeln!(outline, "        <line choice=\"{outer_id}\">");
-        for fmt in &member_formats {
+        for fmt in member_formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let _ = writeln!(outline, "            <line choice=\"{inner_id}\"/>");
         }
@@ -588,7 +586,7 @@ fn generate_suite_distribution_xml(
             plugin_name = xml_escape(&plugin.name),
         );
 
-        for fmt in &member_formats {
+        for fmt in member_formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, fmt.pkg_id_suffix());
             let component_file = format!("{}-{}.pkg", plugin.file_stem(), fmt.label());
@@ -768,46 +766,38 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::CargoTruceE
     })
 }
 
-/// Resolve the format list from CLI > toml > feature-detection.
-fn resolve_formats(
+/// Each of `plugins`' formats, as a macOS `.pkg` can ship them: helper
+/// formats with no macOS `.pkg` layout dropped, and a plugin's standalone
+/// folded into its AU v3 app when it ships both.
+fn resolve_plugin_formats(
+    root: &Path,
+    plugins: &[&PluginDef],
     format_str: Option<&str>,
     config: &Config,
-) -> Result<Vec<PkgFormat>, crate::CargoTruceError> {
-    let fmts = if let Some(s) = format_str {
-        PkgFormat::parse_list(s)?
-    } else if !config.packaging.formats.is_empty() {
-        PkgFormat::parse_list(&config.packaging.formats.join(","))?
-    } else {
-        let available = detect_default_features();
-        let mut fmts = Vec::new();
-        if available.contains("clap") {
-            fmts.push(PkgFormat::Clap);
-        }
-        if available.contains("vst3") {
-            fmts.push(PkgFormat::Vst3);
-        }
-        if available.contains("vst2") {
-            fmts.push(PkgFormat::Vst2);
-        }
-        if available.contains("au") {
-            fmts.push(PkgFormat::Au2);
-            fmts.push(PkgFormat::Au3);
-        }
-        if available.contains("aax") {
-            fmts.push(PkgFormat::Aax);
-        }
-        if available.contains("standalone") {
-            fmts.push(PkgFormat::Standalone);
-        }
-        fmts.extend(
-            crate::external::defaults_for(&available)?
-                .into_iter()
-                .map(PkgFormat::External),
-        );
-        fmts
-    };
+) -> Result<PluginFormats, crate::CargoTruceError> {
+    let requested = requested_formats(format_str, config)?;
+    let mut plugin_formats = PluginFormats::resolve(root, plugins, requested.as_deref(), |all| {
+        Ok(drop_unpackageable_externals(all))
+    })?;
+    plugin_formats.adjust_each(drop_standalone_if_au3);
+    Ok(plugin_formats)
+}
 
-    Ok(drop_unpackageable_externals(drop_standalone_if_au3(fmts)))
+/// `--formats`, else `[packaging] formats` from truce.toml; `None` when
+/// neither is set, so each plugin takes its own default features.
+fn requested_formats(
+    format_str: Option<&str>,
+    config: &Config,
+) -> Result<Option<Vec<PkgFormat>>, crate::CargoTruceError> {
+    if let Some(s) = format_str {
+        Ok(Some(PkgFormat::parse_list(s)?))
+    } else if !config.packaging.formats.is_empty() {
+        Ok(Some(PkgFormat::parse_list(
+            &config.packaging.formats.join(","),
+        )?))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Drop every external format whose helper declares no `macos_pkg`
@@ -848,20 +838,6 @@ fn drop_standalone_if_au3(mut fmts: Vec<PkgFormat>) -> Vec<PkgFormat> {
     fmts
 }
 
-/// The package formats that actually apply to `p`. Standalone is dropped
-/// for plugins that declare no standalone `[[bin]]` (MIDI / utility
-/// examples): they can't run as a desktop app, so they get no Standalone
-/// component or installer choice. AU v3 still ships for them - as a stub
-/// app - so it is never filtered here.
-fn formats_for_plugin(formats: &[PkgFormat], p: &PluginDef) -> Vec<PkgFormat> {
-    let has_standalone = crate::read_standalone_bin_name(&p.crate_name).is_some();
-    formats
-        .iter()
-        .filter(|f| **f != PkgFormat::Standalone || has_standalone)
-        .copied()
-        .collect()
-}
-
 /// Drive Step 1 of the packaging pipeline: per-arch builds + lipo for
 /// every requested format. Stage functions read from the canonical
 /// `target/release/lib{stem}_{fmt}.dylib` paths populated here and
@@ -872,32 +848,36 @@ fn build_all_formats(
     plugins: &[&PluginDef],
     archs: &[MacArch],
     dt: &str,
-    formats: &[PkgFormat],
+    plugin_formats: &PluginFormats,
     universal: bool,
 ) -> Res {
+    // Each build covers only the plugins packaged in that format.
+    let with = |f: PkgFormat| plugin_formats.plugins_with(plugins, f);
+    let formats = plugin_formats.all();
     if formats.contains(&PkgFormat::Clap) {
-        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Clap)?;
+        build_and_lipo_format(root, &with(PkgFormat::Clap), archs, dt, BuildFormat::Clap)?;
     }
     if formats.contains(&PkgFormat::Vst3) {
-        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Vst3)?;
+        build_and_lipo_format(root, &with(PkgFormat::Vst3), archs, dt, BuildFormat::Vst3)?;
     }
     if formats.contains(&PkgFormat::Vst2) {
-        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Vst2)?;
+        build_and_lipo_format(root, &with(PkgFormat::Vst2), archs, dt, BuildFormat::Vst2)?;
     }
-    for f in formats {
+    for &f in formats {
         if let PkgFormat::External(e) = f {
-            build_and_lipo_format(root, plugins, archs, dt, BuildFormat::External(e))?;
+            build_and_lipo_format(root, &with(f), archs, dt, BuildFormat::External(e))?;
         }
     }
     if formats.contains(&PkgFormat::Au2) {
-        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Au2)?;
+        build_and_lipo_format(root, &with(PkgFormat::Au2), archs, dt, BuildFormat::Au2)?;
     }
     if formats.contains(&PkgFormat::Aax) {
-        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Aax)?;
+        let aax = with(PkgFormat::Aax);
+        build_and_lipo_format(root, &aax, archs, dt, BuildFormat::Aax)?;
         // Apple-sign + assemble the .aaxplugin bundle once we have the
         // universal Rust dylib. PACE wrap happens later in stage_aax
         // against the staging copy.
-        for p in plugins {
+        for p in aax {
             crate::commands::install::aax::emit_aax_bundle(root, p, config, universal)?;
         }
     }
@@ -909,12 +889,13 @@ fn build_all_formats(
         // AU2 and AU3 share `--features au` byte-for-byte. When AU2 was
         // built first in this same run, the universal `lib<stem>_au.dylib`
         // is already on disk - let AU3 reuse it instead of re-running
-        // cargo + lipo for an identical artifact.
+        // cargo + lipo for an identical artifact. Both come from the
+        // `au` feature, so a plugin has AU v3 exactly when it has AU v2.
         let reuse_au_artifacts = formats.contains(&PkgFormat::Au2);
         crate::commands::install::au_v3::emit_au_v3_bundle(
             root,
             config,
-            plugins,
+            &with(PkgFormat::Au3),
             archs,
             reuse_au_artifacts,
         )?;
@@ -924,7 +905,7 @@ fn build_all_formats(
         // outputs land at `target/<triple>/release/<bin>` rather than
         // `lib<stem>_<feature>.dylib`, so it doesn't fit the shared
         // `build_and_lipo_format` shape.
-        build_and_lipo_standalone(root, plugins, archs, dt)?;
+        build_and_lipo_standalone(root, &with(PkgFormat::Standalone), archs, dt)?;
     }
     Ok(())
 }
@@ -1057,7 +1038,8 @@ pub(crate) fn build_and_lipo_standalone(
 #[allow(clippy::struct_excessive_bools)]
 struct PackageOpts<'a> {
     config: &'a Config,
-    formats: &'a [PkgFormat],
+    /// Each plugin's formats.
+    plugin_formats: &'a PluginFormats,
     /// The developer-requested scope. Drives the `.pkg` filename suffix
     /// so a build's output name stays stable regardless of widening.
     scope: PkgScope,
@@ -1102,7 +1084,7 @@ const VST3_PRESETS_DIR: &str = "vst3-presets";
 /// Write `p`'s VST3 preset tree into `staging` when VST3 is selected and
 /// the plugin ships presets.
 fn stage_vst3_presets(root: &Path, p: &PluginDef, o: &PackageOpts, staging: &Path) -> Res {
-    if !o.formats.contains(&PkgFormat::Vst3) {
+    if !o.plugin_formats.of(p).contains(&PkgFormat::Vst3) {
         return Ok(());
     }
     let Some(fp) = presets::load_factory_presets(root, p, o.config)? else {
@@ -1121,10 +1103,14 @@ fn stage_vst3_presets(root: &Path, p: &PluginDef, o: &PackageOpts, staging: &Pat
 /// The distribution descriptor for `p`'s VST3 preset component, when its
 /// staged tree has one (the pkg itself is built by
 /// [`build_vst3_preset_component`]).
-fn vst3_preset_descriptor(o: &PackageOpts, staging: &Path) -> Option<ExtraComponent> {
+fn vst3_preset_descriptor(
+    p: &PluginDef,
+    o: &PackageOpts,
+    staging: &Path,
+) -> Option<ExtraComponent> {
     let staged = staging.join(VST3_PRESETS_DIR);
     let has_presets = fs::read_dir(&staged).is_ok_and(|mut d| d.next().is_some());
-    (o.formats.contains(&PkgFormat::Vst3) && has_presets).then(|| ExtraComponent {
+    (o.plugin_formats.of(p).contains(&PkgFormat::Vst3) && has_presets).then(|| ExtraComponent {
         suffix: "vst3presets".to_string(),
         label: "VST3-Presets".to_string(),
         parent: PkgFormat::Vst3,
@@ -1140,7 +1126,7 @@ fn build_vst3_preset_component(
     staging: &Path,
     components_dir: &Path,
 ) -> Result<Option<ExtraComponent>, crate::CargoTruceError> {
-    let Some(ec) = vst3_preset_descriptor(o, staging) else {
+    let Some(ec) = vst3_preset_descriptor(p, o, staging) else {
         return Ok(None);
     };
     let pkg_id = format!("{}.{}.{}", o.config.vendor.id, p.bundle_id, ec.suffix);
@@ -1161,7 +1147,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
 
     let staging = o.staging_root.join(&p.bundle_id);
 
-    let plugin_formats = formats_for_plugin(o.formats, p);
+    let plugin_formats = o.plugin_formats.of(p).to_vec();
     // Step 2: Stage signed bundles
     stage_plugin_formats(root, p, o, &staging, &plugin_formats)?;
 

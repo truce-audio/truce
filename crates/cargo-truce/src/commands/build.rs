@@ -8,11 +8,13 @@
 //! to system paths.
 
 use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
+use crate::commands::package::PkgFormat;
+use crate::commands::package::formats::PluginFormats;
 #[cfg(target_os = "macos")]
 use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{stage_clap, stage_external, stage_vst2, stage_vst3};
 use crate::util::{fs_ctx, parse_target_cpu_arg};
-use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
+use crate::{Res, deployment_target, load_config, project_root};
 use std::path::PathBuf;
 use truce_build::{BundleEntry, BundleManifest};
 
@@ -38,7 +40,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut shell_mode = false;
     let mut debug = false;
     let mut target_cpu_arg: Option<String> = None;
-    let mut plugin_filter: Option<String> = None;
+    let mut plugin_filters: Vec<String> = Vec::new();
     let mut targets: Vec<String> = Vec::new();
     let mut user_features: Vec<String> = Vec::new();
     let mut no_default_features = false;
@@ -58,7 +60,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 target_cpu_arg =
                     Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
             }
-            "-p" => plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string()),
+            "-p" => plugin_filters.push(crate::util::arg_value(args, &mut i, "-p")?.to_string()),
             "--target" => {
                 targets.push(crate::util::arg_value(args, &mut i, "--target")?.to_string());
             }
@@ -88,26 +90,55 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         .map(parse_target_cpu_arg)
         .unwrap_or_default();
 
-    // No format flags → enable every format in the project's default
-    // features, mirroring `install`'s discovery rule.
-    if !clap && !vst3 && !vst2 && externals.is_empty() && !au2 && !au3 && !aax {
-        let available = detect_default_features();
-        clap = available.contains("clap");
-        vst3 = available.contains("vst3");
-        vst2 = available.contains("vst2");
-        externals = crate::external::defaults_for(&available)?;
-        // AU is macOS-only at runtime, but flip the flags on every platform
-        // so the build path can emit per-plugin skip lines for Linux /
-        // Windows users with `"au"` in their `[features].default`.
-        au2 = available.contains("au");
-        au3 = available.contains("au");
-        aax = available.contains("aax");
-    }
-
-    let plugins = super::pick_plugins(&config, plugin_filter.as_deref())?;
+    let plugins = super::pick_plugins_many(&config, &plugin_filters)?;
     if plugins.is_empty() {
         return Err("no matching plugins".into());
     }
+    let root = project_root();
+
+    // Each plugin's formats: with format flags, those of them it declares
+    // a feature for (the rest skipped with a note); without, the formats
+    // its own `[features].default` turns on. AU stays in the lists on every
+    // platform so the build path can emit per-plugin skip lines for Linux /
+    // Windows users with `"au"` in their defaults. The standalone is a
+    // `[[bin]]`, never built here.
+    let flagged = clap || vst3 || vst2 || !externals.is_empty() || au2 || au3 || aax;
+    let requested: Vec<PkgFormat> = [
+        (clap, PkgFormat::Clap),
+        (vst3, PkgFormat::Vst3),
+        (vst2, PkgFormat::Vst2),
+        (au2, PkgFormat::Au2),
+        (au3, PkgFormat::Au3),
+        (aax, PkgFormat::Aax),
+    ]
+    .into_iter()
+    .filter_map(|(on, f)| on.then_some(f))
+    .chain(externals.iter().map(|e| PkgFormat::External(e)))
+    .collect();
+    let formats = PluginFormats::resolve(
+        &root,
+        &plugins,
+        flagged.then_some(&requested[..]),
+        |mut all| {
+            all.retain(|f| *f != PkgFormat::Standalone);
+            Ok(all)
+        },
+    )?;
+    let run = formats.all();
+    clap = run.contains(&PkgFormat::Clap);
+    vst3 = run.contains(&PkgFormat::Vst3);
+    vst2 = run.contains(&PkgFormat::Vst2);
+    au2 = run.contains(&PkgFormat::Au2);
+    au3 = run.contains(&PkgFormat::Au3);
+    aax = run.contains(&PkgFormat::Aax);
+    externals = run
+        .iter()
+        .filter_map(|f| match f {
+            PkgFormat::External(e) => Some(*e),
+            _ => None,
+        })
+        .collect();
+    let has = |p: &crate::PluginDef, f: PkgFormat| formats.of(p).contains(&f);
 
     // In shell mode `--debug` selects the *logic* profile (the dylib
     // the shell dlopens at runtime). The shell itself goes to
@@ -142,7 +173,6 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         );
     }
 
-    let root = project_root();
     let dt = &deployment_target();
     let bundles_dir = truce_build::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
@@ -183,15 +213,20 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // An external format's cdylib is the same cargo invocation as a
     // compiled-in one - only the staging afterwards differs - so it
     // joins the same selection list.
-    let format_selection: Vec<(bool, BuildFormat)> = [
-        (clap, BuildFormat::Clap),
-        (vst3, BuildFormat::Vst3),
-        (vst2, BuildFormat::Vst2),
-        (au2, BuildFormat::Au2),
-        (aax, BuildFormat::Aax),
+    // Each build covers only the plugins packaged in that format.
+    let format_selection: Vec<(bool, BuildFormat, PkgFormat)> = [
+        (clap, BuildFormat::Clap, PkgFormat::Clap),
+        (vst3, BuildFormat::Vst3, PkgFormat::Vst3),
+        (vst2, BuildFormat::Vst2, PkgFormat::Vst2),
+        (au2, BuildFormat::Au2, PkgFormat::Au2),
+        (aax, BuildFormat::Aax, PkgFormat::Aax),
     ]
     .into_iter()
-    .chain(externals.iter().map(|e| (true, BuildFormat::External(e))))
+    .chain(
+        externals
+            .iter()
+            .map(|e| (true, BuildFormat::External(e), PkgFormat::External(e))),
+    )
     .collect();
 
     let identity = crate::application_identity();
@@ -206,11 +241,11 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     for plan in &target_plans {
         fs_ctx::create_dir_all(&plan.stage_dir)?;
 
-        for &(selected, format) in &format_selection {
+        for &(selected, format, pkg) in &format_selection {
             if selected {
                 build_format_dylibs(
                     format,
-                    &plugins,
+                    &formats.plugins_with(&plugins, pkg),
                     &extra_features,
                     &config,
                     &root,
@@ -235,7 +270,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         // what to ship.
         let mut produced: Vec<BundleEntry> = Vec::new();
         for p in &plugins {
-            if clap {
+            if clap && has(p, PkgFormat::Clap) {
                 stage_clap(&root, p, &config, &plan.stage_dir, &identity, plan.target)?;
                 let filename = format!("{}.clap", p.file_stem());
                 crate::log_output(format!(
@@ -244,7 +279,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 ));
                 produced.push(entry(p, "clap", filename));
             }
-            if vst3 {
+            if vst3 && has(p, PkgFormat::Vst3) {
                 stage_vst3(&root, p, &config, &plan.stage_dir, plan.target)?;
                 let filename = format!("{}.vst3", p.file_stem());
                 crate::log_output(format!(
@@ -253,7 +288,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 ));
                 produced.push(entry(p, "vst3", filename));
             }
-            if vst2 {
+            if vst2 && has(p, PkgFormat::Vst2) {
                 // macOS produces a `.vst` directory bundle; Linux/Windows
                 // get a bare `.so` / `.dll` since neither uses a bundle.
                 let staged = stage_vst2(&root, p, &config, &plan.stage_dir, plan.target)?;
@@ -264,7 +299,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 );
                 produced.push(entry(p, "vst2", filename));
             }
-            for &e in &externals {
+            for &e in externals.iter().filter(|e| has(p, PkgFormat::External(e))) {
                 // The helper writes its own presets during `stage`, so
                 // unlike the compiled-in formats there is nothing to
                 // layer on afterwards.
@@ -291,7 +326,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 ));
                 produced.push(entry(p, &e.format, filename));
             }
-            if au2 {
+            if au2 && has(p, PkgFormat::Au2) {
                 #[cfg(target_os = "macos")]
                 {
                     // AU2 is macOS-only and only fires for host targets;
@@ -343,16 +378,17 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                                 .to_string(),
                         );
                     } else {
+                        let au3_plugins = formats.plugins_with(&plugins, PkgFormat::Au3);
                         crate::commands::install::au_v3::emit_au_v3_bundle(
                             &root,
                             &config,
-                            &plugins,
+                            &au3_plugins,
                             &[MacArch::host()],
                             // `cargo truce build --au3` doesn't run AU2,
                             // so there's no AU artifact to reuse.
                             false,
                         )?;
-                        for p in &plugins {
+                        for p in &au3_plugins {
                             let filename = format!("{}.app", p.au3_app_name());
                             crate::log_output(format!(
                                 "AU3:  {}",
@@ -433,8 +469,10 @@ Usage: cargo truce build [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
 
 Build per-format bundles into target/bundles/ without installing.
 Defaults to release; pass --debug for the cargo dev profile.
-Defaults match `install`: when no format flags are passed, every
-format in the project's default Cargo features is built.
+With no format flags, each plugin is built in its own default
+formats: those its `[features].default` turns on. With flags, each
+plugin is built in the flagged formats it has a feature for; the rest
+are skipped for it with a note.
 
 Pass --target <triple> (repeatable) to cross-build for a specific
 cargo target; bundles land in target/bundles/<triple>/. Without
@@ -458,6 +496,7 @@ Options:
   --au3            AU v3 only (.appex inside .app, macOS only)
   --aax            AAX only (requires pre-built SDK + template)
   -p <crate>       Build only the plugin with this cargo crate name
+                   (repeatable)
   --target <triple>
                    Cargo target triple (e.g. aarch64-unknown-linux-gnu).
                    Repeatable. Outputs land at target/bundles/<triple>/.

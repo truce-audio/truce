@@ -1,12 +1,12 @@
 //! `cargo truce install` - build per-format dylibs and install into the
 //! standard plug-in directories.
 
+use crate::commands::package::PkgFormat;
+use crate::commands::package::formats::PluginFormats;
 use crate::format::Format;
 use crate::install_scope::{InstallScope, effective_scope, note_once, set_cli_install_scope};
 use crate::util::{fs_ctx, parse_target_cpu_arg};
-use crate::{
-    Config, PluginDef, Res, deployment_target, detect_default_features, load_config, project_root,
-};
+use crate::{Config, PluginDef, Res, deployment_target, load_config, project_root};
 // `run_sudo` shells out to `/usr/bin/sudo` and is therefore macOS-only.
 // Windows admin elevation is per-process; the non-macOS install branches
 // below use `fs_ctx` directly and surface the OS-level EACCES if the user
@@ -210,21 +210,53 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
     }
 
-    if !clap && !vst3 && !vst2 && externals.is_empty() && !au2 && !au3 && !aax {
-        // No format flags specified - enable all formats that the project supports.
-        // Check which features are defined in the first plugin's Cargo.toml.
-        let available = detect_default_features();
-        clap = available.contains("clap");
-        vst3 = available.contains("vst3");
-        vst2 = available.contains("vst2");
-        externals = crate::external::defaults_for(&available)?;
-        // AU is macOS-only at runtime, but flip the flags on every platform
-        // so the build/install paths can emit per-plugin skip lines for
-        // Linux / Windows users with `"au"` in their `[features].default`.
-        au2 = available.contains("au");
-        au3 = available.contains("au");
-        aax = available.contains("aax");
-    }
+    // Filter plugins if -p specified
+    let plugins: Vec<&PluginDef> = super::pick_plugins(&config, plugin_filter.as_deref())?;
+    let root = project_root();
+
+    // Each plugin's formats: with format flags, those of them it declares
+    // a feature for (the rest skipped with a note); without, the formats
+    // its own `[features].default` turns on. AU stays in the lists on every
+    // platform so the build/install paths can emit per-plugin skip lines
+    // for Linux / Windows users with `"au"` in their defaults. The
+    // standalone isn't installed here.
+    let flagged = clap || vst3 || vst2 || !externals.is_empty() || au2 || au3 || aax;
+    let requested: Vec<PkgFormat> = [
+        (clap, PkgFormat::Clap),
+        (vst3, PkgFormat::Vst3),
+        (vst2, PkgFormat::Vst2),
+        (au2, PkgFormat::Au2),
+        (au3, PkgFormat::Au3),
+        (aax, PkgFormat::Aax),
+    ]
+    .into_iter()
+    .filter_map(|(on, f)| on.then_some(f))
+    .chain(externals.iter().map(|e| PkgFormat::External(e)))
+    .collect();
+    let formats = PluginFormats::resolve(
+        &root,
+        &plugins,
+        flagged.then_some(&requested[..]),
+        |mut all| {
+            all.retain(|f| *f != PkgFormat::Standalone);
+            Ok(all)
+        },
+    )?;
+    let run = formats.all();
+    clap = run.contains(&PkgFormat::Clap);
+    vst3 = run.contains(&PkgFormat::Vst3);
+    vst2 = run.contains(&PkgFormat::Vst2);
+    au2 = run.contains(&PkgFormat::Au2);
+    au3 = run.contains(&PkgFormat::Au3);
+    aax = run.contains(&PkgFormat::Aax);
+    externals = run
+        .iter()
+        .filter_map(|f| match f {
+            PkgFormat::External(e) => Some(*e),
+            _ => None,
+        })
+        .collect();
+    let has = |p: &PluginDef, f: PkgFormat| formats.of(p).contains(&f);
 
     // Shell-mode preflight: bail early if the user's Cargo.toml is
     // missing `[profile.shell]`. Catching this here gives a one-line
@@ -247,9 +279,6 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         );
     }
 
-    // Filter plugins if -p specified
-    let plugins: Vec<&PluginDef> = super::pick_plugins(&config, plugin_filter.as_deref())?;
-
     // Profile of the logic dylib that the shell dlopens at runtime.
     // Only meaningful when `shell_mode` is on.
     let logic_profile = if debug { "debug" } else { "release" };
@@ -270,7 +299,6 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         .unwrap_or_default();
     crate::set_target_cpu(target_cpu);
 
-    let root = project_root();
     let dt = &deployment_target();
 
     let mut extra_features = Vec::new();
@@ -299,18 +327,24 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         // An external format's cdylib is the same cargo invocation as a
         // compiled-in one - only the staging afterwards differs - so it
         // joins the same selection list.
+        // Each build covers only the plugins installed in that format.
         let selection = [
-            (clap, BuildFormat::Clap),
-            (vst3, BuildFormat::Vst3),
-            (vst2, BuildFormat::Vst2),
-            (au2, BuildFormat::Au2),
-            (aax, BuildFormat::Aax),
+            (clap, BuildFormat::Clap, PkgFormat::Clap),
+            (vst3, BuildFormat::Vst3, PkgFormat::Vst3),
+            (vst2, BuildFormat::Vst2, PkgFormat::Vst2),
+            (au2, BuildFormat::Au2, PkgFormat::Au2),
+            (aax, BuildFormat::Aax, PkgFormat::Aax),
         ]
         .into_iter()
-        .chain(externals.iter().map(|e| (true, BuildFormat::External(e))));
-        for (selected, format) in selection {
+        .chain(
+            externals
+                .iter()
+                .map(|e| (true, BuildFormat::External(e), PkgFormat::External(e))),
+        );
+        for (selected, format, pkg) in selection {
             if selected {
-                build_format_dylibs(format, &plugins, &extra_features, &config, &root, dt, None)?;
+                let with = formats.plugins_with(&plugins, pkg);
+                build_format_dylibs(format, &with, &extra_features, &config, &root, dt, None)?;
             }
         }
 
@@ -349,23 +383,23 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             None
         };
         let fp = factory_presets.as_ref();
-        if clap {
+        if clap && has(p, PkgFormat::Clap) {
             let s = scope_for(Format::Clap, cli_scope);
             install_clap(&root, p, &config, s, fp)?;
         }
-        if vst3 {
+        if vst3 && has(p, PkgFormat::Vst3) {
             let s = scope_for(Format::Vst3, cli_scope);
             install_vst3(&root, p, &config, s, fp)?;
         }
-        if vst2 {
+        if vst2 && has(p, PkgFormat::Vst2) {
             let s = scope_for(Format::Vst2, cli_scope);
             install_vst2(&root, p, &config, s)?;
         }
-        for &e in &externals {
+        for &e in externals.iter().filter(|e| has(p, PkgFormat::External(e))) {
             let s = scope_for(Format::External(e), cli_scope);
             install_external(e, &root, p, &config, s, fp)?;
         }
-        if au2 {
+        if au2 && has(p, PkgFormat::Au2) {
             #[cfg(target_os = "macos")]
             {
                 let s = scope_for(Format::Au2, cli_scope);
@@ -373,7 +407,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             }
             // Non-macOS skip line was already pushed in the build phase.
         }
-        if aax {
+        if aax && has(p, PkgFormat::Aax) {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 // AAX is always system-scope; the call to `scope_for`
@@ -393,7 +427,12 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             // AU v3 is always system-scope on macOS - emit the note
             // once before delegating to the (system-only) installer.
             let _ = scope_for(Format::Au3, cli_scope);
-            build_and_install_au_v3(&root, &config, &plugins, no_build)?;
+            build_and_install_au_v3(
+                &root,
+                &config,
+                &formats.plugins_with(&plugins, PkgFormat::Au3),
+                no_build,
+            )?;
         }
         #[cfg(not(target_os = "macos"))]
         crate::log_skip(
@@ -435,8 +474,10 @@ Usage: cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
                            [--target-cpu <value>]
 
 Build and install plugins into the host's plug-in directories. Defaults
-to release. Defaults to whichever formats are in the plugin's Cargo.toml
-default features (typically clap + vst3).
+to release. Without format flags, each plugin is installed in its own
+default formats (those its `[features].default` turns on, typically
+clap + vst3); with flags, in the flagged formats it has a feature for,
+the rest skipped with a note.
 
 Per-format scope is per-user by default; pass --system for the shared
 system directories. AAX and AU v3 are always system-scope. VST3 on

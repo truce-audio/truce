@@ -43,7 +43,7 @@ pub(crate) use config::{
 pub(crate) use util::tmp_verify;
 pub(crate) use util::{
     apply_extra_features, cargo_build, cargo_build_debug, check_cmd, codesign_bundle,
-    confirm_prompt, detect_default_features, find_on_path, is_debug_profile, log_output, log_skip,
+    confirm_prompt, find_on_path, is_debug_profile, log_output, log_skip,
     namespaced_nonformat_defaults, parse_extra_features, plugin_meta_dir, project_root,
     read_standalone_bin_name, release_lib, set_build_profile, set_debug_profile,
     set_extra_features, set_no_default_features, set_target_cpu, tag_fail, tag_ok, tag_warn,

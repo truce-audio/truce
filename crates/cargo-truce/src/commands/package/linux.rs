@@ -19,6 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::formats::PluginFormats;
 use super::{PkgFormat, SuiteSelection};
 use crate::commands::install::presets;
 use crate::config::{Config, PluginDef, ResolvedSuite};
@@ -129,6 +130,39 @@ pub(crate) fn cmd_package_linux(
         return Err("no [[plugin]] entries in truce.toml".into());
     }
 
+    // `-p <crate>` narrows packaging to a single plugin. Same rule as
+    // the macOS / Windows packagers: a single-plugin run can't satisfy
+    // a multi-member suite, so suite tarballs are skipped in that mode.
+    let wanted_suites: Vec<ResolvedSuite<'_>> = if plugin_filter.is_some() {
+        if !config.suites.is_empty() {
+            eprintln!("(-p set; skipping suite tarballs - they need every member plugin staged)");
+        }
+        Vec::new()
+    } else {
+        config
+            .suites
+            .iter()
+            .filter(|s| selection.want_suite(&s.name, &s.bundle_id))
+            .map(|s| s.resolve(&config.plugin))
+            .collect::<Result<_, _>>()?
+    };
+    // With `--suite <name>`, build and package only those suites' members
+    // (and their per-plugin tarballs), as on macOS and Windows.
+    let narrowed = super::suite_members(selection, plugin_filter.is_some(), &wanted_suites);
+    let selected_plugins = match &narrowed {
+        Some(members) => members.clone(),
+        None => crate::commands::pick_plugins(&config, plugin_filter.as_deref())?,
+    };
+    let suites = if no_installer {
+        Vec::new()
+    } else {
+        wanted_suites
+    };
+    let plugin_formats =
+        PluginFormats::resolve(&root, &selected_plugins, formats.as_deref(), |all| {
+            Ok(linux_formats(all, formats.is_some()))
+        })?;
+
     // Run `cargo truce build` first unless the caller opted out via
     // `--no-build`. Cargo's incremental build makes a fresh `package`
     // after a recent `build` essentially free. With `--target` flags,
@@ -148,9 +182,11 @@ pub(crate) fn cmd_package_linux(
                 }
             }
         }
-        if let Some(ref p) = plugin_filter {
-            build_args.push("-p".into());
-            build_args.push(p.clone());
+        if plugin_filter.is_some() || narrowed.is_some() {
+            for p in &selected_plugins {
+                build_args.push("-p".into());
+                build_args.push(p.crate_name.clone());
+            }
         }
         if let Some(ref v) = target_cpu_arg {
             build_args.push("--target-cpu".into());
@@ -180,7 +216,7 @@ pub(crate) fn cmd_package_linux(
             triple,
             Source::Assembled {
                 from: from.to_path_buf(),
-                formats: formats.clone(),
+                requested: formats.is_some(),
             },
         )]
     } else if targets.is_empty() {
@@ -191,6 +227,7 @@ pub(crate) fn cmd_package_linux(
             Source::Build {
                 bundles_dir: bundles_root.clone(),
                 manifest,
+                built: !no_build,
             },
         )]
     } else {
@@ -204,30 +241,11 @@ pub(crate) fn cmd_package_linux(
                 Source::Build {
                     bundles_dir: dir,
                     manifest,
+                    built: !no_build,
                 },
             ));
         }
         out
-    };
-
-    // `-p <crate>` narrows packaging to a single plugin. Same rule as
-    // the macOS / Windows packagers: a single-plugin run can't satisfy
-    // a multi-member suite, so suite tarballs are skipped in that mode.
-    let selected_plugins = crate::commands::pick_plugins(&config, plugin_filter.as_deref())?;
-    let suites: Vec<ResolvedSuite<'_>> = if plugin_filter.is_some() {
-        if !config.suites.is_empty() {
-            eprintln!("(-p set; skipping suite tarballs - they need every member plugin staged)");
-        }
-        Vec::new()
-    } else if no_installer {
-        Vec::new()
-    } else {
-        config
-            .suites
-            .iter()
-            .filter(|s| selection.want_suite(&s.name, &s.bundle_id))
-            .map(|s| s.resolve(&config.plugin))
-            .collect::<Result<_, _>>()?
     };
 
     // The standalone host is a `[[bin]]`, not a cdylib, so the
@@ -255,7 +273,7 @@ pub(crate) fn cmd_package_linux(
             && build_standalone
         {
             let cross = (triple.as_str() != truce_build::host_triple()).then_some(triple.as_str());
-            for plugin in &selected_plugins {
+            for plugin in plugin_formats.plugins_with(&selected_plugins, PkgFormat::Standalone) {
                 build_standalone_binary(&root, plugin, cross, bundles_dir)?;
             }
         }
@@ -266,6 +284,7 @@ pub(crate) fn cmd_package_linux(
             dist_dir: &dist_dir,
             version: &version,
             source,
+            formats: &plugin_formats,
             arch,
             no_installer,
         };
@@ -290,7 +309,11 @@ pub(crate) fn cmd_package_linux(
         }
     }
 
-    eprintln!("\nDone. Tarballs in {}", dist_dir.display());
+    if no_installer {
+        eprintln!("\nDone. No tarballs (--no-installer): the staged trees are listed above.");
+    } else {
+        eprintln!("\nDone. Tarballs in {}", dist_dir.display());
+    }
     Ok(())
 }
 
@@ -323,18 +346,22 @@ fn arch_from_triple(triple: &str) -> &str {
 /// Where a target's tarballs take their payload from.
 enum Source {
     /// A build's bundles: `target/bundles[/<triple>]/` and its manifest.
+    /// `built` is whether this run built them; the manifest also keeps
+    /// earlier builds' entries, so then only each plugin's formats are
+    /// taken from it (with `--no-build`, everything it lists).
     Build {
         bundles_dir: PathBuf,
         manifest: BundleManifest,
+        built: bool,
     },
     /// `--assemble-from <DIR>`: per-plugin trees an earlier run staged
     /// (`--no-installer` leaves them in
     /// `target/package/linux/<arch>/plugin/`), read from
-    /// `<DIR>/<bundle_id>/`. `formats` is `--formats`, when given.
-    Assembled {
-        from: PathBuf,
-        formats: Option<Vec<PkgFormat>>,
-    },
+    /// `<DIR>/<bundle_id>/`. Each tree must hold its plugin's formats
+    /// ([`PluginFormats`]); `requested` is whether `--formats` chose them,
+    /// in which case only those are packaged, rather than everything the
+    /// tree has.
+    Assembled { from: PathBuf, requested: bool },
 }
 
 /// Context shared by every tarball build: per-target directories plus
@@ -346,6 +373,8 @@ struct TarballCtx<'a> {
     dist_dir: &'a Path,
     version: &'a str,
     source: &'a Source,
+    /// Each plugin's formats.
+    formats: &'a PluginFormats,
     arch: &'a str,
     /// `--no-installer`: stage each plugin's tree and stop.
     no_installer: bool,
@@ -361,9 +390,23 @@ fn stage_plugin(
         Source::Build {
             bundles_dir,
             manifest,
-        } => stage_plugin_payload(ctx.root, ctx.config, plugin, staging, bundles_dir, manifest),
-        Source::Assembled { from, formats } => {
-            assemble_plugin(ctx.root, plugin, from, formats.as_deref(), staging)
+            built,
+        } => {
+            let only = built.then(|| ctx.formats.of(plugin));
+            stage_plugin_payload(
+                ctx.root,
+                ctx.config,
+                plugin,
+                staging,
+                bundles_dir,
+                manifest,
+                only,
+            )
+        }
+        Source::Assembled { from, requested } => {
+            let mine = ctx.formats.of(plugin);
+            let selected = requested.then_some(mine);
+            assemble_plugin(ctx.root, plugin, from, selected, mine, staging)
         }
     }
 }
@@ -383,7 +426,8 @@ fn plugin_kind(ctx: &TarballCtx<'_>) -> &'static str {
 /// the macOS `.pkg` / Windows `.exe` produced for the same plugin.
 fn build_per_plugin_tarball(ctx: &TarballCtx<'_>, plugin: &PluginDef) -> Res {
     let stem = format!("{}-{}-linux-{}", plugin.crate_name, ctx.version, ctx.arch);
-    let staging = stage_dir(ctx.root, plugin_kind(ctx), &plugin.bundle_id, ctx.arch)?;
+    let staging = stage_dir(ctx.root, plugin_kind(ctx), &plugin.bundle_id, ctx.arch);
+    fresh_stage_dir(ctx.source, &[plugin], &staging)?;
 
     let plugin_summary = stage_plugin(ctx, plugin, &staging)?;
     if ctx.no_installer {
@@ -423,7 +467,8 @@ fn build_suite_tarball(ctx: &TarballCtx<'_>, suite: &ResolvedSuite<'_>) -> Res {
         "{}-{}-linux-{}",
         suite.def.bundle_id, suite_version, ctx.arch
     );
-    let staging = suite_stage_dir(ctx.root, &suite.def.bundle_id, ctx.arch)?;
+    let staging = stage_dir(ctx.root, "suite", &suite.def.bundle_id, ctx.arch);
+    fresh_stage_dir(ctx.source, &suite.plugins, &staging)?;
 
     let mut summaries = Vec::with_capacity(suite.plugins.len());
     for plugin in &suite.plugins {
@@ -538,7 +583,8 @@ struct BundleEntry {
 /// return a summary for install.sh generation.
 ///
 /// Reads the build manifest written by `cargo truce build` to find
-/// what bundles to copy; if the manifest lists nothing for this
+/// what bundles to copy, keeping only the formats in `only` when given;
+/// if the manifest lists nothing for this
 /// plugin and the plugin has no standalone either, that's a hard
 /// error rather than a silent skip - empty plugin payloads ship
 /// broken tarballs.
@@ -549,6 +595,7 @@ fn stage_plugin_payload(
     staging: &Path,
     bundles_dir: &Path,
     manifest: &BundleManifest,
+    only: Option<&[PkgFormat]>,
 ) -> Result<PluginSummary, CargoTruceError> {
     let mut bundles = Vec::new();
 
@@ -559,6 +606,15 @@ fn stage_plugin_payload(
     // alternative to `install.sh` and keeps install.sh's per-plugin
     // case bodies short (one path component to copy from).
     for entry in manifest.bundles_for_plugin(&plugin.crate_name) {
+        // An entry a previous build left for a format this run doesn't
+        // package for the plugin.
+        if only.is_some_and(|only| {
+            !only
+                .iter()
+                .any(|f| manifest_slug(f) == Some(entry.format.as_str()))
+        }) {
+            continue;
+        }
         let Some(slug) = linux_install_slug(&entry.format)? else {
             // AU2/AU3/AAX would never appear in a host-Linux manifest
             // because they're macOS-only; if one slips in via a copied
@@ -677,20 +733,23 @@ fn stage_plugin_payload(
 
 /// `--assemble-from`: stage `plugin`'s tree from `<from>/<bundle_id>/`
 /// into `staging` - its bundles, factory presets and standalone, as
-/// found - and describe it for install.sh. Fails naming any `--formats`
-/// format the tree lacks, and any factory presets the plugin ships that
-/// the tree doesn't carry (they're never regenerated here: field-name
-/// preset keys would need the build's parameter metadata).
+/// found - and describe it for install.sh. Fails naming any format the
+/// tree lacks (from `--formats`, else from `defaults`), and any factory
+/// presets the plugin ships that the tree doesn't carry (they're never
+/// regenerated here: field-name preset keys would need the build's
+/// parameter metadata).
 fn assemble_plugin(
     root: &Path,
     plugin: &PluginDef,
     from: &Path,
     formats: Option<&[PkgFormat]>,
+    defaults: &[PkgFormat],
     staging: &Path,
 ) -> Result<PluginSummary, CargoTruceError> {
+    // `fresh_stage_dir` refused a `src` overlapping `staging` before
+    // clearing it.
     let src = super::assemble::plugin_dir(from, plugin)?;
-    super::assemble::ensure_disjoint(&src, staging)?;
-    let summary = summarize_tree(root, plugin, &src, formats)?;
+    let summary = summarize_tree(root, plugin, &src, formats, defaults)?;
     for rel in summary.paths() {
         let (from, to) = (src.join(&rel), staging.join(&rel));
         if from.is_dir() {
@@ -708,12 +767,15 @@ fn assemble_plugin(
 /// `vst/`, a helper's token), CLAP presets as `clap/<stem>.presets`, the
 /// VST3 preset tree under `vst3-presets/<Vendor>/<Plugin>`, and the
 /// standalone with its presets under `standalone/`. With `formats`, only
-/// those, each required; without, every format directory present.
+/// those, each required; without, every format directory present, of
+/// which each of `defaults` is required - a tree missing one would
+/// otherwise make an installer that quietly lacks it.
 fn summarize_tree(
     root: &Path,
     plugin: &PluginDef,
     src: &Path,
     formats: Option<&[PkgFormat]>,
+    defaults: &[PkgFormat],
 ) -> Result<PluginSummary, CargoTruceError> {
     // (what to call it in an error, install slug, required)
     let mut wanted: Vec<(String, &'static str, bool)> = Vec::new();
@@ -748,6 +810,19 @@ fn summarize_tree(
             };
             wanted.push((name.clone(), slug, false));
         }
+        for f in defaults {
+            let Some(slug) = manifest_slug(f)
+                .map(linux_install_slug)
+                .transpose()?
+                .flatten()
+            else {
+                continue;
+            };
+            match wanted.iter_mut().find(|(_, s, _)| *s == slug) {
+                Some(present) => present.2 = true,
+                None => wanted.push((f.label().to_string(), slug, true)),
+            }
+        }
     }
 
     let mut bundles = Vec::new();
@@ -763,7 +838,15 @@ fn summarize_tree(
             })
             .unwrap_or_default();
         if names.is_empty() && required {
-            return Err(super::assemble::missing(plugin, &label, &dir));
+            let err = super::assemble::missing(plugin, &label, &dir);
+            if formats.is_some() {
+                return Err(err);
+            }
+            return Err(format!(
+                "{err} (a plain `cargo truce build` makes it; pass --formats to package \
+                 without it)"
+            )
+            .into());
         }
         names.sort();
         bundles.extend(
@@ -843,6 +926,19 @@ fn first_subdir(dir: &Path) -> Option<String> {
         .collect();
     names.sort();
     names.into_iter().next()
+}
+
+/// What a Linux tarball carries of a run's formats: the plugin formats
+/// Linux builds, and the standalone only when `--formats` asks for it -
+/// `cargo truce build` never makes one, so without it a staged standalone
+/// is packaged as found but not required.
+fn linux_formats(mut all: Vec<PkgFormat>, requested: bool) -> Vec<PkgFormat> {
+    all.retain(|f| match f {
+        PkgFormat::Clap | PkgFormat::Vst3 | PkgFormat::Vst2 | PkgFormat::External(_) => true,
+        PkgFormat::Standalone => requested,
+        PkgFormat::Au2 | PkgFormat::Au3 | PkgFormat::Aax => false,
+    });
+    all
 }
 
 /// The build manifest's format slug for `f`'s bundles (`"clap"`,
@@ -1182,37 +1278,35 @@ fn write_readme(
 // helpers
 // ---------------------------------------------------------------------------
 
-/// Per-suite Linux staging dir, arch-namespaced like [`stage_dir`].
-fn suite_stage_dir(
-    root: &Path,
-    suite_bundle_id: &str,
-    arch: &str,
-) -> Result<PathBuf, CargoTruceError> {
-    stage_dir(root, "suite", suite_bundle_id, arch)
-}
-
-/// A fresh Linux staging dir, `target/package/linux/<arch>/<kind>/<id>/`:
+/// A Linux staging dir, `target/package/linux/<arch>/<kind>/<id>/`:
 /// `plugin` for a plugin's tree (what `--no-installer` leaves and
 /// `--assemble-from` reads), `assemble` for one copied back out of such
 /// a tree, `suite` for a suite's. Namespaced by arch so dual-target
 /// packaging in one invocation doesn't have the second target wipe the
 /// first. The in-archive layout uses the version-tagged stem via
 /// `create_tarball`'s `--transform`, so the on-disk path stays
-/// internal-only.
-fn stage_dir(
-    root: &Path,
-    kind: &str,
-    bundle_id: &str,
-    arch: &str,
-) -> Result<PathBuf, CargoTruceError> {
-    let staging = truce_build::target_dir(root)
+/// internal-only. Only the path: [`fresh_stage_dir`] clears it.
+fn stage_dir(root: &Path, kind: &str, bundle_id: &str, arch: &str) -> PathBuf {
+    truce_build::target_dir(root)
         .join("package/linux")
         .join(arch)
         .join(kind)
-        .join(bundle_id);
-    let _ = fs::remove_dir_all(&staging);
-    fs::create_dir_all(&staging)?;
-    Ok(staging)
+        .join(bundle_id)
+}
+
+/// Empty `staging` for `plugins` to be staged into. With
+/// `--assemble-from`, first refuse any plugin whose source tree overlaps
+/// it: clearing would delete the very bundles being assembled.
+fn fresh_stage_dir(source: &Source, plugins: &[&PluginDef], staging: &Path) -> Res {
+    if let Source::Assembled { from, .. } = source {
+        for plugin in plugins {
+            let src = super::assemble::plugin_dir(from, plugin)?;
+            super::assemble::ensure_disjoint(&src, staging)?;
+        }
+    }
+    let _ = fs::remove_dir_all(staging);
+    fs::create_dir_all(staging)?;
+    Ok(())
 }
 
 fn create_tarball(staging: &Path, out: &Path, stem: &str) -> Res {
@@ -1331,7 +1425,9 @@ mod tests {
 /// `--assemble-from` reading plugin trees.
 #[cfg(test)]
 mod assemble_tests {
-    use super::{PkgFormat, assemble_plugin, standalone_binary_name, summarize_tree};
+    use super::{
+        PkgFormat, Source, assemble_plugin, fresh_stage_dir, standalone_binary_name, summarize_tree,
+    };
     use crate::config::test_plugin;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1378,7 +1474,7 @@ mod assemble_tests {
         let staging = dir.join("staging");
         fs::create_dir_all(&staging).unwrap();
 
-        let s = assemble_plugin(&dir, &p, &dir.join("from"), None, &staging).unwrap();
+        let s = assemble_plugin(&dir, &p, &dir.join("from"), None, &[], &staging).unwrap();
 
         let bundles: Vec<(&str, &str)> = s
             .bundles
@@ -1412,14 +1508,20 @@ mod assemble_tests {
         staged_tree(&dir.join("from"), &standalone_binary_name(&p));
         let src = dir.join("from/gain");
 
-        let only_clap = summarize_tree(&dir, &p, &src, Some(&[PkgFormat::Clap])).unwrap();
+        let only_clap = summarize_tree(&dir, &p, &src, Some(&[PkgFormat::Clap]), &[]).unwrap();
         assert_eq!(only_clap.bundles.len(), 1);
         assert!(only_clap.vst3_presets.is_none() && only_clap.standalone.is_none());
 
-        let err = summarize_tree(&dir, &p, &src, Some(&[PkgFormat::Clap, PkgFormat::Vst2]))
-            .err()
-            .unwrap()
-            .to_string();
+        let err = summarize_tree(
+            &dir,
+            &p,
+            &src,
+            Some(&[PkgFormat::Clap, PkgFormat::Vst2]),
+            &[],
+        )
+        .err()
+        .unwrap()
+        .to_string();
         assert!(err.contains("no VST2 bundle"), "{err}");
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1438,11 +1540,70 @@ mod assemble_tests {
         let p = test_plugin("asm-fixture", "gain");
         write(&dir.join("from/gain/clap/asm-fixture.clap"), b"clap");
 
-        let err = summarize_tree(&dir, &p, &dir.join("from/gain"), None)
+        let err = summarize_tree(&dir, &p, &dir.join("from/gain"), None, &[])
             .err()
             .unwrap()
             .to_string();
         assert!(err.contains("ships factory presets"), "{err}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Without `--formats`, a tree must hold every format a plain build
+    /// makes: one missing fails, pointing at `--formats`, rather than
+    /// packaging an installer that quietly lacks it. Formats beyond the
+    /// defaults are still packaged as found.
+    #[test]
+    fn default_formats_are_required_without_formats() {
+        let dir = scratch("defaults");
+        let p = test_plugin("Gain", "gain");
+        staged_tree(&dir.join("from"), &standalone_binary_name(&p));
+        let src = dir.join("from/gain");
+
+        let err = summarize_tree(
+            &dir,
+            &p,
+            &src,
+            None,
+            &[PkgFormat::Clap, PkgFormat::Vst3, PkgFormat::Vst2],
+        )
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(err.contains("no VST2 bundle"), "{err}");
+        assert!(err.contains("--formats"), "{err}");
+
+        let s = summarize_tree(&dir, &p, &src, None, &[PkgFormat::Clap]).unwrap();
+        let formats: Vec<&str> = s.bundles.iter().map(|b| b.format).collect();
+        assert_eq!(formats, ["clap", "vst3"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A source tree inside the staging dir about to be cleared is
+    /// refused before the clear, so it survives.
+    #[test]
+    fn an_overlapping_source_is_refused_before_staging_is_cleared() {
+        let dir = scratch("overlap");
+        let p = test_plugin("Gain", "gain");
+        let staging = dir.join("assemble/gain");
+        staged_tree(&dir.join("assemble"), &standalone_binary_name(&p));
+        let source = Source::Assembled {
+            from: dir.join("assemble"),
+            requested: false,
+        };
+
+        let err = fresh_stage_dir(&source, &[&p], &staging)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("overlaps"), "{err}");
+        assert!(
+            staging.join("clap/Gain.clap").is_file(),
+            "source was cleared"
+        );
+
+        let elsewhere = dir.join("elsewhere/gain");
+        fresh_stage_dir(&source, &[&p], &elsewhere).unwrap();
+        assert!(elsewhere.is_dir() && fs::read_dir(&elsewhere).unwrap().next().is_none());
         fs::remove_dir_all(&dir).unwrap();
     }
 }

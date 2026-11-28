@@ -10,6 +10,7 @@ use crate::PluginDef;
 use crate::Res;
 
 pub(crate) mod assemble;
+pub(crate) mod formats;
 pub(crate) mod stage;
 pub(crate) mod verify;
 
@@ -91,6 +92,33 @@ impl SuiteSelection {
         };
         Err(format!("--suite: no suite matches {unknown:?}. Available suites: {available}").into())
     }
+}
+
+/// With `--suite <name>` (and no `-p`), the plugins of the selected
+/// `suites`, each once, in suite order: a run that ships some suites
+/// builds and packages only their members, not every plugin in
+/// `truce.toml`. `None` when no suite was named (or `--no-suite`
+/// overrides it), meaning every plugin `-p` allows.
+pub(crate) fn suite_members<'a>(
+    selection: &SuiteSelection,
+    plugin_filter: bool,
+    suites: &[crate::config::ResolvedSuite<'a>],
+) -> Option<Vec<&'a crate::PluginDef>> {
+    if selection.only_suites.is_empty() || selection.no_suite || plugin_filter {
+        return None;
+    }
+    let mut members: Vec<&crate::PluginDef> = Vec::new();
+    for plugin in suites.iter().flat_map(|s| s.plugins.iter().copied()) {
+        if !members.iter().any(|m| m.bundle_id == plugin.bundle_id) {
+            members.push(plugin);
+        }
+    }
+    eprintln!(
+        "Limiting to {} plugin{} for the selected suite(s).",
+        members.len(),
+        if members.len() == 1 { "" } else { "s" }
+    );
+    Some(members)
 }
 
 /// Strip the suite-selection flags out of `args` before the
@@ -575,15 +603,19 @@ per-suite installers by default. See docs for the schema.
 
 Selection (composable):
   -p <crate>           Package only this plugin crate's installer.
-  --suite <name>       Package only this suite (repeatable).
+  --suite <name>       Package only this suite (repeatable), and build
+                       and package only its member plugins.
   --no-suite           Skip suite installers.
   --no-per-plugin      Skip per-plugin installers.
 
 Format selection:
   --formats <list>     Comma-separated subset
                        (clap,vst3,vst2,au2,au3,aax,standalone).
-                       Default: every format in the plugin's
-                       `[features].default`.
+                       Default (and with no `[packaging] formats` in
+                       truce.toml): each plugin's own formats, those its
+                       `[features].default` turns on. With a list, each
+                       plugin gets the listed formats it has a feature
+                       for; the rest are skipped for it with a note.
   --features <list>    Extra Cargo features for the plugin crate,
                        comma/space-separated. Additive, applied to every
                        underlying build. Format features are reserved -

@@ -628,8 +628,8 @@ pub(crate) fn plist_version_keys(version: &str) -> String {
 }
 
 /// Resolve a plugin crate's `Cargo.toml` path via `cargo metadata`.
-/// Used by `detect_default_features` to find the manifest in
-/// workspace layouts where plugins live in arbitrary subdirectories.
+/// Finds the manifest in the single-crate layout and in workspace
+/// layouts where plugins live in arbitrary subdirectories.
 pub(crate) fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathBuf> {
     let out = Command::new("cargo")
         .args([
@@ -835,38 +835,6 @@ pub(crate) fn read_standalone_bin_name(crate_name: &str) -> Option<String> {
     None
 }
 
-/// Detect which format features to build when the user didn't pass
-/// any `--clap` / `--vst3` / etc. flags.
-///
-/// Lookup order:
-///
-/// 1. **Root `Cargo.toml`'s `[features].default`** - the single-crate
-///    layout (`cargo truce new` produces this). Most reliable signal.
-/// 2. **Plugin crates listed in `truce.toml`** - the workspace layout
-///    (`cargo truce new --workspace`). Reads each plugin's own
-///    `[features].default` and returns the **union**, so `install`
-///    tries the formats declared by at least one plugin and skips the
-///    rest.
-pub(crate) fn detect_default_features() -> HashSet<String> {
-    let root = project_root();
-
-    // Single-crate layout: root Cargo.toml has a `[features]` table.
-    let root_defaults = read_default_features(&root.join("Cargo.toml"));
-    if !root_defaults.is_empty() {
-        return root_defaults;
-    }
-
-    // Workspace layout: iterate plugins from `truce.toml` and union
-    // their declared default features.
-    let mut union = HashSet::new();
-    if let Ok(config) = crate::load_config() {
-        for p in &config.plugin {
-            union.extend(plugin_default_features(&root, &p.crate_name));
-        }
-    }
-    union
-}
-
 /// Parse a manifest's `[features]` table into `name -> its enabled
 /// entries` (feature names, `dep:pkg`, and `pkg/feat` alike). Empty when
 /// the file is unreadable or declares no features.
@@ -889,22 +857,42 @@ fn read_features_table(manifest: &Path) -> BTreeMap<String, Vec<String>> {
     out
 }
 
-/// A manifest's `[features].default` array as a set.
-fn read_default_features(manifest: &Path) -> HashSet<String> {
-    read_features_table(manifest)
-        .get("default")
-        .map(|d| d.iter().cloned().collect())
+/// Every feature one plugin crate's `[features].default` turns on,
+/// following one feature enabling another (`standalone-playback =
+/// ["standalone", ...]` turns on `standalone`). Empty when the manifest
+/// can't be located.
+pub(crate) fn plugin_enabled_default_features(root: &Path, crate_name: &str) -> HashSet<String> {
+    locate_plugin_manifest(root, crate_name)
+        .map(|m| enabled_defaults(&read_features_table(&m)))
         .unwrap_or_default()
 }
 
-/// One plugin crate's declared default features (its `[features].default`).
-/// Empty when the crate declares none or its manifest can't be located.
-/// Resolves the crate's own manifest, so it works in both the single-crate
-/// and workspace layouts.
-pub(crate) fn plugin_default_features(root: &Path, crate_name: &str) -> HashSet<String> {
+/// Every feature one plugin crate declares in `[features]`. Empty when
+/// the manifest can't be located.
+pub(crate) fn plugin_declared_features(root: &Path, crate_name: &str) -> HashSet<String> {
     locate_plugin_manifest(root, crate_name)
-        .map(|m| read_default_features(&m))
+        .map(|m| read_features_table(&m).into_keys().collect())
         .unwrap_or_default()
+}
+
+/// The features `default` turns on in a `[features]` table, transitively.
+/// Only the crate's own features: `dep:x` and `x/feature` entries enable
+/// dependencies, not features of this crate.
+fn enabled_defaults(table: &BTreeMap<String, Vec<String>>) -> HashSet<String> {
+    let mut on = HashSet::new();
+    let mut todo: Vec<&str> = table
+        .get("default")
+        .map(|d| d.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    while let Some(feature) = todo.pop() {
+        if feature.starts_with("dep:") || feature.contains('/') || !on.insert(feature.to_string()) {
+            continue;
+        }
+        if let Some(next) = table.get(feature) {
+            todo.extend(next.iter().map(String::as_str));
+        }
+    }
+    on
 }
 
 /// Cargo `--features` tokens (`crate/feature`) for every non-format
@@ -1385,6 +1373,28 @@ pub(crate) fn check_cmd(cmd: &str, args: &[&OsStr], label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `default` turns on what it lists and, through them, what those list:
+    /// `standalone-playback` brings `standalone`. Dependency entries aren't
+    /// features of the crate.
+    #[test]
+    fn enabled_defaults_follow_feature_chains() {
+        let table: std::collections::BTreeMap<String, Vec<String>> = [
+            ("default", vec!["clap", "standalone-playback", "dep:extra"]),
+            (
+                "standalone-playback",
+                vec!["standalone", "truce-standalone/playback"],
+            ),
+            ("standalone", vec!["dep:truce-standalone"]),
+            ("vst2", vec!["dep:truce-vst2"]),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.into_iter().map(String::from).collect()))
+        .collect();
+        let mut on: Vec<String> = super::enabled_defaults(&table).into_iter().collect();
+        on.sort();
+        assert_eq!(on, ["clap", "standalone", "standalone-playback"]);
+    }
     use std::sync::atomic::AtomicU64;
 
     /// Every AAX command finds bundles through this one folder, so it has

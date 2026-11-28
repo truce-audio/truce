@@ -285,7 +285,10 @@ fn ensure_aax_sdk_library(
 #[cfg(target_os = "windows")]
 fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::CargoTruceError> {
     let build_dir = sdk_path.join("build-truce");
-    let lib_path = build_dir.join("Libs/AAXLibrary/AAXLibrary.lib");
+    let lib_path = build_dir
+        .join("Libs")
+        .join("AAXLibrary")
+        .join("AAXLibrary.lib");
     if lib_path.exists() {
         return Ok(lib_path);
     }
@@ -351,7 +354,9 @@ fn template_binary() -> PathBuf {
 fn template_binary() -> PathBuf {
     // Ninja is single-config - target lands directly in the build dir.
     // CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX="".
-    tmp_aax_template().join("build/TruceAAXTemplate.aaxplugin")
+    tmp_aax_template()
+        .join("build")
+        .join("TruceAAXTemplate.aaxplugin")
 }
 
 /// Ensure the shared AAX cmake template has been built and return its
