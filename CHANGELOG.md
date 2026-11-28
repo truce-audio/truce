@@ -9,6 +9,7 @@ Notable changes per release.
 - CLI: Windows packages PACE-sign AAX again.
 - Params: `#[nested]` array lengths can be consts (#229); LV2 still needs a literal.
 - Editors: macOS opens the editor once its view is in a window (#234), and AU v3 drives `Editor::idle`.
+- Editors: a resizable built-in grid's minimum height is its shortest layout's, not its narrowest's, so a window dragged larger no longer jumps taller than the screen (the GUI Zoo GPU standalone grew to 1353 px).
 - CLAP: reversed discrete and enum parameters report as stepped.
 
 ## 7.0.1

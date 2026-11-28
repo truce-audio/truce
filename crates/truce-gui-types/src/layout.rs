@@ -875,18 +875,35 @@ impl GridLayout {
         (self.cell_size + GRID_GAP).round().max(1.0) as u32
     }
 
-    /// `Editor::min_size` value: the pixel size of the layout at
-    /// the smallest allowed `(cols, rows)` extent declared by
-    /// [`Self::min_size`]. Hosts see this via the format-specific
+    /// `Editor::min_size` value. Hosts see this via the format-specific
     /// resize-hint RPC (CLAP `gui_get_resize_hints`, VST3
-    /// `checkSizeConstraint`, etc.).
+    /// `checkSizeConstraint`, etc.) and the standalone as its window's
+    /// minimum track size.
+    ///
+    /// Each axis is its own minimum. The width is the layout's at the
+    /// fewest allowed columns. The height is the layout's at the *most*
+    /// allowed columns (and fewest rows): auto-flowed widgets wrap into
+    /// more rows as columns drop, so the narrowest layout is also the
+    /// tallest, and its height as the minimum would hold every width to
+    /// it - taller than the editor opens at. Below the height a given
+    /// width needs, [`Self::refit_rows`] still reports that width's
+    /// content height, so nothing is clipped.
     #[must_use]
     pub fn min_snapped_size(&self) -> (u32, u32) {
-        let mut probe = self.clone();
-        probe.cols = self.min_size.0.max(1);
-        probe.rows = self.min_size.1.max(1);
-        probe.flow_and_size();
-        (probe.width, probe.height)
+        let min_rows = self.min_size.1.max(1);
+        let mut narrowest = self.clone();
+        narrowest.cols = self.min_size.0.max(1);
+        narrowest.rows = min_rows;
+        narrowest.flow_and_size();
+        let mut widest = self.clone();
+        widest.cols = if self.max_size.0 == u32::MAX {
+            64
+        } else {
+            self.max_size.0.max(narrowest.cols)
+        };
+        widest.rows = min_rows;
+        widest.flow_and_size();
+        (narrowest.width, widest.height.min(narrowest.height))
     }
 
     /// `Editor::max_size` value. `u32::MAX` per axis means "no
@@ -1346,6 +1363,54 @@ mod tests {
             g.rows
         );
         assert!(new_h > natural_h);
+    }
+
+    #[test]
+    fn min_height_is_not_taller_than_the_natural_layout() {
+        // Auto-flowed widgets wrap into more rows at fewer columns, so
+        // the narrowest layout is the tallest. The minimum height must
+        // not be that, or a window held to it can't be as short as the
+        // editor opens.
+        let g = GridLayout::build(vec![widgets(auto_widgets(12))])
+            .with_cols(6)
+            .resizable(true)
+            .min_size((2, 1))
+            .max_size((8, u32::MAX));
+        let (min_w, min_h) = g.min_snapped_size();
+        assert!(
+            min_w < g.width,
+            "min width {min_w} should be under the natural {}",
+            g.width
+        );
+        assert!(
+            min_h <= g.height,
+            "min height {min_h} exceeds the natural {}",
+            g.height
+        );
+    }
+
+    #[test]
+    fn narrow_width_still_reports_its_content_height() {
+        // The minimum height is the widest layout's, so at the narrowest
+        // width the editor itself has to keep the taller content in view.
+        let mut g = GridLayout::build(vec![widgets(auto_widgets(12))])
+            .with_cols(6)
+            .resizable(true)
+            .min_size((2, 1))
+            .max_size((8, u32::MAX));
+        let (min_w, min_h) = g.min_snapped_size();
+        g.refit_cols(min_w);
+        let (_, h) = g.refit_rows(min_h);
+        let (_, content_h) = g.compute_size();
+        assert_eq!(g.cols, 2);
+        assert!(
+            h >= content_h,
+            "reported height {h} clips the 2-column content ({content_h})"
+        );
+        assert!(
+            h > min_h,
+            "2 columns of 12 widgets should need more than the minimum height"
+        );
     }
 
     #[test]
