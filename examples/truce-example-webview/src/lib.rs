@@ -134,8 +134,9 @@ impl PluginLogic for WebviewSynth {
 
 /// The page. `window.ipc.postMessage` is `wry`'s channel back to Rust;
 /// `setVolume` is how [`WebviewEditor::idle`] pushes values in;
-/// `truceInitial` is the value when the page is built (AU v3 doesn't drive
-/// `idle` yet, so without it the page would start empty there).
+/// `truceInitial` is the value when the page is built, so the first paint
+/// is right without waiting for a tick; `idleRunning` marks that the format
+/// drives `idle` at all (the status line a host test reads).
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const PAGE: &str = r#"<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -147,12 +148,14 @@ const PAGE: &str = r#"<!doctype html>
   #value { font-size: 28px; text-align: center; }
   input { width: 100%; accent-color: #4e8df5; }
   .label { text-align: center; color: #9aa0aa; }
+  .status { text-align: center; color: #6c7280; font-size: 11px; }
 </style></head><body>
   <header>WEBVIEW SYNTH</header>
   <main>
     <div id="value">-</div>
     <input id="volume" type="range" min="0" max="1" step="0.001" value="0">
     <div class="label">Volume</div>
+    <div id="idle" class="status">idle(): not called</div>
   </main>
 <script>
   const slider = document.getElementById('volume');
@@ -167,8 +170,9 @@ const PAGE: &str = r#"<!doctype html>
     if (!dragging) slider.value = normalized;
     value.textContent = text;
   };
-  // The value when the page was built (see `build_webview`): shown at
-  // once, whether or not the format drives `Editor::idle`.
+  window.idleRunning = () => { document.getElementById('idle').textContent = 'idle(): running'; };
+  // The value when the page was built (see `build_webview`): shown at once,
+  // without waiting for an `Editor::idle` tick.
   if (window.truceInitial) window.setVolume(...window.truceInitial);
 </script></body></html>"#;
 
@@ -190,6 +194,8 @@ struct WebviewEditor {
     notice: Option<UiThread<objc2::rc::Retained<objc2_app_kit::NSTextField>>>,
     /// The last (normalized value, text) pushed into the page.
     shown: Option<(f64, String)>,
+    /// `idle` calls since `open`, to re-mark the status line now and then.
+    ticks: u64,
 }
 
 impl Editor for WebviewEditor {
@@ -199,6 +205,7 @@ impl Editor for WebviewEditor {
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         self.shown = None;
+        self.ticks = 0;
         #[cfg(target_os = "macos")]
         if let RawWindowHandle::AppKit(view) = parent
             && !macos::in_window(view)
@@ -252,14 +259,23 @@ impl Editor for WebviewEditor {
         self.context = None;
     }
 
-    /// Push the volume into the page whenever it changes on the host side
-    /// (and once after `open`).
+    /// Push the volume into the page whenever it changes on the host side,
+    /// and mark the page's status line: `idle` is running.
     fn idle(&mut self, _dt: std::time::Duration) {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             let (Some(ctx), Some(webview)) = (&self.context, &self.webview) else {
                 return;
             };
+            // Every 30 ticks (twice a second at 60 Hz), not once: the first
+            // ticks can come before the page has loaded, and the call is
+            // idempotent.
+            if self.ticks.is_multiple_of(30) {
+                let _ = webview
+                    .0
+                    .evaluate_script("window.idleRunning && window.idleRunning()");
+            }
+            self.ticks += 1;
             let normalized = ctx.bridge().get_param(P::Volume.into());
             let text = ctx.format_param(P::Volume);
             // Exact compare on purpose: any change at all is worth a push.
