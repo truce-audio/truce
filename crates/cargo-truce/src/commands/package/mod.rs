@@ -9,6 +9,7 @@ use crate::CargoTruceError;
 use crate::PluginDef;
 use crate::Res;
 
+pub(crate) mod assemble;
 pub(crate) mod stage;
 pub(crate) mod verify;
 
@@ -455,12 +456,16 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     // `--no-default-features` opts out of re-adding each plugin's
     // non-format default features (e.g. `ara`) to the per-format builds.
     crate::set_no_default_features(no_default_features);
+    let (assemble_from, args) = assemble::extract(&args)?;
     // iOS short-circuit: AU v3 inside an `.ipa` is the only viable
     // iOS distribution shape and doesn't share any of the macOS /
     // Windows / Linux packaging pipeline (no productbuild, no Inno
     // Setup, no tarball). Handle it as a thin pass-through before
     // the platform dispatch.
     if args.iter().any(|a| a == "--ios") {
+        if assemble_from.is_some() {
+            return Err("--assemble-from doesn't apply to --ios packaging".into());
+        }
         #[cfg(target_os = "macos")]
         {
             return package_ios(&args);
@@ -477,17 +482,18 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     if !selection.only_suites.is_empty() {
         selection.validate_against(&crate::load_config()?.suites)?;
     }
+    let assemble_from = assemble_from.as_deref();
     #[cfg(target_os = "windows")]
     {
-        windows::cmd_package_windows(&args, &selection)
+        windows::cmd_package_windows(&args, &selection, assemble_from)
     }
     #[cfg(target_os = "macos")]
     {
-        macos::cmd_package_macos(&args, &selection)
+        macos::cmd_package_macos(&args, &selection, assemble_from)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        linux::cmd_package_linux(&args, &selection)
+        linux::cmd_package_linux(&args, &selection, assemble_from)
     }
 }
 
@@ -607,10 +613,24 @@ Build target (macOS):
                        Single-arch build of that architecture. The host
                        may be the other one. Not with --host-only.
 
-Build invocation (Linux):
-  --no-build           Skip the implicit `cargo truce build` and use the
-                       existing `target/bundles/` manifest as-is. Errors
-                       if no manifest is present.
+Build invocation:
+  --assemble-from <DIR>
+                       Package bundles that already exist (e.g. signed
+                       elsewhere) instead of building: no build, no
+                       per-format staging, no bundle signing. Reads each
+                       plugin's tree from `<DIR>/<bundle_id>/`, in the
+                       layout `--no-installer` leaves under
+                       `target/package/<os>/[<arch>/]plugin/`, out-of-bundle
+                       factory presets included (never regenerated). Fails
+                       if a selected plugin, format or shipped preset set
+                       is missing. `<DIR>` is never modified; the installer
+                       is still signed unless --no-sign.
+  --no-installer       Windows / Linux: stage each plugin's tree and stop
+                       (no .exe / tarball) - the input `--assemble-from`
+                       reads.
+  --no-build           Linux: skip the implicit `cargo truce build` and use
+                       the existing `target/bundles/` manifest as-is.
+                       Errors if no manifest is present.
 
 Codegen tuning (all platforms):
   --target-cpu <value> Override the x86_64 default of `-C target-cpu=x86-64-v3`.
