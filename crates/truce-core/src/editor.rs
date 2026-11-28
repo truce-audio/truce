@@ -291,19 +291,16 @@ pub trait Editor: Send {
     ///
     /// Driven by the standalone host (baseview's frame loop), CLAP
     /// (`clap.timer-support`), VST3 (a per-instance UI-thread timer), AU v2
-    /// / VST2 (the Cocoa view's `NSTimer` / `effEditIdle`), AAX (the GUI's
-    /// timer wakeup), and LV2 (`ui:idleInterface`). The AU v3 app-extension view does **not** drive
-    /// it yet: a baseview-backed editor (the built-in editor, or the egui /
-    /// iced / vizia / slint backends) repaints through its own frame loop
-    /// regardless, but a raw-window-handle editor under AU v3 must run its
-    /// own timer until it does.
+    /// / VST2 (the Cocoa view's `NSTimer` / `effEditIdle`), AU v3 (the
+    /// app extension's view-controller timer), AAX (the GUI's timer wakeup),
+    /// and LV2 (`ui:idleInterface`).
     fn idle(&mut self, _dt: std::time::Duration) {}
 
     /// Whether [`Self::idle`] does anything while the editor is open. A
     /// format skips its ~60 Hz idle timer for an editor that says `false`:
     /// CLAP registers no `clap.timer-support` tick, VST3 runs no idle source
-    /// (its restart drain keeps its slower cadence) and the AU v2 view no
-    /// `NSTimer`. Read once the editor is built, before or right after
+    /// (its restart drain keeps its slower cadence), and the AU v2 view and
+    /// the AU v3 view controller no timer. Read once the editor is built, before or right after
     /// `open` depending on the format, so it must not depend on state `open`
     /// sets, and must stay the same for the editor's lifetime.
     ///
