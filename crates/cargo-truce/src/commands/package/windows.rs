@@ -225,19 +225,17 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
         let presets = stage_windows_presets(&root, &config, p, &formats, &staging)?;
 
         if !opts.no_sign {
-            // PACE-sign every AAX bundle (one per arch). PACE wraps the binary;
-            // Authenticode signs the wrapped result - so PACE first.
-            // `--no-pace-sign` (or `--no-sign`) skips the wraptool round-trip
-            // while keeping Authenticode for smoke tests.
+            // PACE-sign every AAX bundle (one per arch). PACE wraps the
+            // binary; Authenticode signs the wrapped result - so PACE
+            // first. `--no-pace-sign` (or `--no-sign`) skips the
+            // wraptool round-trip while keeping Authenticode for smoke
+            // tests.
             if !opts.no_pace_sign && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
-                let aax_bundle = staging.join(format!("{}.aaxplugin", p.file_stem()));
+                let staged = Staged { dir: &staging, p };
                 for &arch in &archs {
-                    let inner_wrapper = aax_bundle
-                        .join("Contents")
-                        .join(arch.aax_bundle_subdir())
-                        .join(format!("{}.aaxplugin", p.file_stem()));
-                    if inner_wrapper.exists() {
-                        pace_sign_aax(&inner_wrapper)?;
+                    let wrapper = staged.aax_wrapper(arch);
+                    if wrapper.exists() {
+                        pace_sign_aax(&wrapper)?;
                     }
                 }
             }
@@ -640,6 +638,89 @@ struct StagedPlugin {
     signable: Vec<PathBuf>,
 }
 
+/// Where each format lands in one plugin's Windows staging tree: the
+/// layout `--no-installer` leaves and `--assemble-from` reads. Staging,
+/// PACE signing, the `.iss` and the assemble check all take their paths
+/// from here, so they can't disagree.
+struct Staged<'a> {
+    dir: &'a Path,
+    p: &'a PluginDef,
+}
+
+impl Staged<'_> {
+    fn clap(&self, arch: TargetArch) -> PathBuf {
+        self.dir
+            .join("clap")
+            .join(arch.tag())
+            .join(format!("{}.clap", self.p.file_stem()))
+    }
+
+    /// The VST3 bundle's per-arch directory (`Contents/x86_64-win`, ...).
+    fn vst3_arch_dir(&self, arch: TargetArch) -> PathBuf {
+        self.dir
+            .join("vst3")
+            .join(format!("{}.vst3", self.p.file_stem()))
+            .join("Contents")
+            .join(arch.vst3_bundle_subdir())
+    }
+
+    fn vst3(&self, arch: TargetArch) -> PathBuf {
+        self.vst3_arch_dir(arch)
+            .join(format!("{}.vst3", self.p.file_stem()))
+    }
+
+    fn vst2(&self, arch: TargetArch) -> PathBuf {
+        self.dir
+            .join("vst2")
+            .join(arch.tag())
+            .join(format!("{}.dll", self.p.file_stem()))
+    }
+
+    /// Where an external format's helper stages its bundle for `arch`.
+    fn external_dir(&self, e: &ExternalFormat, arch: TargetArch) -> PathBuf {
+        self.dir.join(&e.format).join(arch.tag())
+    }
+
+    fn external(&self, e: &ExternalFormat, arch: TargetArch) -> PathBuf {
+        self.external_dir(e, arch).join(e.bundle_name_for(self.p))
+    }
+
+    fn aax_contents(&self) -> PathBuf {
+        self.dir
+            .join("aax")
+            .join(format!("{}.aaxplugin", self.p.file_stem()))
+            .join("Contents")
+    }
+
+    fn aax_arch_dir(&self, arch: TargetArch) -> PathBuf {
+        self.aax_contents().join(arch.aax_bundle_subdir())
+    }
+
+    /// The AAX template wrapper for `arch` - what PACE wraps.
+    fn aax_wrapper(&self, arch: TargetArch) -> PathBuf {
+        self.aax_arch_dir(arch)
+            .join(format!("{}.aaxplugin", self.p.file_stem()))
+    }
+
+    /// The arch-tagged Rust cdylib the wrapper loads from `Resources/`.
+    fn aax_resource_dll(&self, arch: TargetArch) -> PathBuf {
+        self.aax_contents().join("Resources").join(format!(
+            "{}_aax_{}.dll",
+            self.p.dylib_stem(),
+            arch.tag()
+        ))
+    }
+
+    fn standalone(&self, arch: TargetArch) -> PathBuf {
+        let bin_stem = crate::read_standalone_bin_name(&self.p.crate_name)
+            .unwrap_or_else(|| format!("{}-standalone", self.p.crate_name));
+        self.dir
+            .join("standalone")
+            .join(arch.tag())
+            .join(format!("{bin_stem}.exe"))
+    }
+}
+
 /// Stage a single plugin for one architecture. Multi-arch packaging calls
 /// this once per arch; the bundle formats (VST3, AAX) accumulate arch-scoped
 /// subdirectories in the same bundle root across calls.
@@ -670,7 +751,7 @@ fn stage_plugin(
                     root,
                     p,
                     config,
-                    &staging.join(&e.format).join(arch.tag()),
+                    &Staged { dir: staging, p }.external_dir(e, arch),
                     // Authenticode signing is a batched `signtool`
                     // pass over `signable` later; the macOS codesign
                     // identity has no meaning here.
@@ -713,9 +794,8 @@ fn stage_clap(
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }
-    let dst_dir = staging.join("clap").join(arch.tag());
-    fs::create_dir_all(&dst_dir)?;
-    let dst = dst_dir.join(format!("{}.clap", p.file_stem()));
+    let dst = Staged { dir: staging, p }.clap(arch);
+    fs::create_dir_all(dst.parent().expect("a staged file has a parent"))?;
     fs::copy(&dll, &dst)?;
     Ok(dst)
 }
@@ -733,26 +813,25 @@ fn stage_standalone(
     staging: &Path,
     arch: TargetArch,
 ) -> std::result::Result<PathBuf, crate::CargoTruceError> {
-    let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
-        .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
-    let exe_name = format!("{bin_stem}.exe");
+    let dst = Staged { dir: staging, p }.standalone(arch);
+    let exe_name = dst.file_name().expect("a staged file has a name");
+    let bin_stem = Path::new(exe_name).with_extension("");
 
     let built = truce_build::target_dir(root)
         .join(arch.triple())
         .join("release")
-        .join(&exe_name);
+        .join(exe_name);
     if !built.exists() {
         return Err(format!(
             "Standalone build produced no binary at {}. \
-             Make sure the plugin's Cargo.toml declares a [[bin]] target named '{bin_stem}'.",
-            built.display()
+             Make sure the plugin's Cargo.toml declares a [[bin]] target named '{}'.",
+            built.display(),
+            bin_stem.display()
         )
         .into());
     }
 
-    let dst_dir = staging.join("standalone").join(arch.tag());
-    fs::create_dir_all(&dst_dir)?;
-    let dst = dst_dir.join(&exe_name);
+    fs::create_dir_all(dst.parent().expect("a staged file has a parent"))?;
     fs::copy(&built, &dst)?;
     let version = crate::plugin_version(p, root)?;
     super::windows_manifest::embed_dpi_manifest(&dst, &version)?;
@@ -788,11 +867,9 @@ fn stage_vst3(
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }
-    let bundle_root = staging.join("vst3");
-    let bundle = bundle_root.join(format!("{}.vst3", p.file_stem()));
-    let arch_dir = bundle.join("Contents").join(arch.vst3_bundle_subdir());
-    fs::create_dir_all(&arch_dir)?;
-    let inner = arch_dir.join(format!("{}.vst3", p.file_stem()));
+    let staged = Staged { dir: staging, p };
+    fs::create_dir_all(staged.vst3_arch_dir(arch))?;
+    let inner = staged.vst3(arch);
     fs::copy(&dll, &inner)?;
     Ok(inner)
 }
@@ -811,9 +888,8 @@ fn stage_vst2(
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }
-    let dst_dir = staging.join("vst2").join(arch.tag());
-    fs::create_dir_all(&dst_dir)?;
-    let dst = dst_dir.join(format!("{}.dll", p.file_stem()));
+    let dst = Staged { dir: staging, p }.vst2(arch);
+    fs::create_dir_all(dst.parent().expect("a staged file has a parent"))?;
     fs::copy(&dll, &dst)?;
     Ok(dst)
 }
@@ -1053,21 +1129,16 @@ fn stage_aax(
         .into());
     }
 
-    let bundle_root = staging.join("aax");
-    let bundle = bundle_root.join(format!("{}.aaxplugin", p.file_stem()));
-    let contents = bundle.join("Contents");
-    let arch_dir = contents.join(arch.aax_bundle_subdir());
-    let resources_dir = contents.join("Resources");
-    fs::create_dir_all(&arch_dir)?;
-    fs::create_dir_all(&resources_dir)?;
-
-    let wrapper = arch_dir.join(format!("{}.aaxplugin", p.file_stem()));
+    let staged = Staged { dir: staging, p };
+    let wrapper = staged.aax_wrapper(arch);
     // Arch-tagged dylib so multi-arch bundles don't collide in Resources/.
     // The bridge C++ code scans Resources/*.dll via FindFirstFileA and loads
     // the first one whose arch matches the current process - arch tagging
     // in the filename is purely for storage; the binary's own arch header
     // determines what LoadLibrary accepts.
-    let resource_dll = resources_dir.join(format!("{}_aax_{}.dll", p.dylib_stem(), arch.tag()));
+    let resource_dll = staged.aax_resource_dll(arch);
+    fs::create_dir_all(staged.aax_arch_dir(arch))?;
+    fs::create_dir_all(resource_dll.parent().expect("a staged file has a parent"))?;
     fs::copy(&template, &wrapper)?;
     fs::copy(&dylib, &resource_dll)?;
 
@@ -2159,14 +2230,11 @@ fn iss_files_block(
             None => suffix.to_string(),
         }
     };
+    let staged = Staged { dir: staging, p };
 
     match fmt {
         PkgFormat::Clap => {
-            let src = staging
-                .join("clap")
-                .join(arch.tag())
-                .join(format!("{}.clap", p.file_stem()));
-            let src_quoted = iss_escape_path(&src);
+            let src_quoted = iss_escape_path(&staged.clap(arch));
             let dest = format!("{}\\CLAP", scoped_cf(scope));
             iss_dual_dest(
                 &src_quoted,
@@ -2182,12 +2250,7 @@ fn iss_files_block(
             // an ARM64 machine doesn't waste ~9MB on an x86_64-win sub-bundle
             // it won't load (x64 hosts running on ARM64 via emulation are not
             // a use case we're optimizing for here).
-            let src_dir = staging
-                .join("vst3")
-                .join(format!("{}.vst3", p.file_stem()))
-                .join("Contents")
-                .join(arch.vst3_bundle_subdir());
-            let src_glob = src_dir.join("*");
+            let src_glob = staged.vst3_arch_dir(arch).join("*");
             let src_quoted = iss_escape_path(&src_glob);
             // Dest is a real path - reuse the same `file_stem` the
             // source side (`format!("{}.vst3", p.file_stem())` above)
@@ -2212,11 +2275,7 @@ fn iss_files_block(
             // the doc keeps it system-only with `Check: IsAdminInstallMode`,
             // so end users in for-me-only mode simply don't receive VST2.
             // `--user` already filtered it out before render_iss is called.
-            let src = staging
-                .join("vst2")
-                .join(arch.tag())
-                .join(format!("{}.dll", p.file_stem()));
-            let src_quoted = iss_escape_path(&src);
+            let src_quoted = iss_escape_path(&staged.vst2(arch));
             iss_admin_only(
                 scope,
                 &src_quoted,
@@ -2228,11 +2287,7 @@ fn iss_files_block(
         }
         PkgFormat::External(e) => {
             let bundle = e.bundle_name_for(p);
-            let src_glob = staging
-                .join(&e.format)
-                .join(arch.tag())
-                .join(&bundle)
-                .join("*");
+            let src_glob = staged.external(e, arch).join("*");
             let src_quoted = iss_escape_path(&src_glob);
             let component = comp(&e.format);
             iss_external_dests(e, &iss_escape_quoted(&bundle), scope)
@@ -2262,21 +2317,12 @@ fn iss_files_block(
             // arches are skipped at stage time (see stage_aax); if the arch
             // subdir doesn't exist in staging, don't emit an .iss reference
             // to it - ISCC would fail on a missing Source otherwise.
-            let src_arch_dir = staging
-                .join("aax")
-                .join(format!("{}.aaxplugin", p.file_stem()))
-                .join("Contents")
-                .join(arch.aax_bundle_subdir());
+            let src_arch_dir = staged.aax_arch_dir(arch);
             if !src_arch_dir.exists() {
                 return String::new();
             }
             let src_arch_glob = src_arch_dir.join("*");
-            let resource_dll = staging
-                .join("aax")
-                .join(format!("{}.aaxplugin", p.file_stem()))
-                .join("Contents")
-                .join("Resources")
-                .join(format!("{}_aax_{}.dll", p.dylib_stem(), arch.tag()));
+            let resource_dll = staged.aax_resource_dll(arch);
             // Same path-component fix as VST3 above - AAX bundles
             // live at `{commoncf}\Avid\Audio\Plug-Ins\<stem>.aaxplugin`
             // and the install side uses `p.file_stem()`, so the
